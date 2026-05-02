@@ -69,13 +69,18 @@ export const audit = {
 // ─── PROVIDER + COST ──────────────────────────────────────────────────────────
 
 export const provider = {
-  list:             ()         => invoke("list_providers"),
-  getActive:        ()         => invoke("get_active_provider"),
-  setActive:        (p)        => invoke("set_active_provider",  { provider: p }),
-  getCost:          ()         => invoke("get_cost_state"),
-  recordTokens:     (i, o)     => invoke("record_token_usage",   { tokens_in: i, tokens_out: o }),
-  resetSession:     ()         => invoke("reset_session_cost"),
-  setBudget:        (usd)      => invoke("set_monthly_budget",   { budget_usd: usd }),
+  list:         ()              => invoke("list_providers"),
+  getActive:    ()              => invoke("get_active_provider"),
+  setActive:    (p)             => invoke("set_active_provider",      { provider: p }),
+  // Model + pricing are user-configurable — persisted to providers.json, never hardcoded
+  setModel:     (p, model)      => invoke("set_provider_model",       { provider: p, model }),
+  setPricing:   (p, i, o)       => invoke("set_provider_pricing",     { provider: p, price_in_1m: i, price_out_1m: o }),
+  getCost:      ()              => invoke("get_cost_state"),
+  recordTokens: (i, o)          => invoke("record_token_usage",       { tokens_in: i, tokens_out: o }),
+  resetSession: ()              => invoke("reset_session_cost"),
+  setBudget:    (usd)           => invoke("set_monthly_budget",       { budget_usd: usd }),
+  // Fetch live model list from provider API (requires api_key for cloud providers)
+  fetchModels:  (p, apiKey)     => invoke("fetch_provider_models",   { provider: p, api_key: apiKey || null }),
 };
 
 // ─── KEYCHAIN ─────────────────────────────────────────────────────────────────
@@ -95,11 +100,13 @@ function mockInvoke(cmd, args) {
     switch (cmd) {
       case "get_workspace":       return "/Users/samer/Projects/MyProduct";
       case "get_active_provider": return "anthropic";
-      case "list_providers":      return [
-        { id: "anthropic", name: "Anthropic Claude", model: "claude-sonnet-4-6",  price_in: 3.00,  price_out: 15.00 },
-        { id: "openai",    name: "OpenAI",           model: "gpt-4o",             price_in: 5.00,  price_out: 15.00 },
-        { id: "gemini",    name: "Google Gemini",    model: "gemini-1.5-pro",     price_in: 1.25,  price_out: 5.00  },
-        { id: "ollama",    name: "Ollama (local)",   model: "llama3",             price_in: 0.00,  price_out: 0.00  },
+      // Mock provider list — model names match providers.json defaults.
+      // In the real app these come from the user's providers.json, not this file.
+      case "list_providers": return [
+        { id: "anthropic", name: "Anthropic Claude", model: "claude-sonnet-4-6",  needs_key: true,  price_in_1m: 3.00,  price_out_1m: 15.00 },
+        { id: "openai",    name: "OpenAI",           model: "gpt-4o",             needs_key: true,  price_in_1m: 5.00,  price_out_1m: 15.00 },
+        { id: "gemini",    name: "Google Gemini",    model: "gemini-2.0-flash",   needs_key: true,  price_in_1m: 0.10,  price_out_1m: 0.40  },
+        { id: "ollama",    name: "Ollama (local)",   model: "",                   needs_key: false, price_in_1m: 0.00,  price_out_1m: 0.00  },
       ];
       case "get_cost_state": return {
         tokens_in: 12400, tokens_out: 3200,
@@ -111,6 +118,32 @@ function mockInvoke(cmd, args) {
       case "get_audit_trail":   return [];
       case "get_gate_status":   return null;
       case "get_wave_state":    return null;
+      // Mock model lists for browser dev mode
+      case "fetch_provider_models": {
+        const p = args.provider;
+        if (p === "anthropic") return [
+          { id: "claude-opus-4-6",    name: "Claude Opus 4.6"   },
+          { id: "claude-sonnet-4-6",  name: "Claude Sonnet 4.6" },
+          { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
+        ];
+        if (p === "openai") return [
+          { id: "gpt-4o",       name: "GPT-4o"        },
+          { id: "gpt-4o-mini",  name: "GPT-4o Mini"   },
+          { id: "o3",           name: "o3"             },
+          { id: "o4-mini",      name: "o4-mini"        },
+        ];
+        if (p === "gemini") return [
+          { id: "gemini-2.0-flash",   name: "Gemini 2.0 Flash"  },
+          { id: "gemini-1.5-pro",     name: "Gemini 1.5 Pro"    },
+          { id: "gemini-1.5-flash",   name: "Gemini 1.5 Flash"  },
+        ];
+        if (p === "ollama") return [
+          { id: "llama3.2",   name: "llama3.2"  },
+          { id: "mistral",    name: "mistral"   },
+          { id: "phi4",       name: "phi4"      },
+        ];
+        return [];
+      }
       default:                  return null;
     }
   });

@@ -27,10 +27,10 @@
   --text-3:       #8C8C87;
   --text-inv:     #FFFFFF;
 
-  /* Brand */
-  --accent:       #5B5BD6;
-  --accent-light: #EEF0FF;
-  --accent-hover: #4F4FC4;
+  /* Brand — Electric Blue */
+  --accent:       #1B4FD8;
+  --accent-light: #DBEAFE;
+  --accent-hover: #1540B8;
 
   /* Semantic */
   --success:      #17A34A;
@@ -120,7 +120,7 @@ a { color: inherit; text-decoration: none; }
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.sidebar-logo-mark svg { width: 14px; height: 14px; fill: white; }
+.sidebar-logo-mark svg { width: 16px; height: 16px; }
 .sidebar-logo-text { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-1); }
 .sidebar-logo-version { font-size: 10px; color: var(--text-3); font-weight: 500; margin-left: auto; }
 
@@ -128,14 +128,14 @@ a { color: inherit; text-decoration: none; }
 .wave-pill {
   margin: 12px 12px 4px;
   background: var(--accent-light);
-  border: 1px solid #CACAFF;
+  border: 1px solid #BFDBFE;
   border-radius: var(--r-md);
   padding: 10px 12px;
   flex-shrink: 0;
 }
 .wave-pill-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 4px; }
 .wave-pill-name { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
-.wave-pill-bar { background: #CACAFF; border-radius: var(--r-full); height: 4px; }
+.wave-pill-bar { background: #BFDBFE; border-radius: var(--r-full); height: 4px; }
 .wave-pill-fill { background: var(--accent); height: 4px; border-radius: var(--r-full); transition: width .4s ease; }
 .wave-pill-meta { display: flex; justify-content: space-between; margin-top: 5px; }
 .wave-pill-meta span { font-size: 10px; color: var(--text-3); }
@@ -180,7 +180,7 @@ a { color: inherit; text-decoration: none; }
 }
 .gate-dot.signed   { background: var(--success); color: white; }
 .gate-dot.pending  { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
-.gate-dot.current  { background: var(--accent); color: white; box-shadow: 0 0 0 3px #CACAFF; }
+.gate-dot.current  { background: var(--accent); color: white; box-shadow: 0 0 0 3px #BFDBFE; }
 .gate-dot.locked   { background: var(--surface-2); color: var(--border-strong); border: 1.5px dashed var(--border); }
 
 .sidebar-footer {
@@ -391,7 +391,7 @@ a { color: inherit; text-decoration: none; }
 }
 .chat-input-box:focus-within {
   border-color: var(--accent);
-  box-shadow: var(--shadow-sm), 0 0 0 3px rgba(91,91,214,.12);
+  box-shadow: var(--shadow-sm), 0 0 0 3px rgba(27,79,216,.12);
 }
 .chat-input-box textarea {
   flex: 1; resize: none; min-height: 22px; max-height: 160px;
@@ -418,7 +418,7 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--border); border-radius: var(--r-full);
   padding: 3px 9px; cursor: pointer; transition: all .1s;
 }
-.hint-chip:hover { background: var(--accent-light); color: var(--accent); border-color: #CACAFF; }
+.hint-chip:hover { background: var(--accent-light); color: var(--accent); border-color: #BFDBFE; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    DASHBOARD VIEW
@@ -655,7 +655,7 @@ a { color: inherit; text-decoration: none; }
   transition: border-color .15s, box-shadow .15s;
   font-family: var(--font);
 }
-.onboarding-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,91,214,.1); }
+.onboarding-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(27,79,216,.1); }
 .onboarding-input.mono { font-family: var(--mono); letter-spacing: .02em; }
 
 .provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
@@ -668,6 +668,55 @@ a { color: inherit; text-decoration: none; }
 .provider-card-name { font-size: 12px; font-weight: 700; margin-top: 4px; }
 .provider-card-sub  { font-size: 10px; color: var(--text-3); }
 .provider-card-emoji { font-size: 20px; }
+
+/* ── Model picker ─────────────────────────────────────────────────────── */
+.model-picker-wrap { position: relative; }
+.model-fetch-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.model-fetch-input {
+  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 14px;
+  font-size: 13px; color: var(--text-1); font-family: var(--mono);
+  transition: border-color .15s, box-shadow .15s;
+}
+.model-fetch-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(27,79,216,.1); outline: none; }
+.model-fetch-btn {
+  flex-shrink: 0; background: var(--accent); color: white;
+  border: none; border-radius: var(--r-sm); padding: 10px 14px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background .15s; white-space: nowrap;
+}
+.model-fetch-btn:hover { background: var(--accent-hover); }
+.model-fetch-btn:disabled { background: var(--surface-3); color: var(--text-3); cursor: default; }
+.model-dropdown {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--surface); border: 1.5px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-lg);
+  z-index: 200; max-height: 220px; overflow-y: auto;
+}
+.model-dropdown.open { display: block; }
+.model-dropdown::-webkit-scrollbar { width: 4px; }
+.model-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.model-search-wrap {
+  padding: 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
+  background: var(--surface);
+}
+.model-search {
+  width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 6px 10px;
+  font-size: 12px; color: var(--text-1); font-family: var(--font);
+}
+.model-search:focus { outline: none; border-color: var(--accent); }
+.model-list { padding: 4px; }
+.model-list-item {
+  padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: 12.5px; font-family: var(--mono); color: var(--text-1);
+  cursor: pointer; transition: background .1s;
+}
+.model-list-item:hover  { background: var(--accent-light); color: var(--accent); }
+.model-list-empty { padding: 16px 10px; text-align: center; color: var(--text-3); font-size: 12px; }
+/* ─────────────────────────────────────────────────────────────────────── */
 
 .workspace-picker {
   display: flex; gap: 8px; align-items: center;
@@ -826,27 +875,45 @@ a { color: inherit; text-decoration: none; }
         <div class="provider-card selected" data-provider="anthropic" onclick="selectProvider(this)">
           <div class="provider-card-emoji">⚡</div>
           <div class="provider-card-name">Anthropic</div>
-          <div class="provider-card-sub">Claude Sonnet / Opus</div>
+          <div class="provider-card-sub">Claude</div>
         </div>
         <div class="provider-card" data-provider="openai" onclick="selectProvider(this)">
           <div class="provider-card-emoji">🤖</div>
           <div class="provider-card-name">OpenAI</div>
-          <div class="provider-card-sub">GPT-4o / o1</div>
+          <div class="provider-card-sub">GPT</div>
         </div>
         <div class="provider-card" data-provider="gemini" onclick="selectProvider(this)">
           <div class="provider-card-emoji">💎</div>
           <div class="provider-card-name">Gemini</div>
-          <div class="provider-card-sub">Gemini 1.5 Pro</div>
+          <div class="provider-card-sub">Google</div>
         </div>
         <div class="provider-card" data-provider="ollama" onclick="selectProvider(this)">
           <div class="provider-card-emoji">🏠</div>
           <div class="provider-card-name">Ollama</div>
-          <div class="provider-card-sub">Local · No API key</div>
+          <div class="provider-card-sub">Local · No key</div>
+        </div>
+      </div>
+      <!-- Model picker — fetch live list or type manually -->
+      <div class="onboarding-field">
+        <label>Model <span style="font-weight:400;color:var(--text-3)">— fetched live from your provider</span></label>
+        <div class="model-picker-wrap">
+          <div class="model-fetch-row">
+            <input class="model-fetch-input" id="ob-model" placeholder="e.g. claude-sonnet-4-6" autocomplete="off" readonly onclick="toggleModelDropdown()">
+            <button class="model-fetch-btn" id="ob-model-fetch-btn" onclick="fetchModels()">Fetch models</button>
+          </div>
+          <div class="model-dropdown" id="ob-model-dropdown">
+            <div class="model-search-wrap">
+              <input class="model-search" id="ob-model-search" placeholder="Search models…" oninput="filterModelList(this.value)">
+            </div>
+            <div class="model-list" id="ob-model-list">
+              <div class="model-list-empty">Click "Fetch models" to load available models</div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="onboarding-field" id="api-key-field">
         <label>API Key</label>
-        <input class="onboarding-input mono" id="ob-apikey" type="password" placeholder="sk-ant-..." autocomplete="off">
+        <input class="onboarding-input mono api-key-input" id="ob-apikey" type="password" placeholder="sk-ant-..." autocomplete="off">
       </div>
     </div>
 
@@ -907,7 +974,17 @@ a { color: inherit; text-decoration: none; }
   <nav id="sidebar" role="navigation">
     <div class="sidebar-logo">
       <div class="sidebar-logo-mark">
-        <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        <!-- Broadcast logo: concentric arcs radiating from a central dot -->
+        <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Central dot -->
+          <circle cx="7" cy="7" r="1.4" fill="white"/>
+          <!-- Inner arc -->
+          <path d="M4.2 9.8a4 4 0 0 1 0-5.6" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none"/>
+          <path d="M9.8 9.8a4 4 0 0 0 0-5.6" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none"/>
+          <!-- Outer arc -->
+          <path d="M2.1 11.9a7 7 0 0 1 0-9.8" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.55"/>
+          <path d="M11.9 11.9a7 7 0 0 0 0-9.8" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.55"/>
+        </svg>
       </div>
       <span class="sidebar-logo-text">SignalOS</span>
       <span class="sidebar-logo-version">v1.0</span>
@@ -1225,9 +1302,92 @@ function selectProvider(el) {
   document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
   state.provider = el.dataset.provider;
-  document.getElementById('api-key-field').style.display = el.dataset.provider === 'ollama' ? 'none' : 'block';
+  const isOllama = el.dataset.provider === 'ollama';
+  document.getElementById('api-key-field').style.display = isOllama ? 'none' : 'block';
   document.getElementById('tb-provider').textContent = el.querySelector('.provider-card-name').textContent;
+
+  // Populate model input from the loaded provider list (never hardcoded here)
+  const modelInput = document.getElementById('ob-model');
+  if (modelInput && window._providerList) {
+    const p = window._providerList.find(p => p.id === el.dataset.provider);
+    modelInput.value = p?.model || '';
+    modelInput.placeholder = isOllama
+      ? 'e.g. llama3.2, mistral, phi4 (whatever you pulled)'
+      : 'e.g. claude-sonnet-4-6';
+  }
+
+  // Auto-fetch models for Ollama (no key needed); close dropdown for others
+  closeModelDropdown();
+  if (isOllama) { fetchModels(); }
 }
+
+// ─── MODEL PICKER ────────────────────────────────────────────────────────
+let _fetchedModels = [];
+
+function toggleModelDropdown() {
+  const dd = document.getElementById('ob-model-dropdown');
+  if (dd.classList.contains('open')) { closeModelDropdown(); }
+  else if (_fetchedModels.length) { dd.classList.add('open'); }
+}
+
+function closeModelDropdown() {
+  document.getElementById('ob-model-dropdown')?.classList.remove('open');
+}
+
+async function fetchModels() {
+  const btn = document.getElementById('ob-model-fetch-btn');
+  const list = document.getElementById('ob-model-list');
+  const dropdown = document.getElementById('ob-model-dropdown');
+  const apiKey = document.getElementById('ob-apikey')?.value?.trim() || null;
+
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  list.innerHTML = '<div class="model-list-empty">Loading…</div>';
+  dropdown.classList.add('open');
+
+  try {
+    const models = await window.SignalOS?.provider.fetchModels(state.provider, apiKey);
+    _fetchedModels = models || [];
+    renderModelList(_fetchedModels);
+  } catch (e) {
+    list.innerHTML = `<div class="model-list-empty">Failed: ${e?.message || e}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch models';
+  }
+}
+
+function renderModelList(models) {
+  const list = document.getElementById('ob-model-list');
+  if (!models || models.length === 0) {
+    list.innerHTML = '<div class="model-list-empty">No models found</div>';
+    return;
+  }
+  list.innerHTML = models.map(m =>
+    `<div class="model-list-item" onclick="selectModel('${m.id}')">${m.name || m.id}</div>`
+  ).join('');
+}
+
+function filterModelList(query) {
+  const q = query.toLowerCase();
+  const filtered = q ? _fetchedModels.filter(m =>
+    (m.name || m.id).toLowerCase().includes(q)
+  ) : _fetchedModels;
+  renderModelList(filtered);
+}
+
+function selectModel(modelId) {
+  const input = document.getElementById('ob-model');
+  if (input) input.value = modelId;
+  closeModelDropdown();
+  document.getElementById('ob-model-search').value = '';
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.model-picker-wrap')) closeModelDropdown();
+}, { capture: true });
+
 function browseWorkspace() {
   if (window.browseWorkspaceReal) { window.browseWorkspaceReal(); return; }
   // Browser fallback
@@ -1558,6 +1718,12 @@ window.obFinish = async function () {
   const apiKey        = apiKeyInput?.value?.trim();
   const workspacePath = document.getElementById('ob-workspace-path')?.textContent;
 
+  // Save model choice — written to providers.json, never hardcoded
+  const model = document.getElementById('ob-model')?.value?.trim();
+  if (model) {
+    try { await ipc.provider.setModel(provider, model); } catch {}
+  }
+
   if (apiKey && provider !== 'ollama') {
     try { await ipc.keychain.store(provider, apiKey); } catch {}
   }
@@ -1607,11 +1773,18 @@ async function init() {
       ipc.provider.getCost(),
       ipc.provider.list(),
     ]);
+
+    // Cache provider list globally so selectProvider() can read models without hardcoding
+    window._providerList = providers || [];
+
     if (provId && window.state) window.state.provider = provId;
     if (provId) {
       const p = providers?.find(p => p.id === provId);
       const tbProv = document.getElementById('tb-provider');
       if (tbProv) tbProv.textContent = p?.name || provId;
+      // Pre-fill model input in onboarding with the user's current configured model
+      const modelInput = document.getElementById('ob-model');
+      if (modelInput && p) modelInput.value = p.model || '';
     }
     updateCostDisplay(costData);
   } catch {}
