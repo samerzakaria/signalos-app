@@ -1211,8 +1211,11 @@ function obNext() {
     state.onboardingStep++;
     renderOnboarding();
   } else {
-    document.getElementById('onboarding').classList.add('hidden');
-    toast('You\'re all set — let\'s ship 🚀', 'success');
+    if (window.obFinish) { window.obFinish(); }
+    else {
+      document.getElementById('onboarding').classList.add('hidden');
+      toast('You\'re all set — let\'s ship 🚀', 'success');
+    }
   }
 }
 function obBack() {
@@ -1226,7 +1229,8 @@ function selectProvider(el) {
   document.getElementById('tb-provider').textContent = el.querySelector('.provider-card-name').textContent;
 }
 function browseWorkspace() {
-  // In real app: invoke Tauri dialog → open_folder
+  if (window.browseWorkspaceReal) { window.browseWorkspaceReal(); return; }
+  // Browser fallback
   document.getElementById('ob-workspace-path').textContent = '/Users/samer/Projects/MyProduct';
 }
 function renderOnboarding() {
@@ -1307,11 +1311,25 @@ function toggleGateCard(el) {
   if (body) body.style.display = body.style.display === 'none' ? 'block' : 'none';
 }
 
-function signGate(id, btn) {
+async function signGate(id, btn) {
   const g = state.gates.find(g => g.id === id);
   if (!g) return;
+
+  const signerInput = btn.closest('.gate-sign-row')?.querySelector('.gate-signer-input');
+  const signer = signerInput?.value?.trim() || 'Samer';
+
+  // Call real backend if available
+  if (window.SignalOS) {
+    try {
+      await window.SignalOS.gates.sign(id, signer);
+    } catch (e) {
+      toast(`Sign failed: ${e?.message || e}`, 'error');
+      return;
+    }
+  }
+
   g.status = 'signed';
-  g.signer = 'Samer';
+  g.signer = signer;
   g.ts = new Date().toLocaleString();
   btn.classList.add('signed');
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg> Signed`;
@@ -1360,13 +1378,30 @@ const RESPONSES = {
   'default':           'Understood. I\'m tracking that in context for this wave. Is there a specific gate or phase you want to focus on, or should I suggest the next best action?'
 };
 
-function sendMessage() {
+async function sendMessage() {
   const inp = document.getElementById('chat-input');
   const text = inp.value.trim();
   if (!text) return;
   addChatMessage('user', text);
   inp.value = ''; inp.style.height = '';
   showTyping();
+
+  // Route /signal-* commands through the real sidecar when in Tauri
+  if (text.startsWith('/signal-') && window.SignalOS) {
+    const parts = text.slice(1).split(' ');
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    try {
+      await window.SignalOS.signal.run(cmd, args);
+      // Response arrives via onSidecarResponse listener — nothing more to do here
+    } catch (e) {
+      hideTyping();
+      addChatMessage('ai', `⚠ Command failed: ${e?.message || e}`);
+    }
+    return;
+  }
+
+  // Fallback: local canned responses for browser dev / demo mode
   const key = Object.keys(RESPONSES).find(k => text.toLowerCase().startsWith(k)) || 'default';
   setTimeout(() => { hideTyping(); addChatMessage('ai', RESPONSES[key]); }, 900 + Math.random() * 400);
 }
@@ -1416,7 +1451,33 @@ document.addEventListener('keydown', e => {
 });
 
 // ─── BRAIN ───────────────────────────────────────────────────────────────
-function filterBrain(q) { /* live filter brain entries */ }
+async function filterBrain(q) {
+  if (!window.SignalOS) return;
+  try {
+    const entries = await window.SignalOS.brain.search(q || '');
+    renderBrainEntries(entries);
+  } catch {}
+}
+
+function renderBrainEntries(entries) {
+  const list = document.getElementById('brain-list');
+  if (!entries || !entries.length) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🧠</div>
+        <h3>Brain is empty</h3>
+        <p>Beliefs, decisions, and signed gates will appear here as your wave progresses. Start your first Discovery to populate it.</p>
+        <button class="empty-state-cta" onclick="switchView('chat', document.querySelector('[data-view=chat]')); insertCmd('/signal-discovery')">Start Discovery</button>
+      </div>`;
+    return;
+  }
+  list.innerHTML = entries.map(e => `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);margin-bottom:6px">${e.type || 'belief'}</div>
+      <div style="font-size:13px;color:var(--text-1);line-height:1.5">${e.text}</div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:6px">${e.ts ? new Date(e.ts).toLocaleDateString() : ''}</div>
+    </div>`).join('');
+}
 
 // ─── TOAST ───────────────────────────────────────────────────────────────
 function toast(msg, type = '') {
@@ -1439,6 +1500,162 @@ function updateWaveStatus(name, pct, phase) {
 updateWaveStatus('Wave 1', 18, 'Phase 1 · Discovery');
 document.getElementById('tb-project').textContent = state.project;
 document.getElementById('tb-cost').textContent = '$' + state.cost.toFixed(2);
+</script>
+
+<!-- ─── IPC BRIDGE (ES module) ───────────────────────────────────────────── -->
+<!-- Imports named exports from ipc.js and exposes them on window.SignalOS   -->
+<!-- so the non-module inline script above can call them.                     -->
+<script type="module">
+import * as ipc from './js/ipc.js';
+window.SignalOS = ipc;
+
+// ─── HELPERS ────────────────────────────────────────────────────────────────
+
+function updateCostDisplay(costData) {
+  if (!costData) return;
+  const session = costData.session_usd ?? 0;
+  const budget  = costData.budget_usd  ?? 10;
+  // Topbar
+  const tbCost = document.getElementById('tb-cost');
+  if (tbCost) tbCost.textContent = '$' + session.toFixed(2);
+  // Dashboard cost card — first .card-value is wave progress, second is cost
+  const costCard = document.querySelector('#view-dashboard .card-value');
+  if (costCard) costCard.textContent = '$' + session.toFixed(2);
+  const costSub = document.querySelector('#view-dashboard .card-value-sub');
+  if (costSub) costSub.textContent = `of $${budget.toFixed(2)} monthly budget`;
+  const fill = document.querySelector('#view-dashboard .metric-fill');
+  if (fill && budget > 0) fill.style.width = Math.min((session / budget) * 100, 100) + '%';
+}
+
+function renderSidebarGateDots(gates) {
+  const dots = document.querySelectorAll('.gate-dot');
+  gates.forEach((g, i) => { if (dots[i]) dots[i].className = 'gate-dot ' + g.status; });
+  const current = gates.find(g => g.status === 'current');
+  const badge = document.getElementById('gates-badge');
+  if (badge && current) badge.textContent = 'G' + current.id;
+}
+
+// ─── ONBOARDING REAL WORKSPACE BROWSE ───────────────────────────────────────
+
+window.browseWorkspaceReal = async function () {
+  if (window.__TAURI__?.dialog) {
+    try {
+      const selected = await window.__TAURI__.dialog.open({
+        directory: true, multiple: false, title: 'Select your project folder',
+      });
+      if (selected) document.getElementById('ob-workspace-path').textContent = selected;
+    } catch { /* fallback handled in inline script */ }
+  } else {
+    document.getElementById('ob-workspace-path').textContent = '/Users/samer/Projects/MyProduct';
+  }
+};
+
+// ─── ONBOARDING FINISH ──────────────────────────────────────────────────────
+
+window.obFinish = async function () {
+  const provider      = window.state?.provider || 'anthropic';
+  const apiKeyInput   = document.querySelector('.api-key-input');
+  const apiKey        = apiKeyInput?.value?.trim();
+  const workspacePath = document.getElementById('ob-workspace-path')?.textContent;
+
+  if (apiKey && provider !== 'ollama') {
+    try { await ipc.keychain.store(provider, apiKey); } catch {}
+  }
+  if (workspacePath && !workspacePath.includes('Click to browse')) {
+    try { await ipc.workspace.set(workspacePath); } catch {}
+  }
+  try { await ipc.provider.setActive(provider); } catch {}
+
+  document.getElementById('onboarding').classList.add('hidden');
+  // toast is defined in the inline script, call via global
+  window.toast?.('You\'re all set — let\'s ship 🚀', 'success');
+  init();
+};
+
+// ─── SIDECAR LISTENERS ──────────────────────────────────────────────────────
+
+ipc.onSidecarResponse((resp) => {
+  window.hideTyping?.();
+  if (resp.output) window.addChatMessage?.('ai', resp.output);
+  else if (resp.error) window.addChatMessage?.('ai', `⚠ ${resp.error}`);
+  ipc.provider.getCost().then(updateCostDisplay).catch(() => {});
+});
+
+ipc.onSidecarLog((log) => {
+  if (log?.level === 'error') console.error('[sidecar]', log.message);
+});
+
+// ─── STARTUP INIT ───────────────────────────────────────────────────────────
+
+async function init() {
+  // Workspace
+  try {
+    const ws = await ipc.workspace.get();
+    if (ws) {
+      const name = ws.split(/[/\\]/).filter(Boolean).pop() || 'My Project';
+      const tbProj = document.getElementById('tb-project');
+      if (tbProj) tbProj.textContent = name;
+      // Skip onboarding if workspace already configured
+      document.getElementById('onboarding')?.classList.add('hidden');
+    }
+  } catch {}
+
+  // Provider + cost
+  try {
+    const [provId, costData, providers] = await Promise.all([
+      ipc.provider.getActive(),
+      ipc.provider.getCost(),
+      ipc.provider.list(),
+    ]);
+    if (provId && window.state) window.state.provider = provId;
+    if (provId) {
+      const p = providers?.find(p => p.id === provId);
+      const tbProv = document.getElementById('tb-provider');
+      if (tbProv) tbProv.textContent = p?.name || provId;
+    }
+    updateCostDisplay(costData);
+  } catch {}
+
+  // Wave state
+  try {
+    const waveData = await ipc.wave.get();
+    if (waveData) {
+      window.updateWaveStatus?.(
+        waveData.name,
+        waveData.progress_pct ?? 0,
+        `Phase ${waveData.phase} · ${waveData.phase_name}`,
+      );
+    }
+  } catch {}
+
+  // Gate state
+  try {
+    const gateData = await ipc.gates.getAll();
+    if (gateData?.length && window.state) {
+      window.state.gates = gateData.map((g, i) => ({
+        id:        g.id,
+        name:      g.name,
+        desc:      g.desc || window.state.gates[i]?.desc || '',
+        status:    g.status,
+        signer:    g.signer || null,
+        ts:        g.signed_at ? new Date(g.signed_at).toLocaleString() : null,
+        artifacts: window.state.gates[i]?.artifacts || [],
+      }));
+      renderSidebarGateDots(window.state.gates);
+    }
+  } catch {}
+
+  // Brain (initial load, empty query)
+  try {
+    const entries = await ipc.brain.search('');
+    if (entries?.length) window.renderBrainEntries?.(entries);
+  } catch {}
+}
+
+// Make state visible so module can read it
+window.state = window.state || {};
+
+init();
 </script>
 </body>
 </html>
