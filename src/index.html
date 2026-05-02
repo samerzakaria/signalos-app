@@ -1,0 +1,1444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignalOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+
+/* ─── DESIGN TOKENS ─────────────────────────────────────────────────────── */
+:root {
+  /* Surface */
+  --bg:           #F7F7F6;
+  --surface:      #FFFFFF;
+  --surface-2:    #F3F3F2;
+  --surface-3:    #EBEBEA;
+
+  /* Border */
+  --border:       #E5E5E3;
+  --border-strong:#CDCDC9;
+
+  /* Text */
+  --text-1:       #0F0F0E;
+  --text-2:       #4B4B48;
+  --text-3:       #8C8C87;
+  --text-inv:     #FFFFFF;
+
+  /* Brand */
+  --accent:       #5B5BD6;
+  --accent-light: #EEF0FF;
+  --accent-hover: #4F4FC4;
+
+  /* Semantic */
+  --success:      #17A34A;
+  --success-bg:   #DCFCE7;
+  --warning:      #D97706;
+  --warning-bg:   #FEF3C7;
+  --danger:       #DC2626;
+  --danger-bg:    #FEE2E2;
+  --info:         #0284C7;
+  --info-bg:      #E0F2FE;
+
+  /* Shadow */
+  --shadow-xs:    0 1px 2px rgba(0,0,0,.05);
+  --shadow-sm:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:    0 4px 6px -1px rgba(0,0,0,.07), 0 2px 4px -1px rgba(0,0,0,.04);
+  --shadow-lg:    0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
+  --shadow-xl:    0 20px 25px -5px rgba(0,0,0,.08), 0 10px 10px -5px rgba(0,0,0,.03);
+
+  /* Radius */
+  --r-xs:   4px;
+  --r-sm:   6px;
+  --r-md:   10px;
+  --r-lg:   14px;
+  --r-xl:   18px;
+  --r-full: 9999px;
+
+  /* Typography */
+  --font:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono:  'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Layout */
+  --sidebar-w: 220px;
+  --topbar-h:  52px;
+}
+
+/* ─── RESET ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+button { font-family: inherit; cursor: pointer; border: none; outline: none; }
+input, textarea { font-family: inherit; outline: none; border: none; background: none; }
+a { color: inherit; text-decoration: none; }
+
+/* ─── APP SHELL ─────────────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-rows: var(--topbar-h) 1fr;
+  height: 100vh;
+  grid-template-areas:
+    "sidebar topbar"
+    "sidebar main";
+}
+
+/* ─── SIDEBAR ───────────────────────────────────────────────────────────── */
+#sidebar {
+  grid-area: sidebar;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 16px;
+  height: var(--topbar-h);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-logo-mark {
+  width: 26px; height: 26px;
+  background: var(--accent);
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar-logo-mark svg { width: 14px; height: 14px; fill: white; }
+.sidebar-logo-text { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-1); }
+.sidebar-logo-version { font-size: 10px; color: var(--text-3); font-weight: 500; margin-left: auto; }
+
+/* Wave status pill */
+.wave-pill {
+  margin: 12px 12px 4px;
+  background: var(--accent-light);
+  border: 1px solid #CACAFF;
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  flex-shrink: 0;
+}
+.wave-pill-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 4px; }
+.wave-pill-name { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
+.wave-pill-bar { background: #CACAFF; border-radius: var(--r-full); height: 4px; }
+.wave-pill-fill { background: var(--accent); height: 4px; border-radius: var(--r-full); transition: width .4s ease; }
+.wave-pill-meta { display: flex; justify-content: space-between; margin-top: 5px; }
+.wave-pill-meta span { font-size: 10px; color: var(--text-3); }
+.wave-pill-meta strong { color: var(--accent); }
+
+/* Nav sections */
+.nav-section { padding: 16px 8px 4px; flex-shrink: 0; }
+.nav-section-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--text-3);
+  padding: 0 8px; margin-bottom: 2px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: var(--r-sm);
+  font-size: 13px; font-weight: 500; color: var(--text-2);
+  cursor: pointer; transition: background .1s, color .1s;
+  position: relative;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text-1); }
+.nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 600; }
+.nav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
+.nav-item.active svg { opacity: 1; }
+.nav-badge {
+  margin-left: auto; font-size: 10px; font-weight: 700;
+  background: var(--accent); color: white;
+  padding: 1px 6px; border-radius: var(--r-full); min-width: 18px; text-align: center;
+}
+.nav-badge.warn { background: var(--warning); }
+
+/* Gate status mini-row */
+.gate-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+.gate-dot {
+  width: 20px; height: 20px; border-radius: var(--r-full);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; flex-shrink: 0;
+  transition: all .2s;
+}
+.gate-dot.signed   { background: var(--success); color: white; }
+.gate-dot.pending  { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
+.gate-dot.current  { background: var(--accent); color: white; box-shadow: 0 0 0 3px #CACAFF; }
+.gate-dot.locked   { background: var(--surface-2); color: var(--border-strong); border: 1.5px dashed var(--border); }
+
+.sidebar-footer {
+  margin-top: auto; border-top: 1px solid var(--border);
+  padding: 10px 8px; flex-shrink: 0;
+}
+.sidebar-footer-btn {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: var(--r-sm);
+  font-size: 12px; color: var(--text-3); cursor: pointer;
+  transition: background .1s, color .1s; width: 100%;
+  background: none;
+}
+.sidebar-footer-btn:hover { background: var(--surface-2); color: var(--text-2); }
+.sidebar-footer-btn svg { width: 14px; height: 14px; }
+
+/* ─── TOP BAR ───────────────────────────────────────────────────────────── */
+#topbar {
+  grid-area: topbar;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px;
+}
+.topbar-breadcrumb {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-3);
+}
+.topbar-breadcrumb strong { color: var(--text-1); font-weight: 600; }
+.topbar-breadcrumb .sep { color: var(--border-strong); }
+
+.topbar-spacer { flex: 1; }
+
+/* Phase badge */
+.phase-badge {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-full); padding: 4px 10px;
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+}
+.phase-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+/* Cost meter */
+.cost-meter {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-full); padding: 4px 12px;
+  font-size: 11px; color: var(--text-3); font-weight: 500;
+}
+.cost-meter strong { color: var(--text-1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.cost-meter svg { width: 12px; height: 12px; opacity: 0.5; }
+
+/* Provider selector */
+.provider-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-full); padding: 4px 10px;
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+  cursor: pointer; transition: all .15s;
+}
+.provider-btn:hover { border-color: var(--accent); color: var(--accent); }
+.provider-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+
+/* ─── MAIN ───────────────────────────────────────────────────────────────── */
+#main {
+  grid-area: main;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ─── VIEWS ─────────────────────────────────────────────────────────────── */
+.view { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+.view.active { display: flex; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CHAT VIEW
+══════════════════════════════════════════════════════════════════════════ */
+#view-chat { background: var(--bg); }
+
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 28px 0;
+  scroll-behavior: smooth;
+}
+.chat-messages::-webkit-scrollbar { width: 4px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.chat-row {
+  display: flex; gap: 12px;
+  padding: 6px 28px;
+  animation: msg-in .2s ease both;
+}
+@keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.chat-row.user { flex-direction: row-reverse; }
+
+.chat-avatar {
+  width: 28px; height: 28px; border-radius: var(--r-full);
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; margin-top: 2px;
+}
+.chat-avatar.ai   { background: var(--accent); color: white; }
+.chat-avatar.user { background: var(--text-1); color: white; }
+
+.chat-bubble {
+  max-width: 640px; padding: 10px 14px;
+  border-radius: var(--r-lg);
+  font-size: 13.5px; line-height: 1.65; color: var(--text-1);
+}
+.chat-row.ai .chat-bubble {
+  background: var(--surface); border: 1px solid var(--border);
+  border-bottom-left-radius: var(--r-xs);
+  box-shadow: var(--shadow-xs);
+}
+.chat-row.user .chat-bubble {
+  background: var(--accent); color: white;
+  border-bottom-right-radius: var(--r-xs);
+}
+
+/* Inline gate card (inside chat) */
+.gate-card {
+  margin: 12px 0 4px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.gate-card-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.gate-card-num {
+  width: 28px; height: 28px; border-radius: var(--r-full);
+  background: var(--accent); color: white;
+  font-size: 11px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.gate-card-info { flex: 1; }
+.gate-card-title { font-size: 13px; font-weight: 700; color: var(--text-1); }
+.gate-card-sub   { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.gate-card-status { font-size: 11px; font-weight: 600; }
+.gate-card-status.pending { color: var(--warning); }
+.gate-card-status.signed  { color: var(--success); }
+.gate-card-body { padding: 12px 14px; }
+.gate-card-body p { font-size: 12.5px; color: var(--text-2); margin-bottom: 12px; line-height: 1.6; }
+.gate-sign-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: white;
+  font-size: 12px; font-weight: 700;
+  padding: 8px 16px; border-radius: var(--r-sm);
+  cursor: pointer; transition: background .15s, transform .1s;
+  border: none;
+}
+.gate-sign-btn:hover  { background: var(--accent-hover); }
+.gate-sign-btn:active { transform: scale(0.98); }
+.gate-sign-btn.signed {
+  background: var(--success-bg); color: var(--success);
+  cursor: default;
+}
+.gate-sign-btn svg { width: 13px; height: 13px; }
+
+/* Command pill */
+.cmd-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-full); padding: 2px 9px;
+  font-size: 11.5px; font-weight: 600; color: var(--accent);
+  font-family: var(--mono); cursor: pointer;
+  transition: background .1s;
+}
+.cmd-pill:hover { background: var(--accent-light); }
+
+/* Mentor context strip (above chat bubble) */
+.mentor-strip {
+  display: flex; align-items: center; gap: 7px;
+  margin-bottom: 6px; padding: 0 4px;
+}
+.mentor-strip span { font-size: 11px; color: var(--text-3); }
+.mentor-strip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+/* Typing indicator */
+.typing-indicator { display: flex; gap: 4px; padding: 4px 2px; }
+.typing-indicator span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-3);
+  animation: typing 1.2s infinite ease;
+}
+.typing-indicator span:nth-child(2) { animation-delay: .15s; }
+.typing-indicator span:nth-child(3) { animation-delay: .3s; }
+@keyframes typing { 0%,60%,100% { transform: translateY(0); opacity:.4; } 30% { transform: translateY(-4px); opacity:1; } }
+
+/* Chat input bar */
+.chat-input-wrap {
+  padding: 16px 28px 20px; flex-shrink: 0;
+  background: var(--bg);
+}
+.chat-input-box {
+  display: flex; align-items: flex-end; gap: 10px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 10px 10px 10px 16px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s, box-shadow .15s;
+}
+.chat-input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm), 0 0 0 3px rgba(91,91,214,.12);
+}
+.chat-input-box textarea {
+  flex: 1; resize: none; min-height: 22px; max-height: 160px;
+  font-size: 13.5px; color: var(--text-1);
+  line-height: 1.5; overflow-y: auto;
+}
+.chat-input-box textarea::placeholder { color: var(--text-3); }
+.chat-send-btn {
+  width: 34px; height: 34px; border-radius: var(--r-md);
+  background: var(--accent); color: white; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, transform .1s;
+  border: none; cursor: pointer;
+}
+.chat-send-btn:hover  { background: var(--accent-hover); }
+.chat-send-btn:active { transform: scale(0.95); }
+.chat-send-btn svg { width: 15px; height: 15px; }
+.chat-send-btn:disabled { background: var(--surface-3); cursor: default; }
+.chat-input-hints {
+  display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+}
+.hint-chip {
+  font-size: 11px; color: var(--text-3); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-full);
+  padding: 3px 9px; cursor: pointer; transition: all .1s;
+}
+.hint-chip:hover { background: var(--accent-light); color: var(--accent); border-color: #CACAFF; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARD VIEW
+══════════════════════════════════════════════════════════════════════════ */
+#view-dashboard {
+  overflow-y: auto; padding: 24px 28px;
+  gap: 0;
+  background: var(--bg);
+}
+#view-dashboard::-webkit-scrollbar { width: 4px; }
+#view-dashboard::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.dash-header { margin-bottom: 20px; }
+.dash-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
+.dash-header p  { font-size: 12px; color: var(--text-3); }
+
+.dash-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.dash-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px;
+  box-shadow: var(--shadow-xs);
+}
+.card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+.card-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
+.card-action { font-size: 11px; color: var(--accent); font-weight: 600; cursor: pointer; }
+.card-action:hover { text-decoration: underline; }
+.card-value { font-size: 32px; font-weight: 800; letter-spacing: -1px; color: var(--text-1); line-height: 1; }
+.card-value-sub { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+
+/* Phase track */
+.phase-track { display: flex; align-items: center; gap: 0; margin: 12px 0 4px; }
+.phase-node {
+  flex: 1; text-align: center; position: relative;
+}
+.phase-node::before {
+  content: ''; position: absolute; top: 12px; left: calc(-50%);
+  right: calc(50%); height: 2px; background: var(--border);
+  z-index: 0;
+}
+.phase-node:first-child::before { display: none; }
+.phase-dot {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 5px; font-size: 9px; font-weight: 700;
+  position: relative; z-index: 1;
+}
+.phase-dot.done    { background: var(--success); color: white; }
+.phase-dot.active  { background: var(--accent); color: white; box-shadow: 0 0 0 4px rgba(91,91,214,.2); }
+.phase-dot.future  { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
+.phase-node-label { font-size: 9px; color: var(--text-3); font-weight: 500; }
+.phase-node.active .phase-node-label { color: var(--accent); font-weight: 700; }
+
+/* Metric bars */
+.metric-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.metric-label { font-size: 11px; color: var(--text-2); width: 80px; flex-shrink: 0; }
+.metric-bar { flex: 1; background: var(--surface-3); border-radius: var(--r-full); height: 6px; }
+.metric-fill { height: 6px; border-radius: var(--r-full); transition: width .5s ease; }
+.metric-val { font-size: 11px; font-weight: 700; width: 34px; text-align: right; color: var(--text-1); }
+
+/* Debt table */
+.debt-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.debt-row:last-child { border-bottom: none; }
+.debt-tier { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: var(--r-full); flex-shrink: 0; }
+.debt-tier.t1 { background: var(--danger-bg); color: var(--danger); }
+.debt-tier.t2 { background: var(--warning-bg); color: var(--warning); }
+.debt-tier.t3 { background: var(--surface-3); color: var(--text-3); }
+.debt-name { flex: 1; font-size: 12px; color: var(--text-2); }
+.debt-age  { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GATES VIEW
+══════════════════════════════════════════════════════════════════════════ */
+#view-gates { overflow-y: auto; padding: 24px 28px; background: var(--bg); }
+#view-gates::-webkit-scrollbar { width: 4px; }
+#view-gates::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.gates-header { margin-bottom: 24px; }
+.gates-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
+.gates-header p  { font-size: 12px; color: var(--text-3); }
+
+.gate-full-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); margin-bottom: 12px;
+  box-shadow: var(--shadow-xs); overflow: hidden;
+  transition: box-shadow .2s;
+}
+.gate-full-card:hover { box-shadow: var(--shadow-sm); }
+.gate-full-card.current { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,91,214,.08); }
+.gate-full-card.signed { border-color: var(--border); }
+
+.gate-full-header { display: flex; align-items: center; gap: 12px; padding: 16px 18px; cursor: pointer; }
+.gate-full-num {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; flex-shrink: 0;
+}
+.gate-full-num.signed  { background: var(--success-bg); color: var(--success); }
+.gate-full-num.current { background: var(--accent); color: white; }
+.gate-full-num.locked  { background: var(--surface-2); color: var(--text-3); }
+
+.gate-full-info { flex: 1; }
+.gate-full-name { font-size: 14px; font-weight: 700; color: var(--text-1); margin-bottom: 2px; }
+.gate-full-desc { font-size: 12px; color: var(--text-3); }
+
+.gate-full-state { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.gate-full-state.signed  { color: var(--success); }
+.gate-full-state.current { color: var(--accent); }
+.gate-full-state.locked  { color: var(--text-3); }
+
+.gate-full-body { padding: 0 18px 18px; border-top: 1px solid var(--border); }
+.gate-full-body-inner { padding-top: 14px; }
+.gate-artifact-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-3); margin-bottom: 8px; }
+.gate-artifact-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); border-radius: var(--r-sm); margin-bottom: 6px; }
+.gate-artifact-icon { font-size: 14px; }
+.gate-artifact-name { font-size: 12px; font-weight: 600; color: var(--text-1); flex: 1; }
+.gate-artifact-status { font-size: 11px; font-weight: 600; }
+.gate-artifact-status.ok      { color: var(--success); }
+.gate-artifact-status.missing { color: var(--danger); }
+.gate-sign-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.gate-signer-input {
+  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 8px 12px;
+  font-size: 12px; color: var(--text-1);
+  transition: border-color .15s;
+}
+.gate-signer-input:focus { border-color: var(--accent); }
+.gate-sign-row .gate-sign-btn { padding: 8px 18px; font-size: 13px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BRAIN VIEW
+══════════════════════════════════════════════════════════════════════════ */
+#view-brain { overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
+
+.brain-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 28px; border-bottom: 1px solid var(--border);
+  background: var(--surface); flex-shrink: 0;
+}
+.brain-search {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 7px 12px;
+  transition: border-color .15s;
+}
+.brain-search:focus-within { border-color: var(--accent); }
+.brain-search svg { width: 14px; height: 14px; color: var(--text-3); flex-shrink: 0; }
+.brain-search input { flex: 1; font-size: 13px; color: var(--text-1); }
+.brain-search input::placeholder { color: var(--text-3); }
+.brain-filter-btn {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 7px 12px;
+  font-size: 12px; font-weight: 500; color: var(--text-2);
+  cursor: pointer; transition: all .15s;
+}
+.brain-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.brain-list { flex: 1; overflow-y: auto; padding: 16px 28px; }
+.brain-list::-webkit-scrollbar { width: 4px; }
+.brain-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.brain-entry {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 8px;
+  cursor: pointer; transition: all .15s;
+  box-shadow: var(--shadow-xs);
+}
+.brain-entry:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
+.brain-entry-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.brain-entry-type {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: var(--r-full);
+}
+.brain-entry-type.belief    { background: var(--accent-light); color: var(--accent); }
+.brain-entry-type.decision  { background: var(--warning-bg); color: var(--warning); }
+.brain-entry-type.gate      { background: var(--success-bg); color: var(--success); }
+.brain-entry-type.note      { background: var(--surface-3); color: var(--text-3); }
+.brain-entry-date { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.brain-entry-text { font-size: 12.5px; color: var(--text-1); line-height: 1.55; margin-bottom: 6px; }
+.brain-entry-meta { font-size: 11px; color: var(--text-3); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ONBOARDING OVERLAY
+══════════════════════════════════════════════════════════════════════════ */
+#onboarding {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fade-in .25s ease;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+#onboarding.hidden { display: none; }
+
+.onboarding-card {
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  width: 480px; max-width: calc(100vw - 40px);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: card-in .3s cubic-bezier(.34,1.56,.64,1) both;
+}
+@keyframes card-in { from { transform: scale(.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+
+.onboarding-progress {
+  display: flex; gap: 4px; padding: 18px 24px 0;
+}
+.onboarding-progress-dot {
+  flex: 1; height: 3px; border-radius: var(--r-full);
+  background: var(--surface-3); transition: background .3s;
+}
+.onboarding-progress-dot.done    { background: var(--success); }
+.onboarding-progress-dot.active  { background: var(--accent); }
+
+.onboarding-body { padding: 28px 32px 24px; }
+.onboarding-icon {
+  width: 48px; height: 48px; border-radius: var(--r-lg);
+  background: var(--accent-light); display: flex; align-items: center; justify-content: center;
+  font-size: 22px; margin-bottom: 18px;
+}
+.onboarding-body h2 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; }
+.onboarding-body p  { font-size: 13.5px; color: var(--text-2); line-height: 1.6; margin-bottom: 22px; }
+
+.onboarding-field { margin-bottom: 14px; }
+.onboarding-field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.onboarding-input {
+  width: 100%; background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 14px;
+  font-size: 13px; color: var(--text-1);
+  transition: border-color .15s, box-shadow .15s;
+  font-family: var(--font);
+}
+.onboarding-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,91,214,.1); }
+.onboarding-input.mono { font-family: var(--mono); letter-spacing: .02em; }
+
+.provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.provider-card {
+  border: 1.5px solid var(--border); border-radius: var(--r-md);
+  padding: 12px; cursor: pointer; transition: all .15s; text-align: center;
+}
+.provider-card:hover { border-color: var(--accent); background: var(--accent-light); }
+.provider-card.selected { border-color: var(--accent); background: var(--accent-light); }
+.provider-card-name { font-size: 12px; font-weight: 700; margin-top: 4px; }
+.provider-card-sub  { font-size: 10px; color: var(--text-3); }
+.provider-card-emoji { font-size: 20px; }
+
+.workspace-picker {
+  display: flex; gap: 8px; align-items: center;
+}
+.workspace-path {
+  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 14px;
+  font-size: 12px; color: var(--text-2); font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.workspace-browse-btn {
+  background: var(--surface-2); border: 1.5px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 14px;
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  cursor: pointer; white-space: nowrap; transition: all .15s;
+}
+.workspace-browse-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.onboarding-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 32px 24px;
+  border-top: 1px solid var(--border);
+}
+.onboarding-back {
+  font-size: 13px; font-weight: 600; color: var(--text-3);
+  background: none; cursor: pointer;
+  transition: color .15s;
+}
+.onboarding-back:hover { color: var(--text-2); }
+.onboarding-next {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--accent); color: white;
+  font-size: 13px; font-weight: 700;
+  padding: 10px 22px; border-radius: var(--r-sm);
+  cursor: pointer; transition: background .15s, transform .1s; border: none;
+}
+.onboarding-next:hover  { background: var(--accent-hover); }
+.onboarding-next:active { transform: scale(0.98); }
+.onboarding-next svg { width: 14px; height: 14px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   EMPTY STATES
+══════════════════════════════════════════════════════════════════════════ */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center;
+  padding: 60px 40px; flex: 1;
+}
+.empty-state-icon {
+  width: 56px; height: 56px; border-radius: var(--r-xl);
+  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+  font-size: 24px; margin-bottom: 18px;
+}
+.empty-state h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 8px; }
+.empty-state p  { font-size: 13px; color: var(--text-3); max-width: 300px; line-height: 1.6; margin-bottom: 20px; }
+.empty-state-cta {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: white; font-size: 13px; font-weight: 600;
+  padding: 9px 18px; border-radius: var(--r-sm); cursor: pointer;
+  border: none; transition: background .15s;
+}
+.empty-state-cta:hover { background: var(--accent-hover); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+══════════════════════════════════════════════════════════════════════════ */
+#toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--text-1); color: white;
+  padding: 12px 16px; border-radius: var(--r-md);
+  font-size: 13px; font-weight: 500; min-width: 240px;
+  box-shadow: var(--shadow-lg);
+  animation: toast-in .25s cubic-bezier(.34,1.56,.64,1) both;
+  pointer-events: all;
+}
+@keyframes toast-in { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.toast.success { background: var(--success); }
+.toast.warning { background: var(--warning); }
+.toast.error   { background: var(--danger); }
+.toast-icon { font-size: 15px; flex-shrink: 0; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COMMAND PALETTE
+══════════════════════════════════════════════════════════════════════════ */
+#cmdpal {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 120px;
+}
+#cmdpal.hidden { display: none; }
+.cmdpal-box {
+  background: var(--surface); border-radius: var(--r-xl);
+  width: 540px; max-width: calc(100vw - 40px);
+  box-shadow: var(--shadow-xl); overflow: hidden;
+}
+.cmdpal-input-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.cmdpal-input-row svg { width: 16px; height: 16px; color: var(--text-3); flex-shrink: 0; }
+.cmdpal-input {
+  flex: 1; font-size: 14px; color: var(--text-1);
+  background: none;
+}
+.cmdpal-input::placeholder { color: var(--text-3); }
+.cmdpal-kbd { font-size: 10px; color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
+.cmdpal-results { max-height: 320px; overflow-y: auto; padding: 8px 0; }
+.cmdpal-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 18px; cursor: pointer; transition: background .1s;
+}
+.cmdpal-item:hover, .cmdpal-item.selected { background: var(--accent-light); }
+.cmdpal-item-icon { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+.cmdpal-item-name { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.cmdpal-item-sub  { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.cmdpal-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-3); padding: 8px 18px 4px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   UTILITY
+══════════════════════════════════════════════════════════════════════════ */
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+</style>
+</head>
+<body>
+
+<!-- ─── ONBOARDING OVERLAY ─────────────────────────────────────────────── -->
+<div id="onboarding">
+  <div class="onboarding-card">
+    <div class="onboarding-progress" id="ob-progress">
+      <div class="onboarding-progress-dot active"></div>
+      <div class="onboarding-progress-dot"></div>
+      <div class="onboarding-progress-dot"></div>
+      <div class="onboarding-progress-dot"></div>
+    </div>
+
+    <!-- Step 1: Welcome -->
+    <div class="onboarding-body" id="ob-step-1">
+      <div class="onboarding-icon">✦</div>
+      <h2>Welcome to SignalOS</h2>
+      <p>Your AI governance runtime. Ship with clarity — from the first wave to the last debrief. Let's get you set up in under 3 minutes.</p>
+    </div>
+
+    <!-- Step 2: Provider + API Key (hidden) -->
+    <div class="onboarding-body" id="ob-step-2" style="display:none">
+      <div class="onboarding-icon">🔑</div>
+      <h2>Choose your AI provider</h2>
+      <p>Pick a provider and paste your API key. It's stored in your OS keychain — never written to disk.</p>
+      <div class="provider-grid">
+        <div class="provider-card selected" data-provider="anthropic" onclick="selectProvider(this)">
+          <div class="provider-card-emoji">⚡</div>
+          <div class="provider-card-name">Anthropic</div>
+          <div class="provider-card-sub">Claude Sonnet / Opus</div>
+        </div>
+        <div class="provider-card" data-provider="openai" onclick="selectProvider(this)">
+          <div class="provider-card-emoji">🤖</div>
+          <div class="provider-card-name">OpenAI</div>
+          <div class="provider-card-sub">GPT-4o / o1</div>
+        </div>
+        <div class="provider-card" data-provider="gemini" onclick="selectProvider(this)">
+          <div class="provider-card-emoji">💎</div>
+          <div class="provider-card-name">Gemini</div>
+          <div class="provider-card-sub">Gemini 1.5 Pro</div>
+        </div>
+        <div class="provider-card" data-provider="ollama" onclick="selectProvider(this)">
+          <div class="provider-card-emoji">🏠</div>
+          <div class="provider-card-name">Ollama</div>
+          <div class="provider-card-sub">Local · No API key</div>
+        </div>
+      </div>
+      <div class="onboarding-field" id="api-key-field">
+        <label>API Key</label>
+        <input class="onboarding-input mono" id="ob-apikey" type="password" placeholder="sk-ant-..." autocomplete="off">
+      </div>
+    </div>
+
+    <!-- Step 3: Workspace (hidden) -->
+    <div class="onboarding-body" id="ob-step-3" style="display:none">
+      <div class="onboarding-icon">📁</div>
+      <h2>Select your workspace</h2>
+      <p>SignalOS sandboxes all agent writes inside this folder. Nothing outside it is ever touched without your explicit approval.</p>
+      <div class="onboarding-field">
+        <label>Workspace folder</label>
+        <div class="workspace-picker">
+          <div class="workspace-path" id="ob-workspace-path">No folder selected</div>
+          <button class="workspace-browse-btn" onclick="browseWorkspace()">Browse…</button>
+        </div>
+      </div>
+      <div class="onboarding-field">
+        <label>Project name</label>
+        <input class="onboarding-input" id="ob-project-name" placeholder="My Product" type="text">
+      </div>
+    </div>
+
+    <!-- Step 4: Ready (hidden) -->
+    <div class="onboarding-body" id="ob-step-4" style="display:none">
+      <div class="onboarding-icon">🚀</div>
+      <h2>You're ready to ship</h2>
+      <p>SignalOS will guide you through your first Discovery session now. One stakeholder interview — under 15 minutes — and Gate 0 will be in reach.</p>
+    </div>
+
+    <div class="onboarding-footer">
+      <button class="onboarding-back" id="ob-back" onclick="obBack()" style="visibility:hidden">Back</button>
+      <button class="onboarding-next" id="ob-next" onclick="obNext()">
+        <span id="ob-next-label">Get started</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── COMMAND PALETTE ────────────────────────────────────────────────── -->
+<div id="cmdpal" class="hidden">
+  <div class="cmdpal-box">
+    <div class="cmdpal-input-row">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input class="cmdpal-input" id="cmdpal-input" placeholder="Run a command…" oninput="filterCommands(this.value)">
+      <span class="cmdpal-kbd">ESC</span>
+    </div>
+    <div class="cmdpal-results" id="cmdpal-results"></div>
+  </div>
+</div>
+
+<!-- ─── TOAST CONTAINER ───────────────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ─── APP SHELL ─────────────────────────────────────────────────────── -->
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar" role="navigation">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-mark">
+        <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <span class="sidebar-logo-text">SignalOS</span>
+      <span class="sidebar-logo-version">v1.0</span>
+    </div>
+
+    <!-- Wave status -->
+    <div class="wave-pill">
+      <div class="wave-pill-label">Active wave</div>
+      <div class="wave-pill-name" id="sb-wave-name">No active wave</div>
+      <div class="wave-pill-bar">
+        <div class="wave-pill-fill" id="sb-wave-fill" style="width:0%"></div>
+      </div>
+      <div class="wave-pill-meta">
+        <span id="sb-wave-phase">Phase —</span>
+        <span><strong id="sb-wave-pct">0%</strong></span>
+      </div>
+    </div>
+
+    <!-- Primary nav -->
+    <div class="nav-section">
+      <div class="nav-section-label">Workspace</div>
+      <div class="nav-item active" data-view="chat" onclick="switchView('chat', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Chat
+      </div>
+      <div class="nav-item" data-view="dashboard" onclick="switchView('dashboard', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item" data-view="gates" onclick="switchView('gates', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Gates
+        <span class="nav-badge" id="gates-badge">G2</span>
+      </div>
+      <div class="nav-item" data-view="brain" onclick="switchView('brain', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.14Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.14Z"/></svg>
+        Brain
+      </div>
+    </div>
+
+    <!-- Gate status row -->
+    <div class="nav-section">
+      <div class="nav-section-label">Gates</div>
+      <div class="gate-row" id="gate-row">
+        <div class="gate-dot signed"  title="G0 Constitution">0</div>
+        <div class="gate-dot signed"  title="G1 Belief">1</div>
+        <div class="gate-dot current" title="G2 Expectation Map — current">2</div>
+        <div class="gate-dot locked"  title="G3 Plan">3</div>
+        <div class="gate-dot locked"  title="G4 Trust Tier">4</div>
+        <div class="gate-dot locked"  title="G5 Quality Check">5</div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-footer-btn" onclick="openCmdPal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        Commands
+        <span style="margin-left:auto;font-size:10px;color:var(--text-3)">⌘K</span>
+      </button>
+      <button class="sidebar-footer-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+        Settings
+      </button>
+    </div>
+  </nav>
+
+  <!-- TOP BAR -->
+  <header id="topbar">
+    <div class="topbar-breadcrumb">
+      <span id="tb-project">No project</span>
+      <span class="sep">/</span>
+      <strong id="tb-view">Chat</strong>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="phase-badge">
+      <div class="phase-badge-dot"></div>
+      <span id="tb-phase">Phase 1 · Discovery</span>
+    </div>
+    <div class="cost-meter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      Session cost: <strong id="tb-cost">$0.00</strong>
+    </div>
+    <div class="provider-btn" onclick="switchView('settings', null)">
+      <div class="provider-dot"></div>
+      <span id="tb-provider">Claude</span>
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main id="main">
+
+    <!-- CHAT VIEW -->
+    <div class="view active" id="view-chat">
+      <div class="chat-messages" id="chat-messages">
+        <!-- Welcome message -->
+        <div class="chat-row ai">
+          <div class="chat-avatar ai">S</div>
+          <div>
+            <div class="mentor-strip">
+              <div class="dot"></div>
+              <span>Gate 2 · Expectation Map · pending signature</span>
+            </div>
+            <div class="chat-bubble">
+              <p style="margin-bottom:10px">Welcome back. You're in <strong>Phase 1 — Discovery</strong>. Your next action is to run a stakeholder interview before Gate 2 can be signed.</p>
+              <p style="margin-bottom:12px">When you're ready, type <span class="cmd-pill" onclick="insertCmd('/signal-discovery')">/signal-discovery</span> and I'll guide you through the structured interview. Or jump to:</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <span class="cmd-pill" onclick="insertCmd('/signal-status')">/signal-status</span>
+                <span class="cmd-pill" onclick="insertCmd('/signal-plan')">/signal-plan</span>
+                <span class="cmd-pill" onclick="insertCmd('/signal-brain')">/signal-brain</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gate 2 signing card -->
+        <div class="chat-row ai">
+          <div class="chat-avatar ai">S</div>
+          <div>
+            <div class="chat-bubble">
+              <div class="gate-card">
+                <div class="gate-card-header">
+                  <div class="gate-card-num">G2</div>
+                  <div class="gate-card-info">
+                    <div class="gate-card-title">Expectation Map</div>
+                    <div class="gate-card-sub">Phase 1 · Required before build begins</div>
+                  </div>
+                  <div class="gate-card-status pending">Pending</div>
+                </div>
+                <div class="gate-card-body">
+                  <p>The Expectation Map captures what success looks like for this wave — in measurable terms. It must be signed before any build work can start.</p>
+                  <button class="gate-sign-btn" id="g2-btn" onclick="signGate(2, this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                    Sign Gate 2
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input bar -->
+      <div class="chat-input-wrap">
+        <div class="chat-input-box">
+          <textarea id="chat-input" rows="1" placeholder="Ask SignalOS anything, or type / for commands…"
+            onkeydown="handleChatKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="chat-send-btn" id="send-btn" onclick="sendMessage()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="chat-input-hints">
+          <div class="hint-chip" onclick="insertCmd('/signal-discovery')">▶ Start discovery interview</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-status')">📊 Check wave status</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-plan')">📝 Write PLAN.md</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-qa')">🔍 Run quality check</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD VIEW -->
+    <div class="view" id="view-dashboard">
+      <div class="dash-header">
+        <h2>Wave Dashboard</h2>
+        <p>Live health · no active wave — start one to see metrics</p>
+      </div>
+
+      <div class="dash-grid-3">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Phase</div></div>
+          <div class="card-value" style="font-size:20px;font-weight:700">Discovery</div>
+          <div class="card-value-sub">Phase 1 of 7</div>
+          <div class="phase-track" style="margin-top:14px">
+            <div class="phase-node done"><div class="phase-dot done">✓</div><div class="phase-node-label">Pre-wave</div></div>
+            <div class="phase-node active"><div class="phase-dot active">1</div><div class="phase-node-label">Discovery</div></div>
+            <div class="phase-node future"><div class="phase-dot future">2</div><div class="phase-node-label">Plan</div></div>
+            <div class="phase-node future"><div class="phase-dot future">3</div><div class="phase-node-label">Build</div></div>
+            <div class="phase-node future"><div class="phase-dot future">4</div><div class="phase-node-label">Review</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Belief Confidence</div></div>
+          <div class="card-value">72%</div>
+          <div class="card-value-sub">3 signals · 1 risk flagged</div>
+          <div style="margin-top:14px">
+            <div class="metric-row">
+              <span class="metric-label">Signal</span>
+              <div class="metric-bar"><div class="metric-fill" style="width:72%;background:var(--success)"></div></div>
+              <span class="metric-val">72%</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">Noise</span>
+              <div class="metric-bar"><div class="metric-fill" style="width:28%;background:var(--danger)"></div></div>
+              <span class="metric-val">28%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Session Cost</div><div class="card-action">History</div></div>
+          <div class="card-value">$0.42</div>
+          <div class="card-value-sub">of $10.00 monthly budget</div>
+          <div style="margin-top:14px">
+            <div class="metric-row">
+              <span class="metric-label">Used</span>
+              <div class="metric-bar"><div class="metric-fill" style="width:4%;background:var(--accent)"></div></div>
+              <span class="metric-val" style="color:var(--accent)">4%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dash-grid-2">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Phase Debt</div><div class="card-action">View all</div></div>
+          <div class="debt-row">
+            <span class="debt-tier t2">T2</span>
+            <span class="debt-name">Expectation Map not yet signed</span>
+            <span class="debt-age">2 days</span>
+          </div>
+          <div class="debt-row">
+            <span class="debt-tier t3">T3</span>
+            <span class="debt-name">Brain index has no entries yet</span>
+            <span class="debt-age">today</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Worktree Sync</div><div class="card-action">Sync now</div></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0"></div>
+            <span style="font-size:12px;color:var(--text-2)">main — clean, up to date</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-3)">Last sync: just now · No active worktrees</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GATES VIEW -->
+    <div class="view" id="view-gates">
+      <div class="gates-header">
+        <h2>Gate Signing</h2>
+        <p>Sign each gate in order. Every signature is timestamped and written to your audit trail.</p>
+      </div>
+
+      <div id="gates-list"></div>
+    </div>
+
+    <!-- BRAIN VIEW -->
+    <div class="view" id="view-brain">
+      <div class="brain-toolbar">
+        <div class="brain-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input placeholder="Search beliefs, decisions, gates…" oninput="filterBrain(this.value)">
+        </div>
+        <div class="brain-filter-btn">Type ▾</div>
+        <div class="brain-filter-btn">Wave ▾</div>
+      </div>
+      <div class="brain-list" id="brain-list">
+        <!-- Empty state shown when no entries -->
+        <div class="empty-state">
+          <div class="empty-state-icon">🧠</div>
+          <h3>Brain is empty</h3>
+          <p>Beliefs, decisions, and signed gates will appear here as your wave progresses. Start your first Discovery to populate it.</p>
+          <button class="empty-state-cta" onclick="switchView('chat', document.querySelector('[data-view=chat]')); insertCmd('/signal-discovery')">
+            Start Discovery
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ─── STATE ─────────────────────────────────────────────────────────────
+const state = {
+  view: 'chat',
+  provider: 'anthropic',
+  project: 'My Project',
+  phase: 'Phase 1 · Discovery',
+  cost: 0.00,
+  onboardingStep: 1,
+  onboardingDone: false, // set true to skip onboarding
+  gates: [
+    { id: 0, name: 'Constitution', desc: 'Immutable project rules', status: 'signed',  signer: 'Samer', ts: '2026-04-28 09:12', artifacts: ['CONSTITUTION.md'] },
+    { id: 1, name: 'Belief',       desc: 'Signed statement of what we believe to be true', status: 'signed',  signer: 'Samer', ts: '2026-04-29 11:45', artifacts: ['BELIEF.md'] },
+    { id: 2, name: 'Expectation Map', desc: 'Measurable success criteria for this wave', status: 'current', signer: null, ts: null, artifacts: ['EXPECTATION_MAP.md'] },
+    { id: 3, name: 'Plan',         desc: 'PLAN.md approved by PO', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md'] },
+    { id: 4, name: 'Trust Tier',   desc: 'All tasks declared T1/T2/T3', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md (T-tier column)'] },
+    { id: 5, name: 'Quality Check', desc: 'Critical findings resolved, QUALITY_CHECK.md signed', status: 'locked', signer: null, ts: null, artifacts: ['QUALITY_CHECK.md'] },
+  ]
+};
+
+// ─── ONBOARDING ─────────────────────────────────────────────────────────
+const TOTAL_STEPS = 4;
+
+function obNext() {
+  if (state.onboardingStep < TOTAL_STEPS) {
+    state.onboardingStep++;
+    renderOnboarding();
+  } else {
+    document.getElementById('onboarding').classList.add('hidden');
+    toast('You\'re all set — let\'s ship 🚀', 'success');
+  }
+}
+function obBack() {
+  if (state.onboardingStep > 1) { state.onboardingStep--; renderOnboarding(); }
+}
+function selectProvider(el) {
+  document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  state.provider = el.dataset.provider;
+  document.getElementById('api-key-field').style.display = el.dataset.provider === 'ollama' ? 'none' : 'block';
+  document.getElementById('tb-provider').textContent = el.querySelector('.provider-card-name').textContent;
+}
+function browseWorkspace() {
+  // In real app: invoke Tauri dialog → open_folder
+  document.getElementById('ob-workspace-path').textContent = '/Users/samer/Projects/MyProduct';
+}
+function renderOnboarding() {
+  const s = state.onboardingStep;
+  // Progress dots
+  document.querySelectorAll('.onboarding-progress-dot').forEach((d, i) => {
+    d.className = 'onboarding-progress-dot' + (i + 1 < s ? ' done' : i + 1 === s ? ' active' : '');
+  });
+  // Steps
+  for (let i = 1; i <= TOTAL_STEPS; i++) {
+    document.getElementById('ob-step-' + i).style.display = i === s ? 'block' : 'none';
+  }
+  document.getElementById('ob-back').style.visibility = s > 1 ? 'visible' : 'hidden';
+  document.getElementById('ob-next-label').textContent = s === TOTAL_STEPS ? 'Start SignalOS' : (s === 1 ? 'Get started' : 'Continue');
+}
+renderOnboarding();
+// Skip onboarding if already done (would check localStorage in real app)
+// document.getElementById('onboarding').classList.add('hidden');
+
+// ─── NAVIGATION ─────────────────────────────────────────────────────────
+function switchView(viewId, navEl) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const v = document.getElementById('view-' + viewId);
+  if (v) v.classList.add('active');
+  if (navEl) navEl.classList.add('active');
+  const labels = { chat: 'Chat', dashboard: 'Dashboard', gates: 'Gates', brain: 'Brain' };
+  document.getElementById('tb-view').textContent = labels[viewId] || viewId;
+  state.view = viewId;
+  if (viewId === 'gates') renderGates();
+}
+
+// ─── GATES ──────────────────────────────────────────────────────────────
+function renderGates() {
+  const list = document.getElementById('gates-list');
+  list.innerHTML = state.gates.map(g => `
+    <div class="gate-full-card ${g.status}" onclick="toggleGateCard(this)">
+      <div class="gate-full-header">
+        <div class="gate-full-num ${g.status}">G${g.id}</div>
+        <div class="gate-full-info">
+          <div class="gate-full-name">${g.name}</div>
+          <div class="gate-full-desc">${g.desc}</div>
+        </div>
+        <div class="gate-full-state ${g.status}">
+          ${g.status === 'signed' ? '✓ Signed' : g.status === 'current' ? '● Pending' : '🔒 Locked'}
+        </div>
+      </div>
+      ${g.status !== 'locked' ? `
+      <div class="gate-full-body" style="display:none">
+        <div class="gate-full-body-inner">
+          <div class="gate-artifact-label">Required artifacts</div>
+          ${g.artifacts.map(a => `
+            <div class="gate-artifact-item">
+              <span class="gate-artifact-icon">📄</span>
+              <span class="gate-artifact-name">${a}</span>
+              <span class="gate-artifact-status ${g.status === 'signed' ? 'ok' : 'missing'}">${g.status === 'signed' ? '✓ Present' : '⚠ Missing'}</span>
+            </div>
+          `).join('')}
+          ${g.status === 'signed' ? `
+            <div style="font-size:12px;color:var(--text-3);margin-top:12px">Signed by <strong style="color:var(--text-2)">${g.signer}</strong> · ${g.ts}</div>
+          ` : `
+            <div class="gate-sign-row">
+              <input class="gate-signer-input" placeholder="Your name" value="Samer">
+              <button class="gate-sign-btn" onclick="signGateView(${g.id}, this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg>
+                Sign Gate ${g.id}
+              </button>
+            </div>
+          `}
+        </div>
+      </div>` : ''}
+    </div>
+  `).join('');
+}
+
+function toggleGateCard(el) {
+  const body = el.querySelector('.gate-full-body');
+  if (body) body.style.display = body.style.display === 'none' ? 'block' : 'none';
+}
+
+function signGate(id, btn) {
+  const g = state.gates.find(g => g.id === id);
+  if (!g) return;
+  g.status = 'signed';
+  g.signer = 'Samer';
+  g.ts = new Date().toLocaleString();
+  btn.classList.add('signed');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg> Signed`;
+  btn.closest('.gate-card-header')?.querySelector('.gate-card-status')?.classList.replace('pending', 'signed');
+
+  // Update gate dots in sidebar
+  const dots = document.querySelectorAll('.gate-dot');
+  if (dots[id]) {
+    dots[id].className = 'gate-dot signed';
+    if (dots[id + 1]) dots[id + 1].className = 'gate-dot current';
+  }
+  document.getElementById('gates-badge').textContent = 'G' + (id + 1);
+  toast(`Gate ${id} — ${g.name} signed ✓`, 'success');
+  addChatMessage('ai', `Gate ${id} (${g.name}) has been signed and written to your audit trail. The next gate is **G${id + 1}**. I'll remind you what's needed when you're ready.`);
+}
+function signGateView(id, btn) { signGate(id, btn); renderGates(); }
+
+// ─── CHAT ────────────────────────────────────────────────────────────────
+function addChatMessage(role, text) {
+  const msgs = document.getElementById('chat-messages');
+  const row = document.createElement('div');
+  row.className = 'chat-row ' + role;
+  row.innerHTML = `
+    <div class="chat-avatar ${role}">${role === 'ai' ? 'S' : 'Y'}</div>
+    <div class="chat-bubble">${text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}</div>
+  `;
+  msgs.appendChild(row);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showTyping() {
+  const msgs = document.getElementById('chat-messages');
+  const row = document.createElement('div');
+  row.className = 'chat-row ai'; row.id = 'typing-row';
+  row.innerHTML = `<div class="chat-avatar ai">S</div><div class="chat-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>`;
+  msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;
+}
+function hideTyping() { document.getElementById('typing-row')?.remove(); }
+
+const RESPONSES = {
+  '/signal-discovery': 'Starting Discovery. I\'ll ask you a series of structured questions about your stakeholders and their goals.\n\n**Question 1 of 8:** Who is the primary user of this product, and what is the single most painful thing they deal with today?',
+  '/signal-status':    'Current status:\n\n**Wave:** Wave 1 · Phase 1 Discovery\n**Gate:** G2 pending signature\n**Belief confidence:** 72%\n**Phase Debt:** 2 open items\n**Cost this session:** $0.42',
+  '/signal-plan':      'To write PLAN.md, I need Gate 2 signed first. The Expectation Map must be agreed before planning begins — this is a hard gate.\n\nWant me to help you complete the Expectation Map now?',
+  '/signal-brain':     'Your Brain index has 0 entries so far. It will populate automatically as gates are signed and decisions are made.\n\nYou can manually add a belief: **/signal-brain add "Users prefer async communication over sync calls"**',
+  '/signal-qa':        'Quality check requires a completed Build phase. You\'re currently in Discovery. Come back to this when Phase 3 Build is complete.',
+  'default':           'Understood. I\'m tracking that in context for this wave. Is there a specific gate or phase you want to focus on, or should I suggest the next best action?'
+};
+
+function sendMessage() {
+  const inp = document.getElementById('chat-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  addChatMessage('user', text);
+  inp.value = ''; inp.style.height = '';
+  showTyping();
+  const key = Object.keys(RESPONSES).find(k => text.toLowerCase().startsWith(k)) || 'default';
+  setTimeout(() => { hideTyping(); addChatMessage('ai', RESPONSES[key]); }, 900 + Math.random() * 400);
+}
+
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+function insertCmd(cmd) {
+  const inp = document.getElementById('chat-input');
+  inp.value = cmd; inp.focus(); autoResize(inp);
+}
+function autoResize(el) {
+  el.style.height = ''; el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+// ─── COMMAND PALETTE ──────────────────────────────────────────────────────
+const COMMANDS = [
+  { icon: '🔍', name: '/signal-discovery', sub: 'Start a stakeholder interview', action: () => { closeCmdPal(); insertCmd('/signal-discovery'); } },
+  { icon: '📊', name: '/signal-status',    sub: 'Check current wave status',       action: () => { closeCmdPal(); insertCmd('/signal-status'); } },
+  { icon: '📝', name: '/signal-plan',      sub: 'Write or update PLAN.md',         action: () => { closeCmdPal(); insertCmd('/signal-plan'); } },
+  { icon: '🧠', name: '/signal-brain',     sub: 'Search or add a brain entry',     action: () => { closeCmdPal(); switchView('brain', document.querySelector('[data-view=brain]')); } },
+  { icon: '🔏', name: 'Sign Gate 2',       sub: 'Sign the Expectation Map gate',   action: () => { closeCmdPal(); switchView('gates', document.querySelector('[data-view=gates]')); } },
+  { icon: '📋', name: 'Dashboard',         sub: 'Open wave dashboard',             action: () => { closeCmdPal(); switchView('dashboard', document.querySelector('[data-view=dashboard]')); } },
+  { icon: '🔍', name: '/signal-qa',        sub: 'Run quality check',               action: () => { closeCmdPal(); insertCmd('/signal-qa'); } },
+  { icon: '⚙️', name: 'Settings',          sub: 'API keys, provider, workspace',   action: () => { closeCmdPal(); toast('Settings panel coming soon', 'info'); } },
+];
+
+function openCmdPal() {
+  document.getElementById('cmdpal').classList.remove('hidden');
+  document.getElementById('cmdpal-input').value = '';
+  renderCmdPalResults('');
+  setTimeout(() => document.getElementById('cmdpal-input').focus(), 50);
+}
+function closeCmdPal() { document.getElementById('cmdpal').classList.add('hidden'); }
+function filterCommands(q) { renderCmdPalResults(q); }
+function renderCmdPalResults(q) {
+  const filtered = q ? COMMANDS.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) || c.sub.toLowerCase().includes(q.toLowerCase())) : COMMANDS;
+  document.getElementById('cmdpal-results').innerHTML =
+    '<div class="cmdpal-section-label">Commands</div>' +
+    filtered.map(c => `<div class="cmdpal-item" onclick="(${c.action.toString()})()"><div class="cmdpal-item-icon">${c.icon}</div><div><div class="cmdpal-item-name">${c.name}</div><div class="cmdpal-item-sub">${c.sub}</div></div></div>`).join('');
+}
+
+document.getElementById('cmdpal').addEventListener('click', e => { if (e.target === document.getElementById('cmdpal')) closeCmdPal(); });
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdPal(); }
+  if (e.key === 'Escape') { closeCmdPal(); document.getElementById('onboarding').classList.add('hidden'); }
+});
+
+// ─── BRAIN ───────────────────────────────────────────────────────────────
+function filterBrain(q) { /* live filter brain entries */ }
+
+// ─── TOAST ───────────────────────────────────────────────────────────────
+function toast(msg, type = '') {
+  const icons = { success: '✓', warning: '⚠', error: '✕', info: 'ℹ' };
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span>${msg}`;
+  document.getElementById('toast-container').appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+// ─── SIDEBAR WAVE ─────────────────────────────────────────────────────────
+function updateWaveStatus(name, pct, phase) {
+  document.getElementById('sb-wave-name').textContent = name;
+  document.getElementById('sb-wave-fill').style.width = pct + '%';
+  document.getElementById('sb-wave-pct').textContent = pct + '%';
+  document.getElementById('sb-wave-phase').textContent = phase;
+  document.getElementById('tb-phase').textContent = phase;
+}
+updateWaveStatus('Wave 1', 18, 'Phase 1 · Discovery');
+document.getElementById('tb-project').textContent = state.project;
+document.getElementById('tb-cost').textContent = '$' + state.cost.toFixed(2);
+</script>
+</body>
+</html>

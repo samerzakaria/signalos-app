@@ -1,0 +1,43 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# Tauri
+src-tauri/target/
+.tauri/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Env / secrets — NEVER commit these
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# IDE
+.vscode/settings.json
+.idea/
+*.iml
+
+# Build outputs
+dist-tauri/
+bundle/
+release/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Signing artifacts — generated at build time, not stored in repo
+src-tauri/gen/

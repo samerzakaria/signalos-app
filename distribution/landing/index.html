@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SignalOS — AI Governance for Founders</title>
+<style>
+  :root {
+    --ink:    #0f0f0f;
+    --muted:  #666;
+    --accent: #5B5BD6;
+    --bg:     #f8f8f7;
+    --white:  #ffffff;
+    --border: #e5e5e5;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--ink); line-height: 1.5; }
+
+  /* Nav */
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; background: var(--white); border-bottom: 1px solid var(--border); }
+  .logo { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+  .logo span { color: var(--accent); }
+  .nav-links { display: flex; gap: 24px; }
+  .nav-links a { font-size: 13px; color: var(--muted); text-decoration: none; }
+  .nav-links a:hover { color: var(--ink); }
+
+  /* Hero */
+  .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 64px; text-align: center; }
+  .badge { display: inline-block; background: #ede9fe; color: var(--accent); font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 20px; margin-bottom: 20px; }
+  h1 { font-size: 48px; font-weight: 800; line-height: 1.1; letter-spacing: -1.5px; margin-bottom: 20px; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .hero-sub { font-size: 18px; color: var(--muted); max-width: 520px; margin: 0 auto 36px; }
+
+  /* Download buttons */
+  .download-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .btn-download {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--accent); color: white;
+    font-size: 14px; font-weight: 600;
+    padding: 12px 22px; border-radius: var(--radius);
+    text-decoration: none; border: none; cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn-download:hover { opacity: 0.88; }
+  .btn-download.secondary { background: var(--white); color: var(--ink); border: 1px solid var(--border); }
+  .btn-download.secondary:hover { background: var(--bg); }
+  .download-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Detected OS highlight */
+  .btn-download.detected { box-shadow: 0 0 0 3px #c7d2fe; }
+
+  /* Features */
+  .features { max-width: 900px; margin: 0 auto; padding: 48px 24px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feature { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .feature-icon { font-size: 22px; margin-bottom: 10px; }
+  .feature-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+  .feature-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  /* How it works */
+  .steps { max-width: 660px; margin: 0 auto; padding: 0 24px 64px; }
+  .steps h2 { font-size: 22px; font-weight: 700; margin-bottom: 24px; text-align: center; }
+  .step { display: flex; gap: 16px; margin-bottom: 20px; align-items: flex-start; }
+  .step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: white; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .step-text strong { display: block; font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .step-text span { font-size: 13px; color: var(--muted); }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); padding: 24px 48px; display: flex; justify-content: space-between; align-items: center; }
+  footer p { font-size: 12px; color: var(--muted); }
+  footer a { font-size: 12px; color: var(--muted); text-decoration: none; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 32px; }
+    .features { grid-template-columns: 1fr; }
+    nav { padding: 14px 20px; }
+    .nav-links { display: none; }
+    footer { flex-direction: column; gap: 8px; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">Signal<span>OS</span></div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="https://github.com/signalos/signalos-core" target="_blank">GitHub</a>
+    <a href="/docs">Docs</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="badge">Now in preview · v1.0</div>
+  <h1>Ship with <em>clarity</em>,<br>not chaos</h1>
+  <p class="hero-sub">SignalOS is a standalone AI governance runtime. It mentors you through every wave — from belief to debrief — with no IDE required.</p>
+
+  <div class="download-group" id="downloads">
+    <a href="/releases/latest/SignalOS-win32-x64.zip" class="btn-download" data-os="windows">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+      Download for Windows
+    </a>
+    <a href="/releases/latest/SignalOS-macos.zip" class="btn-download secondary" data-os="macos">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
+      Download for macOS
+    </a>
+    <a href="/releases/latest/SignalOS-linux.AppImage" class="btn-download secondary" data-os="linux">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.581 19.049c-.55-.446-.336-1.431-.907-1.917.553-3.365-.997-6.331-2.845-8.232C14.3 6.227 11.977 5 9.9 5c-2.237 0-3.837.825-5.361 2.005C2.994 8.215 2 10.079 2 12.5c0 1.58.898 3.404 1.537 4.184.638.776.846 1.188 1.332 2.015.489.833.658 1.28.945 1.942.286.661.475 1.073 1.082 1.428.604.353 2.147.748 3.107.748l4.027.065c.851 0 1.951-.273 2.498-.744.547-.469.738-1.343 1.228-1.779.49-.435 1.185-.533 1.666-.918.48-.384.554-.966.16-1.392z"/></svg>
+      Download for Linux
+    </a>
+  </div>
+  <p class="download-note" id="version-note">Loading latest version…</p>
+</section>
+
+<section class="features" id="features">
+  <div class="feature">
+    <div class="feature-icon">💬</div>
+    <div class="feature-title">Chat-first interface</div>
+    <div class="feature-desc">Talk to SignalOS in plain language. It mentors you through every phase and gate — no commands to memorise.</div>
+  </div>
+  <div class="feature">
+    <div class="feature-icon">🔏</div>
+    <div class="feature-title">One-click gate signing</div>
+    <div class="feature-desc">G0 through G5 in a single click. Every signature timestamped and written to your audit trail automatically.</div>
+  </div>
+  <div class="feature">
+    <div class="feature-icon">📊</div>
+    <div class="feature-title">Live wave dashboard</div>
+    <div class="feature-desc">Phase health, phase debt, belief confidence, and worktree sync — all visible without opening a terminal.</div>
+  </div>
+  <div class="feature">
+    <div class="feature-icon">🔑</div>
+    <div class="feature-title">BYOK — any provider</div>
+    <div class="feature-desc">Bring your own API key for Anthropic, OpenAI, Gemini, or run locally with Ollama. Keys stored in your OS keychain.</div>
+  </div>
+  <div class="feature">
+    <div class="feature-icon">🧠</div>
+    <div class="feature-title">Brain built in</div>
+    <div class="feature-desc">Every belief, decision, and gate is indexed. SignalOS surfaces the right context before you ask for it.</div>
+  </div>
+  <div class="feature">
+    <div class="feature-icon">💰</div>
+    <div class="feature-title">Cost visibility</div>
+    <div class="feature-desc">Running token cost shown per session. Set a monthly budget cap — SignalOS warns at 80% and stops at 100%.</div>
+  </div>
+</section>
+
+<section class="steps" id="how">
+  <h2>Up and running in 4 steps</h2>
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-text">
+      <strong>Download and open</strong>
+      <span>No installer. Unzip, double-click SignalOS. macOS and Windows signed — no security warnings.</span>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-text">
+      <strong>Add your API key</strong>
+      <span>Paste your Anthropic (or other) key. It's stored in your OS keychain — never written to disk.</span>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-text">
+      <strong>Point to your project</strong>
+      <span>Select your workspace folder. SignalOS sandboxes all writes inside it.</span>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-text">
+      <strong>Start your first wave</strong>
+      <span>SignalOS guides you through Discovery → Onboard → Init. Your first gate is signed within the hour.</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>© 2026 SignalOS. All rights reserved.</p>
+  <a href="/privacy">Privacy</a>
+</footer>
+
+<script>
+// Auto-detect OS and highlight the right download button
+(function() {
+  const ua = navigator.userAgent;
+  let os = "windows";
+  if (/Mac/i.test(ua)) os = "macos";
+  else if (/Linux/i.test(ua)) os = "linux";
+
+  document.querySelectorAll(".btn-download").forEach(btn => {
+    if (btn.dataset.os === os) {
+      btn.classList.add("detected");
+      btn.classList.remove("secondary");
+      // Move to front
+      btn.parentNode.insertBefore(btn, btn.parentNode.firstChild);
+    }
+  });
+
+  // Fetch latest version from update manifest
+  fetch("/releases/latest.json")
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById("version-note").textContent =
+        `Latest: v${data.version} · Released ${new Date(data.pub_date).toLocaleDateString()}`;
+    })
+    .catch(() => {
+      document.getElementById("version-note").textContent = "Signed · Notarized · Auto-updating";
+    });
+})();
+</script>
+</body>
+</html>

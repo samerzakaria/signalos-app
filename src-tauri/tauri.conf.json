@@ -1,0 +1,89 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SignalOS",
+  "version": "1.0.0",
+  "identifier": "com.signalos.desktop",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SignalOS",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "center": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "externalBin": [
+      "bin/signalos-python"
+    ],
+
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "dmg": {
+        "background": null,
+        "windowPosition": { "x": 400, "y": 100 },
+        "windowSize": { "width": 660, "height": 400 }
+      },
+      "entitlements": "entitlements.plist",
+
+      "SIGNING_READY": {
+        "_comment": "Populate these via environment variables in CI to enable signing + notarization",
+        "signingIdentity": "$APPLE_SIGNING_IDENTITY",
+        "providerShortName": "$APPLE_PROVIDER_SHORT_NAME"
+      }
+    },
+
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "SIGNING_READY": {
+        "_comment": "Set WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD in CI secrets to enable signing",
+        "certificateThumbprint": "$WINDOWS_CERTIFICATE_THUMBPRINT"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+
+    "linux": {
+      "deb": { "depends": [] },
+      "appimage": { "bundleMediaFramework": false }
+    },
+
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": [
+        "https://cdn.signalos.io/updates/{{target}}/{{arch}}/latest.json"
+      ],
+      "pubkey": "SIGNING_READY: replace with your Tauri update signing public key",
+      "_pubkey_comment": "Generate with: tauri signer generate -w ~/.tauri/signalos.key"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "signalos-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SignalOS — AI governance runtime for non-technical founders",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "preview": "vite preview"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/api": "^2.0.0"
+  }
+}
