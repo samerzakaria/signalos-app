@@ -40,7 +40,7 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
     // The sidecar binary name must match tauri.conf.json → bundle.externalBin
     // In dev, this resolves to `python3 -m signalos.ipc_server`
     // In release, it resolves to the bundled `signalos-python` binary
-    let (mut rx, child) = shell
+    let (mut rx, mut child) = shell
         .sidecar("signalos-python")
         .context("Failed to find signalos-python sidecar")?
         .spawn()
