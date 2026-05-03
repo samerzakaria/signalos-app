@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0-beta.1",
+  "notes": "SignalOS v1.0.0-beta.1 — preview channel: mentoring engine, full command palette, Electric Blue design system",
+  "pub_date": "2026-05-03T00:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta.1/SignalOS_1.0.0-beta.1_aarch64.dmg",
+      "signature": ""
+    },
+    "darwin-x86_64": {
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta.1/SignalOS_1.0.0-beta.1_x64.dmg",
+      "signature": ""
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta.1/SignalOS_1.0.0-beta.1_x64-setup.exe",
+      "signature": ""
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta.1/signalos-app_1.0.0-beta.1_amd64.AppImage",
+      "signature": ""
+    }
+  }
+}

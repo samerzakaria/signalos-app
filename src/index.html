@@ -605,6 +605,67 @@ a { color: inherit; text-decoration: none; }
 .brain-entry-meta { font-size: 11px; color: var(--text-3); }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   CONSTITUTION VIEW
+══════════════════════════════════════════════════════════════════════════ */
+#view-constitution { overflow-y: auto; padding: 24px 28px; background: var(--bg); }
+#view-constitution::-webkit-scrollbar { width: 4px; }
+#view-constitution::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.const-header { margin-bottom: 20px; }
+.const-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
+.const-header p  { font-size: 12px; color: var(--text-3); }
+.const-summary {
+  display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;
+}
+.const-stat {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 10px 16px; flex: 1; min-width: 90px; text-align: center;
+  box-shadow: var(--shadow-xs);
+}
+.const-stat-num { font-size: 20px; font-weight: 700; color: var(--accent); }
+.const-stat-label { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+
+.const-article {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 18px 20px; margin-bottom: 10px;
+  box-shadow: var(--shadow-xs); transition: border-color .15s;
+}
+.const-article:hover { border-color: var(--border-strong); }
+.const-article-header { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 8px; }
+.const-article-num {
+  width: 28px; height: 28px; border-radius: var(--r-full);
+  background: var(--accent); color: white;
+  font-size: 11px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.const-article-num.ok      { background: var(--success); }
+.const-article-num.warn    { background: var(--warning); }
+.const-article-num.neutral { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
+.const-article-info { flex: 1; }
+.const-article-title { font-size: 13px; font-weight: 700; color: var(--text-1); margin-bottom: 2px; }
+.const-article-sub   { font-size: 11px; color: var(--text-3); }
+.const-article-badge {
+  font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: var(--r-full); flex-shrink: 0;
+}
+.const-article-badge.satisfied { background: var(--success-bg); color: var(--success); }
+.const-article-badge.pending   { background: var(--warning-bg); color: var(--warning); }
+.const-article-badge.violated  { background: var(--danger-bg);  color: var(--danger); }
+.const-article-body { font-size: 12.5px; color: var(--text-2); line-height: 1.65; padding-left: 42px; }
+
+/* ── Worktree sync card ────────────────────────────────────────────────── */
+.wt-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.wt-row:last-child { border-bottom: none; padding-bottom: 0; }
+.wt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.wt-dot.clean   { background: var(--success); }
+.wt-dot.dirty   { background: var(--warning); }
+.wt-branch  { font-size: 12px; font-weight: 600; color: var(--text-1); font-family: var(--mono); flex: 1; }
+.wt-sha     { font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+.wt-ahead   { font-size: 10px; font-weight: 600; color: var(--accent); background: var(--accent-light); padding: 1px 6px; border-radius: var(--r-full); }
+
+/* ══════════════════════════════════════════════════════════════════════════
    ONBOARDING OVERLAY
 ══════════════════════════════════════════════════════════════════════════ */
 #onboarding {
@@ -1023,6 +1084,10 @@ a { color: inherit; text-decoration: none; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.14Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.14Z"/></svg>
         Brain
       </div>
+      <div class="nav-item" data-view="constitution" onclick="switchView('constitution', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Constitution
+      </div>
     </div>
 
     <!-- Gate status row -->
@@ -1080,15 +1145,15 @@ a { color: inherit; text-decoration: none; }
     <!-- CHAT VIEW -->
     <div class="view active" id="view-chat">
       <div class="chat-messages" id="chat-messages">
-        <!-- Welcome message -->
-        <div class="chat-row ai">
+        <!-- Welcome message — dynamically updated by updateMentoringHints() (T2-2) -->
+        <div class="chat-row ai" id="welcome-msg">
           <div class="chat-avatar ai">S</div>
           <div>
             <div class="mentor-strip">
               <div class="dot"></div>
-              <span>Gate 2 · Expectation Map · pending signature</span>
+              <span id="mentor-strip-text">Gate 2 · Expectation Map · pending signature</span>
             </div>
-            <div class="chat-bubble">
+            <div class="chat-bubble" id="welcome-bubble">
               <p style="margin-bottom:10px">Welcome back. You're in <strong>Phase 1 — Discovery</strong>. Your next action is to run a stakeholder interview before Gate 2 can be signed.</p>
               <p style="margin-bottom:12px">When you're ready, type <span class="cmd-pill" onclick="insertCmd('/signal-discovery')">/signal-discovery</span> and I'll guide you through the structured interview. Or jump to:</p>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1136,7 +1201,8 @@ a { color: inherit; text-decoration: none; }
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
-        <div class="chat-input-hints">
+        <!-- Hint chips — dynamically updated by updateMentoringHints() (T2-2) -->
+        <div class="chat-input-hints" id="chat-hints">
           <div class="hint-chip" onclick="insertCmd('/signal-discovery')">▶ Start discovery interview</div>
           <div class="hint-chip" onclick="insertCmd('/signal-status')">📊 Check wave status</div>
           <div class="hint-chip" onclick="insertCmd('/signal-plan')">📝 Write PLAN.md</div>
@@ -1214,12 +1280,13 @@ a { color: inherit; text-decoration: none; }
         </div>
 
         <div class="card">
-          <div class="card-header"><div class="card-title">Worktree Sync</div><div class="card-action">Sync now</div></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-            <div style="width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0"></div>
-            <span style="font-size:12px;color:var(--text-2)">main — clean, up to date</span>
+          <div class="card-header">
+            <div class="card-title">Worktree Sync</div>
+            <div class="card-action" onclick="loadWorktreeStatus()" style="cursor:pointer">↺ Refresh</div>
           </div>
-          <div style="font-size:12px;color:var(--text-3)">Last sync: just now · No active worktrees</div>
+          <div id="wt-content">
+            <div style="font-size:12px;color:var(--text-3)">Loading…</div>
+          </div>
         </div>
       </div>
     </div>
@@ -1232,6 +1299,16 @@ a { color: inherit; text-decoration: none; }
       </div>
 
       <div id="gates-list"></div>
+    </div>
+
+    <!-- CONSTITUTION VIEW -->
+    <div class="view" id="view-constitution">
+      <div class="const-header">
+        <h2>Constitution</h2>
+        <p>Immutable rules enforced across every wave. Violations block gate signing until resolved.</p>
+      </div>
+      <div class="const-summary" id="const-summary"></div>
+      <div id="const-articles"></div>
     </div>
 
     <!-- BRAIN VIEW -->
@@ -1417,7 +1494,7 @@ function switchView(viewId, navEl) {
   const v = document.getElementById('view-' + viewId);
   if (v) v.classList.add('active');
   if (navEl) navEl.classList.add('active');
-  const labels = { chat: 'Chat', dashboard: 'Dashboard', gates: 'Gates', brain: 'Brain' };
+  const labels = { chat: 'Chat', dashboard: 'Dashboard', gates: 'Gates', brain: 'Brain', constitution: 'Constitution' };
   document.getElementById('tb-view').textContent = labels[viewId] || viewId;
   state.view = viewId;
   if (viewId === 'gates') renderGates();
@@ -1550,7 +1627,9 @@ async function sendMessage() {
   if (text.startsWith('/signal-') && window.SignalOS) {
     const parts = text.slice(1).split(' ');
     const cmd = parts[0];
-    const args = parts.slice(1);
+    // T2-5: inject wave/gate context as a leading arg so the sidecar can prepend it
+    const ctx = window.buildLLMContext ? window.buildLLMContext() : '';
+    const args = ctx ? [ctx, ...parts.slice(1)] : parts.slice(1);
     try {
       await window.SignalOS.signal.run(cmd, args);
       // Response arrives via onSidecarResponse listener — nothing more to do here
@@ -1579,14 +1658,35 @@ function autoResize(el) {
 
 // ─── COMMAND PALETTE ──────────────────────────────────────────────────────
 const COMMANDS = [
-  { icon: '🔍', name: '/signal-discovery', sub: 'Start a stakeholder interview', action: () => { closeCmdPal(); insertCmd('/signal-discovery'); } },
-  { icon: '📊', name: '/signal-status',    sub: 'Check current wave status',       action: () => { closeCmdPal(); insertCmd('/signal-status'); } },
-  { icon: '📝', name: '/signal-plan',      sub: 'Write or update PLAN.md',         action: () => { closeCmdPal(); insertCmd('/signal-plan'); } },
-  { icon: '🧠', name: '/signal-brain',     sub: 'Search or add a brain entry',     action: () => { closeCmdPal(); switchView('brain', document.querySelector('[data-view=brain]')); } },
-  { icon: '🔏', name: 'Sign Gate 2',       sub: 'Sign the Expectation Map gate',   action: () => { closeCmdPal(); switchView('gates', document.querySelector('[data-view=gates]')); } },
-  { icon: '📋', name: 'Dashboard',         sub: 'Open wave dashboard',             action: () => { closeCmdPal(); switchView('dashboard', document.querySelector('[data-view=dashboard]')); } },
-  { icon: '🔍', name: '/signal-qa',        sub: 'Run quality check',               action: () => { closeCmdPal(); insertCmd('/signal-qa'); } },
-  { icon: '⚙️', name: 'Settings',          sub: 'API keys, provider, workspace',   action: () => { closeCmdPal(); toast('Settings panel coming soon', 'info'); } },
+  // ── Navigation ────────────────────────────────────────────────────────────
+  { icon: '📋', name: 'Dashboard',               sub: 'Open wave dashboard',                   action: () => { closeCmdPal(); switchView('dashboard', document.querySelector('[data-view=dashboard]')); } },
+  { icon: '🔏', name: 'Sign next gate',           sub: 'Open gate signing panel',               action: () => { closeCmdPal(); switchView('gates', document.querySelector('[data-view=gates]')); } },
+  { icon: '⚙️', name: 'Settings',                sub: 'API keys, provider, workspace',         action: () => { closeCmdPal(); toast('Settings panel coming soon', 'info'); } },
+  // ── Discovery + Planning ──────────────────────────────────────────────────
+  { icon: '🔍', name: '/signal-discovery',        sub: 'Structured stakeholder interview',       action: () => { closeCmdPal(); insertCmd('/signal-discovery'); } },
+  { icon: '📊', name: '/signal-status',           sub: 'Check current wave + gate status',      action: () => { closeCmdPal(); insertCmd('/signal-status'); } },
+  { icon: '🏁', name: '/signal-onboard',          sub: 'Onboard an existing project',            action: () => { closeCmdPal(); insertCmd('/signal-onboard'); } },
+  { icon: '🌊', name: '/signal-init',             sub: 'Initialize a new wave',                  action: () => { closeCmdPal(); insertCmd('/signal-init'); } },
+  { icon: '🔮', name: '/signal-pre-wave',         sub: 'Prepare for the next wave',              action: () => { closeCmdPal(); insertCmd('/signal-pre-wave'); } },
+  { icon: '📝', name: '/signal-plan',             sub: 'Write or update PLAN.md',               action: () => { closeCmdPal(); insertCmd('/signal-plan'); } },
+  // ── Design ───────────────────────────────────────────────────────────────
+  { icon: '🎨', name: '/signal-pre-design',       sub: 'PO brief before design phase',           action: () => { closeCmdPal(); insertCmd('/signal-pre-design'); } },
+  { icon: '✏️', name: '/signal-design',           sub: 'Design: explore / approve / iterate',   action: () => { closeCmdPal(); insertCmd('/signal-design'); } },
+  { icon: '🖼', name: '/signal-design-review',    sub: 'Review designs — rubric + AI check',    action: () => { closeCmdPal(); insertCmd('/signal-design-review'); } },
+  { icon: '🌐', name: '/signal-design-html',      sub: 'Generate production HTML from design',   action: () => { closeCmdPal(); insertCmd('/signal-design-html'); } },
+  // ── Build + Ship ─────────────────────────────────────────────────────────
+  { icon: '🔨', name: '/signal-build',            sub: 'Agentic build phase tasks',              action: () => { closeCmdPal(); insertCmd('/signal-build'); } },
+  { icon: '🔍', name: '/signal-review',           sub: 'Code review before Gate 4',              action: () => { closeCmdPal(); insertCmd('/signal-review'); } },
+  { icon: '🔍', name: '/signal-qa',               sub: 'Run quality check',                      action: () => { closeCmdPal(); insertCmd('/signal-qa'); } },
+  { icon: '🧪', name: '/signal-qa-only',          sub: 'QA without full build',                  action: () => { closeCmdPal(); insertCmd('/signal-qa-only'); } },
+  { icon: '🚀', name: '/signal-ship',             sub: 'Ship to production',                     action: () => { closeCmdPal(); insertCmd('/signal-ship'); } },
+  // ── Intelligence ─────────────────────────────────────────────────────────
+  { icon: '🤔', name: '/signal-second-opinion',   sub: 'Get a second AI opinion on a decision',  action: () => { closeCmdPal(); insertCmd('/signal-second-opinion'); } },
+  { icon: '🔬', name: '/signal-investigate',      sub: 'Investigate a bug or incident',          action: () => { closeCmdPal(); insertCmd('/signal-investigate'); } },
+  { icon: '📋', name: '/signal-wave-review',      sub: 'Wave-level retrospective',               action: () => { closeCmdPal(); insertCmd('/signal-wave-review'); } },
+  { icon: '📝', name: '/signal-debrief',          sub: 'Post-wave debrief',                      action: () => { closeCmdPal(); insertCmd('/signal-debrief'); } },
+  // ── Brain ─────────────────────────────────────────────────────────────────
+  { icon: '🧠', name: '/signal-brain',            sub: 'Search or add a brain entry',            action: () => { closeCmdPal(); switchView('brain', document.querySelector('[data-view=brain]')); } },
 ];
 
 function openCmdPal() {
@@ -1660,6 +1760,102 @@ function updateWaveStatus(name, pct, phase) {
 updateWaveStatus('Wave 1', 18, 'Phase 1 · Discovery');
 document.getElementById('tb-project').textContent = state.project;
 document.getElementById('tb-cost').textContent = '$' + state.cost.toFixed(2);
+
+// ─── CONSTITUTION DATA + RENDERER ───────────────────────────────────────
+const CONSTITUTION_ARTICLES = [
+  {
+    num: 'C1', title: 'Gate-first delivery',
+    sub: 'No build work begins before Gate 2 is signed',
+    body: 'Every wave must have a signed Expectation Map (G2) before any production code is written. This prevents building the wrong thing.',
+    check: () => {
+      const g2 = state.gates?.find(g => g.id === 2);
+      if (!g2) return 'pending';
+      return g2.status === 'signed' ? 'satisfied' : 'pending';
+    }
+  },
+  {
+    num: 'C2', title: 'Workspace sandbox',
+    sub: 'All agent writes stay inside the declared workspace root',
+    body: 'The sandbox boundary is enforced at the IPC layer. Any write outside the workspace root is rejected before it reaches the filesystem.',
+    check: () => state.project ? 'satisfied' : 'pending'
+  },
+  {
+    num: 'C3', title: 'Human-signed gates only',
+    sub: 'Gate signatures cannot be automated — the PO must explicitly confirm',
+    body: 'Sign events are UI-initiated and timestamped. Automated sign-offs are architecturally blocked — the Tauri IPC requires an explicit human invocation.',
+    check: () => 'satisfied'
+  },
+  {
+    num: 'C4', title: 'Audit trail immutability',
+    sub: 'Every gate action is append-only; no deletions',
+    body: 'The audit log is a JSONL append-only file written by the governance module. No command in the system exposes a delete-audit-entry operation.',
+    check: () => 'satisfied'
+  },
+  {
+    num: 'C5', title: 'Brain entries require provenance',
+    sub: 'Every belief or decision must have a source: gate, interview, or explicit PO entry',
+    body: 'Brain entries carry an entry_type field (belief / decision / gate / note). Entries without type are rejected at the add_brain_entry layer.',
+    check: () => 'satisfied'
+  },
+  {
+    num: 'C6', title: 'Phase debt visibility',
+    sub: 'Deferred items must be declared and visible at all times',
+    body: 'Any task skipped with T2/T3 debt status is surfaced in the Phase Debt dashboard panel. No debt is hidden from the PO.',
+    check: () => 'satisfied'
+  },
+  {
+    num: 'C7', title: 'API keys never on disk',
+    sub: 'Provider credentials are stored in the OS keychain only',
+    body: 'The keychain module uses the operating system\'s credential store (macOS Keychain / Windows Credential Manager). Keys are never written to providers.json or any project file.',
+    check: () => 'satisfied'
+  },
+  {
+    num: 'C8', title: 'Constitution cannot be amended mid-wave',
+    sub: 'Changes to these rules require a new wave and PO co-sign',
+    body: 'This document is displayed read-only. Amendments are tracked in AMENDMENTS.md and require a completed wave to take effect.',
+    check: () => 'satisfied'
+  },
+];
+
+function renderConstitution() {
+  const articles = CONSTITUTION_ARTICLES;
+  const satisfied = articles.filter(a => a.check() === 'satisfied').length;
+  const pending   = articles.filter(a => a.check() === 'pending').length;
+  const violated  = articles.filter(a => a.check() === 'violated').length;
+
+  document.getElementById('const-summary').innerHTML = `
+    <div class="const-stat"><div class="const-stat-num" style="color:var(--success)">${satisfied}</div><div class="const-stat-label">Satisfied</div></div>
+    <div class="const-stat"><div class="const-stat-num" style="color:var(--warning)">${pending}</div><div class="const-stat-label">Pending</div></div>
+    <div class="const-stat"><div class="const-stat-num" style="color:var(--danger)">${violated}</div><div class="const-stat-label">Violated</div></div>
+    <div class="const-stat"><div class="const-stat-num">${articles.length}</div><div class="const-stat-label">Total</div></div>
+  `;
+
+  document.getElementById('const-articles').innerHTML = articles.map(a => {
+    const status = a.check();
+    const numClass = status === 'satisfied' ? 'ok' : status === 'violated' ? 'warn' : 'neutral';
+    return `
+    <div class="const-article">
+      <div class="const-article-header">
+        <div class="const-article-num ${numClass}">${a.num}</div>
+        <div class="const-article-info">
+          <div class="const-article-title">${a.title}</div>
+          <div class="const-article-sub">${a.sub}</div>
+        </div>
+        <span class="const-article-badge ${status}">${status}</span>
+      </div>
+      <div class="const-article-body">${a.body}</div>
+    </div>`;
+  }).join('');
+}
+
+// Re-render when switching to constitution view
+const _origSwitchView = window.switchView ?? function(){};
+window.switchView = function(viewId, navEl) {
+  _origSwitchView(viewId, navEl);
+  if (viewId === 'constitution') renderConstitution();
+  if (viewId === 'dashboard')    window.loadWorktreeStatus?.();
+};
+
 </script>
 
 <!-- ─── IPC BRIDGE (ES module) ───────────────────────────────────────────── -->
@@ -1693,6 +1889,146 @@ function renderSidebarGateDots(gates) {
   const current = gates.find(g => g.status === 'current');
   const badge = document.getElementById('gates-badge');
   if (badge && current) badge.textContent = 'G' + current.id;
+}
+
+// ─── WORKTREE SYNC ───────────────────────────────────────────────────────────
+
+window.loadWorktreeStatus = async function () {
+  const el = document.getElementById('wt-content');
+  if (!el) return;
+  el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">Loading…</div>';
+  try {
+    const s = await ipc.git.status();
+    if (!s) { el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No workspace selected</div>'; return; }
+
+    const relTime = (iso) => {
+      if (!iso) return '—';
+      const diff = Date.now() - new Date(iso).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1)  return 'just now';
+      if (m < 60) return `${m}m ago`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ago`;
+      return `${Math.floor(h/24)}d ago`;
+    };
+
+    const aheadTag = s.ahead > 0
+      ? `<span class="wt-ahead">↑${s.ahead} ahead</span>`
+      : s.behind > 0 ? `<span class="wt-ahead" style="background:var(--warning-bg);color:var(--warning)">↓${s.behind} behind</span>` : '';
+
+    const rows = (s.worktrees || [{ branch: s.branch, head: '', path: '' }]).map(wt => `
+      <div class="wt-row">
+        <div class="wt-dot ${s.is_clean ? 'clean' : 'dirty'}"></div>
+        <span class="wt-branch">${wt.branch || s.branch}</span>
+        <span class="wt-sha">${wt.head || ''}</span>
+        ${wt.branch === s.branch ? aheadTag : ''}
+      </div>`).join('');
+
+    el.innerHTML = rows + `<div style="font-size:11px;color:var(--text-3);margin-top:8px">Last commit: ${relTime(s.last_sync)}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-3)">git unavailable: ${e?.message || e}</div>`;
+  }
+};
+
+// ─── MENTORING ENGINE (T2-2) ─────────────────────────────────────────────────
+// Reads window.state (wave + gates) and dynamically updates:
+//   • #mentor-strip-text — gate reminder in the chat header
+//   • #welcome-bubble    — welcome message body
+//   • #chat-hints        — contextual hint chips
+
+function updateMentoringHints() {
+  const st    = window.state;
+  const gates = st?.gates || [];
+  const wave  = st?.wave  || null;
+  const phase = st?.phase || null;
+
+  // First gate that isn't signed
+  const nextGate = gates.find(g => g.status !== 'signed');
+
+  // ── Mentor strip (gate reminder) ─────────────────────────────────────────
+  const stripEl = document.getElementById('mentor-strip-text');
+  if (stripEl) {
+    if (nextGate) {
+      stripEl.textContent = `Gate ${nextGate.id} · ${nextGate.name} · pending signature`;
+    } else if (gates.length) {
+      stripEl.textContent = 'All gates signed · wave complete';
+    }
+  }
+
+  // ── Welcome bubble ───────────────────────────────────────────────────────
+  const bubbleEl = document.getElementById('welcome-bubble');
+  if (bubbleEl) {
+    const phaseLabel = phase || 'Phase 1 — Discovery';
+    const waveLabel  = wave  ? `Wave ${wave}` : 'your first wave';
+    let intro = `Welcome back. You're in <strong>${phaseLabel}</strong>.`;
+    let action = '';
+    let pills  = [];
+
+    if (!wave) {
+      intro  = 'Ready to start your first wave. Run Discovery to kick things off.';
+      action = `Type <span class="cmd-pill" onclick="insertCmd('/signal-discovery')">/signal-discovery</span> to begin a structured stakeholder interview.`;
+      pills  = ['/signal-onboard', '/signal-status'];
+    } else if (nextGate) {
+      const gateCommands = { 0: '/signal-discovery', 1: '/signal-discovery', 2: '/signal-plan', 3: '/signal-build', 4: '/signal-review', 5: '/signal-debrief' };
+      const suggestedCmd = gateCommands[nextGate.id] || '/signal-status';
+      action = `Your next action is to complete work for <strong>Gate ${nextGate.id} — ${nextGate.name}</strong> before it can be signed. `
+             + `Type <span class="cmd-pill" onclick="insertCmd('${suggestedCmd}')">${suggestedCmd}</span> to proceed.`;
+      pills  = ['/signal-status', '/signal-plan', '/signal-brain'];
+    } else {
+      intro  = `All gates signed for ${waveLabel}. Great work — ready for debrief.`;
+      action = `Type <span class="cmd-pill" onclick="insertCmd('/signal-debrief')">/signal-debrief</span> to close this wave and capture what you learned.`;
+      pills  = ['/signal-debrief', '/signal-wave-review', '/signal-pre-wave'];
+    }
+
+    bubbleEl.innerHTML = `
+      <p style="margin-bottom:10px">${intro}</p>
+      <p style="margin-bottom:12px">${action}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${pills.map(p => `<span class="cmd-pill" onclick="insertCmd('${p}')">${p}</span>`).join('')}
+      </div>`;
+  }
+
+  // ── Hint chips ───────────────────────────────────────────────────────────
+  const hintsEl = document.getElementById('chat-hints');
+  if (!hintsEl) return;
+
+  const GATE_HINTS = {
+    0: [{ icon: '▶', label: 'Start discovery',    cmd: '/signal-discovery' }, { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '📝', label: 'Write PLAN.md',  cmd: '/signal-plan' }, { icon: '🧠', label: 'Search brain',   cmd: '/signal-brain' }],
+    1: [{ icon: '▶', label: 'Start discovery',    cmd: '/signal-discovery' }, { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '📝', label: 'Write PLAN.md',  cmd: '/signal-plan' }, { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' }],
+    2: [{ icon: '📝', label: 'Write PLAN.md',     cmd: '/signal-plan' },      { icon: '🎨', label: 'Pre-design',     cmd: '/signal-pre-design' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }, { icon: '🧠', label: 'Search brain',   cmd: '/signal-brain' }],
+    3: [{ icon: '🔨', label: 'Build phase',       cmd: '/signal-build' },     { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' },     { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '🤔', label: 'Second opinion', cmd: '/signal-second-opinion' }],
+    4: [{ icon: '🔍', label: 'Code review',       cmd: '/signal-review' },    { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' },     { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '🔬', label: 'Investigate',    cmd: '/signal-investigate' }],
+    5: [{ icon: '🚀', label: 'Ship to prod',      cmd: '/signal-ship' },      { icon: '🔍', label: 'Final QA',       cmd: '/signal-qa' },     { icon: '📋', label: 'Wave review',    cmd: '/signal-wave-review' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }],
+  };
+  const NO_WAVE_HINTS  = [{ icon: '▶', label: 'Start discovery', cmd: '/signal-discovery' }, { icon: '🏁', label: 'Onboard project', cmd: '/signal-onboard' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }, { icon: '🧠', label: 'Search brain', cmd: '/signal-brain' }];
+  const ALL_DONE_HINTS = [{ icon: '📝', label: 'Start debrief',  cmd: '/signal-debrief' },   { icon: '📋', label: 'Wave review',     cmd: '/signal-wave-review' }, { icon: '🚀', label: 'Next wave', cmd: '/signal-pre-wave' }, { icon: '🧠', label: 'Search brain', cmd: '/signal-brain' }];
+
+  const hints = !wave ? NO_WAVE_HINTS : nextGate ? (GATE_HINTS[nextGate.id] || GATE_HINTS[0]) : ALL_DONE_HINTS;
+  hintsEl.innerHTML = hints.map(h => `<div class="hint-chip" onclick="insertCmd('${h.cmd}')">${h.icon} ${h.label}</div>`).join('');
+}
+
+// ─── CONTEXT INJECTION (T2-5) ────────────────────────────────────────────────
+// Builds a compact SignalOS context header prepended to every LLM/sidecar call.
+
+function buildLLMContext() {
+  const st = window.state;
+  if (!st) return '';
+
+  // Wave line
+  const waveLine = st.wave
+    ? `Wave: ${st.wave} · ${st.phase || 'Phase 1 — Discovery'}`
+    : 'No active wave';
+
+  // Gate summary — show first 6 gates with status symbol
+  const gateSymbols = { signed: '✓', current: '⏳', pending: '○', locked: '🔒' };
+  const gateLine = (st.gates || [])
+    .map(g => `G${g.id}:${gateSymbols[g.status] || '?'}`)
+    .join(' ');
+
+  // Provider
+  const provLine = st.provider ? `Provider: ${st.provider}` : '';
+
+  return `[SignalOS] ${waveLine} | Gates: ${gateLine}${provLine ? ' | ' + provLine : ''}\n`;
 }
 
 // ─── ONBOARDING REAL WORKSPACE BROWSE ───────────────────────────────────────
@@ -1823,6 +2159,16 @@ async function init() {
     const entries = await ipc.brain.search('');
     if (entries?.length) window.renderBrainEntries?.(entries);
   } catch {}
+
+  // Worktree sync (T4-4) — load immediately so dashboard card is populated
+  window.loadWorktreeStatus?.();
+
+  // Mentoring engine (T2-2) — update welcome message + hint chips after state is loaded
+  updateMentoringHints();
+
+  // Expose buildLLMContext + updateMentoringHints globally (T2-5 / T2-2)
+  window.buildLLMContext       = buildLLMContext;
+  window.updateMentoringHints  = updateMentoringHints;
 }
 
 // Make state visible so module can read it
