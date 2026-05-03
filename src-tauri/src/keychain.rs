@@ -44,7 +44,7 @@ pub fn delete_api_key(provider: String) -> Result<(), String> {
     validate_provider(&provider)?;
     Entry::new(SERVICE, &provider)
         .map_err(|e| e.to_string())?
-        .delete_credential()
+        .delete_password()
         .map_err(|e| format!("Keychain delete failed ({}): {}", provider, e))
 }
 

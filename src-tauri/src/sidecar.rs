@@ -21,7 +21,7 @@ pub struct SidecarRequest {
 }
 
 /// A response received from the Python sidecar over stdout
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SidecarResponse {
     pub id:      String,
     pub ok:      bool,

@@ -4,10 +4,10 @@
 /// All file writes are validated against the sandbox boundary before execution.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::sidecar::{send_command, SidecarRequest};
 
