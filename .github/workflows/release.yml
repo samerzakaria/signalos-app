@@ -361,4 +361,5 @@ jobs:
           git add distribution/update-manifest/
           git diff --cached --quiet || \
             git commit -m "chore: update manifests to v${{ steps.meta.outputs.version }} [${{ steps.meta.outputs.channel }}]"
-          git push
+          # Tags check out in detached-HEAD state — push explicitly to main
+          git push origin HEAD:main
