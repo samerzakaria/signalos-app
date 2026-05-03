@@ -8,7 +8,7 @@ use signalos_desktop_lib::keychain;
 use signalos_desktop_lib::provider;
 use signalos_desktop_lib::sidecar;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn main() {
     // ── Startup timer (T5-6) ─────────────────────────────────────────────────
