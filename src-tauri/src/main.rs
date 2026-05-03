@@ -16,6 +16,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -188,8 +189,8 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
             "nav-audit"       => { let _ = window.map(|w| w.emit("menu:nav", "audit")); }
             "check-update"    => { let _ = window.map(|w| w.emit("menu:check-update", ())); }
             "open-docs"       => {
-                let _ = tauri_plugin_shell::ShellExt::shell(app_handle)
-                    .open("https://docs.signalos.io", None);
+                use tauri_plugin_opener::OpenerExt;
+                let _ = app_handle.opener().open_url("https://docs.signalos.io", None::<&str>);
             }
             _ => {}
         }
