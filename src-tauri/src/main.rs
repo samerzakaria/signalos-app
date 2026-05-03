@@ -1,11 +1,12 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod governance;
-mod ipc;
-mod keychain;
-mod provider;
-mod sidecar;
+// All modules live in lib.rs — import them from the library crate
+use signalos_desktop_lib::governance;
+use signalos_desktop_lib::ipc;
+use signalos_desktop_lib::keychain;
+use signalos_desktop_lib::provider;
+use signalos_desktop_lib::sidecar;
 
 use tauri::Manager;
 
