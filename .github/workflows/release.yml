@@ -4,11 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+      - 'v*-beta*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Version to release (e.g. 1.0.1)'
         required: true
+      channel:
+        description: 'Release channel (stable | beta)'
+        required: false
+        default: 'stable'
 
 env:
   CARGO_TERM_COLOR: always
@@ -93,6 +98,38 @@ jobs:
             -Password (ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force)
           Remove-Item certificate.pfx
 
+      # ── Determine channel & prerelease flag ──────────────────────────────
+      - name: Set channel
+        id: channel
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          if [[ "$TAG" == *"beta"* ]] || [[ "${{ github.event.inputs.channel }}" == "beta" ]]; then
+            echo "name=beta"    >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "name=stable"  >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Extract release notes from CHANGELOG.md ──────────────────────────
+      - name: Extract release notes
+        id: notes
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          # Pull the block between ## [V] and the next ## heading
+          NOTES=$(awk "/^## \[$V\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          if [ -z "$NOTES" ]; then
+            NOTES="See CHANGELOG.md for release notes."
+          fi
+          # Escape for multiline output
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -108,46 +145,162 @@ jobs:
         with:
           tagName:      ${{ github.ref_name }}
           releaseName:  'SignalOS v__VERSION__'
-          releaseBody:  'See CHANGELOG.md for release notes.'
+          releaseBody:  ${{ steps.notes.outputs.notes }}
           releaseDraft: true
-          prerelease:   false
+          prerelease:   ${{ steps.channel.outputs.prerelease }}
           args:         ${{ matrix.args }}
 
-  # ── Update manifest ───────────────────────────────────────────────────────
+  # ── Update manifests (stable + beta) ─────────────────────────────────────
   publish-manifest:
     name: Publish update manifest
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history to push back
 
-      - name: Extract version
-        id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Write latest.json
+      - name: Extract version + channel
+        id: meta
+        shell: bash
         run: |
-          V="${{ steps.ver.outputs.version }}"
+          TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          V="${TAG#v}"
+          echo "version=$V" >> $GITHUB_OUTPUT
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "date=$DATE"  >> $GITHUB_OUTPUT
+          if [[ "$TAG" == *"beta"* ]]; then
+            echo "channel=beta"   >> $GITHUB_OUTPUT
+          else
+            echo "channel=stable" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Fetch .sig files from the GitHub Release assets ──────────────────
+      - name: Fetch release signatures
+        id: sigs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          TAG="v$V"
+          REPO="${GITHUB_REPOSITORY}"
+          BASE="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+
+          # Download asset list
+          ASSETS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "$BASE/assets" 2>/dev/null || echo "[]")
+
+          fetch_sig() {
+            local pattern="$1"
+            local url
+            url=$(echo "$ASSETS" | python3 -c "
+          import sys, json, re
+          assets = json.load(sys.stdin)
+          for a in assets:
+              if re.search(r'$pattern', a['name']):
+                  print(a['browser_download_url'])
+                  break
+          " 2>/dev/null || true)
+            if [ -n "$url" ]; then
+              curl -s -L -H "Authorization: Bearer $GITHUB_TOKEN" "$url" || echo ""
+            fi
+          }
+
+          SIG_MAC_ARM=$(fetch_sig "aarch64.*\.sig$")
+          SIG_MAC_X64=$(fetch_sig "x64.*\.dmg\.sig$|x86_64.*darwin.*\.sig$")
+          SIG_WIN=$(fetch_sig "x64-setup.*\.sig$|windows.*\.sig$")
+          SIG_LIN=$(fetch_sig "amd64.*\.AppImage\.sig$")
+
+          echo "mac_arm=${SIG_MAC_ARM}"  >> $GITHUB_OUTPUT
+          echo "mac_x64=${SIG_MAC_X64}" >> $GITHUB_OUTPUT
+          echo "win=${SIG_WIN}"         >> $GITHUB_OUTPUT
+          echo "lin=${SIG_LIN}"         >> $GITHUB_OUTPUT
+
+      # ── Extract release notes for manifest ───────────────────────────────
+      - name: Extract notes snippet
+        id: notes
+        shell: bash
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          NOTES=$(awk "/^## \[$V\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
+          NOTES="${NOTES:-SignalOS v$V}"
+          # Compact to one line for JSON
+          NOTES_LINE=$(echo "$NOTES" | head -3 | tr '\n' ' ' | sed 's/["\]/\\&/g')
+          echo "line=$NOTES_LINE" >> $GITHUB_OUTPUT
+
+      # ── Write stable manifest ─────────────────────────────────────────────
+      - name: Write latest.json
+        if: steps.meta.outputs.channel == 'stable'
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          DATE="${{ steps.meta.outputs.date }}"
+          NOTES="${{ steps.notes.outputs.line }}"
           cat > distribution/update-manifest/latest.json << EOF
           {
             "version": "$V",
-            "notes": "SignalOS v$V",
+            "notes":   "$NOTES",
             "pub_date": "$DATE",
             "platforms": {
-              "darwin-aarch64":  { "url": "https://github.com/samerzakaria/signalos-app/releases/download/v$V/SignalOS_${V}_aarch64.dmg",      "signature": "" },
-              "darwin-x86_64":   { "url": "https://github.com/samerzakaria/signalos-app/releases/download/v$V/SignalOS_${V}_x64.dmg",           "signature": "" },
-              "windows-x86_64":  { "url": "https://github.com/samerzakaria/signalos-app/releases/download/v$V/SignalOS_${V}_x64-setup.exe",     "signature": "" },
-              "linux-x86_64":    { "url": "https://github.com/samerzakaria/signalos-app/releases/download/v$V/signalos-app_${V}_amd64.AppImage","signature": "" }
+              "darwin-aarch64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.dmg",
+                "signature": "${{ steps.sigs.outputs.mac_arm }}"
+              },
+              "darwin-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.dmg",
+                "signature": "${{ steps.sigs.outputs.mac_x64 }}"
+              },
+              "windows-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64-setup.exe",
+                "signature": "${{ steps.sigs.outputs.win }}"
+              },
+              "linux-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/signalos-app_${V}_amd64.AppImage",
+                "signature": "${{ steps.sigs.outputs.lin }}"
+              }
             }
           }
           EOF
 
-      - name: Commit manifest
+      # ── Write beta manifest ───────────────────────────────────────────────
+      - name: Write beta.json
+        if: steps.meta.outputs.channel == 'beta'
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          DATE="${{ steps.meta.outputs.date }}"
+          NOTES="${{ steps.notes.outputs.line }}"
+          cat > distribution/update-manifest/beta.json << EOF
+          {
+            "version": "$V",
+            "notes":   "$NOTES",
+            "pub_date": "$DATE",
+            "platforms": {
+              "darwin-aarch64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.dmg",
+                "signature": "${{ steps.sigs.outputs.mac_arm }}"
+              },
+              "darwin-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.dmg",
+                "signature": "${{ steps.sigs.outputs.mac_x64 }}"
+              },
+              "windows-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64-setup.exe",
+                "signature": "${{ steps.sigs.outputs.win }}"
+              },
+              "linux-x86_64": {
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/signalos-app_${V}_amd64.AppImage",
+                "signature": "${{ steps.sigs.outputs.lin }}"
+              }
+            }
+          }
+          EOF
+
+      - name: Commit manifests
         run: |
           git config user.email "actions@github.com"
           git config user.name  "GitHub Actions"
-          git add distribution/update-manifest/latest.json
+          git add distribution/update-manifest/
           git diff --cached --quiet || \
-            git commit -m "chore: update manifest to v${{ steps.ver.outputs.version }}"
+            git commit -m "chore: update manifests to v${{ steps.meta.outputs.version }} [${{ steps.meta.outputs.channel }}]"
           git push

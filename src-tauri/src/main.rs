@@ -51,6 +51,11 @@ fn main() {
             ipc::set_workspace,
             ipc::get_workspace,
             ipc::validate_workspace_write,
+            ipc::get_git_status,               // live branch / worktree info
+            ipc::start_workspace_watch,        // file watcher → workspace:changed events (T1-4)
+
+            // ── Auto-updater (T1-5) ─────────────────────────────────────────
+            ipc::check_for_updates,
 
             // ── Signal commands (→ Python sidecar) ──────────────────────────
             ipc::run_signal_command,

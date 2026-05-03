@@ -21,7 +21,14 @@ export const workspace = {
   set:      (path)         => invoke("set_workspace",           { path }),
   get:      ()             => invoke("get_workspace"),
   validate: (target)       => invoke("validate_workspace_write", { target }),
+  startWatch: ()           => invoke("start_workspace_watch"),
 };
+
+// Listen for workspace file-system change events (T1-4)
+export function onWorkspaceChange(cb) {
+  if (!IS_TAURI) return () => {};
+  return window.__TAURI__.event.listen("workspace:changed", (e) => cb(e.payload));
+}
 
 // ─── SIGNAL COMMANDS ──────────────────────────────────────────────────────────
 
@@ -40,10 +47,22 @@ export function onSidecarLog(cb) {
   return window.__TAURI__.event.listen("sidecar:log", (e) => cb(e.payload));
 }
 
+// ─── AUTO-UPDATER (T1-5) ─────────────────────────────────────────────────────
+
+export const updater = {
+  check: () => invoke("check_for_updates"),
+};
+
 // ─── WAVE STATE ───────────────────────────────────────────────────────────────
 
 export const wave = {
   get: () => invoke("get_wave_state"),
+};
+
+// ─── GIT / WORKTREE ───────────────────────────────────────────────────────────
+
+export const git = {
+  status: () => invoke("get_git_status"),
 };
 
 // ─── GATES ────────────────────────────────────────────────────────────────────
@@ -113,11 +132,21 @@ function mockInvoke(cmd, args) {
         session_usd: 0.42, monthly_usd: 2.18,
         budget_usd: 10.0, provider: "Claude",
       };
-      case "has_api_key": return true;
-      case "get_brain_entries": return [];
-      case "get_audit_trail":   return [];
-      case "get_gate_status":   return null;
-      case "get_wave_state":    return null;
+      case "get_git_status": return {
+        branch: "main", is_clean: true, ahead: 0, behind: 0,
+        last_sync: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+        worktrees: [
+          { path: "/Users/samer/dev/MyProduct",          branch: "main",             head: "70e2fee" },
+          { path: "/Users/samer/dev/MyProduct-feat-auth", branch: "feat/auth-module", head: "3a1bc09" },
+        ],
+      };
+      case "has_api_key":             return true;
+      case "get_brain_entries":       return [];
+      case "get_audit_trail":         return [];
+      case "get_gate_status":         return null;
+      case "get_wave_state":          return null;
+      case "check_for_updates":       return { available: false };
+      case "start_workspace_watch":   return null;
       // Mock model lists for browser dev mode
       case "fetch_provider_models": {
         const p = args.provider;

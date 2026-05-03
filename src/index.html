@@ -906,9 +906,55 @@ a { color: inherit; text-decoration: none; }
 ══════════════════════════════════════════════════════════════════════════ */
 .flex-center { display: flex; align-items: center; justify-content: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+/* ── UPDATE BANNER (T1-5) ──────────────────────────────────────────────── */
+#update-banner {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 9999;
+  background: #1B4FD8;
+  color: #fff;
+  font-size: 13px;
+  padding: 8px 16px;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+}
+#update-banner.visible { display: flex; }
+#update-banner strong { font-weight: 700; }
+#update-banner .update-notes {
+  font-size: 11px;
+  opacity: 0.82;
+  max-width: 480px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#update-banner-dismiss {
+  margin-left: 8px;
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+#update-banner-dismiss:hover { background: rgba(255,255,255,0.35); }
 </style>
 </head>
 <body>
+
+<!-- ─── UPDATE NOTIFICATION BANNER (T1-5) ──────────────────────────────── -->
+<div id="update-banner" role="alert" aria-live="polite">
+  <span>⬆ SignalOS update available:</span>
+  <strong id="update-version"></strong>
+  <span class="update-notes" id="update-notes"></span>
+  <button id="update-banner-dismiss" onclick="document.getElementById('update-banner').classList.remove('visible')">Dismiss</button>
+</div>
 
 <!-- ─── ONBOARDING OVERLAY ─────────────────────────────────────────────── -->
 <div id="onboarding">
@@ -2357,6 +2403,32 @@ async function init() {
 
   // Mentoring engine (T2-2) — update welcome message + hint chips after state is loaded
   updateMentoringHints();
+
+  // Auto-updater (T1-5) — check after 2 s so we don't slow down first paint
+  setTimeout(async () => {
+    try {
+      const upd = await ipc.updater.check();
+      if (upd?.available) {
+        const banner = document.getElementById('update-banner');
+        if (banner) {
+          const vEl = document.getElementById('update-version');
+          const nEl = document.getElementById('update-notes');
+          if (vEl) vEl.textContent = `v${upd.version}`;
+          if (nEl) nEl.textContent = upd.notes || '';
+          banner.classList.add('visible');
+        }
+      }
+    } catch {}
+  }, 2000);
+
+  // File watcher (T1-4) — start watching and refresh dash on change
+  try {
+    await ipc.workspace.startWatch();
+    ipc.onWorkspaceChange(() => {
+      window.loadWorktreeStatus?.();
+      loadPhaseDebt();
+    });
+  } catch {}
 
   // Expose globals
   window.buildLLMContext       = buildLLMContext;

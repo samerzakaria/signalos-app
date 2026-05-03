@@ -186,6 +186,143 @@ pub fn get_cost_summary(state: State<WorkspaceState>) -> Result<String, String> 
     Ok(id)
 }
 
+// ─── GIT / WORKTREE STATUS ───────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct GitWorktree {
+    pub path:   String,
+    pub branch: String,
+    pub head:   String,  // short SHA (7 chars)
+}
+
+#[derive(Serialize)]
+pub struct GitStatus {
+    pub branch:    String,
+    pub is_clean:  bool,
+    pub ahead:     u32,
+    pub behind:    u32,
+    pub worktrees: Vec<GitWorktree>,
+    pub last_sync: String,  // ISO-8601 timestamp of HEAD commit
+}
+
+/// Returns branch, ahead/behind, clean flag, and active worktrees for the workspace.
+#[tauri::command]
+pub fn get_git_status(state: State<WorkspaceState>) -> Result<GitStatus, String> {
+    use std::process::Command;
+
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+
+    let run = |args: &[&str]| -> String {
+        Command::new("git")
+            .args(args)
+            .current_dir(&workspace)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+
+    let branch   = run(&["rev-parse", "--abbrev-ref", "HEAD"]);
+    let is_clean = run(&["status", "--short"]).is_empty();
+
+    // ahead/behind relative to upstream (silently fails if no upstream)
+    let (ahead, behind) = {
+        let s = Command::new("git")
+            .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+            .current_dir(&workspace)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        let parts: Vec<u32> = s.split('\t').filter_map(|x| x.parse().ok()).collect();
+        (parts.first().copied().unwrap_or(0), parts.get(1).copied().unwrap_or(0))
+    };
+
+    // Last commit timestamp
+    let last_sync = run(&["log", "-1", "--format=%cI"]);
+
+    // Worktrees
+    let wt_raw = run(&["worktree", "list", "--porcelain"]);
+    let mut worktrees: Vec<GitWorktree> = Vec::new();
+    let mut cur = GitWorktree { path: String::new(), branch: String::new(), head: String::new() };
+    for line in wt_raw.lines() {
+        if let Some(v) = line.strip_prefix("worktree ") {
+            if !cur.path.is_empty() { worktrees.push(cur.clone()); }
+            cur = GitWorktree { path: v.to_string(), branch: String::new(), head: String::new() };
+        } else if let Some(v) = line.strip_prefix("HEAD ") {
+            cur.head = v.chars().take(7).collect();
+        } else if let Some(v) = line.strip_prefix("branch refs/heads/") {
+            cur.branch = v.to_string();
+        } else if line == "bare" {
+            cur.branch = "(bare)".to_string();
+        }
+    }
+    if !cur.path.is_empty() { worktrees.push(cur); }
+
+    Ok(GitStatus { branch, is_clean, ahead, behind, worktrees, last_sync })
+}
+
+// ─── AUTO-UPDATER (T1-5) ─────────────────────────────────────────────────────
+
+/// Check for a new SignalOS version using the Tauri updater plugin.
+/// Returns { available: bool, version?, notes?, date? }.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(serde_json::json!({
+            "available": true,
+            "version":   update.version,
+            "notes":     update.body.unwrap_or_default(),
+            "date":      update.date.map(|d| d.to_string()).unwrap_or_default(),
+        })),
+        Ok(None) => Ok(serde_json::json!({ "available": false })),
+        Err(e)   => Ok(serde_json::json!({ "available": false, "error": e.to_string() })),
+    }
+}
+
+// ─── FILE WATCHER (T1-4) ─────────────────────────────────────────────────────
+
+/// Start watching the workspace for file-system changes.
+/// Spawns a Tokio task that polls the workspace directory mtime every 2 s
+/// and emits a "workspace:changed" event to the frontend when a change is
+/// detected.  Safe to call multiple times — only one watcher per process.
+#[tauri::command]
+pub async fn start_workspace_watch(app: tauri::AppHandle, state: State<'_, WorkspaceState>) -> Result<(), String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        use std::time::{Duration, SystemTime};
+        use tokio::time::sleep;
+
+        let mut last_mtime: Option<SystemTime> = None;
+        loop {
+            sleep(Duration::from_secs(2)).await;
+            if let Ok(meta) = tokio::fs::metadata(&workspace).await {
+                if let Ok(mtime) = meta.modified() {
+                    if last_mtime.map_or(false, |prev| prev != mtime) {
+                        let _ = app_handle.emit("workspace:changed", workspace.to_string_lossy().to_string());
+                    }
+                    last_mtime = Some(mtime);
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 fn uuid() -> String {
