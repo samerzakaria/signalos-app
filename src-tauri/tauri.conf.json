@@ -41,9 +41,7 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "externalBin": [
-      "bin/signalos-python"
-    ],
+    "externalBin": [],
     "macOS": {
       "minimumSystemVersion": "12.0",
       "dmg": {
@@ -66,12 +64,5 @@
       "appimage": { "bundleMediaFramework": false }
     }
   },
-  "plugins": {
-    "updater": {
-      "pubkey": "",
-      "endpoints": [
-        "https://raw.githubusercontent.com/samerzakaria/signalos-app/main/updater/{{target}}-{{arch}}.json"
-      ]
-    }
-  }
+  "plugins": {}
 }

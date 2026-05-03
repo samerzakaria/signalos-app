@@ -13,6 +13,7 @@ use crate::sidecar::{send_command, SidecarRequest};
 
 // ─── WORKSPACE STATE ────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct WorkspaceState(pub Mutex<Option<PathBuf>>);
 
 /// Set the active workspace root. All agent writes are sandboxed to this path.

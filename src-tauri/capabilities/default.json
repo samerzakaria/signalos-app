@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for SignalOS desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "shell:allow-open",
+    "process:default",
+    "updater:default",
+    "notification:default",
+    "fs:default",
+    "dialog:default"
+  ]
+}

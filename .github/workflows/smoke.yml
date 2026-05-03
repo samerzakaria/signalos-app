@@ -84,6 +84,11 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      # Generate all required icon sizes from the SVG source
+      - name: Generate app icons
+        working-directory: src-tauri
+        run: cargo tauri icon icons/icon.svg
+
       # Build in debug mode (no signing, no bundling) — just verifies compilation
       - name: Cargo check (fast)
         working-directory: src-tauri
