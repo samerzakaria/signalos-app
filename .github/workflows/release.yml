@@ -138,10 +138,12 @@ jobs:
         env:
           TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD:             ${{ secrets.TAURI_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY:         ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_ID:                       ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD:                 ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID:                  ${{ secrets.APPLE_TEAM_ID }}
+          # Apple: only pass signing/notarization vars when a real cert is available.
+          # Without APPLE_CERTIFICATE, we use ad-hoc signing (-) and skip notarization.
+          APPLE_SIGNING_IDENTITY:         ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_ID:                       ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD:                 ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID:                  ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_TEAM_ID || '' }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
 
       # ── Upload artifacts — macOS ──────────────────────────────────────────
