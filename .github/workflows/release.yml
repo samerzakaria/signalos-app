@@ -132,18 +132,40 @@ jobs:
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
+      # ── Set Apple env vars (macOS only) ──────────────────────────────────
+      # Tauri triggers notarization whenever APPLE_ID is present in the
+      # environment — even as an empty string.  So we must NOT set it at all
+      # when no developer certificate is available.  This step writes the vars
+      # into GITHUB_ENV only when APPLE_CERTIFICATE is non-empty.
+      - name: Configure Apple signing env
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        env:
+          _CERT:     ${{ secrets.APPLE_CERTIFICATE }}
+          _IDENT:    ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          _ID:       ${{ secrets.APPLE_ID }}
+          _PASS:     ${{ secrets.APPLE_PASSWORD }}
+          _TEAM:     ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$_CERT" ]; then
+            echo "APPLE_SIGNING_IDENTITY=$_IDENT" >> $GITHUB_ENV
+            echo "APPLE_ID=$_ID"                  >> $GITHUB_ENV
+            echo "APPLE_PASSWORD=$_PASS"          >> $GITHUB_ENV
+            echo "APPLE_TEAM_ID=$_TEAM"           >> $GITHUB_ENV
+          else
+            # Ad-hoc signing only — notarization vars are intentionally absent
+            echo "APPLE_SIGNING_IDENTITY=-"       >> $GITHUB_ENV
+          fi
+
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Build Tauri app
         run: cargo tauri build ${{ matrix.args }}
         env:
           TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD:             ${{ secrets.TAURI_KEY_PASSWORD }}
-          # Apple: only pass signing/notarization vars when a real cert is available.
-          # Without APPLE_CERTIFICATE, we use ad-hoc signing (-) and skip notarization.
-          APPLE_SIGNING_IDENTITY:         ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_ID:                       ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD:                 ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID:                  ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_TEAM_ID || '' }}
+          # Apple vars (APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_TEAM_ID,
+          # APPLE_PASSWORD) are injected by the step above via GITHUB_ENV.
+          # They are NOT set here so that empty-string secrets never reach Tauri.
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
 
       # ── Upload artifacts — macOS ──────────────────────────────────────────
