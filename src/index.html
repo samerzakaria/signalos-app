@@ -1676,6 +1676,7 @@ async function sendMessage() {
   addChatMessage('user', text);
   inp.value = ''; inp.style.height = '';
   showTyping();
+  window._recordChatSend?.(); // latency timer start (T5-6)
 
   // Route /signal-* commands through the real sidecar when in Tauri
   if (text.startsWith('/signal-') && window.SignalOS) {
@@ -2001,6 +2002,8 @@ window.switchView = function(viewId, navEl) {
 import * as ipc from './js/ipc.js';
 window.SignalOS = ipc;
 
+const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
+
 // ─── HELPERS ────────────────────────────────────────────────────────────────
 
 function updateCostDisplay(costData) {
@@ -2301,7 +2304,24 @@ window.obFinish = async function () {
 
 // ─── SIDECAR LISTENERS ──────────────────────────────────────────────────────
 
+// Chat latency tracking (T5-6) — measure time from send → first AI token
+let _chatSentAt = 0;
+const _chatLatencies = [];
+window._recordChatSend = () => { _chatSentAt = performance.now(); };
+
 ipc.onSidecarResponse((resp) => {
+  // Record latency
+  if (_chatSentAt > 0) {
+    const ms = Math.round(performance.now() - _chatSentAt);
+    _chatLatencies.push(ms);
+    _chatSentAt = 0;
+    // Log p95 every 10 responses
+    if (_chatLatencies.length % 10 === 0) {
+      const sorted = [..._chatLatencies].sort((a, b) => a - b);
+      const p95 = sorted[Math.floor(sorted.length * 0.95)];
+      console.debug(`[SignalOS] chat latency p95=${p95}ms (n=${sorted.length})`);
+    }
+  }
   window.hideTyping?.();
   if (resp.output) window.addChatMessage?.('ai', resp.output);
   else if (resp.error) window.addChatMessage?.('ai', `⚠ ${resp.error}`);
@@ -2311,6 +2331,32 @@ ipc.onSidecarResponse((resp) => {
 ipc.onSidecarLog((log) => {
   if (log?.level === 'error') console.error('[sidecar]', log.message);
 });
+
+// ─── NATIVE MENU LISTENERS (T1-1) ────────────────────────────────────────────
+
+if (IS_TAURI) {
+  window.__TAURI__.event.listen('menu:nav', (e) => {
+    const view = e.payload;
+    // Trigger the same nav as clicking a sidebar link
+    document.querySelector(`[data-view="${view}"]`)?.click();
+  });
+  window.__TAURI__.event.listen('menu:open-workspace', () => {
+    window.browseWorkspaceReal?.();
+  });
+  window.__TAURI__.event.listen('menu:export-audit', () => {
+    document.querySelector('[data-view="audit"]')?.click();
+  });
+  window.__TAURI__.event.listen('menu:check-update', async () => {
+    try {
+      const upd = await ipc.updater.check();
+      if (upd?.available) {
+        document.getElementById('update-banner')?.classList.add('visible');
+      } else {
+        window.toast?.('You\'re on the latest version', 'success');
+      }
+    } catch {}
+  });
+}
 
 // ─── STARTUP INIT ───────────────────────────────────────────────────────────
 

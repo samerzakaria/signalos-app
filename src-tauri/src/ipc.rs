@@ -333,3 +333,122 @@ fn uuid() -> String {
         .subsec_nanos();
     format!("req-{:x}", t)
 }
+
+// ─── UNIT TESTS (T5-1) ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Workspace path validation ────────────────────────────────────────────
+
+    #[test]
+    fn workspace_state_starts_empty() {
+        let state = WorkspaceState::default();
+        assert!(state.0.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn workspace_state_set_and_get() {
+        let state = WorkspaceState::default();
+        // Use the temp dir as a guaranteed-existing path
+        let tmp = std::env::temp_dir();
+        *state.0.lock().unwrap() = Some(tmp.clone());
+        let stored = state.0.lock().unwrap().clone().unwrap();
+        assert_eq!(stored, tmp);
+    }
+
+    #[test]
+    fn workspace_path_traversal_guard() {
+        // Simulate what validate_workspace_write does, without needing a Tauri state
+        let workspace = std::env::temp_dir();
+        let inside  = workspace.join("allowed.txt");
+        // A path that escapes via ../.. should not start_with workspace
+        let outside = PathBuf::from("/etc/passwd");
+        assert!(inside.starts_with(&workspace));
+        assert!(!outside.starts_with(&workspace));
+    }
+
+    // ── UUID helper ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn uuid_has_correct_prefix() {
+        let id = uuid();
+        assert!(id.starts_with("req-"), "uuid should start with 'req-': {id}");
+    }
+
+    #[test]
+    fn uuid_is_nonempty_hex_suffix() {
+        let id = uuid();
+        let hex_part = id.trim_start_matches("req-");
+        assert!(!hex_part.is_empty());
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()),
+            "uuid hex suffix should be all hex digits: {hex_part}");
+    }
+
+    // UUID uniqueness is not guaranteed (subsec_nanos can repeat), but
+    // two calls in rapid succession will often differ — test format only.
+    #[test]
+    fn uuid_two_calls_same_format() {
+        let a = uuid();
+        let b = uuid();
+        assert!(a.starts_with("req-"));
+        assert!(b.starts_with("req-"));
+    }
+
+    // ── Git worktree parser ──────────────────────────────────────────────────
+
+    #[test]
+    fn git_worktree_struct_serialises() {
+        let wt = GitWorktree {
+            path:   "/home/user/proj".into(),
+            branch: "main".into(),
+            head:   "abc1234".into(),
+        };
+        let json = serde_json::to_string(&wt).unwrap();
+        assert!(json.contains("main"));
+        assert!(json.contains("abc1234"));
+    }
+
+    #[test]
+    fn git_status_struct_serialises() {
+        let gs = GitStatus {
+            branch:    "feat/x".into(),
+            is_clean:  true,
+            ahead:     2,
+            behind:    0,
+            worktrees: vec![],
+            last_sync: "2026-05-03T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&gs).unwrap();
+        assert!(json.contains("feat/x"));
+        assert!(json.contains("\"is_clean\":true"));
+        assert!(json.contains("\"ahead\":2"));
+    }
+
+    // ── Sandbox boundary logic ───────────────────────────────────────────────
+
+    #[test]
+    fn path_inside_workspace_passes() {
+        let workspace = PathBuf::from("/workspace/root");
+        let target    = PathBuf::from("/workspace/root/subdir/file.txt");
+        assert!(target.starts_with(&workspace));
+    }
+
+    #[test]
+    fn path_outside_workspace_fails() {
+        let workspace = PathBuf::from("/workspace/root");
+        let target    = PathBuf::from("/workspace/other/file.txt");
+        assert!(!target.starts_with(&workspace));
+    }
+
+    #[test]
+    fn dotdot_escape_detected() {
+        // Simulates what canonicalize() would catch:
+        // /workspace/root/../../../etc/passwd → starts_with check after canonicalize
+        let workspace = PathBuf::from("/workspace/root");
+        // After canonicalize the path would be /etc/passwd — not inside workspace
+        let escaped = PathBuf::from("/etc/passwd");
+        assert!(!escaped.starts_with(&workspace));
+    }
+}

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "SignalOS",
         "width": 1200,
         "height": 780,
@@ -20,7 +21,9 @@
         "resizable": true,
         "decorations": true,
         "center": true,
-        "transparent": false
+        "transparent": false,
+        "titleBarStyle": "Visible",
+        "hiddenTitle": false
       }
     ],
     "security": {

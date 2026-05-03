@@ -10,6 +10,9 @@ mod sidecar;
 use tauri::Manager;
 
 fn main() {
+    // ── Startup timer (T5-6) ─────────────────────────────────────────────────
+    let t0 = std::time::Instant::now();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
@@ -38,11 +41,17 @@ fn main() {
                 }
             });
 
+            // ── Native menu (T1-1) ────────────────────────────────────────────
+            build_menu(app)?;
+
             // ── Open devtools in debug builds ─────────────────────────────────
             #[cfg(debug_assertions)]
             if let Some(win) = app.get_webview_window("main") {
                 win.open_devtools();
             }
+
+            // ── Log startup time (T5-6) ───────────────────────────────────────
+            eprintln!("[SignalOS] startup ready in {}ms", t0.elapsed().as_millis());
 
             Ok(())
         })
@@ -93,4 +102,97 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SignalOS");
+}
+
+// ─── NATIVE MENU (T1-1) ──────────────────────────────────────────────────────
+//
+// Builds a minimal OS-native menu with File / Edit / View / Help.
+// Tauri 2 uses the Menu builder API; items emit window events that the
+// frontend can handle via window.__TAURI__.menu (or simply as shortcuts).
+fn build_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let handle = app.handle();
+
+    // ── File ──────────────────────────────────────────────────────────────
+    let file_menu = Submenu::with_items(
+        handle,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(handle, "open-workspace", "Open Workspace…", true, Some("CmdOrCtrl+O"))?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "export-audit",   "Export Audit Trail…", true, None::<&str>)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::quit(handle, None)?,
+        ],
+    )?;
+
+    // ── Edit ──────────────────────────────────────────────────────────────
+    let edit_menu = Submenu::with_items(
+        handle,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(handle, None)?,
+            &PredefinedMenuItem::redo(handle, None)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::cut(handle, None)?,
+            &PredefinedMenuItem::copy(handle, None)?,
+            &PredefinedMenuItem::paste(handle, None)?,
+            &PredefinedMenuItem::select_all(handle, None)?,
+        ],
+    )?;
+
+    // ── View ──────────────────────────────────────────────────────────────
+    let view_menu = Submenu::with_items(
+        handle,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(handle, "nav-chat",      "Chat",       true, Some("CmdOrCtrl+1"))?,
+            &MenuItem::with_id(handle, "nav-dashboard", "Dashboard",  true, Some("CmdOrCtrl+2"))?,
+            &MenuItem::with_id(handle, "nav-brain",     "Brain",      true, Some("CmdOrCtrl+3"))?,
+            &MenuItem::with_id(handle, "nav-audit",     "Audit Trail",true, Some("CmdOrCtrl+4"))?,
+            &PredefinedMenuItem::separator(handle)?,
+            &PredefinedMenuItem::fullscreen(handle, None)?,
+        ],
+    )?;
+
+    // ── Help ──────────────────────────────────────────────────────────────
+    let help_menu = Submenu::with_items(
+        handle,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(handle, "open-docs",    "SignalOS Docs",         true, None::<&str>)?,
+            &MenuItem::with_id(handle, "check-update", "Check for Updates…",    true, None::<&str>)?,
+            &PredefinedMenuItem::separator(handle)?,
+            &MenuItem::with_id(handle, "about",        "About SignalOS",        true, None::<&str>)?,
+        ],
+    )?;
+
+    let menu = Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])?;
+    app.set_menu(menu)?;
+
+    // ── Handle menu events → forward to frontend as JS-visible events ─────
+    app.on_menu_event(|app_handle, event| {
+        let window = app_handle.get_webview_window("main");
+        match event.id().as_ref() {
+            "open-workspace"  => { let _ = window.map(|w| w.emit("menu:open-workspace", ())); }
+            "export-audit"    => { let _ = window.map(|w| w.emit("menu:export-audit", ())); }
+            "nav-chat"        => { let _ = window.map(|w| w.emit("menu:nav", "chat")); }
+            "nav-dashboard"   => { let _ = window.map(|w| w.emit("menu:nav", "dashboard")); }
+            "nav-brain"       => { let _ = window.map(|w| w.emit("menu:nav", "brain")); }
+            "nav-audit"       => { let _ = window.map(|w| w.emit("menu:nav", "audit")); }
+            "check-update"    => { let _ = window.map(|w| w.emit("menu:check-update", ())); }
+            "open-docs"       => {
+                let _ = tauri_plugin_shell::ShellExt::shell(app_handle)
+                    .open("https://docs.signalos.io", None);
+            }
+            _ => {}
+        }
+    });
+
+    Ok(())
 }

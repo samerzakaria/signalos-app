@@ -1,0 +1,112 @@
+name: Smoke
+
+# Runs on every PR to main — verifies the app compiles on all 3 platforms
+# and that Rust unit tests pass.  No signing, no release artifacts.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libsecret-1-dev pkg-config
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Run unit tests
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-threads=4
+
+  smoke-build:
+    name: Smoke build (${{ matrix.platform }})
+    needs: unit-tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm
+            os: macos-latest
+            rust-target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+          - platform: windows
+            os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            args: ''
+          - platform: linux
+            os: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            args: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Install Linux system deps
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libsecret-1-dev pkg-config
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      # Build in debug mode (no signing, no bundling) — just verifies compilation
+      - name: Cargo check (fast)
+        working-directory: src-tauri
+        run: cargo check ${{ matrix.args }}
+
+      # Full debug build — confirms the binary links correctly
+      - name: Build debug binary
+        run: cargo tauri build --debug ${{ matrix.args }}
+
+      - name: Verify binary exists (Linux / macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          BIN=$(find src-tauri/target -name "signalos-desktop" -type f | head -1)
+          if [ -z "$BIN" ]; then
+            echo "ERROR: binary not found"; exit 1
+          fi
+          echo "Binary: $BIN ($(du -sh "$BIN" | cut -f1))"
+
+      - name: Verify binary exists (Windows)
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: |
+          $bin = Get-ChildItem -Recurse src-tauri\target -Filter "signalos-desktop.exe" | Select-Object -First 1
+          if (-not $bin) { Write-Error "Binary not found"; exit 1 }
+          Write-Host "Binary: $($bin.FullName) ($([math]::Round($bin.Length/1MB,1)) MB)"
