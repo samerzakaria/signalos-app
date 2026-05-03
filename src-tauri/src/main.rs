@@ -22,7 +22,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
             // ── Provider config dir (user-editable providers.json lives here) ──
             // e.g. ~/Library/Application Support/io.signalos.app/  (macOS)
             //      %APPDATA%\io.signalos.app\                       (Windows)
