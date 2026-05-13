@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signal-pause step pause control."
+globs:
+alwaysApply: false
+---
+
+# /signal-pause
+
+Follow `core/execution/commands/signal-pause.md`.

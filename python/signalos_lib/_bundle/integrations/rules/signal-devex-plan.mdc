@@ -1,0 +1,20 @@
+---
+description: DevEx planning in EXPANSION/POLISH/TRIAGE modes. AMD-CORE-034 W13.
+globs: [".signalos/devex/**", "cli/signalos_lib/devex.py"]
+alwaysApply: false
+---
+
+# signal-devex-plan
+
+DevEx + Global Retro. No external deps — pure stdlib.
+
+## When to use
+- Plan DevEx work: `signalos signal-devex-plan --mode EXPANSION --wave 13`
+- Record TTHW: `signalos signal-devex TTHW 90.0 --wave 13`
+- Cross-wave retro: `signalos signal-retro-global "auth friction" --wave 13`
+
+## Key behaviours
+- Plans index at `.signalos/devex/plans.jsonl` (append-only)
+- Metrics index at `.signalos/devex/metrics.jsonl` (append-only)
+- retro_global reads brain index directly — no brain module import
+- mode is normalised to uppercase

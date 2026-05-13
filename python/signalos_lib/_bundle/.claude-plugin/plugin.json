@@ -1,0 +1,22 @@
+{
+  "name": "signalos",
+  "version": "2.17.0b3",
+  "description": "SignalOS \u2014 Product Operating System. Governance-first delivery operating system with gated waves, trust tiers, validators, and audit trail.",
+  "author": {
+    "name": "Samer Zakaria",
+    "url": "https://github.com/signalos"
+  },
+  "license": "MIT",
+  "keywords": [
+    "product-management",
+    "governance",
+    "delivery",
+    "operating-system",
+    "trust-tiers",
+    "gates",
+    "validators"
+  ],
+  "skills": "./core/execution/skills/",
+  "commands": "./core/execution/commands/",
+  "hooks": "./integrations/hooks/claude-hooks.json"
+}

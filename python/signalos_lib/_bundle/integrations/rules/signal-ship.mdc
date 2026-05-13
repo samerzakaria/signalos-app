@@ -1,0 +1,59 @@
+---
+description: "Phase 5 ship. Merges, tags, emits CREDITS.md."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-ship — Phase 5: Ship + Listen
+
+Owner: PO. Agent executes deploy sequence. SIGNAL phase.
+
+## Your first action
+Read `core/governance/Governance/SOUL-DOCUMENT.md`. Confirm Quality Check gate passed.
+
+## Ship Guardrails sequence (three linked elements)
+
+### 4a — Smoke Pack
+Run the QA-signed acceptance suite (seeded in Phase 2 Planning):
+- Top-N happy path flows
+- Auth + RBAC checks
+- Payment / write endpoint checks
+- Public landing pages
+- KPI probes
+- Recovery drill (simulate rollback, verify restore)
+
+### 4b — Deploy Health Gate
+After deploy, before Human Gate:
+- Healthy → proceed to Human Gate
+- Fail → trigger Rollback (4c)
+
+### 4c — Rollback edge
+If Deploy Health Gate fails:
+1. Restore last-known-good build from Artifacts Manager
+2. Document incident in `core/governance/Governance/incidents/wave-{N}-incident.md`
+3. Route back to Phase 3 Build for root-cause fix
+4. Incidents feed Debrief retrospective mandatory
+
+## Human Gate — PO confirms ship
+PO reviews Smoke Pack evidence and Deploy Health result.
+PO signs: "I confirm this is ready for real users."
+
+## Signal Window
+Define Signal Window (e.g., 72 hours) and what counts as a result.
+Log to `core/governance/Governance/signal-logs/wave-{N}-signal.md`:
+- Analytics activation: confirm instrumentation fires
+- Silence is a signal — no engagement in 72h is a falsification outcome
+- Only real user behaviour counts. No metric theatre.
+
+## Exit criteria
+
+- [ ] Smoke Pack passed and evidence archived
+- [ ] Deploy Health Gate: Healthy
+- [ ] PO Human Gate signed
+- [ ] Signal Window defined with threshold
+- [ ] Analytics confirmed firing in production
+
+## Next phase
+Run `/signal-observe` to activate the Observability agent during the Signal Window.

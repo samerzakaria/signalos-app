@@ -1,0 +1,124 @@
+[
+  {
+    "name": "memory",
+    "source": "core/execution/skills/memory/SKILL.md",
+    "description": "Cross-session memory retrieval with relevance scoring"
+  },
+  {
+    "name": "brainstorming",
+    "source": "core/execution/skills/brainstorming/SKILL.md",
+    "description": "Structured ideation and divergent-thinking facilitation for Belief and Design phases."
+  },
+  {
+    "name": "design",
+    "source": "core/execution/skills/design/SKILL.md",
+    "description": "Gate 3 design brief facilitation: decision log, option analysis, risk table, and client sign-off checklist."
+  },
+  {
+    "name": "context",
+    "source": "core/execution/skills/context/SKILL.md",
+    "description": "Context budget zone management for long sessions"
+  },
+  {
+    "name": "review",
+    "source": "core/execution/skills/review/SKILL.md",
+    "description": "Stage-1 spec-drift review — compare diff against Belief + Expectation Map + PLAN + Trust Tier, return PASS / BLOCK / FLAG-FOR-HUMAN"
+  },
+  {
+    "name": "existing-product-kit",
+    "source": "core/execution/skills/existing-product-kit/SKILL.md",
+    "description": "Onboarding orchestrator invoked by /signal-onboard: stakeholder-interview -> product-surface-mapping -> belief-seed-generation -> six first-run artifacts"
+  },
+  {
+    "name": "stakeholder-interview",
+    "source": "core/execution/skills/stakeholder-interview/SKILL.md",
+    "description": "Structured interview script for onboarding Discovery Briefs — verbatim capture, 9-question sequence"
+  },
+  {
+    "name": "product-surface-mapping",
+    "source": "core/execution/skills/product-surface-mapping/SKILL.md",
+    "description": "Surface inventory and Trust Tier classifier for onboarding — emits SURFACE_INVENTORY.md and PERMANENTLY_T3.md"
+  },
+  {
+    "name": "belief-seed-generation",
+    "source": "core/execution/skills/belief-seed-generation/SKILL.md",
+    "description": "Seed Belief generator — derives the first 2-week falsifiable Belief from Surface Inventory + Discovery Briefs"
+  },
+  {
+    "name": "session-journal",
+    "source": "core/execution/skills/session-journal/SKILL.md",
+    "description": "Session journal model: the .signalos/sessions/<id>/journal.jsonl append-only surface, the 10 canonical event types, the redaction contract, and how to resume a session.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001"
+  },
+  {
+    "name": "observability-dashboard",
+    "source": "core/execution/skills/observability-dashboard/SKILL.md",
+    "description": "Static HTML observability dashboard over metrics.jsonl — reading, refreshing, and extending it without introducing Node or a build pipeline.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-003"
+  },
+  {
+    "name": "headless-execution",
+    "source": "core/execution/skills/headless-execution/SKILL.md",
+    "description": "When to pick the harness (CI, batch, no editor attached) vs. an editor emitter, and how to wire a step for headless-safe execution.",
+    "wave": "W1.2",
+    "amendment": "AMD-CORE-004"
+  },
+  {
+    "name": "dispatching-parallel-agents",
+    "source": "core/execution/subagents/dispatching-parallel-agents/SKILL.md",
+    "description": "How to fan out multiple parallel subagent calls, collect results, and reconcile into a single coherent output without race conditions.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "subagent-driven-development",
+    "source": "core/execution/subagents/subagent-driven-development/SKILL.md",
+    "description": "Architecture pattern for driving a full development cycle (plan -> implement -> review -> merge) via coordinated subagents, each owning a discrete task.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "compress-context",
+    "source": "core/execution/skills/compress-context/SKILL.md",
+    "description": "Rule-based 4-layer context compressor: verbatim / summary / headline / discard. Disk-truth is never compressed.",
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-005"
+  },
+  {
+    "name": "plugin-registry",
+    "source": "core/execution/skills/plugin-registry/SKILL.md",
+    "description": "cosign-signed tarball registry: install / verify / publish / uninstall. Plugins default to T3.",
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-006"
+  },
+  {
+    "name": "parallel-orchestration",
+    "source": "core/execution/skills/parallel-orchestration/SKILL.md",
+    "description": "Parallel wave orchestration via git worktrees: how to create, dispatch, reconcile, and retire concurrent task branches using signalos orchestrate.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "intent-router",
+    "source": "core/execution/skills/intent-router/SKILL.md",
+    "description": "Natural language intent routing — maps free-form phrases to signalos commands with confidence scoring. No LLM call on the routing path.",
+    "wave": "W3.3",
+    "amendment": "AMD-CORE-016"
+  },
+  {
+    "name": "task-schema",
+    "source": "core/execution/skills/task-schema/SKILL.md",
+    "description": "Machine-readable task schema for PLAN.tasks.yaml — ULID IDs, depends_on, tier, status, render/validate/list CLI commands.",
+    "wave": "W3.4",
+    "amendment": "AMD-CORE-017"
+  },
+  {
+    "name": "operator-tooling",
+    "source": "core/execution/skills/operator-tooling/SKILL.md",
+    "description": "Operator tooling: health check, runtime diagnostics, validator suite, hook lifecycle, and checkpoint recovery commands.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  }
+]

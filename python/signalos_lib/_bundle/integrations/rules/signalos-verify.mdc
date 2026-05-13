@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-verify signature revalidation."
+globs:
+alwaysApply: false
+---
+
+# /signalos-verify
+
+Follow `core/execution/commands/signalos-verify.md`.

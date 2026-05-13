@@ -1,0 +1,13 @@
+---
+description: Use signalos diagnose to collect runtime snapshots for debugging or audit review.
+globs: ["core/execution/**", "cli/signalos_lib/diagnose.py"]
+alwaysApply: false
+---
+
+# diagnose wiring rule
+
+`signalos diagnose` produces a JSON snapshot suitable for incident review.
+
+- Run `signalos diagnose --wave W3.5` to scope audit trail to a specific wave.
+- Pipe to `--output diagnose.json` for file-based review.
+- Snapshot includes gate signing status; use to verify G-sequence before closing waves.

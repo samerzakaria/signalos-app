@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-install plugin installation."
+globs:
+alwaysApply: false
+---
+
+# /signalos-install
+
+Follow `core/execution/commands/signalos-install.md`.

@@ -11,6 +11,9 @@
 
 # Binary files — no line ending conversion
 *.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
 *.ico  binary
 *.icns binary
 *.dmg  binary

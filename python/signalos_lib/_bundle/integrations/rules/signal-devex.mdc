@@ -1,0 +1,18 @@
+---
+description: Record DevEx metrics (TTHW and custom). AMD-CORE-034 W13.
+globs: [".signalos/devex/metrics.jsonl", "cli/signalos_lib/devex.py"]
+alwaysApply: false
+---
+
+# signal-devex
+
+Record developer experience metrics. No external deps — pure stdlib.
+
+## When to use
+- Record a TTHW measurement: `signalos signal-devex TTHW 90.0 --wave 13`
+- Record custom metric: `signalos signal-devex MY_METRIC 45.0 --wave 13 --note "after refactor"`
+
+## Key behaviours
+- Metrics stored at `.signalos/devex/metrics.jsonl` (append-only)
+- Sequential IDs: `dxm-001`, `dxm-002`, ...
+- value_seconds is a float — supports sub-second precision

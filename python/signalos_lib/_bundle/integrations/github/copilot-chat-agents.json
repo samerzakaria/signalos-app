@@ -1,0 +1,52 @@
+[
+  {
+    "name": "signal-onboard",
+    "description": "Phase -1 onboarding. Runs once per product. Gathers Product DNA.",
+    "prompt": "You are running the SignalOS /signal-onboard command. Follow the instructions in core/execution/commands/signal-onboard.md exactly. This command is the first phase for a new product joining SignalOS. You will activate the Onboarding agent, guide PO review, and exit only when all seven exit criteria are met."
+  },
+  {
+    "name": "signal-init",
+    "description": "Phase 0 initialization. Creates repo scaffold, CONSTITUTION.md, agent roster.",
+    "prompt": "You are running the SignalOS /signal-init command. Follow the instructions in core/execution/commands/signal-init.md exactly. This command initializes the repository structure, confirms the product Constitution, seeds the Prompt Library, and establishes git worktree conventions."
+  },
+  {
+    "name": "signal-pre-wave",
+    "description": "Phase 1 pre-wave. Signs BELIEF.md, locks Expectation Map.",
+    "prompt": "You are running the SignalOS /signal-pre-wave command. Follow the instructions in core/execution/commands/signal-pre-wave.md exactly. Declare the Scale Track, harvest DEFER comments, state the Belief, and lock the Expectation Map before proceeding to planning."
+  },
+  {
+    "name": "signal-plan",
+    "description": "Phase 2 planning. Produces PLAN.md with tasks, gates, metrics.",
+    "prompt": "You are running the SignalOS /signal-plan command. Follow the instructions in core/execution/commands/signal-plan.md exactly. Run the Principal Engineer, DBA, and Security in parallel to synthesize the plan. Produce PLAN.md and acceptance criteria with all six exit criteria satisfied."
+  },
+  {
+    "name": "signal-build",
+    "description": "Phase 3 build. Runs Build×N parallel agents, tracks progress.",
+    "prompt": "You are running the SignalOS /signal-build command. Follow the instructions in core/execution/commands/signal-build.md exactly. Execute TDD loops per ticket, enforce the pre-commit hook, run memory searches before each task, and pass the Integration Checkpoint before review."
+  },
+  {
+    "name": "signal-review",
+    "description": "Phase 4 review. Runs validators, generates QA evidence pack.",
+    "prompt": "You are running the SignalOS /signal-review command. Follow the instructions in core/execution/commands/signal-review.md exactly. Run two-stage review (AI code review + human senior review), verify all acceptance criteria with evidence, and generate the QA evidence pack."
+  },
+  {
+    "name": "signal-ship",
+    "description": "Phase 5 ship. Merges, tags, emits CREDITS.md.",
+    "prompt": "You are running the SignalOS /signal-ship command. Follow the instructions in core/execution/commands/signal-ship.md exactly. Execute the Ship Guardrails sequence (Smoke Pack → Deploy Health Gate → Rollback edge), obtain PO Human Gate sign-off, and define the Signal Window."
+  },
+  {
+    "name": "signal-wave-review",
+    "description": "Phase 6 wave review. Compares actuals vs Expectation Map.",
+    "prompt": "You are running the SignalOS /signal-wave-review command. Follow the instructions in core/execution/commands/signal-wave-review.md exactly. Present results to the client, classify reactions, run CR Classifier for change requests, and log all feedback in CLIENT-SIGNAL-LOG.md."
+  },
+  {
+    "name": "signal-debrief",
+    "description": "Phase 7 retrospective. Captures wins, misses, belief updates.",
+    "prompt": "You are running the SignalOS /signal-debrief command. Follow the instructions in core/execution/commands/signal-debrief.md exactly. Create the Debrief document with all mandatory fields, harvest Gotchas, update Constitution if needed, and seed the next Belief before incrementing the Wave number."
+  },
+  {
+    "name": "signal-observe",
+    "description": "Phase 5b observe. Post-release signal monitoring, live metrics, SLO tracking.",
+    "prompt": "You are running the SignalOS /signal-observe command. Follow the instructions in core/execution/commands/signal-observe.md exactly. Monitor the Signal Window, collect live metrics against the Belief's declared signal, enforce SLO gates, and produce the evidence pack for the upcoming debrief."
+  }
+]

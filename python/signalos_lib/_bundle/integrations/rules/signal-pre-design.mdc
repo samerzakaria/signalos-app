@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signal-pre-design."
+globs:
+alwaysApply: false
+---
+
+# /signal-pre-design
+
+Follow `core/execution/commands/signal-pre-design.md`.

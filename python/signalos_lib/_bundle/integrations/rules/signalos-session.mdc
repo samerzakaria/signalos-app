@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-session journal inspection and archive."
+globs:
+alwaysApply: false
+---
+
+# /signalos-session
+
+Follow `core/execution/commands/signalos-session.md`.

@@ -1,5 +1,4 @@
 param(
-  [string]$CorePath = "..\SignalOS-Core-v1.0.3",
   [string]$Python = "python"
 )
 
@@ -14,7 +13,11 @@ function Resolve-HostTriple {
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-$coreFullPath = Resolve-Path -Path (Join-Path $root $CorePath)
+$vendoredCorePath = Join-Path $root "python\signalos_lib"
+if (-not (Test-Path $vendoredCorePath)) {
+  throw "Vendored signalos_lib is missing at $vendoredCorePath"
+}
+
 $targetTriple = Resolve-HostTriple
 $isWindows = $env:OS -eq "Windows_NT"
 $binaryName = "signalos-python-$targetTriple"
@@ -37,9 +40,11 @@ $venvPython = if ($isWindows) {
 }
 
 & $venvPython -m pip install --upgrade pip wheel pyinstaller
-& $venvPython -m pip install $coreFullPath
+& $venvPython -m pip install "anthropic>=0.39,<1.0" "pyyaml>=6.0,<7"
 
 $entry = Join-Path $root "python\signalos_ipc_server.py"
+$pythonPath = Join-Path $root "python"
+$dataSpec = "$vendoredCorePath;signalos_lib"
 
 & $venvPython -m PyInstaller `
   --onefile `
@@ -49,7 +54,11 @@ $entry = Join-Path $root "python\signalos_ipc_server.py"
   --specpath $specDir `
   --clean `
   --noconfirm `
-  --collect-all signalos_lib `
+  --paths $pythonPath `
+  --add-data $dataSpec `
+  --hidden-import signalos_lib.cli `
+  --hidden-import anthropic `
+  --hidden-import yaml `
   $entry
 
 $built = Join-Path $outDir $expectedFile

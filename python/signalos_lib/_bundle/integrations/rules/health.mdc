@@ -1,0 +1,18 @@
+---
+description: Use signalos health to check system health before starting waves or after daemon restarts.
+globs: ["core/execution/**", "cli/signalos_lib/health.py"]
+alwaysApply: false
+---
+
+# health wiring rule
+
+`signalos health` runs 5 structural checks and exits 0/1/2.
+
+- Exit 0 = all OK — safe to proceed.
+- Exit 1 = degraded — proceed with caution; log the degraded items.
+- Exit 2 = down — block wave start until resolved.
+
+**Integration points**
+- Call before `signalos orchestrate` in CI to gate on health.
+- Call after `signalos daemon start` to confirm daemon heartbeat.
+- Pipe `--json` output to monitoring systems for alerting.

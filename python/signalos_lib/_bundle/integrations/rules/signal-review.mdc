@@ -1,0 +1,55 @@
+---
+description: "Phase 4 review. Runs validators, generates QA evidence pack."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-review — Phase 4: Code Review
+
+Owner: PO. Agent executes review; PO signs gate.
+
+## Your first action
+Read `core/execution/Plans/wave-{N}-plan.md` and `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+Confirm Integration Checkpoint passed.
+
+## Two-stage review
+
+**Stage A — AI code review**
+- Pass 1: Spec compliance — does implementation match PLAN.md?
+- Pass 2: Quality — readability, test coverage, security surface
+- Apply declared Trust Tier (T1 Proceed / T2 Propose / T3 Suggest) from Decision DNA
+
+**Stage B — PO review**
+PO reviews the agent's review report, not just the code. Spot what the agent missed.
+
+## Acceptance criteria verification
+Open `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+For each criterion: mark ✅ PASS or ❌ FAIL with evidence.
+Critical failures block merge. Minor findings → add to backlog as `status: raw`.
+
+## QC pass
+- Evidence pack: test results, coverage report, security scan output
+- All findings captured in `core/governance/Governance/DECISION-DNA.md`
+
+## Exit criteria
+
+- [ ] No critical findings remain
+- [ ] All acceptance criteria verified with evidence
+- [ ] Review notes captured in Decision DNA
+- [ ] Ready to ship to real users — not merely staging
+
+## Gate 5: Quality Check
+Merge is blocked on any critical finding.
+
+## Mandatory pre-ship gate: /signal-qa
+Before routing to `/signal-ship`, `/signal-qa` must complete and pass. This is not optional:
+- Run `/signal-qa` against the full acceptance criteria document.
+- Every criterion must be marked ✅ PASS with evidence. ❌ FAIL on any criterion blocks ship.
+- `/signal-qa` output must be included in the evidence pack that PO signs at Gate 5.
+
+An agent that reads this file and routes to `/signal-ship` without running `/signal-qa` is in protocol violation.
+
+## Next phase
+Run `/signal-ship` only after Gate 5 is signed and `/signal-qa` has passed.

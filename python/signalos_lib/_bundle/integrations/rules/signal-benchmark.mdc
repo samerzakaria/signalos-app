@@ -1,0 +1,17 @@
+---
+description: Record Core Web Vitals benchmark. AMD-CORE-033 W12.
+globs: [".signalos/deploy/**", "cli/signalos_lib/deploy.py"]
+alwaysApply: false
+---
+
+# signal-benchmark
+
+Core Web Vitals recorder. See signal-setup-deploy.mdc for full lifecycle.
+
+## When to use
+- After a deploy: `signalos signal-benchmark https://myapp.com --wave 12 --lcp 1200 --inp 150 --cls 0.05 --ttfb 300 --weight 450`
+
+## Key behaviours
+- Benchmark index at `.signalos/deploy/benchmarks.jsonl` (append-only)
+- IDs are sequential: bench-001, bench-002, ...
+- Tracks LCP, INP, CLS, TTFB, and page weight_kb

@@ -1,0 +1,17 @@
+---
+description: Guard check — exit 1 if directory is frozen, exit 0 if clear. AMD-CORE-035 W14.
+globs: [".signalos/safety/freeze/**"]
+alwaysApply: false
+---
+
+# signal-guard
+
+Gate that blocks operations when a directory is frozen.
+
+## Usage
+`signalos signal-guard <target> [--json]`
+
+## Key behaviours
+- Exit code 0: directory is clear, safe to proceed
+- Exit code 1: directory is frozen, operation should be blocked
+- Use in CI pipelines before any write to a guarded directory

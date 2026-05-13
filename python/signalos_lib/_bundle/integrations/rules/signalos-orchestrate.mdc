@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-orchestrate parallel Wave orchestration."
+globs:
+alwaysApply: false
+---
+
+# /signalos-orchestrate
+
+Follow `core/execution/commands/signalos-orchestrate.md`.

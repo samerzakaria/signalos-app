@@ -1,0 +1,48 @@
+---
+description: "Machine-readable task schema commands: render PLAN.md, validate PLAN.tasks.yaml, list tasks (W3.4, AMD-CORE-017)."
+globs:
+alwaysApply: false
+---
+
+<!-- Concept adapted from a5c-ai/babysitter (MIT). No source code copied. -->
+<!-- SignalOS Core v1.0.3 — plan-schema rule (AMD-CORE-017). -->
+
+# /plan — Machine-Readable Task Schema
+
+Owner: PO. Agent executes. Authoritative task list is `PLAN.tasks.yaml`; `PLAN.md` is generated from it.
+
+## Purpose
+
+Manages `PLAN.tasks.yaml` — a ULID-keyed, dependency-aware, typed task list that is
+the orchestrator's authoritative source. `PLAN.md` is a *rendered view* only and
+must not be edited directly.
+
+## Usage
+
+```
+signalos plan render [--input <path>] [--output <path>]
+signalos plan validate [--input <path>] [--json]
+signalos plan list [--input <path>] [--status <status>] [--json]
+```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| `render` | Generate `PLAN.md` from `PLAN.tasks.yaml` |
+| `validate` | Check `PLAN.tasks.yaml` against the JSON Schema and dependency graph |
+| `list` | Print tasks, optionally filtered by status |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success / valid |
+| 1 | Validation errors found |
+| 2 | File not found / usage error |
+
+## Implementation
+
+`cli/signalos_lib/plan.py` — `Task`, `PlanDoc`, `load_tasks`, `validate_tasks`, `render_plan_md`, `dump_tasks`, `make_ulid`.
+`cli/signalos_lib/commands/plan.py` — CLI entry point.
+`core/execution/skills/task-schema/SKILL.md` — agent skill guide.

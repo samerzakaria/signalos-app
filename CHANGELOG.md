@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.6] - 2026-05-14
+
+### Standalone app repo
+
+- Vendored the SignalOS Core runtime into the desktop app repository so release builds no longer depend on checking out a separate private repository.
+- Updated CI sidecar bundling to build from the app repo only.
+- Switched the desktop version to numeric `0.0.6` so Windows MSI can build while GitHub still marks the release as a beta/prerelease.
+- Kept the safe chat attachment work from beta5.
+
 ## [1.0.0-beta5] - 2026-05-13
 
 ### Chat attachments and release fix

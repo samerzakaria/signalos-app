@@ -1,0 +1,9 @@
+---
+description: "Command rule for /context-expand scope expansion."
+globs:
+alwaysApply: false
+---
+
+# /context-expand
+
+Follow `core/execution/commands/context-expand.md`.

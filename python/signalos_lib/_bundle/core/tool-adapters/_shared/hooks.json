@@ -1,0 +1,130 @@
+[
+  {
+    "name": "pre-commit",
+    "event": "pre-commit",
+    "source": "core/execution/hooks/pre-commit",
+    "status": "implemented",
+    "validators": [
+      "trust-tier-surface-check",
+      "self-review-freshness",
+      "no-commit-without-tests",
+      "no-direct-commits-to-main"
+    ],
+    "description": "Anti-shortcut enforcement: TDD gate, branch protection, commit message format"
+  },
+  {
+    "name": "pre-merge",
+    "event": "pre-merge",
+    "source": "core/execution/hooks/pre-merge",
+    "status": "implemented",
+    "validators": [
+      "gate-5-signature",
+      "worktree-sync-complete",
+      "pe-merge-signer-recorded"
+    ],
+    "description": "Gate-5 signature validation, Worktree-Sync reconciliation, records PE signer for SoD"
+  },
+  {
+    "name": "pre-deploy",
+    "event": "pre-deploy",
+    "source": "core/execution/hooks/pre-deploy",
+    "status": "implemented",
+    "validators": [
+      "sod-check",
+      "devops-signer-set",
+      "trust-tier-veto-resolved"
+    ],
+    "description": "Segregation of Duties: merge signer not equal to deploy signer; DevOps veto resolution"
+  },
+  {
+    "name": "post-retro",
+    "event": "post-retro",
+    "source": "core/execution/hooks/post-retro",
+    "status": "implemented",
+    "validators": [
+      "constitution-delta-present",
+      "po-pe-cosign",
+      "constitution-hash-record"
+    ],
+    "description": "Verify Constitution delta and PO/PE co-sign; record Constitution hash on ratified amendments"
+  },
+  {
+    "name": "session-start",
+    "event": "session-start",
+    "source": "core/execution/hooks/session-start",
+    "status": "implemented",
+    "validators": [
+      "gate-sequence-valid",
+      "unowned-agent-check",
+      "constitution-hash-check",
+      "scale-track-validator",
+      "delivery-mode-validator"
+    ],
+    "description": "Session init: Gate 0 check, gate sequence, Constitution hash, Scale Track and Delivery Mode fail-hard defaults"
+  },
+  {
+    "name": "step-started",
+    "event": "step-started",
+    "source": "core/execution/hooks/step-started",
+    "status": "planned-w1.1",
+    "validators": [
+      "journal-append-step-started",
+      "step-pause-check",
+      "metrics-step-open"
+    ],
+    "description": "Emitted before a PLAN step executes. Writes a step.started event to the session journal, honours opt-in step-pause (AMD-CORE-002), and opens a metrics timer.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001,AMD-CORE-002,AMD-CORE-003"
+  },
+  {
+    "name": "step-completed",
+    "event": "step-completed",
+    "source": "core/execution/hooks/step-completed",
+    "status": "planned-w1.1",
+    "validators": [
+      "journal-append-step-completed",
+      "metrics-step-close"
+    ],
+    "description": "Emitted after a PLAN step finishes successfully. Closes the metrics timer and writes a step.completed event.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001,AMD-CORE-003"
+  },
+  {
+    "name": "step-failed",
+    "event": "step-failed",
+    "source": "core/execution/hooks/step-failed",
+    "status": "planned-w1.1",
+    "validators": [
+      "journal-append-step-failed",
+      "metrics-step-close",
+      "failure-reason-required"
+    ],
+    "description": "Emitted when a PLAN step exits non-zero. Requires a failure reason and preserves the exit code in the journal event.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001,AMD-CORE-003"
+  },
+  {
+    "name": "pre-session-compress",
+    "event": "pre-session-compress",
+    "source": "core/execution/hooks/pre-session-compress",
+    "status": "planned-w1.1",
+    "validators": [
+      "disk-truth-unchanged",
+      "compressed-window-only-in-memory"
+    ],
+    "description": "Guard: enforces that session compression only touches the in-memory editor context, never journal.jsonl or metrics.jsonl or AUDIT_TRAIL.jsonl. Refuses to run if any disk-truth file is under the compressor input path.",
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001"
+  },
+  {
+    "name": "pre-tool-use-guard",
+    "event": "pre-tool-use-guard",
+    "source": "core/execution/hooks/pre-tool-use-guard.sh",
+    "status": "implemented",
+    "validators": [
+      "t3-surface-check",
+      "secret-scan-diff"
+    ],
+    "description": "Agent write guard: blocks T3 surface writes and secret patterns in write content; writes AUDIT_TRAIL.jsonl on block"
+  }
+]

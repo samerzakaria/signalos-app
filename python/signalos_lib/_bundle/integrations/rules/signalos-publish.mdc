@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-publish plugin packaging and signing."
+globs:
+alwaysApply: false
+---
+
+# /signalos-publish
+
+Follow `core/execution/commands/signalos-publish.md`.

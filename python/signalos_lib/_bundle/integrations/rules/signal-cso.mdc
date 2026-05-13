@@ -1,0 +1,21 @@
+---
+description: Security Chief Officer — OWASP+STRIDE threat model, canary tokens, injection scan. AMD-CORE-031 W10.
+globs: [".signalos/security/**", "cli/signalos_lib/security.py"]
+alwaysApply: false
+---
+
+# signal-cso
+
+Security Sprint. No external deps — pure stdlib.
+
+## When to use
+- Before a security review gate: `signalos signal-cso scan api --wave 10`
+- Deploy canary to detect file tampering: `signalos signal-cso canary plant --label deploy`
+- Check canary at boot: `signalos signal-cso canary check --label deploy`
+- Scan for injection risks: `signalos signal-cso inject-scan cli/signalos_lib/harness.py`
+
+## Key behaviours
+- Threat index at `.signalos/security/threats.jsonl` (append-only)
+- 9 threats generated per scan: 6 STRIDE + 3 OWASP
+- Canary tokens are UUID v4 — unguessable
+- Injection scanner is regex-based, no AST parsing

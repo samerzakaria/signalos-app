@@ -1,0 +1,9 @@
+---
+description: "Command rule for /harness-call headless step execution."
+globs:
+alwaysApply: false
+---
+
+# /harness-call
+
+Follow `core/execution/commands/harness-call.md`.

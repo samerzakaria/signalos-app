@@ -1,0 +1,19 @@
+---
+description: Independent cross-model second-opinion review. AMD-CORE-036 W15.
+globs: [".signalos/second-opinion/index.jsonl", "cli/signalos_lib/second_opinion.py"]
+alwaysApply: false
+---
+
+# signal-second-opinion
+
+Cross-model second-opinion reviews. No external deps — pure stdlib.
+
+## When to use
+- Request a review: `signalos signal-second-opinion "Plan: X" --wave 15`
+- Record verdict: `signalos signal-second-opinion-record so-001 --verdict disagree --new-risk "Y"`
+
+## Key behaviours
+- Reviews stored at `.signalos/second-opinion/index.jsonl` (append-only)
+- Sequential IDs: `so-001`, `so-002`, ...
+- Reviewer must use a fresh system prompt — no prior session context
+- Disagree/risk-identified verdicts should be recorded in DECISION-DNA

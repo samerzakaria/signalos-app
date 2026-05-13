@@ -48,13 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Checkout SignalOS Core
-        uses: actions/checkout@v5
-        with:
-          repository: samerzakaria/SignalOS
-          path: SignalOS-Core-v1.0.3
-          token: ${{ secrets.CORE_REPO_TOKEN || github.token }}
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -83,12 +76,12 @@ jobs:
       - name: Bundle Python sidecar (Windows)
         if: matrix.platform == 'windows'
         shell: powershell
-        run: .\scripts\bundle-sidecar.ps1 -CorePath "SignalOS-Core-v1.0.3" -Python "python"
+        run: .\scripts\bundle-sidecar.ps1 -Python "python"
 
       - name: Bundle Python sidecar (macOS/Linux)
         if: matrix.platform != 'windows'
         shell: bash
-        run: bash ./scripts/bundle-sidecar.sh SignalOS-Core-v1.0.3
+        run: bash ./scripts/bundle-sidecar.sh
 
       # ── macOS signing (no-op when APPLE_CERTIFICATE secret is not set) ────
       - name: Import Apple certificate
@@ -127,7 +120,7 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME:-v0.0.0}"
-          if [[ "$TAG" == *"beta"* ]] || [[ "${{ github.event.inputs.channel }}" == "beta" ]]; then
+          if [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == v0.* ]] || [[ "${{ github.event.inputs.channel }}" == "beta" ]]; then
             echo "prerelease=true"  >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
@@ -184,6 +177,28 @@ jobs:
           # APPLE_PASSWORD) are injected by the step above via GITHUB_ENV.
           # They are NOT set here so that empty-string secrets never reach Tauri.
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+
+      - name: Normalize Windows beta asset names
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $assets = @(
+            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe"; Name = "SignalOS_${version}_x64-setup.exe" },
+            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe.sig"; Name = "SignalOS_${version}_x64-setup.exe.sig" },
+            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "SignalOS_*_x64_en-US.msi"; Name = "SignalOS_${version}_x64_en-US.msi" },
+            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "SignalOS_*_x64_en-US.msi.sig"; Name = "SignalOS_${version}_x64_en-US.msi.sig" }
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path $asset.Dir)) { continue }
+            $file = Get-ChildItem -LiteralPath $asset.Dir -Filter $asset.Pattern | Select-Object -First 1
+            if (-not $file) { continue }
+            $target = Join-Path $asset.Dir $asset.Name
+            $targetPath = [IO.Path]::GetFullPath($target)
+            if ($file.FullName -ne $targetPath) {
+              Move-Item -LiteralPath $file.FullName -Destination $target -Force
+            }
+          }
 
       # ── Upload artifacts — macOS ──────────────────────────────────────────
       - name: Upload release assets (macOS)
@@ -246,7 +261,7 @@ jobs:
           echo "version=$V" >> $GITHUB_OUTPUT
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "date=$DATE"  >> $GITHUB_OUTPUT
-          if [[ "$TAG" == *"beta"* ]]; then
+          if [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == v0.* ]]; then
             echo "channel=beta"   >> $GITHUB_OUTPUT
           else
             echo "channel=stable" >> $GITHUB_OUTPUT

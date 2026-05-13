@@ -1,0 +1,371 @@
+[
+  {
+    "name": "signal-onboard",
+    "source": "core/execution/commands/signal-onboard.md",
+    "phase": "onboarding",
+    "description": "One-time per product: run the Onboarding agent (Team Charter \u00a71) to emit Soul Document, product-Constitution draft, Surface Inventory, permanently-T3 list, and seed Belief"
+  },
+  {
+    "name": "signal-init",
+    "source": "core/execution/commands/signal-init.md",
+    "phase": "pre-wave",
+    "description": "Bootstrap a new product repo with SignalOS governance files"
+  },
+  {
+    "name": "signal-pre-wave",
+    "source": "core/execution/commands/signal-pre-wave.md",
+    "phase": "pre-wave",
+    "description": "Run the pre-wave ceremony: Belief draft, Expectation Map, Plan"
+  },
+  {
+    "name": "signal-plan",
+    "source": "core/execution/commands/signal-plan.md",
+    "phase": "plan",
+    "description": "Activate the Plan agent to produce PLAN.md + failing tests from a signed Expectation Map"
+  },
+  {
+    "name": "signal-build",
+    "source": "core/execution/commands/signal-build.md",
+    "phase": "build",
+    "description": "Activate Build subagents on declared tasks with Trust Tier enforcement"
+  },
+  {
+    "name": "signal-review",
+    "source": "core/execution/commands/signal-review.md",
+    "phase": "review",
+    "description": "Run Stage-1 automated review, then Stage-2 manual QA"
+  },
+  {
+    "name": "signal-ship",
+    "source": "core/execution/commands/signal-ship.md",
+    "phase": "ship",
+    "description": "Execute merge (PE) then hand off to DevOps for deploy, with SoD enforcement"
+  },
+  {
+    "name": "signal-observe",
+    "source": "core/execution/commands/signal-observe.md",
+    "phase": "observe",
+    "description": "Post-release signal monitoring \u2014 load belief context, read live metrics, check staleness, compare actual vs target, write observation evidence, route to debrief"
+  },
+  {
+    "name": "signal-debrief",
+    "source": "core/execution/commands/signal-debrief.md",
+    "phase": "retro",
+    "description": "Run Phase-8: reconcile, retro, retrospective-analyze, Constitution-delta"
+  },
+  {
+    "name": "signal-wave-review",
+    "source": "core/execution/commands/signal-wave-review.md",
+    "phase": "retro",
+    "description": "Run the Wave Review ceremony with Observability agent output"
+  },
+  {
+    "name": "signal-pause",
+    "source": "core/execution/commands/signal-pause.md",
+    "phase": "build",
+    "description": "Opt-in step-pause controller: list paused steps, resume (release) a paused step, or abort one. Default is no pause \u2014 a step only pauses if PLAN declared `pause: true`.",
+    "overlays": [],
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-002"
+  },
+  {
+    "name": "signalos-session",
+    "source": "core/execution/commands/signalos-session.md",
+    "phase": "all",
+    "description": "Python CLI surface for the session journal: list / show / resume / archive. Calls cli/signalos session ...",
+    "overlays": [],
+    "wave": "W1.1",
+    "amendment": "AMD-CORE-001"
+  },
+  {
+    "name": "harness-call",
+    "source": "core/execution/commands/harness-call.md",
+    "phase": "build",
+    "description": "Execute a PLAN step headlessly via the 8th emitter. Emits the same preamble / journal / metrics events as the 7 editor emitters.",
+    "overlays": [],
+    "wave": "W1.2",
+    "amendment": "AMD-CORE-004"
+  },
+  {
+    "name": "signalos-install",
+    "source": "core/execution/commands/signalos-install.md",
+    "phase": "registry",
+    "description": "Install a cosign-signed plugin tarball. Refuses unsigned or tier-demoted plugins. Writes an AUDIT_TRAIL.jsonl entry on success.",
+    "overlays": [],
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-006"
+  },
+  {
+    "name": "signalos-publish",
+    "source": "core/execution/commands/signalos-publish.md",
+    "phase": "registry",
+    "description": "Sign and register a plugin tarball for distribution. Requires a cosign key.",
+    "overlays": [],
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-006"
+  },
+  {
+    "name": "signalos-verify",
+    "source": "core/execution/commands/signalos-verify.md",
+    "phase": "registry",
+    "description": "Re-verify the cosign signature of an installed plugin. Used by the post-retro hook to detect tampering.",
+    "overlays": [],
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-006"
+  },
+  {
+    "name": "context-expand",
+    "source": "core/execution/commands/context-expand.md",
+    "phase": "build",
+    "description": "Expand a compressed context turn back to its verbatim form from the session journal. Disk-truth is never compressed (AMD-CORE-005 invariant).",
+    "overlays": [],
+    "wave": "W1.3",
+    "amendment": "AMD-CORE-005"
+  },
+  {
+    "name": "signalos-orchestrate",
+    "source": "core/execution/commands/signalos-orchestrate.md",
+    "phase": "build",
+    "description": "Parallel wave orchestrator: create git worktrees for a Wave's tasks, dispatch them concurrently via the headless harness, then reconcile and retire. AMD-CORE-008.",
+    "overlays": [],
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "signalos-status",
+    "source": "core/execution/commands/signalos-status.md",
+    "phase": "all",
+    "description": "Render the Wave status card: gates G0-G5, active tasks with tier and status, belief statement, scale track, and next blocking action. AMD-CORE-008.",
+    "overlays": [],
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "intent",
+    "source": "core/execution/commands/intent.md",
+    "phase": "any",
+    "description": "Route a free-form phrase to the matching signalos command (W3.3, AMD-CORE-016). Pure stdlib \u2014 no LLM call on the routing path.",
+    "wave": "W3.3",
+    "amendment": "AMD-CORE-016"
+  },
+  {
+    "name": "plan-schema",
+    "source": "core/execution/commands/plan-schema.md",
+    "phase": "any",
+    "description": "Machine-readable task schema commands: render PLAN.md, validate PLAN.tasks.yaml, list tasks (W3.4, AMD-CORE-017).",
+    "wave": "W3.4",
+    "amendment": "AMD-CORE-017"
+  },
+  {
+    "name": "health",
+    "source": "core/execution/commands/health.md",
+    "phase": "any",
+    "description": "System health check: git, Python runtime, jq, wiring guard, daemon heartbeat. Exits 0/1/2 (OK/DEGRADED/DOWN). (W3.5, AMD-CORE-018).",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "diagnose",
+    "source": "core/execution/commands/diagnose.md",
+    "phase": "any",
+    "description": "Runtime diagnostic snapshot: daemon state, audit trail, worktrees, gate status, pending T2 items. (W3.5, AMD-CORE-018).",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-cmd",
+    "source": "core/execution/commands/validate-cmd.md",
+    "phase": "any",
+    "description": "Run the full validator suite (HALT/BLOCK_MERGE/WARN tiers) or a single named validator. (W3.5, AMD-CORE-018).",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "signal-qa",
+    "source": "core/execution/commands/signal-qa.md",
+    "phase": "ship",
+    "description": "Gating QA run: discovers YAML scenarios, executes via SBrowser, runs regression suite, emits evidence JSON, and fills QUALITY_CHECK.md for Gate 5 entry. (W7, AMD-CORE-028).",
+    "wave": "W7",
+    "amendment": "AMD-CORE-028"
+  },
+  {
+    "name": "signal-qa-only",
+    "source": "core/execution/commands/signal-qa-only.md",
+    "phase": "any",
+    "description": "Non-gating QA run: executes scenarios and regressions, emits evidence JSON with gating:false. Does not modify QUALITY_CHECK.md. (W7, AMD-CORE-028).",
+    "wave": "W7",
+    "amendment": "AMD-CORE-028"
+  },
+  {
+    "name": "signal-pre-design",
+    "source": "core/execution/commands/signal-pre-design.md",
+    "phase": "design",
+    "description": "W8 Design Pipeline: scoping ceremony \u2014 4 modes, 6 forcing questions, outputs PO_BRIEF.md"
+  },
+  {
+    "name": "signal-design",
+    "source": "core/execution/commands/signal-design.md",
+    "phase": "design",
+    "description": "W8 Design Pipeline: variant generation (explore), approval, and taste iteration"
+  },
+  {
+    "name": "signal-design-review",
+    "source": "core/execution/commands/signal-design-review.md",
+    "phase": "design",
+    "description": "W8 Design Pipeline: 8-dimension rubric review of a design variant"
+  },
+  {
+    "name": "signal-design-html",
+    "source": "core/execution/commands/signal-design-html.md",
+    "phase": "design",
+    "description": "W8 Design Pipeline: promote approved variant to production HTML/JSX/Svelte"
+  },
+  {
+    "name": "signalos-brain",
+    "source": "core/execution/commands/signalos-brain.md",
+    "phase": "execution",
+    "description": "Knowledge Brain \u2014 put/search/list/prune/export/upgrade entries (W9, AMD-CORE-030)"
+  },
+  {
+    "name": "signal-learn",
+    "source": "core/execution/commands/signal-learn.md",
+    "phase": "execution",
+    "description": "Human-facing brain review, search, prune, and export (W9, AMD-CORE-030)"
+  },
+  {
+    "name": "signal-cso",
+    "source": "core/execution/commands/signal-cso.md",
+    "phase": "execution",
+    "description": "Security Chief Officer — OWASP+STRIDE threat model, canary tokens, injection scan (W10, AMD-CORE-031).",
+    "wave": "W10",
+    "amendment": "AMD-CORE-031"
+  },
+  {
+    "name": "signal-autoplan",
+    "source": "core/execution/commands/signal-autoplan.md",
+    "phase": "execution",
+    "description": "Auto-generate PLAN task list from a feature description (W11, AMD-CORE-032).",
+    "wave": "W11",
+    "amendment": "AMD-CORE-032"
+  },
+  {
+    "name": "signal-context-restore",
+    "source": "core/execution/commands/signal-context-restore.md",
+    "phase": "execution",
+    "description": "Checkpoint save/restore and doc drift detection (W11, AMD-CORE-032).",
+    "wave": "W11",
+    "amendment": "AMD-CORE-032"
+  },
+  {
+    "name": "signal-setup-deploy",
+    "source": "core/execution/commands/signal-setup-deploy.md",
+    "phase": "execution",
+    "description": "Set up a deployment record for a wave and stage (W12, AMD-CORE-033).",
+    "wave": "W12",
+    "amendment": "AMD-CORE-033"
+  },
+  {
+    "name": "signal-land-deploy",
+    "source": "core/execution/commands/signal-land-deploy.md",
+    "phase": "execution",
+    "description": "Mark a deployment as landed (W12, AMD-CORE-033).",
+    "wave": "W12",
+    "amendment": "AMD-CORE-033"
+  },
+  {
+    "name": "signal-canary-deploy",
+    "source": "core/execution/commands/signal-canary-deploy.md",
+    "phase": "execution",
+    "description": "Post-deploy canary check: verify deploy records exist for a wave (W12, AMD-CORE-033).",
+    "wave": "W12",
+    "amendment": "AMD-CORE-033"
+  },
+  {
+    "name": "signal-benchmark",
+    "source": "core/execution/commands/signal-benchmark.md",
+    "phase": "execution",
+    "description": "Record Core Web Vitals benchmark: LCP, INP, CLS, TTFB, weight (W12, AMD-CORE-033).",
+    "wave": "W12",
+    "amendment": "AMD-CORE-033"
+  },
+  {
+    "name": "signal-devex-plan",
+    "source": "core/execution/commands/signal-devex-plan.md",
+    "phase": "execution",
+    "description": "Plan DevEx work in three modes: EXPANSION, POLISH, TRIAGE (W13, AMD-CORE-034).",
+    "wave": "W13",
+    "amendment": "AMD-CORE-034"
+  },
+  {
+    "name": "signal-devex",
+    "source": "core/execution/commands/signal-devex.md",
+    "phase": "execution",
+    "description": "Record a DevEx metric — TTHW (Time To Hello World) or custom (W13, AMD-CORE-034).",
+    "wave": "W13",
+    "amendment": "AMD-CORE-034"
+  },
+  {
+    "name": "signal-retro-global",
+    "source": "core/execution/commands/signal-retro-global.md",
+    "phase": "execution",
+    "description": "Cross-product retrospective: query brain index for insights across waves (W13, AMD-CORE-034).",
+    "wave": "W13",
+    "amendment": "AMD-CORE-034"
+  },
+  {
+    "name": "signal-careful",
+    "source": "core/execution/commands/signal-careful.md",
+    "phase": "execution",
+    "description": "Enable/disable/check careful mode — extra caution flag for high-risk operations (W14, AMD-CORE-035).",
+    "wave": "W14",
+    "amendment": "AMD-CORE-035"
+  },
+  {
+    "name": "signal-freeze",
+    "source": "core/execution/commands/signal-freeze.md",
+    "phase": "execution",
+    "description": "Lock a directory against writes by creating a freeze record (W14, AMD-CORE-035).",
+    "wave": "W14",
+    "amendment": "AMD-CORE-035"
+  },
+  {
+    "name": "signal-guard",
+    "source": "core/execution/commands/signal-guard.md",
+    "phase": "execution",
+    "description": "Check if a directory is frozen — gate that blocks writes when frozen (W14, AMD-CORE-035).",
+    "wave": "W14",
+    "amendment": "AMD-CORE-035"
+  },
+  {
+    "name": "signal-unfreeze",
+    "source": "core/execution/commands/signal-unfreeze.md",
+    "phase": "execution",
+    "description": "Remove a directory freeze — allow writes again (W14, AMD-CORE-035).",
+    "wave": "W14",
+    "amendment": "AMD-CORE-035"
+  },
+  {
+    "name": "signal-second-opinion",
+    "source": "core/execution/commands/signal-second-opinion.md",
+    "phase": "execution",
+    "description": "Request independent cross-model review on a plan, diff, or decision (W15, AMD-CORE-036).",
+    "wave": "W15",
+    "amendment": "AMD-CORE-036"
+  },
+  {
+    "name": "signal-investigate",
+    "source": "core/execution/commands/signal-investigate.md",
+    "phase": "execution",
+    "description": "Iron-law systematic debugging protocol: reproduce → log → regression → fix (W15, AMD-CORE-036).",
+    "wave": "W15",
+    "amendment": "AMD-CORE-036"
+  },
+  {
+    "name": "signal-discovery",
+    "source": "core/execution/commands/signal-discovery.md",
+    "phase": "discovery",
+    "description": "Run a structured stakeholder interview and emit a Discovery Brief — the prerequisite artifact for /signal-onboard (W16, AMD-CORE-037).",
+    "wave": "W16",
+    "amendment": "AMD-CORE-037"
+  }
+]

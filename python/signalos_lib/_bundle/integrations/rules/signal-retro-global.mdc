@@ -1,0 +1,18 @@
+---
+description: Cross-product retrospective via brain index query. AMD-CORE-034 W13.
+globs: [".signalos/brain/index.jsonl", "cli/signalos_lib/devex.py"]
+alwaysApply: false
+---
+
+# signal-retro-global
+
+Query the SignalOS brain index for cross-wave retrospective insights.
+
+## When to use
+- Run a global retro: `signalos signal-retro-global "auth friction" --wave 13`
+- Audit past decisions: `signalos signal-retro-global "security" --wave 13 --json`
+
+## Key behaviours
+- Reads `.signalos/brain/index.jsonl` directly (no brain module import)
+- Case-insensitive content search
+- Returns `[]` gracefully if brain index is absent

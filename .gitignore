@@ -11,6 +11,10 @@ node_modules/
 dist/
 .vite/
 
+# Python
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db

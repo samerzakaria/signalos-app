@@ -1,0 +1,22 @@
+---
+description: Safety gates — careful mode, directory freeze/guard/unfreeze. AMD-CORE-035 W14.
+globs: [".signalos/safety/**", "cli/signalos_lib/safety.py"]
+alwaysApply: false
+---
+
+# signal-careful
+
+Safety Gates. No external deps — pure stdlib.
+
+## When to use
+- Before risky operation: `signalos signal-careful enable --note "prod deploy"`
+- After: `signalos signal-careful disable`
+- Freeze a dir: `signalos signal-freeze src/db --wave 14`
+- Gate check: `signalos signal-guard src/db`
+- Unfreeze: `signalos signal-unfreeze src/db`
+
+## Key behaviours
+- Careful flag at `.signalos/safety/careful.flag` (JSON)
+- Freeze records at `.signalos/safety/freeze/<hash>.json`
+- `signal-guard` exits 1 if frozen (use in CI to block merges)
+- `unfreeze_dir` updates the freeze record status to "unfrozen" in-place

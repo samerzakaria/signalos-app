@@ -1,0 +1,21 @@
+---
+description: Knowledge Brain — put, search, list, prune, export, upgrade. AMD-CORE-030 W9.
+globs: [".signalos/brain/**", "cli/signalos_lib/brain.py"]
+alwaysApply: false
+---
+
+# signalos brain
+
+Persistent AI memory index. Pure-Python BM25, no runtime deps.
+
+## When to use
+- Store gate artifacts after signing: `signalos brain put "$(cat PLAN.md)" --source PLAN.md --gate G2 --wave 09 --type artifact`
+- Retrieve context before a design session: `signalos brain search "design decision" --top 5`
+- Audit what was ingested: `signalos brain list --wave 09`
+- Clean up stale entries: `signalos brain prune brain-007`
+
+## Key behaviours
+- Index lives at `.signalos/brain/index.jsonl` (append-only)
+- Prune = tombstone record, never destructive
+- `upgrade --embeddings` requires `ANTHROPIC_API_KEY`; falls back to BM25 silently
+- C15 wiring-guard: index present → `brain-auto-ingest.sh` must exist

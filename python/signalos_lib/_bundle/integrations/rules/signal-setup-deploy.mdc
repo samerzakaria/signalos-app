@@ -1,0 +1,21 @@
+---
+description: Post-Deploy Lifecycle — setup, land, canary, benchmark. AMD-CORE-033 W12.
+globs: [".signalos/deploy/**", "cli/signalos_lib/deploy.py"]
+alwaysApply: false
+---
+
+# signal-setup-deploy
+
+Post-Deploy Lifecycle. No external deps — pure stdlib.
+
+## When to use
+- Start a deploy: `signalos signal-setup-deploy 12 staging`
+- Land a deploy: `signalos signal-land-deploy deploy-001`
+- Post-deploy canary: `signalos signal-canary-deploy --wave 12`
+- Record benchmarks: `signalos signal-benchmark https://myapp.com --wave 12 --lcp 1200`
+
+## Key behaviours
+- Deploy index at `.signalos/deploy/index.jsonl` (append-only)
+- Benchmark index at `.signalos/deploy/benchmarks.jsonl` (append-only)
+- IDs are sequential: deploy-001, deploy-002, ...
+- `land_deploy` rewrites the file to update the matched record's status

@@ -1,0 +1,62 @@
+---
+description: "Phase 0 initialization. Creates repo scaffold, CONSTITUTION.md, agent roster."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-init — Phase 0: Init
+
+Owner: PO. Agent executes. Runs once per project.
+
+## Your first action
+Read `core/governance/Governance/SOUL-DOCUMENT.md` if it exists. If it does not exist, create it
+now using the Soul Document template at `core/governance/Templates/soul-document-template.md`.
+
+## Mandatory actions (complete in order)
+
+1. **Seed Soul Document**
+   - Stack and tech constraints
+   - Closed decisions (things that will not change)
+   - Open questions (things not yet decided)
+   - Current Wave number (start at Wave 1)
+
+2. **Confirm the product-Constitution**
+   - Confirm the product-Constitution is signed and locked at `core/governance/Governance/CONSTITUTION.md` (Gate 0 prerequisite — the SignalOS meta-Constitution governs how it's authored).
+   - See `core/governance/Templates/example-product-constitution.md` for the reference instance.
+
+3. **Initialise git worktree structure**
+   - Create branch naming convention: `wave-{N}/ticket-{ID}`
+   - Document convention in Soul Document under "Conventions"
+
+4. **Seed Prompt Library**
+   - Create `core/governance/Governance/PROMPT-LIBRARY.md` with first 3 reusable patterns you know you will need
+   - Use the skill template from `core/governance/Templates/gotcha-skill-template.md`
+
+5. **Register IDE / agent hooks** (otherwise audit-trail, brain ingest, and pause are silently disabled)
+   - **Detection order (agent runs all checks autonomously — no human shell action required):**
+     1. Check env vars: `CLAUDE_CODE_SESSION_ID` → `claude-code`; `CURSOR_AGENT` → `cursor`; `WINDSURF_*` → `windsurf`; `CODEX_*` → `codex`; `ANTIGRAVITY_*` → `antigravity`; `GITHUB_COPILOT_*` → `github-copilot`.
+     2. Check filesystem markers: `.cursor/` directory present → `cursor`; `.vscode/` present → `vs-code`; `.windsurfrules` present → `windsurf`.
+     3. If both checks pass with the same surface: confirmed match, proceed.
+     4. If env and filesystem disagree: use env var result (runtime is authoritative).
+     5. If neither check yields a match: run `claude-code` emitter as the safe default (Claude Code is the primary SignalOS runtime), log `surface: claude-code (default fallback)` in DECISION-DNA.
+   - Run the matching emitter: `bash core/tool-adapters/emitters/<surface>/register-hooks.sh "$REPO_ROOT"`. The script is idempotent.
+   - Available emitters: `claude-code`, `cursor`, `windsurf`, `codex`, `antigravity`, `github-copilot`, `vs-code`. Use `harness` only for headless / CI runs (no IDE).
+   - Confirm the surface-specific config landed (e.g. Cursor: `.cursor/rules/signalos-hooks.mdc`; Windsurf: `## SignalOS W1.1 hooks` section in `.windsurfrules`).
+   - **Skipping this step is the most common cause of an apparently-working SignalOS install with no audit trail.** The agent must complete detection and registration autonomously — do not stop and ask the PO to run a shell command.
+
+## Exit criteria (do not proceed to Pre-Wave until all are true)
+
+- [ ] Soul Document is pastable into any AI session in under 5 seconds
+- [ ] `core/governance/Governance/CONSTITUTION.md` committed and has at least 5 rules
+- [ ] Worktree + branch naming convention documented
+- [ ] Prompt Library seeded with at least 3 skills
+- [ ] IDE/agent hooks registered (surface-specific config file present)
+
+## Gate: Constitution Check
+Before exiting, confirm: does every rule in CONSTITUTION.md have a clear
+violation condition and a clear consequence? If not, strengthen the weak rules now.
+
+## Next phase
+Run `/signal-pre-wave` when exit criteria are all checked.

@@ -1,0 +1,66 @@
+---
+description: "Phase 6 retrospective. Captures wins, misses, belief updates."
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-debrief — Phase 7: Wave Debrief
+
+Owner: You + Constitution Guardian. SIGNAL + Agency borrowed.
+
+## Your first action
+Read the full wave history: Soul Document, Signal Log, Client Signal Log, all Decision DNA entries from this wave.
+
+## Debrief document
+Create `core/governance/Governance/debriefs/wave-{N}-debrief.md` and complete all fields:
+
+```
+Wave: {N}
+Date: {YYYY-MM-DD}
+Belief result: [Confirmed / Refuted / Inconclusive]
+Signal outcome: [exact metric result]
+Biggest surprise: [MANDATORY — the most valuable line on this page]
+Client reaction summary: [1–2 sentences]
+What we would do differently: [specific, not general]
+Next Belief candidate: [one sentence]
+Next Belief Bet Score: Risk={} × Impact={} / TestCost={} = {}
+```
+
+The "Biggest surprise" field is mandatory. If you cannot name one, you did not pay
+enough attention during the wave. Think harder.
+
+## Gotchas harvest
+For every moment this wave where the AI went wrong in a project-specific way:
+1. Open the relevant skill in `core/governance/Governance/PROMPT-LIBRARY.md`
+2. Add an entry to its `## Gotchas` section: what the AI did, why it was wrong, how to prevent
+3. Gotchas compound over waves — this is your most valuable institutional memory
+
+## Constitution update
+If a durable new rule emerged from this wave's experience:
+- Add it to `core/governance/Governance/CONSTITUTION.md` with a note: `# Added Wave {N} — reason`
+- Constitution rules can only be added through Debrief, never mid-wave
+
+## Trust Tier score update
+Update the trust scoring table at `core/governance/Templates/trust-tier-scoring.md`:
+- Log this wave's CI pass rate, surprise count, and security findings
+- The table will compute the recommended tier for next wave automatically
+
+## Worktree-Sync
+Run worktree-sync to ensure all artifacts match final state:
+- Soul Document reflects current wave number and any direction changes
+- Decision DNA has all architectural choices from this wave
+- Backlog is up to date with Raw and Refined items
+
+## Exit criteria
+
+- [ ] Debrief document written with all fields completed
+- [ ] "Biggest surprise" field is specific, not generic
+- [ ] At least one Gotcha captured (if AI made any mistake this wave)
+- [ ] Constitution updated if a new durable rule emerged
+- [ ] Trust Tier score updated
+- [ ] Next Belief seeded and scored
+- [ ] Worktree-sync completed
+
+## Loop
+When Debrief is complete, increment Wave number in Soul Document.
+Run `/signal-pre-wave` to begin the next wave.

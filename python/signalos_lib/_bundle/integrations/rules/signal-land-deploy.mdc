@@ -1,0 +1,16 @@
+---
+description: Mark a deployment as landed. AMD-CORE-033 W12.
+globs: [".signalos/deploy/**", "cli/signalos_lib/deploy.py"]
+alwaysApply: false
+---
+
+# signal-land-deploy
+
+Transitions a deploy record from `setup` → `landed`. See signal-setup-deploy.mdc for full lifecycle.
+
+## When to use
+- After a deploy succeeds: `signalos signal-land-deploy deploy-001`
+
+## Key behaviours
+- Rewrites the deploy index in place to update the matched record's status
+- Returns None (exit 1) if the deploy_id is not found

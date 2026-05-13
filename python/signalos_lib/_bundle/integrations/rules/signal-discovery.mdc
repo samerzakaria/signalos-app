@@ -1,0 +1,43 @@
+---
+description: "Run a structured stakeholder interview and emit a Discovery Brief — the prerequisite artifact for /signal-onboard."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — /signal-discovery (W16, AMD-CORE-037) -->
+
+# /signal-discovery — Stakeholder interview & Discovery Brief
+
+Owner: PO. Run **before** `/signal-onboard`, once per stakeholder. Output is a Discovery Brief at `core/strategy/discovery-briefs/wave-0-session-N.md` (where N is the session number).
+
+This command invokes the **stakeholder-interview** skill (`core/execution/skills/stakeholder-interview/SKILL.md`). The skill is the script; `/signal-discovery` is the entry point that makes it discoverable.
+
+## Your first action
+
+1. Confirm the target stakeholder and their role (e.g. founder, end-user, ops engineer).
+2. Confirm a 30–60 minute slot is available with them — synchronous (call/in-person) or async (transcript review).
+3. Read `core/strategy/Templates/discovery-brief-template.md` to see the output shape you must produce.
+
+## Mandatory actions (complete in order)
+
+1. **Activate the stakeholder-interview skill.** Walk the PO (or the human running this) through the structured forcing questions in the skill's `Procedure` section.
+
+2. **Capture answers in real time.** Do not paraphrase yet — record verbatim where possible. The Discovery Brief is written from these notes after the interview ends.
+
+3. **Write the Discovery Brief.** Copy `core/strategy/Templates/discovery-brief-template.md` to `core/strategy/discovery-briefs/wave-0-session-N.md` (auto-incrementing N over existing briefs). Fill every section. Empty sections are not acceptable; if you don't know, write "(unknown — to surface in next session)" instead of leaving blank.
+
+4. **Sign and date.** Add the PO's name and the interview date at the top of the brief.
+
+## Exit criteria
+
+- [ ] `core/strategy/discovery-briefs/wave-0-session-N.md` exists, is filled, and is signed.
+- [ ] At least one Disproof condition is recorded (the thing that, if observed, would falsify our current understanding of the stakeholder's problem).
+- [ ] At least one Surface item is recorded (the part of the product the stakeholder cares about).
+
+## Repeat
+
+Run `/signal-discovery` once per stakeholder you need to interview before `/signal-onboard`. The minimum is **one** brief; many products need 3–5.
+
+## Next phase
+
+Once the briefs exist, run `/signal-onboard` — it reads every Discovery Brief at `core/strategy/discovery-briefs/wave-0-session-*.md` as input.

@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signalos-status Wave status card."
+globs:
+alwaysApply: false
+---
+
+# /signalos-status
+
+Follow `core/execution/commands/signalos-status.md`.

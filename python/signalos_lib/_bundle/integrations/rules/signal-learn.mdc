@@ -1,0 +1,20 @@
+---
+description: Human-facing brain review, search, prune, export. AMD-CORE-030 W9.
+globs: [".signalos/brain/**"]
+alwaysApply: false
+---
+
+# signal-learn
+
+Human interface to the Knowledge Brain.
+
+## When to use
+- Weekly knowledge review: `signalos signal-learn review --wave 09`
+- Find relevant past decisions: `signalos signal-learn search "OIDC gate signing"`
+- Remove outdated entries: `signalos signal-learn prune brain-003`
+- Export for sharing: `signalos signal-learn export --out brain-export.jsonl`
+
+## Key behaviours
+- All reads are non-destructive except `prune` (which soft-deletes via tombstone)
+- `review` paginates at 10 entries by default; use `--page-size` to adjust
+- `search` uses same BM25 engine as `signalos brain search`

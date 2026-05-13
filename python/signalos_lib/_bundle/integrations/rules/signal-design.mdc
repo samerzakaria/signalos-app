@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signal-design."
+globs:
+alwaysApply: false
+---
+
+# /signal-design
+
+Follow `core/execution/commands/signal-design.md`.

@@ -63,13 +63,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Checkout SignalOS Core
-        uses: actions/checkout@v5
-        with:
-          repository: samerzakaria/SignalOS
-          path: SignalOS-Core-v1.0.3
-          token: ${{ secrets.CORE_REPO_TOKEN || github.token }}
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -99,12 +92,12 @@ jobs:
       - name: Bundle Python sidecar (Windows)
         if: matrix.platform == 'windows'
         shell: powershell
-        run: .\scripts\bundle-sidecar.ps1 -CorePath "SignalOS-Core-v1.0.3" -Python "python"
+        run: .\scripts\bundle-sidecar.ps1 -Python "python"
 
       - name: Bundle Python sidecar (Linux / macOS)
         if: matrix.platform != 'windows'
         shell: bash
-        run: bash ./scripts/bundle-sidecar.sh SignalOS-Core-v1.0.3
+        run: bash ./scripts/bundle-sidecar.sh
 
       # Build in debug mode (no signing, no bundling) — just verifies compilation
       - name: Cargo check (fast)

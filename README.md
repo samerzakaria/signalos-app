@@ -6,7 +6,7 @@ No IDE required. Chat-first interface. Ships as a native app on macOS, Windows, 
 
 ## What it is
 
-SignalOS App wraps the [SignalOS Core](https://github.com/signalos/signalos-core) governance engine in a native desktop UI. You download it, open it, and it mentors you through every wave — from Discovery to Debrief — without touching a terminal.
+SignalOS App wraps the SignalOS Core governance engine in a native desktop UI. The desktop repository vendors the packaged Core runtime under `python/signalos_lib`, so release builds can be produced from this repo without checking out a separate private repository.
 
 - **Chat interface** — talk to SignalOS in plain language
 - **Gate signing** — one-click G0–G5 with full audit trail

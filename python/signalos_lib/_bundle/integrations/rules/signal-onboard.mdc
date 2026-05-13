@@ -1,0 +1,91 @@
+---
+description: "Phase -1 onboarding. Runs once per product. Gathers Product DNA."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-onboard — Phase -1: Product Onboarding
+
+Owner: PO. Runs **exactly once per product**, before `/signal-init`. Invokes the Onboarding agent (Team Charter §1).
+
+> `/signal-init` assumes a product-Constitution already exists. `/signal-onboard` is what produces that Constitution (and the Soul Document, the Surface Inventory, the seed Belief). **Every product runs `/signal-onboard` first**, including greenfield — for an empty repo the Onboarding agent still produces the six first-run artifacts from a Discovery Brief, just with shorter inputs. `/signal-init` always runs second, on the output of onboarding.
+
+## Your first action
+
+Confirm this product has never had `/signal-onboard` run before. Check for:
+- Absence of `core/governance/Governance/SOUL-DOCUMENT.md`
+- Absence of `core/execution/SURFACE_INVENTORY.md`
+- Absence of `core/execution/PERMANENTLY_T3.md`
+
+If any of those exist and `/signal-onboard` was not logged in `core/governance/Governance/DECISION-DNA.md` as a prior run → **stop**. The product has partial onboarding state; resolve with PO before continuing.
+
+## Prerequisites
+
+- PO has run **`/signal-discovery`** at least once to file a Discovery Brief at `core/strategy/discovery-briefs/wave-0-session-1.md`. Most products need 3–5 briefs (one per stakeholder); the minimum is one.
+- Repo read access for the Onboarding agent.
+- No live production incidents in flight.
+
+## Mandatory actions (complete in order)
+
+1. **Activate Onboarding agent** with the `existing-product-kit` skill. The agent reads the repo, reads all Wave-0 Discovery Briefs, and produces draft artifacts at the paths listed in `core/execution/agents/onboarding.md`.
+
+   **Existing-project detection:** If the repo contains files beyond the `.signalos/` scaffold (i.e. this is a mid-age adoption), the agent must:
+   - Add `source: retroactive` front-matter to every produced artifact.
+   - State this status explicitly at the top of each artifact so the PO is never reviewing a retroactive stub as if it were a greenfield document.
+   - PO must acknowledge the retroactive status of each artifact before signing.
+
+2. **PO reviews every draft.** The PO is expected to edit, not rubber-stamp. The agent is T2 — nothing lands without PO eyes on each line.
+   - `SOUL-DOCUMENT.md` — must fit on one page
+   - `CONSTITUTION.md` — product-scoped; at minimum the meta-Constitution clauses §1, §2, §3, §4 are retained
+   - `SURFACE_INVENTORY.md` — every surface classified T1/T2/T3
+   - `PERMANENTLY_T3.md` — auth, payments, PII, billing, migrations enumerated
+   - `BELIEF.md` — falsifiable within 2 weeks
+   - Draft `ROLE_ACTIVATION_CARD.md` — PO re-signs at Gate 1
+
+3. **Log the onboarding run** in `core/governance/Governance/DECISION-DNA.md` as:
+   `DEC-{ID} — Onboarded product {name} under SignalOS v1.0 — agent run: {run-id} — PO: {name} — date: {YYYY-MM-DD}`
+
+4. **Sign Gate 0** (Soul Document) before proceeding. Gate 1 (Belief) can be signed next or deferred to the first `/signal-pre-wave`.
+
+## Exit criteria (do not proceed to `/signal-init` until all are true)
+
+- [ ] `SOUL-DOCUMENT.md` signed (Gate 0)
+- [ ] `CONSTITUTION.md` product-draft signed by PO
+- [ ] `SURFACE_INVENTORY.md` complete — zero unclassified rows
+- [ ] `PERMANENTLY_T3.md` enumerated and acknowledged by PO
+- [ ] Seed `BELIEF.md` drafted (Gate 1 may be deferred to first Pre-Wave)
+- [ ] Draft `ROLE_ACTIVATION_CARD.md` present
+- [ ] Decision DNA entry logged
+
+## Gate: Onboarding Integrity
+
+Before exiting, confirm the onboarding report at `core/execution/onboarding-report.md` shows:
+- What the agent read vs. skipped
+- Every assumption it made
+- Any contradiction between stakeholder interviews and code — logged, not resolved in-place
+
+If the integrity report is missing or incomplete → do not exit.
+
+**Adoption Gap Report (existing projects only):** When `source: retroactive` artifacts were produced, the onboarding report must additionally list three columns:
+
+| Artifact | Synthesized from | Needs PO judgment |
+|---|---|---|
+| SOUL-DOCUMENT.md | (what the agent read: README, git log, etc.) | (what the agent could not infer) |
+| CONSTITUTION.md | … | … |
+| … | … | … |
+
+Every row where "Needs PO judgment" is non-empty must be resolved by the PO before signing that artifact. An unreviewed gap is a load-bearing assumption — flag it, never silently carry it forward.
+
+## Calibration Wave (existing projects only)
+
+When any artifact carries `source: retroactive`, the agent must declare Wave 1 a **Calibration Wave** in the handoff message to PO:
+
+> "Wave 1 is a Calibration Wave. No feature delivery. Goal: validate every retroactive artifact against reality, correct what the agent got wrong, and promote stubs to load-bearing status. Feature work begins Wave 2."
+
+The PO must explicitly confirm the Calibration Wave declaration before `/signal-init` proceeds. A retroactive artifact that has not been promoted to load-bearing status by end of Wave 1 is Phase Debt — log it in DECISION-DNA.md.
+
+## Next phase
+
+Run `/signal-init` when exit criteria are checked. (`/signal-init` on an onboarded product is thinner — it primarily confirms what Onboarding already produced and seeds the Prompt Library.)

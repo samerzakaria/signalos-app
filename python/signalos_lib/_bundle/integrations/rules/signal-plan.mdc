@@ -1,0 +1,54 @@
+---
+description: "Phase 2 planning. Produces PLAN.md with tasks, gates, metrics."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-plan — Phase 2: Plan
+
+Owner: PO. Agent executes all discipline roles (architecture, data, security). Execution phase.
+
+## Your first action
+Read `core/governance/Governance/SOUL-DOCUMENT.md`, `core/governance/Governance/DECISION-DNA.md`, and
+`core/governance/Governance/CONSTITUTION.md`. Confirm Expectation Map is signed.
+
+## Plan Synthesis — parallel disciplines
+Agent runs three discipline sub-roles in parallel — do not chain them sequentially.
+
+1. **Architecture** → system design, component boundaries, API contracts
+2. **Data** → data model, migration strategy, schema constraints
+3. **Security** → threat model, auth surface, data sensitivity
+
+Converge all three at a single **Plan Synthesis node** → produce `core/execution/Plans/wave-{N}-plan.md`
+
+No single discipline can unilaterally block the plan. Disagreements surface here for PO resolution.
+
+## Mandatory actions
+
+1. Brainstorm skill — refine design sections, validate each component
+2. Break Belief into 2–5 min tasks (file paths, code sketch, verification)
+3. Write `core/execution/Plans/wave-{N}-acceptance-criteria.md` — use template at `core/governance/Templates/acceptance-criteria-template.md`
+4. Declare Trust Tier: **T1 Proceed** / **T2 Propose** / **T3 Suggest** — log in `core/governance/Governance/DECISION-DNA.md`
+5. Check Trust Tier score from `core/governance/Templates/trust-tier-scoring.md` — tier should match your project's earned trust level
+
+## Memory check
+Before finalising tasks, query `core/governance/Governance/DECISION-DNA.md`:
+- Any prior decisions about this component?
+- Any Gotchas in the Prompt Library related to this area?
+
+## Spec seed
+Seed `core/execution/Plans/wave-{N}-acceptance-criteria.md` now.
+PO reviews and signs it before build begins.
+
+## Exit criteria
+
+- [ ] `core/execution/Plans/wave-{N}-plan.md` written by agent (Architecture + Data + Security sub-roles) and signed by PO
+- [ ] Each task has a failing test scaffold written first
+- [ ] Review Gate tier declared in Decision DNA
+- [ ] Acceptance criteria document seeded and co-signed
+- [ ] No task is larger than 5 minutes of AI coding time
+
+## Next phase
+Run `/signal-build` when all exit criteria are checked.

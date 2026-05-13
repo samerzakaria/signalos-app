@@ -1,0 +1,49 @@
+---
+description: "Phase 1 pre-wave. Signs BELIEF.md, locks Expectation Map."
+globs:
+alwaysApply: false
+---
+
+<!-- SignalOS v1.0 — Locked 2026-04-16 -->
+
+# /signal-pre-wave — Phase 1: Pre-Wave
+
+Owner: Product Owner. SIGNAL phase.
+
+## Your first action
+Verify `core/governance/Governance/CONSTITUTION.md` exists and is signed. If it does not exist, stop immediately — Phase 0 (`/signal-init`) was not completed. Do not proceed until CONSTITUTION.md is present and has at least 5 rules, each with a violation condition.
+
+Then read `core/governance/Governance/SOUL-DOCUMENT.md` and `core/governance/Governance/CONSTITUTION.md`.
+Then read the last Wave Debrief if one exists at `core/governance/Governance/debriefs/wave-{N-1}-debrief.md`.
+
+## Scale check
+Before doing anything else, declare the Scale Track for this wave:
+- **Quick** — bug fix or small enhancement, under 4 hours. Skip to `/signal-plan` directly.
+- **Wave** — standard feature delivery, 1–14 days. Continue with this phase.
+- **Campaign** — multi-wave initiative. Run Pre-Wave once, then repeat Plan→Ship for each sub-wave.
+
+If Quick: summarise the Belief in one sentence and run `/signal-plan`.
+
+## Mandatory actions (Wave and Campaign only)
+
+1. **Harvest DEFER comments** from last wave's code (`git grep -n "DEFER"`)
+2. **State the Belief** = Problem + Bet + Signal threshold (measurable, falsifiable)
+3. **Score candidate beliefs** using Bet Score = (Risk × Impact) / Test Cost
+4. **Write Expectation Map** — what the product is expected to do vs what is being built; make the delta explicit
+5. **Fill Role Activation Card** — One-man show model: PO holds the single human seat; agent handles all execution seats. Declare which agent sub-roles are active this wave (Architecture, Data, Security, QA, DevOps, Observability) and at what Trust Tier. Log in `core/governance/Governance/DECISION-DNA.md`.
+6. **Run Discovery Brief** if a client session happened — use template at `core/strategy/Templates/discovery-brief-template.md`
+
+## Exit criteria
+
+- [ ] One falsifiable Belief chosen and scored
+- [ ] Expectation Map written and ready for PO signature
+- [ ] Smallest testable build defined
+- [ ] Measurable signal threshold documented
+- [ ] Scale Track declared
+
+## Gate 2: Expectation Map signed
+PO must sign Expectation Map before any code is written.
+No exceptions. "Building the wrong thing perfectly" is prevented here.
+
+## Next phase
+Run `/signal-plan` when PO has signed.

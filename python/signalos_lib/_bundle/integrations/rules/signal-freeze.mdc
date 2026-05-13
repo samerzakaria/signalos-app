@@ -1,0 +1,17 @@
+---
+description: Freeze a directory against writes — creates a freeze record. AMD-CORE-035 W14.
+globs: [".signalos/safety/freeze/**"]
+alwaysApply: false
+---
+
+# signal-freeze
+
+Lock a directory by creating a freeze record at `.signalos/safety/freeze/<hash>.json`.
+
+## Usage
+`signalos signal-freeze <target> --wave W [--note N] [--json]`
+
+## Key behaviours
+- Freeze ID auto-increments (freeze-001, freeze-002, ...)
+- Target hash is MD5[:8] of the target path string
+- Use `signal-guard` to enforce; `signal-unfreeze` to release

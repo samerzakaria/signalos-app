@@ -1,0 +1,17 @@
+---
+description: Unfreeze a directory — transitions freeze record to unfrozen status. AMD-CORE-035 W14.
+globs: [".signalos/safety/freeze/**"]
+alwaysApply: false
+---
+
+# signal-unfreeze
+
+Release a directory freeze by updating its record status to "unfrozen".
+
+## Usage
+`signalos signal-unfreeze <target> [--json]`
+
+## Key behaviours
+- Returns exit 0 if a freeze record was found and updated
+- Returns exit 1 if no freeze record found for the target
+- After unfreezing, `signal-guard` will return exit 0 for that target

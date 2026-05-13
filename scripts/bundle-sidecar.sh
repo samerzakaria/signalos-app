@@ -3,7 +3,10 @@
 
 set -euo pipefail
 
-CORE_PATH="${1:-../SignalOS-Core-v1.0.3}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+VENDORED_CORE_PATH="python/signalos_lib"
 SIDECAR_DIR="src-tauri/bin"
 TARGET_TRIPLE="$(rustc -Vv | awk '/^host:/ {print $2}')"
 SIDECAR_NAME="signalos-python-${TARGET_TRIPLE}"
@@ -12,11 +15,11 @@ WORK_DIR="src-tauri/target/pyinstaller-build"
 SPEC_DIR="src-tauri/target/pyinstaller-spec"
 
 echo "SignalOS sidecar bundler"
-echo "  Core path : $CORE_PATH"
+echo "  Core path : $VENDORED_CORE_PATH"
 echo "  Output    : $SIDECAR_DIR/$SIDECAR_NAME"
 
-if [[ ! -d "$CORE_PATH" ]]; then
-  echo "Core path not found: $CORE_PATH"
+if [[ ! -d "$VENDORED_CORE_PATH" ]]; then
+  echo "Vendored signalos_lib is missing: $VENDORED_CORE_PATH"
   exit 1
 fi
 
@@ -28,13 +31,15 @@ fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
 "$VENV_PYTHON" -m pip install --upgrade pip wheel pyinstaller
-"$VENV_PYTHON" -m pip install "$CORE_PATH"
+"$VENV_PYTHON" -m pip install "anthropic>=0.39,<1.0" "pyyaml>=6.0,<7"
 
 IPC_ENTRY="python/signalos_ipc_server.py"
 if [[ ! -f "$IPC_ENTRY" ]]; then
   echo "Missing IPC entry: $IPC_ENTRY"
   exit 1
 fi
+
+DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
 
 "$VENV_PYTHON" -m PyInstaller \
   --onefile \
@@ -44,7 +49,11 @@ fi
   --specpath "$SPEC_DIR" \
   --clean \
   --noconfirm \
-  --collect-all signalos_lib \
+  --paths python \
+  --add-data "$DATA_SPEC" \
+  --hidden-import signalos_lib.cli \
+  --hidden-import anthropic \
+  --hidden-import yaml \
   "$IPC_ENTRY"
 
 if [[ ! -f "$SIDECAR_DIR/$SIDECAR_NAME" ]]; then

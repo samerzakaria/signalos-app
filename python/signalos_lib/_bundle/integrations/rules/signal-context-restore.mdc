@@ -1,0 +1,14 @@
+---
+description: Checkpoint save/restore and doc drift detection. AMD-CORE-032 W11.
+globs: [".signalos/checkpoints/**", "cli/signalos_lib/velocity.py"]
+alwaysApply: false
+---
+
+# signal-context-restore
+
+Checkpoint system + doc drift scanner. stdlib only.
+
+## When to use
+- Save context before a risky operation: `signalos signal-context-restore save --wave 11 --label pre-refactor --context .signalos-session-preamble.md`
+- Restore after context loss: `signalos signal-context-restore restore ckpt-001 --out restored.md`
+- Check for stale docs before a wave: `signalos signal-context-restore drift --max-age-days 14`

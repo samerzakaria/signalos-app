@@ -1,0 +1,72 @@
+---
+description: "Route a free-form phrase to the matching signalos command (W3.3, AMD-CORE-016)."
+globs:
+alwaysApply: false
+---
+
+<!-- Concept adapted from a5c-ai/babysitter (MIT). No source code copied. -->
+<!-- SignalOS Core v1.0.3 — intent rule (AMD-CORE-016). -->
+
+# /intent — Natural Language Intent Router
+
+Owner: Any role. Decision-support command — no LLM call on the routing path.
+
+## Purpose
+
+Routes a free-form phrase (typed by any role) to the most appropriate
+`signalos` command. Uses pure-stdlib weighted keyword matching across
+10 known intents. Confidence below 0.70 triggers a clarifying question
+instead of a hard route.
+
+## Usage
+
+```
+signalos intent "<phrase>"            # human-readable route card
+signalos intent "<phrase>" --json     # machine-readable JSON
+signalos intent "<phrase>" --all      # show all intent scores
+signalos intent "<phrase>" --threshold 0.5  # override confidence floor
+```
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Routed — confidence ≥ threshold |
+| 1 | Low confidence — clarifying question printed |
+| 2 | No phrase supplied / usage error |
+
+## Supported intents
+
+| Intent | Suggested command |
+|---|---|
+| onboard | `signalos session start` |
+| brainstorm | `signalos harness call --step brainstorm` |
+| plan | `signalos orchestrate --wave <id> --plan PLAN.md` |
+| execute | `signalos orchestrate --wave <id> --plan PLAN.md` |
+| review | `signalos harness call --step review` |
+| status | `signalos status` |
+| sign | `signalos sign <gate>` |
+| pause | `signalos pause list` |
+| resume | `signalos pause resume <step-id>` |
+| compress | `signalos context compress <input-file>` |
+
+## Routing algorithm
+
+Keyword matching: each intent defines weighted regex patterns. The phrase
+is lowercased and scored against every pattern; `confidence = raw_score / max_score`,
+clamped to `[0, 1]`. The top-scoring intent wins. If confidence ≥ 0.70 the
+command is printed and exit 0 is returned. Otherwise the intent's clarifying
+question is printed and exit 1 is returned.
+
+Pure stdlib — no LLM call, no network I/O.
+
+## Implementation
+
+`cli/signalos_lib/intent.py` — classifier library (`classify`, `top_match`, `route_or_clarify`).
+`cli/signalos_lib/commands/intent.py` — CLI entry point (`main`).
+`core/execution/skills/intent-router/SKILL.md` — routing decision guidance for agents.
+
+## Next command
+
+If routed: run the suggested `signalos` command shown in the output.
+If not routed: answer the clarifying question and re-run with a clearer phrase.

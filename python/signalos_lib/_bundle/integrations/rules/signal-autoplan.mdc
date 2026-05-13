@@ -1,0 +1,13 @@
+---
+description: AutoPlan — generate structured task lists from feature descriptions. AMD-CORE-032 W11.
+globs: [".signalos/plans/**", "cli/signalos_lib/velocity.py"]
+alwaysApply: false
+---
+
+# signal-autoplan
+
+Eliminates manual PLAN.tasks.yaml authoring. stdlib only, no deps.
+
+## When to use
+- After a design approval, generate tasks: `signalos signal-autoplan generate "Add rate limiting to API" --wave 11`
+- Review what was planned: `signalos signal-autoplan list --wave 11`

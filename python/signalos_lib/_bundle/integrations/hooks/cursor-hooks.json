@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "${CURSOR_PLUGIN_ROOT}/core/execution/hooks/session-start"
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "edit_file|create_file",
+        "command": "${CURSOR_PLUGIN_ROOT}/core/execution/hooks/pre-commit"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+---
+description: Post-deploy canary check for a wave. AMD-CORE-033 W12.
+globs: [".signalos/deploy/**", "cli/signalos_lib/deploy.py"]
+alwaysApply: false
+---
+
+# signal-canary-deploy
+
+Post-deploy health canary. See signal-setup-deploy.mdc for full lifecycle.
+
+## When to use
+- After deploying: `signalos signal-canary-deploy --wave 12`
+
+## Key behaviours
+- Returns count of deploy records for the given wave
+- `found: false` and `count: 0` if no records or index missing

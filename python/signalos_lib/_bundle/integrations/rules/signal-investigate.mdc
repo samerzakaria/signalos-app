@@ -1,0 +1,21 @@
+---
+description: Iron-law systematic debugging protocol. AMD-CORE-036 W15.
+globs: [".signalos/investigations/index.jsonl", "cli/signalos_lib/investigate.py"]
+alwaysApply: false
+---
+
+# signal-investigate
+
+Systematic debugging enforcing 5 iron laws. No external deps — pure stdlib.
+
+## When to use
+- Open investigation: `signalos signal-investigate open --title "Bug title" --wave 15`
+- Confirm reproduction: `signalos signal-investigate confirm-reproduction inv-001 --wave 15`
+- Write regression first: `signalos signal-investigate confirm-regression inv-001 --wave 15`
+- Close after fix: `signalos signal-investigate close inv-001 --wave 15`
+
+## Key behaviours
+- Index stored at `.signalos/investigations/index.jsonl` (append-only)
+- Document written to `.signalos/investigations/{id}-INVESTIGATION.md`
+- `reproduction_confirmed` must be true before hypothesis is accepted
+- `regression_written` must be true before fix is applied

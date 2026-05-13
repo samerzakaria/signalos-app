@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signal-qa-only quality-check-only run."
+globs:
+alwaysApply: false
+---
+
+# /signal-qa-only
+
+Follow `core/execution/commands/signal-qa-only.md`.

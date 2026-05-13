@@ -1,0 +1,9 @@
+---
+description: "Command rule for /signal-qa wave-end quality check."
+globs:
+alwaysApply: false
+---
+
+# /signal-qa
+
+Follow `core/execution/commands/signal-qa.md`.

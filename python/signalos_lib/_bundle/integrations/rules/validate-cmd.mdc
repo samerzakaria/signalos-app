@@ -1,0 +1,14 @@
+---
+description: Use signalos validate to run the full validator suite or a single named validator.
+globs: ["core/execution/**", "cli/signalos_lib/validate_cmd.py"]
+alwaysApply: false
+---
+
+# validate wiring rule
+
+`signalos validate` mirrors the severity tiers of deliver.sh validators.
+
+- A HALT failure (exit 1) must be resolved before any merge.
+- A BLOCK_MERGE failure (exit 2) must be resolved before closing a wave.
+- WARN failures (exit 0) are advisory; log but do not block.
+- Use `--validator <name>` to target a specific guard for faster CI loops.
