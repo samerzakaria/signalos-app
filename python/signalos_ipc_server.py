@@ -100,7 +100,7 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
         return ok(req_id, data=analyze_payload(payload_json))
 
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "0.0.6"})
+        return ok(req_id, data={"pong": True, "version": "0.0.7"})
 
     return err(req_id, f"Unknown command: {command}")
 
