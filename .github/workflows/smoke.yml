@@ -35,6 +35,10 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Bundle Python sidecar
+        shell: bash
+        run: bash ./scripts/bundle-sidecar.sh
+
       - name: Run unit tests
         working-directory: src-tauri
         run: cargo test --lib -- --test-threads=4
