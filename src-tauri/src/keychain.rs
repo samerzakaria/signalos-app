@@ -19,7 +19,6 @@ pub fn store_api_key(provider: String, key: String) -> Result<(), String> {
         .map_err(|e| format!("Keychain write failed ({}): {}", provider, e))
 }
 
-#[tauri::command]
 pub fn get_api_key(provider: String) -> Result<Option<String>, String> {
     validate_provider(&provider)?;
     match Entry::new(SERVICE, &provider).map_err(|e| e.to_string())?.get_password() {
@@ -50,7 +49,8 @@ pub fn delete_api_key(provider: String) -> Result<(), String> {
 
 fn validate_provider(provider: &str) -> Result<(), String> {
     match provider {
-        "anthropic" | "openai" | "gemini" | "ollama" => Ok(()),
+        "anthropic" | "openai" | "gemini" | "qwen" | "ollama" | "openrouter" | "deepseek"
+        | "mistral" | "groq" | "cerebras" | "together" | "xai" => Ok(()),
         other => Err(format!("Unknown provider: {}", other)),
     }
 }

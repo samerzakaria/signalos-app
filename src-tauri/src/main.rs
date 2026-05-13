@@ -87,7 +87,6 @@ fn main() {
 
             // ── Keychain ─────────────────────────────────────────────────────
             keychain::store_api_key,
-            keychain::get_api_key,
             keychain::delete_api_key,
             keychain::has_api_key,
 

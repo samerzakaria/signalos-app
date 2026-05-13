@@ -141,6 +141,10 @@ export const audit = {
   list: (limit = 50) => invokeSidecar("get_audit_trail", { limit }),
 };
 
+export const security = {
+  secrets: () => invokeSidecar("run_signal_command", { command: "security:secrets", args: [] }),
+};
+
 // ─── PROVIDER + COST ──────────────────────────────────────────────────────────
 
 export const provider = {
@@ -162,7 +166,6 @@ export const provider = {
 
 export const keychain = {
   store:  (p, key) => invoke("store_api_key",  { provider: p, key }),
-  get:    (p)      => invoke("get_api_key",    { provider: p }),
   has:    (p)      => invoke("has_api_key",    { provider: p }),
   delete: (p)      => invoke("delete_api_key", { provider: p }),
 };
@@ -181,7 +184,15 @@ function mockInvoke(cmd, args) {
         { id: "anthropic", name: "Anthropic Claude", model: "claude-sonnet-4-6",  needs_key: true,  price_in_1m: 3.00,  price_out_1m: 15.00 },
         { id: "openai",    name: "OpenAI",           model: "gpt-4o",             needs_key: true,  price_in_1m: 5.00,  price_out_1m: 15.00 },
         { id: "gemini",    name: "Google Gemini",    model: "gemini-2.0-flash",   needs_key: true,  price_in_1m: 0.10,  price_out_1m: 0.40  },
+        { id: "qwen",      name: "Qwen",             model: "qwen-plus",          needs_key: true,  price_in_1m: 0.00,  price_out_1m: 0.00  },
         { id: "ollama",    name: "Ollama (local)",   model: "",                   needs_key: false, price_in_1m: 0.00,  price_out_1m: 0.00  },
+        { id: "openrouter",name: "OpenRouter",       model: "qwen/qwen-plus",     needs_key: true,  price_in_1m: 0.00,  price_out_1m: 0.00  },
+        { id: "deepseek",  name: "DeepSeek",         model: "deepseek-chat",      needs_key: true,  price_in_1m: 0.00,  price_out_1m: 0.00  },
+        { id: "mistral",   name: "Mistral",          model: "mistral-large-latest", needs_key: true, price_in_1m: 0.00, price_out_1m: 0.00 },
+        { id: "groq",      name: "Groq",             model: "llama-3.3-70b-versatile", needs_key: true, price_in_1m: 0.00, price_out_1m: 0.00 },
+        { id: "cerebras",  name: "Cerebras",         model: "llama-4-scout-17b-16e-instruct", needs_key: true, price_in_1m: 0.00, price_out_1m: 0.00 },
+        { id: "together",  name: "Together AI",      model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", needs_key: true, price_in_1m: 0.00, price_out_1m: 0.00 },
+        { id: "xai",       name: "xAI",              model: "grok-4",             needs_key: true,  price_in_1m: 0.00,  price_out_1m: 0.00  },
       ];
       case "get_cost_state": return {
         tokens_in: 0, tokens_out: 0,
@@ -219,11 +230,19 @@ function mockInvoke(cmd, args) {
           { id: "gemini-1.5-pro",     name: "Gemini 1.5 Pro"    },
           { id: "gemini-1.5-flash",   name: "Gemini 1.5 Flash"  },
         ];
+        if (p === "qwen") return [
+          { id: "qwen-plus", name: "Qwen Plus" },
+          { id: "qwen-max",  name: "Qwen Max"  },
+          { id: "qwen-turbo", name: "Qwen Turbo" },
+        ];
         if (p === "ollama") return [
           { id: "llama3.2",   name: "llama3.2"  },
           { id: "mistral",    name: "mistral"   },
           { id: "phi4",       name: "phi4"      },
         ];
+        if (["openrouter", "deepseek", "mistral", "groq", "cerebras", "together", "xai"].includes(p)) {
+          return [];
+        }
         return [];
       }
       default:                  return null;

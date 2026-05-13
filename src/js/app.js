@@ -13,6 +13,7 @@ const state = {
   gates: [],
   brain: [],
   audit: [],
+  secrets: [],
   git: null,
   statusChecked: false,
   busy: false,
@@ -62,6 +63,7 @@ const el = {
   settingsProvider: $("#settingsProvider"),
   settingsModel: $("#settingsModel"),
   settingsCost: $("#settingsCost"),
+  settingsSecrets: $("#settingsSecrets"),
   toast: $("#toast"),
 };
 
@@ -223,7 +225,7 @@ function renderShell() {
     guide: ["Guide", "One clear next step at a time."],
     brain: ["Notes", "Saved beliefs, decisions, notes, and QA evidence."],
     history: ["History", "Audit trail and current project status."],
-    settings: ["Settings", "Workspace and AI connection."],
+    settings: ["Settings", "Workspace, AI connection, and secrets."],
   };
   const [title, subtitle] = titles[state.view] || titles.guide;
   el.viewTitle.textContent = title;
@@ -287,11 +289,18 @@ function renderGuide() {
 }
 
 function renderProviderForm() {
-  const options = state.providers.map((provider) => {
+  const primaryProviderIds = ["anthropic", "openai", "gemini", "qwen", "ollama"];
+  const renderOption = (provider) => {
     const selected = provider.id === state.activeProvider ? "selected" : "";
     return `<option value="${escapeHtml(provider.id)}" ${selected}>${escapeHtml(provider.name)}</option>`;
-  });
-  el.providerSelect.innerHTML = options.join("");
+  };
+  const primary = state.providers.filter((provider) => primaryProviderIds.includes(provider.id));
+  const more = state.providers.filter((provider) => !primaryProviderIds.includes(provider.id));
+  const primaryOptions = primary.map(renderOption).join("");
+  const moreOptions = more.length
+    ? `<optgroup label="More providers">${more.map(renderOption).join("")}</optgroup>`
+    : "";
+  el.providerSelect.innerHTML = `${primaryOptions}${moreOptions}`;
 
   if (document.activeElement !== el.providerModel) {
     el.providerModel.value = state.activeProviderInfo?.model || "";
@@ -401,6 +410,20 @@ function renderSettings() {
   el.settingsProvider.textContent = state.activeProviderInfo?.name || "Not connected";
   el.settingsModel.textContent = state.activeProviderInfo?.model || "Not set";
   el.settingsCost.textContent = `${currency.format(Number(state.cost?.session_usd || 0))} this session`;
+  el.settingsSecrets.textContent = secretSummary();
+}
+
+function secretSummary() {
+  if (!state.workspace) return "Choose a project to check secrets.";
+  const files = Array.isArray(state.secrets) ? state.secrets : [];
+  if (!files.length) return "No .env or key files found.";
+
+  const variableNames = files
+    .flatMap((file) => Array.isArray(file.variables) ? file.variables : [])
+    .slice(0, 8);
+  const suffix = variableNames.length ? ` Variables: ${variableNames.join(", ")}.` : "";
+  const fileLabel = files.length === 1 ? "secret file" : "secret files";
+  return `${files.length} ${fileLabel} found. Values stay hidden.${suffix}`;
 }
 
 function setBusy(isBusy) {
@@ -441,16 +464,18 @@ async function refreshProjectState(markChecked = false) {
     state.gates = [];
     state.brain = [];
     state.audit = [];
+    state.secrets = [];
     state.git = null;
     render();
     return;
   }
 
-  const [wave, gates, brain, audit, git] = await Promise.all([
+  const [wave, gates, brain, audit, secrets, git] = await Promise.all([
     safeCall(() => ipc.wave.get(), null),
     safeCall(() => ipc.gates.getAll(), []),
     safeCall(() => ipc.brain.search(el.brainSearch.value.trim()), []),
     safeCall(() => ipc.audit.list(50), []),
+    safeCall(() => ipc.security.secrets(), []),
     safeCall(() => ipc.git.status(), null),
   ]);
 
@@ -458,6 +483,7 @@ async function refreshProjectState(markChecked = false) {
   state.gates = Array.isArray(gates) ? gates : [];
   state.brain = Array.isArray(brain) ? brain : [];
   state.audit = Array.isArray(audit) ? audit : [];
+  state.secrets = Array.isArray(secrets) ? secrets : [];
   state.git = git;
   if (markChecked) state.statusChecked = true;
   render();

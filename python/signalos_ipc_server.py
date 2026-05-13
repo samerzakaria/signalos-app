@@ -12,6 +12,13 @@ from importlib import resources
 from io import StringIO
 from typing import Any
 
+from signalos_secret_guard import (
+    redact_arg_list,
+    redact_response,
+    redact_text,
+    scan_secret_files,
+)
+
 
 GATE_NAMES = {
     0: "Constitution",
@@ -35,7 +42,8 @@ GATE_DESCRIPTIONS = {
 def handle(req: dict) -> dict:
     req_id = req.get("id", "unknown")
     command = req.get("command", "")
-    args = req.get("args", [])
+    raw_args = req.get("args", [])
+    args = redact_arg_list(raw_args if isinstance(raw_args, list) else [str(raw_args)])
     cwd = req.get("cwd")
 
     if cwd and os.path.isdir(cwd):
@@ -47,8 +55,8 @@ def handle(req: dict) -> dict:
         return {
             "id": req_id,
             "ok": False,
-            "error": f"{type(exc).__name__}: {exc}",
-            "trace": traceback.format_exc(),
+            "error": redact_text(f"{type(exc).__name__}: {exc}"),
+            "trace": redact_text(traceback.format_exc()),
         }
 
 
@@ -82,18 +90,21 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
     if command == "cost:summary":
         return ok(req_id, data={"note": "cost tracked in Rust provider layer"})
 
+    if command == "security:secrets":
+        return ok(req_id, data=scan_secret_files(os.getcwd()))
+
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "1.0.0-beta3"})
+        return ok(req_id, data={"pong": True, "version": "1.0.0-beta4"})
 
     return err(req_id, f"Unknown command: {command}")
 
 
 def dispatch_cli(command: str, args: list[str]) -> str:
     cwd = os.getcwd()
-    argv = map_slash_command(command, args, cwd)
+    argv = map_slash_command(command, redact_arg_list(args), cwd)
     if argv is not None:
         rc, out, err_text = run_core_cli(argv)
-        text = (out or err_text).strip()
+        text = redact_text((out or err_text).strip())
         if text:
             return text
         return f"Command completed with exit code {rc}."
@@ -103,7 +114,7 @@ def dispatch_cli(command: str, args: list[str]) -> str:
         return (
             f"/{command} is available as a SignalOS protocol command. "
             "This beta shows the command brief here; conversational execution is next.\n\n"
-            f"{spec}"
+            f"{redact_text(spec)}"
         )
 
     return f"Unknown SignalOS command: /{command}"
@@ -285,6 +296,7 @@ def brain_search(query: str) -> list[dict]:
 
 
 def brain_add(text: str, entry_type: str) -> dict:
+    text = redact_text(text)
     rc, out, err_text = run_core_cli(
         [
             "brain",
@@ -298,8 +310,8 @@ def brain_add(text: str, entry_type: str) -> dict:
         ]
     )
     if rc != 0:
-        raise RuntimeError((err_text or out or f"brain put exited {rc}").strip())
-    return json.loads(out) if out.strip() else {"text": text, "type": entry_type}
+        raise RuntimeError(redact_text((err_text or out or f"brain put exited {rc}").strip()))
+    return redact_response(json.loads(out)) if out.strip() else {"text": text, "type": entry_type}
 
 
 def audit_list(limit: int) -> list[dict]:
@@ -334,7 +346,7 @@ def get_status_json() -> dict:
 def normalize_brain_entry(entry: dict) -> dict:
     return {
         "id": entry.get("id", ""),
-        "text": entry.get("content") or entry.get("text") or "",
+        "text": redact_text(entry.get("content") or entry.get("text") or ""),
         "type": entry.get("type") or "note",
         "ts": entry.get("created_at") or entry.get("ts") or "",
         "wave": entry.get("wave") or "",
@@ -344,11 +356,16 @@ def normalize_brain_entry(entry: dict) -> dict:
 
 
 def ok(req_id: str, output: str | None = None, data: Any = None) -> dict:
-    return {"id": req_id, "ok": True, "output": output, "data": data}
+    return {
+        "id": req_id,
+        "ok": True,
+        "output": redact_text(output) if output is not None else None,
+        "data": redact_response(data),
+    }
 
 
 def err(req_id: str, message: str) -> dict:
-    return {"id": req_id, "ok": False, "error": message}
+    return {"id": req_id, "ok": False, "error": redact_text(message)}
 
 
 def main() -> None:
