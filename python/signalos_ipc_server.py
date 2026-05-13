@@ -18,6 +18,7 @@ from signalos_secret_guard import (
     redact_text,
     scan_secret_files,
 )
+from signalos_attachments import analyze_payload
 
 
 GATE_NAMES = {
@@ -43,7 +44,8 @@ def handle(req: dict) -> dict:
     req_id = req.get("id", "unknown")
     command = req.get("command", "")
     raw_args = req.get("args", [])
-    args = redact_arg_list(raw_args if isinstance(raw_args, list) else [str(raw_args)])
+    raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
+    args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
 
     if cwd and os.path.isdir(cwd):
@@ -93,8 +95,12 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
     if command == "security:secrets":
         return ok(req_id, data=scan_secret_files(os.getcwd()))
 
+    if command == "attachment:analyze":
+        payload_json = args[0] if args else "[]"
+        return ok(req_id, data=analyze_payload(payload_json))
+
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "1.0.0-beta4"})
+        return ok(req_id, data={"pong": True, "version": "1.0.0-beta5"})
 
     return err(req_id, f"Unknown command: {command}")
 

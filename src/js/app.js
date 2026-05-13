@@ -14,6 +14,7 @@ const state = {
   brain: [],
   audit: [],
   secrets: [],
+  attachments: [],
   git: null,
   statusChecked: false,
   busy: false,
@@ -49,6 +50,11 @@ const el = {
   providerHelp: $("#providerHelp"),
   gateList: $("#gateList"),
   activityLog: $("#activityLog"),
+  attachmentDrop: $("#attachmentDrop"),
+  attachmentInput: $("#attachmentInput"),
+  attachmentPick: $("#attachmentPick"),
+  attachmentButton: $("#attachmentButton"),
+  attachmentList: $("#attachmentList"),
   commandForm: $("#commandForm"),
   commandInput: $("#commandInput"),
   sidecarWarning: $("#sidecarWarning"),
@@ -195,6 +201,7 @@ function render() {
   renderProviderForm();
   renderGates();
   renderActivity();
+  renderAttachments();
   renderBrain();
   renderHistory();
   renderSettings();
@@ -355,6 +362,34 @@ function renderActivity() {
     </div>
   `).join("");
   el.activityLog.scrollTop = el.activityLog.scrollHeight;
+}
+
+function renderAttachments() {
+  if (!state.attachments.length) {
+    el.attachmentList.innerHTML = "";
+    return;
+  }
+
+  el.attachmentList.innerHTML = state.attachments.map((item, index) => {
+    const blocked = item.status === "blocked";
+    const badge = blocked ? "Blocked" : item.redacted ? "Redacted" : "Ready";
+    return `
+      <div class="attachment-item ${blocked ? "blocked" : ""}">
+        <div>
+          <div class="item-title">${escapeHtml(item.name || "Attachment")}</div>
+          <div class="attachment-summary">${escapeHtml(item.summary || "")}</div>
+        </div>
+        <button class="ghost small" type="button" data-remove-attachment="${index}">${escapeHtml(badge)} x</button>
+      </div>
+    `;
+  }).join("");
+
+  $$("[data-remove-attachment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.attachments.splice(Number(button.dataset.removeAttachment), 1);
+      renderAttachments();
+    });
+  });
 }
 
 function renderBrain() {
@@ -631,6 +666,58 @@ function formatResult(result) {
   return JSON.stringify(result, null, 2);
 }
 
+async function handleAttachmentFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  setBusy(true);
+  addLog("Reading files", "Checking file types and removing secrets...");
+  try {
+    const payloads = [];
+    let totalBytes = 0;
+    for (const file of files.slice(0, 10)) {
+      totalBytes += file.size || 0;
+      if (totalBytes > 40 * 1024 * 1024) {
+        toast("Too many files at once.");
+        break;
+      }
+      payloads.push({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data_base64: await readFileBase64(file),
+      });
+    }
+
+    const analyzed = await ipc.attachments.analyze(payloads);
+    const items = Array.isArray(analyzed) ? analyzed : [];
+    state.attachments = [...state.attachments, ...items].slice(-12);
+    const accepted = items.filter((item) => item.status === "accepted").length;
+    const blocked = items.length - accepted;
+    replaceLastLog("Files checked", `${accepted} ready. ${blocked} blocked. Secret values are not kept in chat context.`);
+    renderAttachments();
+    toast(blocked ? "Files checked. Some were blocked." : "Files ready.");
+  } catch (error) {
+    replaceLastLog("Could not read files", error.message || String(error));
+    toast("Could not attach those files.");
+  } finally {
+    el.attachmentInput.value = "";
+    setBusy(false);
+  }
+}
+
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",", 2)[1] : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function addLog(title, body) {
   state.log.push({ title, body, ts: Date.now() });
   state.log = state.log.slice(-12);
@@ -663,6 +750,24 @@ function bindEvents() {
   $("#saveProvider").addEventListener("click", saveProvider);
   $("#quickOllama").addEventListener("click", useLocalProvider);
   $("#refreshButton").addEventListener("click", () => refreshProjectState(true));
+  el.attachmentPick.addEventListener("click", () => el.attachmentInput.click());
+  el.attachmentButton.addEventListener("click", () => el.attachmentInput.click());
+  el.attachmentInput.addEventListener("change", (event) => handleAttachmentFiles(event.target.files));
+  ["dragenter", "dragover"].forEach((eventName) => {
+    el.attachmentDrop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      el.attachmentDrop.classList.add("drag-over");
+    });
+  });
+  ["dragleave", "drop"].forEach((eventName) => {
+    el.attachmentDrop.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      el.attachmentDrop.classList.remove("drag-over");
+    });
+  });
+  el.attachmentDrop.addEventListener("drop", (event) => {
+    handleAttachmentFiles(event.dataTransfer?.files);
+  });
 
   el.providerSelect.addEventListener("change", async () => {
     const selected = el.providerSelect.value;
@@ -680,6 +785,18 @@ function bindEvents() {
     event.preventDefault();
     const value = el.commandInput.value.trim();
     el.commandInput.value = "";
+    if (value && !value.startsWith("/")) {
+      const context = state.attachments
+        .filter((item) => item.status === "accepted")
+        .map((item) => `${item.name}\n${item.summary}`)
+        .join("\n\n");
+      const body = context
+        ? `${value}\n\nAttached context:\n${context}`
+        : value;
+      addLog("Question ready", body);
+      toast("Question is ready with safe context.");
+      return;
+    }
     runSignalCommand(value);
   });
 

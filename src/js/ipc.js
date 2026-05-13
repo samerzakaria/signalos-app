@@ -145,6 +145,14 @@ export const security = {
   secrets: () => invokeSidecar("run_signal_command", { command: "security:secrets", args: [] }),
 };
 
+export const attachments = {
+  analyze: (files) => invokeSidecar(
+    "run_signal_command",
+    { command: "attachment:analyze", args: [JSON.stringify(files)] },
+    120000,
+  ),
+};
+
 // ─── PROVIDER + COST ──────────────────────────────────────────────────────────
 
 export const provider = {
@@ -211,6 +219,21 @@ function mockInvoke(cmd, args) {
       case "get_wave_state":          return null;
       case "check_for_updates":       return { available: false };
       case "start_workspace_watch":   return null;
+      case "run_signal_command":
+        if (args.command === "attachment:analyze") {
+          const files = JSON.parse(args.args?.[0] || "[]");
+          return files.map((file) => ({
+            name: file.name,
+            size: file.size,
+            kind: String(file.type || "").startsWith("image/") ? "image" : "text",
+            status: file.name?.startsWith(".env") ? "blocked" : "accepted",
+            summary: file.name?.startsWith(".env")
+              ? "Secret or database files are blocked."
+              : "File checked. Secret values are not shown in browser preview mode.",
+            redacted: true,
+          }));
+        }
+        return null;
       // Mock model lists for browser dev mode
       case "fetch_provider_models": {
         const p = args.provider;

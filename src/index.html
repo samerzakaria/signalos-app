@@ -464,10 +464,64 @@ input:focus, select:focus, textarea:focus {
 }
 .command-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 12px;
   border-top: 1px solid var(--line);
+}
+.attachment-drop {
+  margin: 12px 12px 0;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: #fbfaf7;
+  color: var(--muted);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.attachment-drop.drag-over {
+  border-color: var(--blue);
+  background: #f8fbff;
+}
+.attachment-drop strong {
+  color: var(--text);
+}
+.attachment-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.attachment-list {
+  display: grid;
+  gap: 8px;
+}
+.attachment-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 10px;
+}
+.attachment-item.blocked {
+  border-color: #efc4c4;
+  background: #fff8f8;
+}
+.attachment-summary {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 96px;
+  overflow: hidden;
+}
+.attach-button {
+  min-width: 42px;
+  padding: 0 12px;
 }
 .chips {
   display: flex;
@@ -725,7 +779,20 @@ input:focus, select:focus, textarea:focus {
 
             <section class="command-panel">
               <div class="command-log" id="activityLog"></div>
+              <div class="attachment-drop" id="attachmentDrop">
+                <div class="attachment-copy">
+                  <div>
+                    <strong>Drop files here</strong>
+                    <div class="fine-print">Images, PDF, Office files, text, logs, code, and zip references. Secrets are blocked or redacted.</div>
+                  </div>
+                  <button class="secondary small" type="button" id="attachmentPick">Choose files</button>
+                </div>
+                <div class="attachment-list" id="attachmentList"></div>
+                <input id="attachmentInput" type="file" multiple hidden
+                  accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.pptx,.xlsx,.txt,.md,.csv,.json,.log,.js,.jsx,.ts,.tsx,.py,.rs,.go,.java,.kt,.swift,.c,.cc,.cpp,.h,.hpp,.cs,.php,.rb,.sh,.ps1,.bat,.cmd,.html,.css,.scss,.xml,.yaml,.yml,.toml,.ini,.zip">
+              </div>
               <form class="command-form" id="commandForm">
+                <button class="secondary attach-button" type="button" id="attachmentButton" title="Attach files">+</button>
                 <input id="commandInput" autocomplete="off" placeholder="Ask SignalOS, or press the next button">
                 <button class="primary" type="submit">Run</button>
               </form>

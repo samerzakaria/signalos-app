@@ -29,11 +29,11 @@ jobs:
       matrix:
         include:
           - platform: macos-arm
-            os: macos-latest
+            os: macos-15
             args: '--target aarch64-apple-darwin'
             target: aarch64-apple-darwin
           - platform: macos-intel
-            os: macos-latest
+            os: macos-15-intel
             args: '--target x86_64-apple-darwin'
             target: x86_64-apple-darwin
           - platform: windows
@@ -47,6 +47,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Checkout SignalOS Core
+        uses: actions/checkout@v5
+        with:
+          repository: samerzakaria/SignalOS
+          path: SignalOS-Core-v1.0.3
+          token: ${{ secrets.CORE_REPO_TOKEN || github.token }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -73,9 +80,19 @@ jobs:
         working-directory: src-tauri
         run: cargo tauri icon icons/icon.svg
 
+      - name: Bundle Python sidecar (Windows)
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: .\scripts\bundle-sidecar.ps1 -CorePath "SignalOS-Core-v1.0.3" -Python "python"
+
+      - name: Bundle Python sidecar (macOS/Linux)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: bash ./scripts/bundle-sidecar.sh SignalOS-Core-v1.0.3
+
       # ── macOS signing (no-op when APPLE_CERTIFICATE secret is not set) ────
       - name: Import Apple certificate
-        if: matrix.os == 'macos-latest' && env.APPLE_CERTIFICATE != ''
+        if: startsWith(matrix.platform, 'macos') && env.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -138,7 +155,7 @@ jobs:
       # when no developer certificate is available.  This step writes the vars
       # into GITHUB_ENV only when APPLE_CERTIFICATE is non-empty.
       - name: Configure Apple signing env
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         shell: bash
         env:
           _CERT:     ${{ secrets.APPLE_CERTIFICATE }}

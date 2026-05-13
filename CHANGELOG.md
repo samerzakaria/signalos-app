@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0-beta5] - 2026-05-13
+
+### Chat attachments and release fix
+
+- Added chat file selection and drag/drop attachment intake.
+- Added support for images, PDFs, Word, PowerPoint, Excel, text, Markdown, CSV, JSON, logs, code files, and zip references.
+- Blocked .env, key/certificate files, SQL/database dumps, and likely secret attachments.
+- Redacted likely API keys and secrets from accepted text and document summaries.
+- Added Office/PDF text extraction for safe summaries without returning raw file bytes.
+- Fixed CI release builds by bundling the platform-specific Python sidecar before Tauri packaging.
+
 ## [1.0.0-beta4] - 2026-05-13
 
 ### Provider and secrets release
