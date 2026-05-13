@@ -16,7 +16,7 @@
       "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.7/signalos-app_0.0.7_amd64.AppImage",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.7/SignalOS_0.0.7_amd64.AppImage",
       "signature": ""
     }
   }

@@ -205,7 +205,7 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
           files: |
@@ -218,7 +218,7 @@ jobs:
         if: matrix.platform == 'windows'
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
           files: |
@@ -232,7 +232,7 @@ jobs:
         if: matrix.platform == 'linux'
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
           files: |
@@ -346,7 +346,7 @@ jobs:
                 "signature": "${{ steps.sigs.outputs.win }}"
               },
               "linux-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/signalos-app_${V}_amd64.AppImage",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_amd64.AppImage",
                 "signature": "${{ steps.sigs.outputs.lin }}"
               }
             }
@@ -379,7 +379,7 @@ jobs:
                 "signature": "${{ steps.sigs.outputs.win }}"
               },
               "linux-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/signalos-app_${V}_amd64.AppImage",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_amd64.AppImage",
                 "signature": "${{ steps.sigs.outputs.lin }}"
               }
             }
