@@ -1,16 +1,19 @@
 /**
  * ipc.js — Frontend ↔ Tauri bridge
  *
- * Wraps all window.__TAURI__.invoke() calls in typed async functions.
+ * Wraps all Tauri invoke() calls in typed async functions.
  * Falls back to mock data when running outside Tauri (browser dev mode).
  */
 
-const IS_TAURI = typeof window.__TAURI__ !== "undefined";
+const TAURI = typeof window !== "undefined" ? window.__TAURI__ : undefined;
+const invokeTauri = TAURI?.core?.invoke || TAURI?.invoke;
+const listenTauri = TAURI?.event?.listen;
+const IS_TAURI = typeof invokeTauri === "function";
 const pendingSidecar = new Map();
 const completedSidecar = new Map();
 
-if (IS_TAURI) {
-  window.__TAURI__.event.listen("sidecar:response", (e) => {
+if (IS_TAURI && typeof listenTauri === "function") {
+  listenTauri("sidecar:response", (e) => {
     const resp = e.payload || {};
     const pending = pendingSidecar.get(resp.id);
     if (!pending) {
@@ -30,7 +33,7 @@ if (IS_TAURI) {
 
 async function invoke(cmd, args = {}) {
   if (IS_TAURI) {
-    return window.__TAURI__.invoke(cmd, args);
+    return invokeTauri(cmd, args);
   }
   // Browser mock — returns plausible data for UI development
   return mockInvoke(cmd, args);
@@ -77,25 +80,27 @@ export const workspace = {
 
 // Listen for workspace file-system change events (T1-4)
 export function onWorkspaceChange(cb) {
-  if (!IS_TAURI) return () => {};
-  return window.__TAURI__.event.listen("workspace:changed", (e) => cb(e.payload));
+  if (!IS_TAURI || typeof listenTauri !== "function") return () => {};
+  return listenTauri("workspace:changed", (e) => cb(e.payload));
 }
 
 // ─── SIGNAL COMMANDS ──────────────────────────────────────────────────────────
 
 export const signal = {
   run: (command, args = []) => invoke("run_signal_command", { command, args }),
+  runAndWait: (command, args = [], timeoutMs = 120000) =>
+    invokeSidecar("run_signal_command", { command, args }, timeoutMs),
 };
 
 // Listen for async sidecar responses
 export function onSidecarResponse(cb) {
-  if (!IS_TAURI) return () => {};
-  return window.__TAURI__.event.listen("sidecar:response", (e) => cb(e.payload));
+  if (!IS_TAURI || typeof listenTauri !== "function") return () => {};
+  return listenTauri("sidecar:response", (e) => cb(e.payload));
 }
 
 export function onSidecarLog(cb) {
-  if (!IS_TAURI) return () => {};
-  return window.__TAURI__.event.listen("sidecar:log", (e) => cb(e.payload));
+  if (!IS_TAURI || typeof listenTauri !== "function") return () => {};
+  return listenTauri("sidecar:log", (e) => cb(e.payload));
 }
 
 // ─── AUTO-UPDATER (T1-5) ─────────────────────────────────────────────────────
@@ -168,7 +173,7 @@ function mockInvoke(cmd, args) {
   const delay = (ms) => new Promise((r) => setTimeout(r, ms));
   return delay(60).then(() => {
     switch (cmd) {
-      case "get_workspace":       return "/Users/samer/Projects/MyProduct";
+      case "get_workspace":       return null;
       case "get_active_provider": return "anthropic";
       // Mock provider list — model names match providers.json defaults.
       // In the real app these come from the user's providers.json, not this file.
@@ -179,19 +184,16 @@ function mockInvoke(cmd, args) {
         { id: "ollama",    name: "Ollama (local)",   model: "",                   needs_key: false, price_in_1m: 0.00,  price_out_1m: 0.00  },
       ];
       case "get_cost_state": return {
-        tokens_in: 12400, tokens_out: 3200,
-        session_usd: 0.42, monthly_usd: 2.18,
+        tokens_in: 0, tokens_out: 0,
+        session_usd: 0, monthly_usd: 0,
         budget_usd: 10.0, provider: "Claude",
       };
       case "get_git_status": return {
-        branch: "main", is_clean: true, ahead: 0, behind: 0,
+        branch: "", is_clean: true, ahead: 0, behind: 0,
         last_sync: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-        worktrees: [
-          { path: "/Users/samer/dev/MyProduct",          branch: "main",             head: "70e2fee" },
-          { path: "/Users/samer/dev/MyProduct-feat-auth", branch: "feat/auth-module", head: "3a1bc09" },
-        ],
+        worktrees: [],
       };
-      case "has_api_key":             return true;
+      case "has_api_key":             return false;
       case "get_brain_entries":       return [];
       case "get_audit_trail":         return [];
       case "get_gate_status":         return null;

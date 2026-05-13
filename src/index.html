@@ -4,2519 +4,859 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SignalOS</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-
-/* ─── DESIGN TOKENS ─────────────────────────────────────────────────────── */
 :root {
-  /* Surface */
-  --bg:           #F7F7F6;
-  --surface:      #FFFFFF;
-  --surface-2:    #F3F3F2;
-  --surface-3:    #EBEBEA;
-
-  /* Border */
-  --border:       #E5E5E3;
-  --border-strong:#CDCDC9;
-
-  /* Text */
-  --text-1:       #0F0F0E;
-  --text-2:       #4B4B48;
-  --text-3:       #8C8C87;
-  --text-inv:     #FFFFFF;
-
-  /* Brand — Electric Blue */
-  --accent:       #1B4FD8;
-  --accent-light: #DBEAFE;
-  --accent-hover: #1540B8;
-
-  /* Semantic */
-  --success:      #17A34A;
-  --success-bg:   #DCFCE7;
-  --warning:      #D97706;
-  --warning-bg:   #FEF3C7;
-  --danger:       #DC2626;
-  --danger-bg:    #FEE2E2;
-  --info:         #0284C7;
-  --info-bg:      #E0F2FE;
-
-  /* Shadow */
-  --shadow-xs:    0 1px 2px rgba(0,0,0,.05);
-  --shadow-sm:    0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
-  --shadow-md:    0 4px 6px -1px rgba(0,0,0,.07), 0 2px 4px -1px rgba(0,0,0,.04);
-  --shadow-lg:    0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
-  --shadow-xl:    0 20px 25px -5px rgba(0,0,0,.08), 0 10px 10px -5px rgba(0,0,0,.03);
-
-  /* Radius */
-  --r-xs:   4px;
-  --r-sm:   6px;
-  --r-md:   10px;
-  --r-lg:   14px;
-  --r-xl:   18px;
-  --r-full: 9999px;
-
-  /* Typography */
-  --font:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --mono:  'JetBrains Mono', 'Fira Code', monospace;
-
-  /* Layout */
-  --sidebar-w: 220px;
-  --topbar-h:  52px;
+  --bg: #f6f5f2;
+  --panel: #ffffff;
+  --panel-soft: #fbfaf8;
+  --line: #e5e1d8;
+  --line-strong: #cfc7b8;
+  --text: #1e1d1a;
+  --muted: #68645d;
+  --faint: #8d877e;
+  --blue: #2457d6;
+  --blue-dark: #1742ad;
+  --blue-soft: #e8efff;
+  --green: #27885c;
+  --green-soft: #e7f5ed;
+  --amber: #a86310;
+  --amber-soft: #fff2dc;
+  --red: #b93434;
+  --red-soft: #fee9e7;
+  --shadow: 0 12px 30px rgba(44, 39, 30, .08);
+  --radius: 8px;
+  --sidebar: 280px;
 }
 
-/* ─── RESET ─────────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
-  font-family: var(--font);
-  font-size: 13px;
-  line-height: 1.5;
+  margin: 0;
+  overflow: hidden;
   background: var(--bg);
-  color: var(--text-1);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
-button { font-family: inherit; cursor: pointer; border: none; outline: none; }
-input, textarea { font-family: inherit; outline: none; border: none; background: none; }
-a { color: inherit; text-decoration: none; }
+button, input, select, textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
 
-/* ─── APP SHELL ─────────────────────────────────────────────────────────── */
 #app {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
-  grid-template-rows: var(--topbar-h) 1fr;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100vh;
-  grid-template-areas:
-    "sidebar topbar"
-    "sidebar main";
+  min-height: 620px;
 }
 
-/* ─── SIDEBAR ───────────────────────────────────────────────────────────── */
-#sidebar {
-  grid-area: sidebar;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+.sidebar {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  user-select: none;
+  gap: 18px;
+  padding: 22px 18px;
+  border-right: 1px solid var(--line);
+  background: #fbfaf7;
+  overflow-y: auto;
 }
 
-.sidebar-logo {
+.brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 16px;
-  height: var(--topbar-h);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  gap: 12px;
 }
-.sidebar-logo-mark {
-  width: 26px; height: 26px;
-  background: var(--accent);
-  border-radius: var(--r-sm);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.sidebar-logo-mark svg { width: 16px; height: 16px; }
-.sidebar-logo-text { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-1); }
-.sidebar-logo-version { font-size: 10px; color: var(--text-3); font-weight: 500; margin-left: auto; }
-
-/* Wave status pill */
-.wave-pill {
-  margin: 12px 12px 4px;
-  background: var(--accent-light);
-  border: 1px solid #BFDBFE;
-  border-radius: var(--r-md);
-  padding: 10px 12px;
-  flex-shrink: 0;
-}
-.wave-pill-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-bottom: 4px; }
-.wave-pill-name { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
-.wave-pill-bar { background: #BFDBFE; border-radius: var(--r-full); height: 4px; }
-.wave-pill-fill { background: var(--accent); height: 4px; border-radius: var(--r-full); transition: width .4s ease; }
-.wave-pill-meta { display: flex; justify-content: space-between; margin-top: 5px; }
-.wave-pill-meta span { font-size: 10px; color: var(--text-3); }
-.wave-pill-meta strong { color: var(--accent); }
-
-/* Nav sections */
-.nav-section { padding: 16px 8px 4px; flex-shrink: 0; }
-.nav-section-label {
-  font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.6px; color: var(--text-3);
-  padding: 0 8px; margin-bottom: 2px;
-}
-.nav-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px; border-radius: var(--r-sm);
-  font-size: 13px; font-weight: 500; color: var(--text-2);
-  cursor: pointer; transition: background .1s, color .1s;
-  position: relative;
-}
-.nav-item:hover { background: var(--surface-2); color: var(--text-1); }
-.nav-item.active { background: var(--accent-light); color: var(--accent); font-weight: 600; }
-.nav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
-.nav-item.active svg { opacity: 1; }
-.nav-badge {
-  margin-left: auto; font-size: 10px; font-weight: 700;
-  background: var(--accent); color: white;
-  padding: 1px 6px; border-radius: var(--r-full); min-width: 18px; text-align: center;
-}
-.nav-badge.warn { background: var(--warning); }
-
-/* Gate status mini-row */
-.gate-row {
-  display: flex; align-items: center; gap: 5px;
-  padding: 8px 12px 4px;
-  flex-shrink: 0;
-}
-.gate-dot {
-  width: 20px; height: 20px; border-radius: var(--r-full);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700; flex-shrink: 0;
-  transition: all .2s;
-}
-.gate-dot.signed   { background: var(--success); color: white; }
-.gate-dot.pending  { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
-.gate-dot.current  { background: var(--accent); color: white; box-shadow: 0 0 0 3px #BFDBFE; }
-.gate-dot.locked   { background: var(--surface-2); color: var(--border-strong); border: 1.5px dashed var(--border); }
-
-.sidebar-footer {
-  margin-top: auto; border-top: 1px solid var(--border);
-  padding: 10px 8px; flex-shrink: 0;
-}
-.sidebar-footer-btn {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px; border-radius: var(--r-sm);
-  font-size: 12px; color: var(--text-3); cursor: pointer;
-  transition: background .1s, color .1s; width: 100%;
-  background: none;
-}
-.sidebar-footer-btn:hover { background: var(--surface-2); color: var(--text-2); }
-.sidebar-footer-btn svg { width: 14px; height: 14px; }
-
-/* ─── TOP BAR ───────────────────────────────────────────────────────────── */
-#topbar {
-  grid-area: topbar;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 12px;
-  padding: 0 20px;
-}
-.topbar-breadcrumb {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 13px; color: var(--text-3);
-}
-.topbar-breadcrumb strong { color: var(--text-1); font-weight: 600; }
-.topbar-breadcrumb .sep { color: var(--border-strong); }
-
-.topbar-spacer { flex: 1; }
-
-/* Phase badge */
-.phase-badge {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-full); padding: 4px 10px;
-  font-size: 11px; font-weight: 600; color: var(--text-2);
-}
-.phase-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-
-/* Cost meter */
-.cost-meter {
-  display: flex; align-items: center; gap: 7px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-full); padding: 4px 12px;
-  font-size: 11px; color: var(--text-3); font-weight: 500;
-}
-.cost-meter strong { color: var(--text-1); font-weight: 700; font-variant-numeric: tabular-nums; }
-.cost-meter svg { width: 12px; height: 12px; opacity: 0.5; }
-
-/* Provider selector */
-.provider-btn {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-full); padding: 4px 10px;
-  font-size: 11px; font-weight: 600; color: var(--text-2);
-  cursor: pointer; transition: all .15s;
-}
-.provider-btn:hover { border-color: var(--accent); color: var(--accent); }
-.provider-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
-
-/* ─── MAIN ───────────────────────────────────────────────────────────────── */
-#main {
-  grid-area: main;
-  display: flex;
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--blue);
+  display: grid;
+  place-items: center;
+  color: white;
   overflow: hidden;
-  background: var(--bg);
+}
+.brand-mark svg { width: 28px; height: 28px; display: block; }
+.brand-name {
+  font-size: 18px;
+  font-weight: 760;
+}
+.brand-sub {
+  color: var(--faint);
+  font-size: 12px;
 }
 
-/* ─── VIEWS ─────────────────────────────────────────────────────────────── */
-.view { display: none; flex: 1; flex-direction: column; overflow: hidden; }
-.view.active { display: flex; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   CHAT VIEW
-══════════════════════════════════════════════════════════════════════════ */
-#view-chat { background: var(--bg); }
-
-.chat-messages {
-  flex: 1; overflow-y: auto; padding: 28px 0;
-  scroll-behavior: smooth;
-}
-.chat-messages::-webkit-scrollbar { width: 4px; }
-.chat-messages::-webkit-scrollbar-track { background: transparent; }
-.chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.chat-row {
-  display: flex; gap: 12px;
-  padding: 6px 28px;
-  animation: msg-in .2s ease both;
-}
-@keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-
-.chat-row.user { flex-direction: row-reverse; }
-
-.chat-avatar {
-  width: 28px; height: 28px; border-radius: var(--r-full);
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; margin-top: 2px;
-}
-.chat-avatar.ai   { background: var(--accent); color: white; }
-.chat-avatar.user { background: var(--text-1); color: white; }
-
-.chat-bubble {
-  max-width: 640px; padding: 10px 14px;
-  border-radius: var(--r-lg);
-  font-size: 13.5px; line-height: 1.65; color: var(--text-1);
-}
-.chat-row.ai .chat-bubble {
-  background: var(--surface); border: 1px solid var(--border);
-  border-bottom-left-radius: var(--r-xs);
-  box-shadow: var(--shadow-xs);
-}
-.chat-row.user .chat-bubble {
-  background: var(--accent); color: white;
-  border-bottom-right-radius: var(--r-xs);
-}
-
-/* Inline gate card (inside chat) */
-.gate-card {
-  margin: 12px 0 4px;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
-.gate-card-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-}
-.gate-card-num {
-  width: 28px; height: 28px; border-radius: var(--r-full);
-  background: var(--accent); color: white;
-  font-size: 11px; font-weight: 800;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.gate-card-info { flex: 1; }
-.gate-card-title { font-size: 13px; font-weight: 700; color: var(--text-1); }
-.gate-card-sub   { font-size: 11px; color: var(--text-3); margin-top: 1px; }
-.gate-card-status { font-size: 11px; font-weight: 600; }
-.gate-card-status.pending { color: var(--warning); }
-.gate-card-status.signed  { color: var(--success); }
-.gate-card-body { padding: 12px 14px; }
-.gate-card-body p { font-size: 12.5px; color: var(--text-2); margin-bottom: 12px; line-height: 1.6; }
-.gate-sign-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--accent); color: white;
-  font-size: 12px; font-weight: 700;
-  padding: 8px 16px; border-radius: var(--r-sm);
-  cursor: pointer; transition: background .15s, transform .1s;
-  border: none;
-}
-.gate-sign-btn:hover  { background: var(--accent-hover); }
-.gate-sign-btn:active { transform: scale(0.98); }
-.gate-sign-btn.signed {
-  background: var(--success-bg); color: var(--success);
-  cursor: default;
-}
-.gate-sign-btn svg { width: 13px; height: 13px; }
-
-/* Command pill */
-.cmd-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-full); padding: 2px 9px;
-  font-size: 11.5px; font-weight: 600; color: var(--accent);
-  font-family: var(--mono); cursor: pointer;
-  transition: background .1s;
-}
-.cmd-pill:hover { background: var(--accent-light); }
-
-/* Mentor context strip (above chat bubble) */
-.mentor-strip {
-  display: flex; align-items: center; gap: 7px;
-  margin-bottom: 6px; padding: 0 4px;
-}
-.mentor-strip span { font-size: 11px; color: var(--text-3); }
-.mentor-strip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-
-/* Typing indicator */
-.typing-indicator { display: flex; gap: 4px; padding: 4px 2px; }
-.typing-indicator span {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--text-3);
-  animation: typing 1.2s infinite ease;
-}
-.typing-indicator span:nth-child(2) { animation-delay: .15s; }
-.typing-indicator span:nth-child(3) { animation-delay: .3s; }
-@keyframes typing { 0%,60%,100% { transform: translateY(0); opacity:.4; } 30% { transform: translateY(-4px); opacity:1; } }
-
-/* Chat input bar */
-.chat-input-wrap {
-  padding: 16px 28px 20px; flex-shrink: 0;
-  background: var(--bg);
-}
-.chat-input-box {
-  display: flex; align-items: flex-end; gap: 10px;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
-  border-radius: var(--r-xl);
-  padding: 10px 10px 10px 16px;
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s, box-shadow .15s;
-}
-.chat-input-box:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-sm), 0 0 0 3px rgba(27,79,216,.12);
-}
-.chat-input-box textarea {
-  flex: 1; resize: none; min-height: 22px; max-height: 160px;
-  font-size: 13.5px; color: var(--text-1);
-  line-height: 1.5; overflow-y: auto;
-}
-.chat-input-box textarea::placeholder { color: var(--text-3); }
-.chat-send-btn {
-  width: 34px; height: 34px; border-radius: var(--r-md);
-  background: var(--accent); color: white; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  transition: background .15s, transform .1s;
-  border: none; cursor: pointer;
-}
-.chat-send-btn:hover  { background: var(--accent-hover); }
-.chat-send-btn:active { transform: scale(0.95); }
-.chat-send-btn svg { width: 15px; height: 15px; }
-.chat-send-btn:disabled { background: var(--surface-3); cursor: default; }
-.chat-input-hints {
-  display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;
-}
-.hint-chip {
-  font-size: 11px; color: var(--text-3); background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--r-full);
-  padding: 3px 9px; cursor: pointer; transition: all .1s;
-}
-.hint-chip:hover { background: var(--accent-light); color: var(--accent); border-color: #BFDBFE; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   DASHBOARD VIEW
-══════════════════════════════════════════════════════════════════════════ */
-#view-dashboard {
-  overflow-y: auto; padding: 24px 28px;
-  gap: 0;
-  background: var(--bg);
-}
-#view-dashboard::-webkit-scrollbar { width: 4px; }
-#view-dashboard::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.dash-header { margin-bottom: 20px; }
-.dash-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
-.dash-header p  { font-size: 12px; color: var(--text-3); }
-
-.dash-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-.dash-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 18px;
-  box-shadow: var(--shadow-xs);
-}
-.card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
-.card-title { font-size: 12px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
-.card-action { font-size: 11px; color: var(--accent); font-weight: 600; cursor: pointer; }
-.card-action:hover { text-decoration: underline; }
-.card-value { font-size: 32px; font-weight: 800; letter-spacing: -1px; color: var(--text-1); line-height: 1; }
-.card-value-sub { font-size: 12px; color: var(--text-3); margin-top: 4px; }
-
-/* Phase track */
-.phase-track { display: flex; align-items: center; gap: 0; margin: 12px 0 4px; }
-.phase-node {
-  flex: 1; text-align: center; position: relative;
-}
-.phase-node::before {
-  content: ''; position: absolute; top: 12px; left: calc(-50%);
-  right: calc(50%); height: 2px; background: var(--border);
-  z-index: 0;
-}
-.phase-node:first-child::before { display: none; }
-.phase-dot {
-  width: 24px; height: 24px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 5px; font-size: 9px; font-weight: 700;
-  position: relative; z-index: 1;
-}
-.phase-dot.done    { background: var(--success); color: white; }
-.phase-dot.active  { background: var(--accent); color: white; box-shadow: 0 0 0 4px rgba(91,91,214,.2); }
-.phase-dot.future  { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
-.phase-node-label { font-size: 9px; color: var(--text-3); font-weight: 500; }
-.phase-node.active .phase-node-label { color: var(--accent); font-weight: 700; }
-
-/* Metric bars */
-.metric-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.metric-label { font-size: 11px; color: var(--text-2); width: 80px; flex-shrink: 0; }
-.metric-bar { flex: 1; background: var(--surface-3); border-radius: var(--r-full); height: 6px; }
-.metric-fill { height: 6px; border-radius: var(--r-full); transition: width .5s ease; }
-.metric-val { font-size: 11px; font-weight: 700; width: 34px; text-align: right; color: var(--text-1); }
-
-/* Debt table */
-.debt-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
-.debt-row:last-child { border-bottom: none; }
-.debt-tier { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: var(--r-full); flex-shrink: 0; }
-.debt-tier.t1 { background: var(--danger-bg); color: var(--danger); }
-.debt-tier.t2 { background: var(--warning-bg); color: var(--warning); }
-.debt-tier.t3 { background: var(--surface-3); color: var(--text-3); }
-.debt-name { flex: 1; font-size: 12px; color: var(--text-2); }
-.debt-age  { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   GATES VIEW
-══════════════════════════════════════════════════════════════════════════ */
-#view-gates { overflow-y: auto; padding: 24px 28px; background: var(--bg); }
-#view-gates::-webkit-scrollbar { width: 4px; }
-#view-gates::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.gates-header { margin-bottom: 24px; }
-.gates-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
-.gates-header p  { font-size: 12px; color: var(--text-3); }
-
-.gate-full-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-lg); margin-bottom: 12px;
-  box-shadow: var(--shadow-xs); overflow: hidden;
-  transition: box-shadow .2s;
-}
-.gate-full-card:hover { box-shadow: var(--shadow-sm); }
-.gate-full-card.current { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,91,214,.08); }
-.gate-full-card.signed { border-color: var(--border); }
-
-.gate-full-header { display: flex; align-items: center; gap: 12px; padding: 16px 18px; cursor: pointer; }
-.gate-full-num {
-  width: 36px; height: 36px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 800; flex-shrink: 0;
-}
-.gate-full-num.signed  { background: var(--success-bg); color: var(--success); }
-.gate-full-num.current { background: var(--accent); color: white; }
-.gate-full-num.locked  { background: var(--surface-2); color: var(--text-3); }
-
-.gate-full-info { flex: 1; }
-.gate-full-name { font-size: 14px; font-weight: 700; color: var(--text-1); margin-bottom: 2px; }
-.gate-full-desc { font-size: 12px; color: var(--text-3); }
-
-.gate-full-state { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; flex-shrink: 0; }
-.gate-full-state.signed  { color: var(--success); }
-.gate-full-state.current { color: var(--accent); }
-.gate-full-state.locked  { color: var(--text-3); }
-
-.gate-full-body { padding: 0 18px 18px; border-top: 1px solid var(--border); }
-.gate-full-body-inner { padding-top: 14px; }
-.gate-artifact-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-3); margin-bottom: 8px; }
-.gate-artifact-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2); border-radius: var(--r-sm); margin-bottom: 6px; }
-.gate-artifact-icon { font-size: 14px; }
-.gate-artifact-name { font-size: 12px; font-weight: 600; color: var(--text-1); flex: 1; }
-.gate-artifact-status { font-size: 11px; font-weight: 600; }
-.gate-artifact-status.ok      { color: var(--success); }
-.gate-artifact-status.missing { color: var(--danger); }
-.gate-sign-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-.gate-signer-input {
-  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 8px 12px;
-  font-size: 12px; color: var(--text-1);
-  transition: border-color .15s;
-}
-.gate-signer-input:focus { border-color: var(--accent); }
-.gate-sign-row .gate-sign-btn { padding: 8px 18px; font-size: 13px; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   BRAIN VIEW
-══════════════════════════════════════════════════════════════════════════ */
-#view-brain { overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
-
-.brain-toolbar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 28px; border-bottom: 1px solid var(--border);
-  background: var(--surface); flex-shrink: 0;
-}
-.brain-search {
-  flex: 1; display: flex; align-items: center; gap: 8px;
-  background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 7px 12px;
-  transition: border-color .15s;
-}
-.brain-search:focus-within { border-color: var(--accent); }
-.brain-search svg { width: 14px; height: 14px; color: var(--text-3); flex-shrink: 0; }
-.brain-search input { flex: 1; font-size: 13px; color: var(--text-1); }
-.brain-search input::placeholder { color: var(--text-3); }
-.brain-filter-btn {
-  display: flex; align-items: center; gap: 5px;
-  background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 7px 12px;
-  font-size: 12px; font-weight: 500; color: var(--text-2);
-  cursor: pointer; transition: all .15s;
-}
-.brain-filter-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.brain-list { flex: 1; overflow-y: auto; padding: 16px 28px; }
-.brain-list::-webkit-scrollbar { width: 4px; }
-.brain-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.brain-entry {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 8px;
-  cursor: pointer; transition: all .15s;
-  box-shadow: var(--shadow-xs);
-}
-.brain-entry:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
-.brain-entry-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
-.brain-entry-type {
-  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-  padding: 2px 7px; border-radius: var(--r-full);
-}
-.brain-entry-type.belief    { background: var(--accent-light); color: var(--accent); }
-.brain-entry-type.decision  { background: var(--warning-bg); color: var(--warning); }
-.brain-entry-type.gate      { background: var(--success-bg); color: var(--success); }
-.brain-entry-type.note      { background: var(--surface-3); color: var(--text-3); }
-.brain-entry-date { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
-.brain-entry-text { font-size: 12.5px; color: var(--text-1); line-height: 1.55; margin-bottom: 6px; }
-.brain-entry-meta { font-size: 11px; color: var(--text-3); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   CONSTITUTION VIEW
-══════════════════════════════════════════════════════════════════════════ */
-#view-constitution { overflow-y: auto; padding: 24px 28px; background: var(--bg); }
-#view-constitution::-webkit-scrollbar { width: 4px; }
-#view-constitution::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.const-header { margin-bottom: 20px; }
-.const-header h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
-.const-header p  { font-size: 12px; color: var(--text-3); }
-.const-summary {
-  display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;
-}
-.const-stat {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-md); padding: 10px 16px; flex: 1; min-width: 90px; text-align: center;
-  box-shadow: var(--shadow-xs);
-}
-.const-stat-num { font-size: 20px; font-weight: 700; color: var(--accent); }
-.const-stat-label { font-size: 10px; color: var(--text-3); margin-top: 2px; }
-
-.const-article {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-lg); padding: 18px 20px; margin-bottom: 10px;
-  box-shadow: var(--shadow-xs); transition: border-color .15s;
-}
-.const-article:hover { border-color: var(--border-strong); }
-.const-article-header { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 8px; }
-.const-article-num {
-  width: 28px; height: 28px; border-radius: var(--r-full);
-  background: var(--accent); color: white;
-  font-size: 11px; font-weight: 800;
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.const-article-num.ok      { background: var(--success); }
-.const-article-num.warn    { background: var(--warning); }
-.const-article-num.neutral { background: var(--surface-3); color: var(--text-3); border: 1.5px solid var(--border); }
-.const-article-info { flex: 1; }
-.const-article-title { font-size: 13px; font-weight: 700; color: var(--text-1); margin-bottom: 2px; }
-.const-article-sub   { font-size: 11px; color: var(--text-3); }
-.const-article-badge {
-  font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: var(--r-full); flex-shrink: 0;
-}
-.const-article-badge.satisfied { background: var(--success-bg); color: var(--success); }
-.const-article-badge.pending   { background: var(--warning-bg); color: var(--warning); }
-.const-article-badge.violated  { background: var(--danger-bg);  color: var(--danger); }
-.const-article-body { font-size: 12.5px; color: var(--text-2); line-height: 1.65; padding-left: 42px; }
-
-/* ── Worktree sync card ────────────────────────────────────────────────── */
-.wt-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 0; border-bottom: 1px solid var(--border);
-}
-.wt-row:last-child { border-bottom: none; padding-bottom: 0; }
-.wt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.wt-dot.clean   { background: var(--success); }
-.wt-dot.dirty   { background: var(--warning); }
-.wt-branch  { font-size: 12px; font-weight: 600; color: var(--text-1); font-family: var(--mono); flex: 1; }
-.wt-sha     { font-size: 11px; color: var(--text-3); font-family: var(--mono); }
-.wt-ahead   { font-size: 10px; font-weight: 600; color: var(--accent); background: var(--accent-light); padding: 1px 6px; border-radius: var(--r-full); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   ONBOARDING OVERLAY
-══════════════════════════════════════════════════════════════════════════ */
-#onboarding {
-  position: fixed; inset: 0; z-index: 100;
-  background: rgba(0,0,0,.45);
-  backdrop-filter: blur(8px);
-  display: flex; align-items: center; justify-content: center;
-  animation: fade-in .25s ease;
-}
-@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-#onboarding.hidden { display: none; }
-
-.onboarding-card {
-  background: var(--surface);
-  border-radius: var(--r-xl);
-  width: 480px; max-width: calc(100vw - 40px);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
-  animation: card-in .3s cubic-bezier(.34,1.56,.64,1) both;
-}
-@keyframes card-in { from { transform: scale(.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
-
-.onboarding-progress {
-  display: flex; gap: 4px; padding: 18px 24px 0;
-}
-.onboarding-progress-dot {
-  flex: 1; height: 3px; border-radius: var(--r-full);
-  background: var(--surface-3); transition: background .3s;
-}
-.onboarding-progress-dot.done    { background: var(--success); }
-.onboarding-progress-dot.active  { background: var(--accent); }
-
-.onboarding-body { padding: 28px 32px 24px; }
-.onboarding-icon {
-  width: 48px; height: 48px; border-radius: var(--r-lg);
-  background: var(--accent-light); display: flex; align-items: center; justify-content: center;
-  font-size: 22px; margin-bottom: 18px;
-}
-.onboarding-body h2 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; }
-.onboarding-body p  { font-size: 13.5px; color: var(--text-2); line-height: 1.6; margin-bottom: 22px; }
-
-.onboarding-field { margin-bottom: 14px; }
-.onboarding-field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
-.onboarding-input {
-  width: 100%; background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 10px 14px;
-  font-size: 13px; color: var(--text-1);
-  transition: border-color .15s, box-shadow .15s;
-  font-family: var(--font);
-}
-.onboarding-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(27,79,216,.1); }
-.onboarding-input.mono { font-family: var(--mono); letter-spacing: .02em; }
-
-.provider-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
-.provider-card {
-  border: 1.5px solid var(--border); border-radius: var(--r-md);
-  padding: 12px; cursor: pointer; transition: all .15s; text-align: center;
-}
-.provider-card:hover { border-color: var(--accent); background: var(--accent-light); }
-.provider-card.selected { border-color: var(--accent); background: var(--accent-light); }
-.provider-card-name { font-size: 12px; font-weight: 700; margin-top: 4px; }
-.provider-card-sub  { font-size: 10px; color: var(--text-3); }
-.provider-card-emoji { font-size: 20px; }
-
-/* ── Model picker ─────────────────────────────────────────────────────── */
-.model-picker-wrap { position: relative; }
-.model-fetch-row {
-  display: flex; gap: 8px; align-items: center;
-}
-.model-fetch-input {
-  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 10px 14px;
-  font-size: 13px; color: var(--text-1); font-family: var(--mono);
-  transition: border-color .15s, box-shadow .15s;
-}
-.model-fetch-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(27,79,216,.1); outline: none; }
-.model-fetch-btn {
-  flex-shrink: 0; background: var(--accent); color: white;
-  border: none; border-radius: var(--r-sm); padding: 10px 14px;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: background .15s; white-space: nowrap;
-}
-.model-fetch-btn:hover { background: var(--accent-hover); }
-.model-fetch-btn:disabled { background: var(--surface-3); color: var(--text-3); cursor: default; }
-.model-dropdown {
-  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
-  background: var(--surface); border: 1.5px solid var(--border);
-  border-radius: var(--r-md); box-shadow: var(--shadow-lg);
-  z-index: 200; max-height: 220px; overflow-y: auto;
-}
-.model-dropdown.open { display: block; }
-.model-dropdown::-webkit-scrollbar { width: 4px; }
-.model-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.model-search-wrap {
-  padding: 8px; border-bottom: 1px solid var(--border); position: sticky; top: 0;
-  background: var(--surface);
-}
-.model-search {
-  width: 100%; background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 6px 10px;
-  font-size: 12px; color: var(--text-1); font-family: var(--font);
-}
-.model-search:focus { outline: none; border-color: var(--accent); }
-.model-list { padding: 4px; }
-.model-list-item {
-  padding: 8px 10px; border-radius: var(--r-sm);
-  font-size: 12.5px; font-family: var(--mono); color: var(--text-1);
-  cursor: pointer; transition: background .1s;
-}
-.model-list-item:hover  { background: var(--accent-light); color: var(--accent); }
-.model-list-empty { padding: 16px 10px; text-align: center; color: var(--text-3); font-size: 12px; }
-/* ─────────────────────────────────────────────────────────────────────── */
-
-.workspace-picker {
-  display: flex; gap: 8px; align-items: center;
-}
-.workspace-path {
-  flex: 1; background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 10px 14px;
-  font-size: 12px; color: var(--text-2); font-family: var(--mono);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.workspace-browse-btn {
-  background: var(--surface-2); border: 1.5px solid var(--border);
-  border-radius: var(--r-sm); padding: 10px 14px;
-  font-size: 12px; font-weight: 600; color: var(--text-2);
-  cursor: pointer; white-space: nowrap; transition: all .15s;
-}
-.workspace-browse-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.onboarding-footer {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 32px 24px;
-  border-top: 1px solid var(--border);
-}
-.onboarding-back {
-  font-size: 13px; font-weight: 600; color: var(--text-3);
-  background: none; cursor: pointer;
-  transition: color .15s;
-}
-.onboarding-back:hover { color: var(--text-2); }
-.onboarding-next {
-  display: flex; align-items: center; gap: 7px;
-  background: var(--accent); color: white;
-  font-size: 13px; font-weight: 700;
-  padding: 10px 22px; border-radius: var(--r-sm);
-  cursor: pointer; transition: background .15s, transform .1s; border: none;
-}
-.onboarding-next:hover  { background: var(--accent-hover); }
-.onboarding-next:active { transform: scale(0.98); }
-.onboarding-next svg { width: 14px; height: 14px; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   EMPTY STATES
-══════════════════════════════════════════════════════════════════════════ */
-.empty-state {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; text-align: center;
-  padding: 60px 40px; flex: 1;
-}
-.empty-state-icon {
-  width: 56px; height: 56px; border-radius: var(--r-xl);
-  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
-  font-size: 24px; margin-bottom: 18px;
-}
-.empty-state h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 8px; }
-.empty-state p  { font-size: 13px; color: var(--text-3); max-width: 300px; line-height: 1.6; margin-bottom: 20px; }
-.empty-state-cta {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--accent); color: white; font-size: 13px; font-weight: 600;
-  padding: 9px 18px; border-radius: var(--r-sm); cursor: pointer;
-  border: none; transition: background .15s;
-}
-.empty-state-cta:hover { background: var(--accent-hover); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   TOAST NOTIFICATIONS
-══════════════════════════════════════════════════════════════════════════ */
-#toast-container {
-  position: fixed; bottom: 20px; right: 20px; z-index: 200;
-  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
-}
-.toast {
-  display: flex; align-items: center; gap: 10px;
-  background: var(--text-1); color: white;
-  padding: 12px 16px; border-radius: var(--r-md);
-  font-size: 13px; font-weight: 500; min-width: 240px;
-  box-shadow: var(--shadow-lg);
-  animation: toast-in .25s cubic-bezier(.34,1.56,.64,1) both;
-  pointer-events: all;
-}
-@keyframes toast-in { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-.toast.success { background: var(--success); }
-.toast.warning { background: var(--warning); }
-.toast.error   { background: var(--danger); }
-.toast-icon { font-size: 15px; flex-shrink: 0; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   COMMAND PALETTE
-══════════════════════════════════════════════════════════════════════════ */
-#cmdpal {
-  position: fixed; inset: 0; z-index: 150;
-  background: rgba(0,0,0,.4);
-  backdrop-filter: blur(6px);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding-top: 120px;
-}
-#cmdpal.hidden { display: none; }
-.cmdpal-box {
-  background: var(--surface); border-radius: var(--r-xl);
-  width: 540px; max-width: calc(100vw - 40px);
-  box-shadow: var(--shadow-xl); overflow: hidden;
-}
-.cmdpal-input-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 14px 18px; border-bottom: 1px solid var(--border);
-}
-.cmdpal-input-row svg { width: 16px; height: 16px; color: var(--text-3); flex-shrink: 0; }
-.cmdpal-input {
-  flex: 1; font-size: 14px; color: var(--text-1);
-  background: none;
-}
-.cmdpal-input::placeholder { color: var(--text-3); }
-.cmdpal-kbd { font-size: 10px; color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
-.cmdpal-results { max-height: 320px; overflow-y: auto; padding: 8px 0; }
-.cmdpal-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 9px 18px; cursor: pointer; transition: background .1s;
-}
-.cmdpal-item:hover, .cmdpal-item.selected { background: var(--accent-light); }
-.cmdpal-item-icon { width: 28px; height: 28px; border-radius: var(--r-sm); background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
-.cmdpal-item-name { font-size: 13px; font-weight: 600; color: var(--text-1); }
-.cmdpal-item-sub  { font-size: 11px; color: var(--text-3); margin-top: 1px; }
-.cmdpal-section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-3); padding: 8px 18px 4px; }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   UTILITY
-══════════════════════════════════════════════════════════════════════════ */
-.flex-center { display: flex; align-items: center; justify-content: center; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
-
-/* ── UPDATE BANNER (T1-5) ──────────────────────────────────────────────── */
-#update-banner {
-  display: none;
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 9999;
-  background: #1B4FD8;
-  color: #fff;
-  font-size: 13px;
-  padding: 8px 16px;
-  display: none;
-  align-items: center;
-  gap: 10px;
-  justify-content: center;
-}
-#update-banner.visible { display: flex; }
-#update-banner strong { font-weight: 700; }
-#update-banner .update-notes {
+.side-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px;
+}
+.side-label {
+  color: var(--faint);
   font-size: 11px;
-  opacity: 0.82;
-  max-width: 480px;
-  white-space: nowrap;
+  font-weight: 720;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.side-value {
+  margin-top: 5px;
+  font-weight: 720;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-#update-banner-dismiss {
-  margin-left: 8px;
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 3px 10px;
-  border-radius: 5px;
+.side-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
-#update-banner-dismiss:hover { background: rgba(255,255,255,0.35); }
+
+.steps {
+  display: grid;
+  gap: 8px;
+}
+.step {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  background: white;
+  color: var(--faint);
+  font-weight: 760;
+  font-size: 12px;
+}
+.step strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+}
+.step span {
+  display: block;
+  font-size: 12px;
+}
+.step.active {
+  background: var(--blue-soft);
+  border-color: #c9d8ff;
+}
+.step.active .step-number {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+.step.done .step-number {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+
+.nav {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+.nav button {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: left;
+  padding: 10px 11px;
+  font-weight: 650;
+}
+.nav button:hover,
+.nav button.active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: 70px minmax(0, 1fr);
+  min-width: 0;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 26px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, .78);
+  backdrop-filter: blur(14px);
+}
+.crumb {
+  min-width: 0;
+}
+.crumb-title {
+  font-weight: 780;
+  font-size: 18px;
+}
+.crumb-sub {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 56vw;
+}
+.topbar-spacer { flex: 1; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  padding: 0 12px;
+  color: var(--muted);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+.pill.ready .pill-dot { background: var(--green); }
+.pill.error .pill-dot { background: var(--red); }
+
+.main {
+  overflow: auto;
+  padding: 28px;
+}
+.view { display: none; }
+.view.active { display: block; }
+
+.guide-layout {
+  display: grid;
+  grid-template-columns: minmax(380px, 1fr) 360px;
+  gap: 22px;
+  max-width: 1220px;
+}
+.hero-action {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 28px;
+}
+.kicker {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.hero-action h1 {
+  margin: 10px 0 8px;
+  max-width: 720px;
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+.hero-action p {
+  margin: 0;
+  max-width: 700px;
+  color: var(--muted);
+  font-size: 16px;
+}
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 24px;
+}
+.primary,
+.secondary,
+.ghost {
+  min-height: 44px;
+  border-radius: var(--radius);
+  padding: 0 16px;
+  font-weight: 760;
+  border: 1px solid transparent;
+}
+.primary {
+  background: var(--blue);
+  color: white;
+}
+.primary:hover { background: var(--blue-dark); }
+.secondary {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+.secondary:hover { border-color: var(--blue); color: var(--blue); }
+.ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: transparent;
+}
+.ghost:hover {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.board {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.setup-row,
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.setup-row {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 12px;
+  padding: 14px;
+}
+.setup-row.done {
+  border-color: #c8e3d3;
+  background: var(--green-soft);
+}
+.setup-row.active {
+  border-color: #c9d8ff;
+  background: #f8fbff;
+}
+.setup-index {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  background: white;
+  font-weight: 780;
+}
+.setup-row.done .setup-index {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.setup-row.active .setup-index {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+.setup-row h3 {
+  margin: 0 0 2px;
+  font-size: 15px;
+}
+.setup-row p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.side-panel {
+  display: grid;
+  gap: 14px;
+}
+.panel {
+  padding: 16px;
+}
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+.field label {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 12px;
+}
+input, select, textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: white;
+  color: var(--text);
+  padding: 10px 11px;
+  min-height: 42px;
+}
+textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid #c9d8ff;
+  border-color: var(--blue);
+}
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.fine-print {
+  color: var(--faint);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.command-panel {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.command-log {
+  min-height: 170px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  background: #fbfaf7;
+}
+.log-entry {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 12px;
+}
+.log-entry strong {
+  display: block;
+  margin-bottom: 5px;
+}
+.log-entry pre {
+  margin: 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.command-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 12px 12px;
+}
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--muted);
+  padding: 7px 10px;
+  font-weight: 650;
+}
+.chip:hover { color: var(--blue); border-color: #c9d8ff; }
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+  max-width: 1220px;
+}
+.list {
+  display: grid;
+  gap: 10px;
+}
+.item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 14px;
+}
+.item-title {
+  font-weight: 760;
+}
+.item-meta {
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  color: var(--muted);
+  text-align: center;
+  padding: 24px;
+}
+.gate-list {
+  display: grid;
+  gap: 8px;
+}
+.gate {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+}
+.gate-id {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f0eee8;
+  color: var(--muted);
+  font-weight: 780;
+}
+.gate.current .gate-id { background: var(--blue); color: white; }
+.gate.signed .gate-id { background: var(--green); color: white; }
+.gate.locked { opacity: .7; }
+.gate-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  text-transform: capitalize;
+}
+
+.banner {
+  display: none;
+  border: 1px solid var(--amber);
+  background: var(--amber-soft);
+  color: #5b390f;
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  margin-bottom: 14px;
+}
+.banner.show { display: block; }
+
+#toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  max-width: 360px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+#toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 1040px) {
+  #app {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    display: none;
+  }
+  .guide-layout,
+  .split {
+    grid-template-columns: 1fr;
+  }
+  .topbar {
+    padding: 0 16px;
+  }
+  .main {
+    padding: 16px;
+  }
+  .topbar .pill {
+    display: none;
+  }
+}
 </style>
 </head>
 <body>
-
-<!-- ─── UPDATE NOTIFICATION BANNER (T1-5) ──────────────────────────────── -->
-<div id="update-banner" role="alert" aria-live="polite">
-  <span>⬆ SignalOS update available:</span>
-  <strong id="update-version"></strong>
-  <span class="update-notes" id="update-notes"></span>
-  <button id="update-banner-dismiss" onclick="document.getElementById('update-banner').classList.remove('visible')">Dismiss</button>
-</div>
-
-<!-- ─── ONBOARDING OVERLAY ─────────────────────────────────────────────── -->
-<div id="onboarding">
-  <div class="onboarding-card">
-    <div class="onboarding-progress" id="ob-progress">
-      <div class="onboarding-progress-dot active"></div>
-      <div class="onboarding-progress-dot"></div>
-      <div class="onboarding-progress-dot"></div>
-      <div class="onboarding-progress-dot"></div>
-    </div>
-
-    <!-- Step 1: Welcome -->
-    <div class="onboarding-body" id="ob-step-1">
-      <div class="onboarding-icon">✦</div>
-      <h2>Welcome to SignalOS</h2>
-      <p>Your AI governance runtime. Ship with clarity — from the first wave to the last debrief. Let's get you set up in under 3 minutes.</p>
-    </div>
-
-    <!-- Step 2: Provider + API Key (hidden) -->
-    <div class="onboarding-body" id="ob-step-2" style="display:none">
-      <div class="onboarding-icon">🔑</div>
-      <h2>Choose your AI provider</h2>
-      <p>Pick a provider and paste your API key. It's stored in your OS keychain — never written to disk.</p>
-      <div class="provider-grid">
-        <div class="provider-card selected" data-provider="anthropic" onclick="selectProvider(this)">
-          <div class="provider-card-emoji">⚡</div>
-          <div class="provider-card-name">Anthropic</div>
-          <div class="provider-card-sub">Claude</div>
-        </div>
-        <div class="provider-card" data-provider="openai" onclick="selectProvider(this)">
-          <div class="provider-card-emoji">🤖</div>
-          <div class="provider-card-name">OpenAI</div>
-          <div class="provider-card-sub">GPT</div>
-        </div>
-        <div class="provider-card" data-provider="gemini" onclick="selectProvider(this)">
-          <div class="provider-card-emoji">💎</div>
-          <div class="provider-card-name">Gemini</div>
-          <div class="provider-card-sub">Google</div>
-        </div>
-        <div class="provider-card" data-provider="ollama" onclick="selectProvider(this)">
-          <div class="provider-card-emoji">🏠</div>
-          <div class="provider-card-name">Ollama</div>
-          <div class="provider-card-sub">Local · No key</div>
-        </div>
-      </div>
-      <!-- Model picker — fetch live list or type manually -->
-      <div class="onboarding-field">
-        <label>Model <span style="font-weight:400;color:var(--text-3)">— fetched live from your provider</span></label>
-        <div class="model-picker-wrap">
-          <div class="model-fetch-row">
-            <input class="model-fetch-input" id="ob-model" placeholder="e.g. claude-sonnet-4-6" autocomplete="off" readonly onclick="toggleModelDropdown()">
-            <button class="model-fetch-btn" id="ob-model-fetch-btn" onclick="fetchModels()">Fetch models</button>
-          </div>
-          <div class="model-dropdown" id="ob-model-dropdown">
-            <div class="model-search-wrap">
-              <input class="model-search" id="ob-model-search" placeholder="Search models…" oninput="filterModelList(this.value)">
-            </div>
-            <div class="model-list" id="ob-model-list">
-              <div class="model-list-empty">Click "Fetch models" to load available models</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="onboarding-field" id="api-key-field">
-        <label>API Key</label>
-        <input class="onboarding-input mono api-key-input" id="ob-apikey" type="password" placeholder="sk-ant-..." autocomplete="off">
-      </div>
-    </div>
-
-    <!-- Step 3: Workspace (hidden) -->
-    <div class="onboarding-body" id="ob-step-3" style="display:none">
-      <div class="onboarding-icon">📁</div>
-      <h2>Select your workspace</h2>
-      <p>SignalOS sandboxes all agent writes inside this folder. Nothing outside it is ever touched without your explicit approval.</p>
-      <div class="onboarding-field">
-        <label>Workspace folder</label>
-        <div class="workspace-picker">
-          <div class="workspace-path" id="ob-workspace-path">No folder selected</div>
-          <button class="workspace-browse-btn" onclick="browseWorkspace()">Browse…</button>
-        </div>
-      </div>
-      <div class="onboarding-field">
-        <label>Project name</label>
-        <input class="onboarding-input" id="ob-project-name" placeholder="My Product" type="text">
-      </div>
-    </div>
-
-    <!-- Step 4: Ready (hidden) -->
-    <div class="onboarding-body" id="ob-step-4" style="display:none">
-      <div class="onboarding-icon">🚀</div>
-      <h2>You're ready to ship</h2>
-      <p>SignalOS will guide you through your first Discovery session now. One stakeholder interview — under 15 minutes — and Gate 0 will be in reach.</p>
-    </div>
-
-    <div class="onboarding-footer">
-      <button class="onboarding-back" id="ob-back" onclick="obBack()" style="visibility:hidden">Back</button>
-      <button class="onboarding-next" id="ob-next" onclick="obNext()">
-        <span id="ob-next-label">Get started</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- ─── COMMAND PALETTE ────────────────────────────────────────────────── -->
-<div id="cmdpal" class="hidden">
-  <div class="cmdpal-box">
-    <div class="cmdpal-input-row">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input class="cmdpal-input" id="cmdpal-input" placeholder="Run a command…" oninput="filterCommands(this.value)">
-      <span class="cmdpal-kbd">ESC</span>
-    </div>
-    <div class="cmdpal-results" id="cmdpal-results"></div>
-  </div>
-</div>
-
-<!-- ─── TOAST CONTAINER ───────────────────────────────────────────────── -->
-<div id="toast-container"></div>
-
-<!-- ─── APP SHELL ─────────────────────────────────────────────────────── -->
 <div id="app">
-
-  <!-- SIDEBAR -->
-  <nav id="sidebar" role="navigation">
-    <div class="sidebar-logo">
-      <div class="sidebar-logo-mark">
-        <!-- Broadcast logo: concentric arcs radiating from a central dot -->
-        <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <!-- Central dot -->
-          <circle cx="7" cy="7" r="1.4" fill="white"/>
-          <!-- Inner arc -->
-          <path d="M4.2 9.8a4 4 0 0 1 0-5.6" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none"/>
-          <path d="M9.8 9.8a4 4 0 0 0 0-5.6" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none"/>
-          <!-- Outer arc -->
-          <path d="M2.1 11.9a7 7 0 0 1 0-9.8" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.55"/>
-          <path d="M11.9 11.9a7 7 0 0 0 0-9.8" stroke="white" stroke-width="1.3" stroke-linecap="round" fill="none" opacity="0.55"/>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" role="img">
+          <path d="M13 43 C22 29 28 35 33 24 C38 13 48 15 52 24" fill="none" stroke="#dce7ff" stroke-width="7" stroke-linecap="round"/>
+          <path d="M13 43 C22 29 28 35 33 24 C38 13 48 15 52 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="13" cy="43" r="8" fill="#fff"/>
+          <circle cx="33" cy="24" r="7" fill="#eaf1ff"/>
+          <circle cx="52" cy="24" r="8" fill="#fff"/>
+          <circle cx="13" cy="43" r="3" fill="#2457d6"/>
+          <circle cx="33" cy="24" r="2.6" fill="#2457d6"/>
+          <circle cx="52" cy="24" r="3" fill="#2457d6"/>
         </svg>
       </div>
-      <span class="sidebar-logo-text">SignalOS</span>
-      <span class="sidebar-logo-version">v1.0</span>
-    </div>
-
-    <!-- Wave status -->
-    <div class="wave-pill">
-      <div class="wave-pill-label">Active wave</div>
-      <div class="wave-pill-name" id="sb-wave-name">No active wave</div>
-      <div class="wave-pill-bar">
-        <div class="wave-pill-fill" id="sb-wave-fill" style="width:0%"></div>
-      </div>
-      <div class="wave-pill-meta">
-        <span id="sb-wave-phase">Phase —</span>
-        <span><strong id="sb-wave-pct">0%</strong></span>
+      <div>
+        <div class="brand-name">SignalOS</div>
+        <div class="brand-sub">Guided workspace</div>
       </div>
     </div>
 
-    <!-- Primary nav -->
-    <div class="nav-section">
-      <div class="nav-section-label">Workspace</div>
-      <div class="nav-item active" data-view="chat" onclick="switchView('chat', this)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Chat
+    <div class="side-card">
+      <div class="side-label">Project</div>
+      <div class="side-value" id="workspaceLabel">No project chosen</div>
+      <div class="side-note" id="waveLabel">No active wave</div>
+    </div>
+
+    <div class="steps" id="stepList">
+      <div class="step" data-step="project">
+        <div class="step-number">1</div>
+        <div><strong>Pick project</strong><span>Choose the folder to use.</span></div>
       </div>
-      <div class="nav-item" data-view="dashboard" onclick="switchView('dashboard', this)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Dashboard
+      <div class="step" data-step="ai">
+        <div class="step-number">2</div>
+        <div><strong>Connect AI</strong><span>Save your AI key once.</span></div>
       </div>
-      <div class="nav-item" data-view="gates" onclick="switchView('gates', this)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Gates
-        <span class="nav-badge" id="gates-badge">G2</span>
+      <div class="step" data-step="status">
+        <div class="step-number">3</div>
+        <div><strong>Check status</strong><span>Let SignalOS inspect the project.</span></div>
       </div>
-      <div class="nav-item" data-view="brain" onclick="switchView('brain', this)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.14Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.14Z"/></svg>
-        Brain
-      </div>
-      <div class="nav-item" data-view="constitution" onclick="switchView('constitution', this)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-        Constitution
+      <div class="step" data-step="start">
+        <div class="step-number">4</div>
+        <div><strong>Start work</strong><span>Use the next safe action.</span></div>
       </div>
     </div>
 
-    <!-- Gate status row -->
-    <div class="nav-section">
-      <div class="nav-section-label">Gates</div>
-      <div class="gate-row" id="gate-row">
-        <div class="gate-dot current" title="G0 Constitution">0</div>
-        <div class="gate-dot locked"  title="G1 Belief">1</div>
-        <div class="gate-dot locked"  title="G2 Expectation Map">2</div>
-        <div class="gate-dot locked"  title="G3 Plan">3</div>
-        <div class="gate-dot locked"  title="G4 Trust Tier">4</div>
-        <div class="gate-dot locked"  title="G5 Quality Check">5</div>
+    <nav class="nav">
+      <button type="button" class="active" data-view="guide">Guide</button>
+      <button type="button" data-view="brain">Notes</button>
+      <button type="button" data-view="history">History</button>
+      <button type="button" data-view="settings">Settings</button>
+    </nav>
+  </aside>
+
+  <section class="workspace">
+    <header class="topbar">
+      <div class="crumb">
+        <div class="crumb-title" id="viewTitle">Guide</div>
+        <div class="crumb-sub" id="viewSubtitle">One clear next step at a time.</div>
       </div>
-    </div>
+      <div class="topbar-spacer"></div>
+      <div class="pill" id="statusPill"><span class="pill-dot"></span><span>Setting up</span></div>
+      <div class="pill" id="providerLabel">AI not connected</div>
+      <div class="pill" id="costLabel">$0.00</div>
+    </header>
 
-    <div class="sidebar-footer">
-      <button class="sidebar-footer-btn" onclick="openCmdPal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        Commands
-        <span style="margin-left:auto;font-size:10px;color:var(--text-3)">⌘K</span>
-      </button>
-      <button class="sidebar-footer-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
-        Settings
-      </button>
-    </div>
-  </nav>
+    <main class="main">
+      <div class="banner" id="sidecarWarning"></div>
 
-  <!-- TOP BAR -->
-  <header id="topbar">
-    <div class="topbar-breadcrumb">
-      <span id="tb-project">No project</span>
-      <span class="sep">/</span>
-      <strong id="tb-view">Chat</strong>
-    </div>
-    <div class="topbar-spacer"></div>
-    <div class="phase-badge">
-      <div class="phase-badge-dot"></div>
-      <span id="tb-phase">Onboarding</span>
-    </div>
-    <div class="cost-meter">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      Session cost: <strong id="tb-cost">$0.00</strong>
-    </div>
-    <div class="provider-btn" onclick="switchView('settings', null)">
-      <div class="provider-dot"></div>
-      <span id="tb-provider">Claude</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
-    </div>
-  </header>
-
-  <!-- MAIN CONTENT -->
-  <main id="main">
-
-    <!-- CHAT VIEW -->
-    <div class="view active" id="view-chat">
-      <div class="chat-messages" id="chat-messages">
-        <!-- Welcome message — dynamically updated by updateMentoringHints() (T2-2) -->
-        <div class="chat-row ai" id="welcome-msg">
-          <div class="chat-avatar ai">S</div>
+      <section class="view active" id="view-guide">
+        <div class="guide-layout">
           <div>
-            <div class="mentor-strip">
-              <div class="dot"></div>
-              <span id="mentor-strip-text">No active wave</span>
-            </div>
-            <div class="chat-bubble" id="welcome-bubble">
-              <p style="margin-bottom:10px">Select a workspace and start from the real project state.</p>
-              <p style="margin-bottom:12px">Use <span class="cmd-pill" onclick="insertCmd('/signal-status')">/signal-status</span> to inspect the workspace, or <span class="cmd-pill" onclick="insertCmd('/signal-init')">/signal-init</span> to initialize SignalOS in the selected folder.</p>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <span class="cmd-pill" onclick="insertCmd('/signal-status')">/signal-status</span>
-                <span class="cmd-pill" onclick="insertCmd('/signal-init')">/signal-init</span>
-                <span class="cmd-pill" onclick="insertCmd('/signal-brain')">/signal-brain</span>
+            <section class="hero-action">
+              <div class="kicker" id="activeStepLabel">Next step</div>
+              <h1 id="guideLead">Choose a project folder to begin.</h1>
+              <p id="guideDetail">SignalOS will guide you one step at a time and only show the next useful action.</p>
+              <div class="action-row">
+                <button class="primary" type="button" id="mainAction">Choose project folder</button>
+                <button class="secondary" type="button" id="secondaryAction">Check project</button>
               </div>
-            </div>
-          </div>
-        </div>
+            </section>
 
-        <!-- Gate card is rendered from real gate state after workspace load. -->
-        <div class="chat-row ai" id="initial-gate-card" style="display:none">
-          <div class="chat-avatar ai">S</div>
-          <div>
-            <div class="chat-bubble">
-              <div class="gate-card">
-                <div class="gate-card-header">
-                  <div class="gate-card-num">G2</div>
-                  <div class="gate-card-info">
-                    <div class="gate-card-title">Expectation Map</div>
-                    <div class="gate-card-sub">Phase 1 · Required before build begins</div>
-                  </div>
-                  <div class="gate-card-status pending">Pending</div>
+            <div class="board" id="guideChecklist">
+              <div class="setup-row" data-step-row="project">
+                <div class="setup-index">1</div>
+                <div>
+                  <h3>Project folder</h3>
+                  <p id="projectPath">No folder selected yet.</p>
                 </div>
-                <div class="gate-card-body">
-                  <p>The Expectation Map captures what success looks like for this wave — in measurable terms. It must be signed before any build work can start.</p>
-                  <button class="gate-sign-btn" id="g2-btn" onclick="signGate(2, this)">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-                    Sign Gate 2
-                  </button>
+              </div>
+              <div class="setup-row" data-step-row="ai">
+                <div class="setup-index">2</div>
+                <div>
+                  <h3>AI connection</h3>
+                  <p id="keyStatus">Choose an AI service and save the key once.</p>
+                </div>
+              </div>
+              <div class="setup-row" data-step-row="status">
+                <div class="setup-index">3</div>
+                <div>
+                  <h3>Project check</h3>
+                  <p id="statusText">Not checked yet.</p>
+                </div>
+              </div>
+              <div class="setup-row" data-step-row="start">
+                <div class="setup-index">4</div>
+                <div>
+                  <h3>Next safe action</h3>
+                  <p id="nextActionText">The app will show this after setup.</p>
                 </div>
               </div>
             </div>
+
+            <section class="command-panel">
+              <div class="command-log" id="activityLog"></div>
+              <form class="command-form" id="commandForm">
+                <input id="commandInput" autocomplete="off" placeholder="Ask SignalOS, or press the next button">
+                <button class="primary" type="submit">Run</button>
+              </form>
+              <div class="chips">
+                <button class="chip" type="button" data-command="/signal-status">Check project</button>
+                <button class="chip" type="button" data-command="/signal-init">Set up project</button>
+                <button class="chip" type="button" data-command="/signal-brain">Show notes</button>
+              </div>
+            </section>
           </div>
-        </div>
-      </div>
 
-      <!-- Input bar -->
-      <div class="chat-input-wrap">
-        <div class="chat-input-box">
-          <textarea id="chat-input" rows="1" placeholder="Ask SignalOS anything, or type / for commands…"
-            onkeydown="handleChatKey(event)" oninput="autoResize(this)"></textarea>
-          <button class="chat-send-btn" id="send-btn" onclick="sendMessage()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </button>
-        </div>
-        <!-- Hint chips — dynamically updated by updateMentoringHints() (T2-2) -->
-        <div class="chat-input-hints" id="chat-hints">
-          <div class="hint-chip" onclick="insertCmd('/signal-status')">Check workspace status</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-init')">Initialize SignalOS</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-brain')">Open brain index</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-discovery')">Read discovery brief</div>
-        </div>
-      </div>
-    </div>
+          <aside class="side-panel">
+            <section class="panel">
+              <h2>Project</h2>
+              <p class="fine-print">Pick the folder your team will work in. SignalOS keeps everything inside that folder.</p>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="chooseProject">Choose folder</button>
+                <button class="ghost small" type="button" id="forgetProject">Forget</button>
+              </div>
+            </section>
 
-    <!-- DASHBOARD VIEW -->
-    <div class="view" id="view-dashboard">
-      <div class="dash-header">
-        <h2>Wave Dashboard</h2>
-        <p>Live health · no active wave — start one to see metrics</p>
-      </div>
+            <section class="panel">
+              <h2>AI</h2>
+              <div class="field">
+                <label for="providerSelect">AI service</label>
+                <select id="providerSelect"></select>
+              </div>
+              <div class="field">
+                <label for="providerModel">Model</label>
+                <input id="providerModel" placeholder="Use provider default">
+              </div>
+              <div class="field" id="keyField">
+                <label for="providerKey">AI key</label>
+                <input id="providerKey" type="password" autocomplete="off" placeholder="Paste key once">
+              </div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="saveProvider">Save connection</button>
+                <button class="ghost small" type="button" id="quickOllama">Use local AI</button>
+              </div>
+              <div class="fine-print" id="providerHelp">Keys are saved securely on this computer.</div>
+            </section>
 
-      <div class="dash-grid-3">
-        <div class="card">
-          <div class="card-header"><div class="card-title">Phase</div></div>
-          <div class="card-value" style="font-size:20px;font-weight:700">Onboarding</div>
-          <div class="card-value-sub">No active wave</div>
-          <div class="phase-track" style="margin-top:14px">
-            <div class="phase-node active"><div class="phase-dot active">0</div><div class="phase-node-label">Onboard</div></div>
-            <div class="phase-node future"><div class="phase-dot future">1</div><div class="phase-node-label">Discovery</div></div>
-            <div class="phase-node future"><div class="phase-dot future">2</div><div class="phase-node-label">Plan</div></div>
-            <div class="phase-node future"><div class="phase-dot future">3</div><div class="phase-node-label">Build</div></div>
-            <div class="phase-node future"><div class="phase-dot future">4</div><div class="phase-node-label">Review</div></div>
-          </div>
+            <section class="panel">
+              <h2>Project steps</h2>
+              <div class="gate-list" id="gateList"></div>
+            </section>
+          </aside>
         </div>
+      </section>
 
-        <div class="card">
-          <div class="card-header"><div class="card-title">Belief Confidence</div></div>
-          <div class="card-value" id="belief-value">—</div>
-          <div class="card-value-sub" id="belief-sub">No brain entries yet</div>
-          <div style="margin-top:14px" id="belief-bars">
-            <div class="metric-row">
-              <span class="metric-label">Signal</span>
-              <div class="metric-bar"><div class="metric-fill" id="belief-signal-fill" style="width:0%;background:var(--success)"></div></div>
-              <span class="metric-val" id="belief-signal-pct">—</span>
+      <section class="view" id="view-brain">
+        <div class="split">
+          <section class="panel">
+            <h2>Notes</h2>
+            <div class="field">
+              <label for="brainSearch">Search</label>
+              <input id="brainSearch" placeholder="Search saved beliefs, notes, and decisions">
             </div>
-            <div class="metric-row">
-              <span class="metric-label">Noise</span>
-              <div class="metric-bar"><div class="metric-fill" id="belief-noise-fill" style="width:0%;background:var(--danger)"></div></div>
-              <span class="metric-val" id="belief-noise-pct">—</span>
+            <div class="list" id="brainList" style="margin-top:14px"></div>
+          </section>
+          <section class="panel">
+            <h2>Add note</h2>
+            <form id="brainForm">
+              <div class="field">
+                <label for="brainType">Type</label>
+                <select id="brainType">
+                  <option value="note">Note</option>
+                  <option value="decision">Decision</option>
+                  <option value="artifact">Artifact</option>
+                  <option value="qa">QA</option>
+                  <option value="session">Session</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="brainText">Text</label>
+                <textarea id="brainText" placeholder="Write one useful thing to remember"></textarea>
+              </div>
+              <div class="inline-actions">
+                <button class="primary small" type="submit">Save note</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-history">
+        <div class="split">
+          <section class="panel">
+            <h2>History</h2>
+            <div class="list" id="historyList"></div>
+          </section>
+          <section class="panel">
+            <h2>Current status</h2>
+            <div id="statusSummary" class="fine-print">No project status loaded yet.</div>
+            <div class="inline-actions">
+              <button class="secondary small" type="button" id="refreshButton">Refresh</button>
             </div>
-          </div>
+          </section>
         </div>
+      </section>
 
-        <div class="card">
-          <div class="card-header"><div class="card-title">Session Cost</div><div class="card-action">History</div></div>
-          <div class="card-value" id="dash-cost-value">$0.00</div>
-          <div class="card-value-sub" id="dash-cost-sub">of $10.00 monthly budget</div>
-          <div style="margin-top:14px">
-            <div class="metric-row">
-              <span class="metric-label">Used</span>
-              <div class="metric-bar"><div class="metric-fill" id="dash-cost-fill" style="width:0%;background:var(--accent)"></div></div>
-              <span class="metric-val" id="dash-cost-pct" style="color:var(--accent)">0%</span>
+      <section class="view" id="view-settings">
+        <div class="split">
+          <section class="panel">
+            <h2>Settings</h2>
+            <div class="item">
+              <div class="item-title">Workspace</div>
+              <div class="item-meta" id="settingsWorkspace">No project chosen</div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="settingsChooseProject">Choose folder</button>
+              </div>
             </div>
-          </div>
+            <div class="item">
+              <div class="item-title">AI service</div>
+              <div class="item-meta" id="settingsProvider">Not connected</div>
+            </div>
+            <div class="item">
+              <div class="item-title">Model</div>
+              <div class="item-meta" id="settingsModel">Not set</div>
+            </div>
+            <div class="item">
+              <div class="item-title">Cost</div>
+              <div class="item-meta" id="settingsCost">$0.00 this session</div>
+            </div>
+          </section>
         </div>
-      </div>
-
-      <div class="dash-grid-2">
-        <div class="card">
-          <div class="card-header"><div class="card-title">Phase Debt</div><div class="card-action" onclick="loadPhaseDebt()" style="cursor:pointer">↺ Refresh</div></div>
-          <div id="debt-content">
-            <div style="font-size:12px;color:var(--text-3)">Loading…</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title">Worktree Sync</div>
-            <div class="card-action" onclick="loadWorktreeStatus()" style="cursor:pointer">↺ Refresh</div>
-          </div>
-          <div id="wt-content">
-            <div style="font-size:12px;color:var(--text-3)">Loading…</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- GATES VIEW -->
-    <div class="view" id="view-gates">
-      <div class="gates-header">
-        <h2>Gate Signing</h2>
-        <p>Sign each gate in order. Every signature is timestamped and written to your audit trail.</p>
-      </div>
-
-      <div id="gates-list"></div>
-    </div>
-
-    <!-- CONSTITUTION VIEW -->
-    <div class="view" id="view-constitution">
-      <div class="const-header">
-        <h2>Constitution</h2>
-        <p>Immutable rules enforced across every wave. Violations block gate signing until resolved.</p>
-      </div>
-      <div class="const-summary" id="const-summary"></div>
-      <div id="const-articles"></div>
-    </div>
-
-    <!-- BRAIN VIEW -->
-    <div class="view" id="view-brain">
-      <div class="brain-toolbar">
-        <div class="brain-search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input id="brain-search-input" placeholder="Search beliefs, decisions, gates…" oninput="filterBrainTyped(this.value)">
-        </div>
-        <div class="brain-filter-btn" id="brain-type-filter" onclick="cycleTypeFilter(this)">All types ▾</div>
-        <button class="btn-download secondary" style="padding:7px 13px;font-size:12px;border-radius:var(--r-sm);display:flex;align-items:center;gap:5px;border:1.5px solid var(--border);background:var(--surface);color:var(--text-1);cursor:pointer;font-weight:600;white-space:nowrap" onclick="toggleAddEntry()">
-          + Add entry
-        </button>
-      </div>
-      <!-- Inline add-entry form (hidden by default) -->
-      <div id="brain-add-form" style="display:none;padding:12px 28px;border-bottom:1px solid var(--border);background:var(--surface);gap:10px;flex-wrap:wrap;align-items:flex-end">
-        <select id="brain-add-type" style="font-size:12px;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);color:var(--text-1);font-family:inherit">
-          <option value="belief">Belief</option>
-          <option value="decision">Decision</option>
-          <option value="note">Note</option>
-        </select>
-        <input id="brain-add-text" placeholder="Enter belief, decision, or note…"
-          style="flex:1;min-width:200px;font-size:13px;padding:7px 12px;border:1.5px solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);color:var(--text-1);font-family:inherit"
-          onkeydown="if(event.key==='Enter')saveBrainEntry()">
-        <button onclick="saveBrainEntry()" style="padding:7px 14px;font-size:12px;font-weight:600;border-radius:var(--r-sm);background:var(--accent);color:white;border:none;cursor:pointer">Save</button>
-        <button onclick="toggleAddEntry()" style="padding:7px 10px;font-size:12px;border-radius:var(--r-sm);border:1.5px solid var(--border);background:var(--surface);color:var(--text-3);cursor:pointer">Cancel</button>
-      </div>
-      <div class="brain-list" id="brain-list">
-        <!-- Empty state shown when no entries -->
-        <div class="empty-state">
-          <div class="empty-state-icon">🧠</div>
-          <h3>Brain is empty</h3>
-          <p>Beliefs, decisions, and signed gates will appear here as your wave progresses. Start your first Discovery to populate it.</p>
-          <button class="empty-state-cta" onclick="switchView('chat', document.querySelector('[data-view=chat]')); insertCmd('/signal-discovery')">
-            Start Discovery
-          </button>
-        </div>
-      </div>
-    </div>
-
-  </main>
+      </section>
+    </main>
+  </section>
 </div>
-
-<script>
-// ─── STATE ─────────────────────────────────────────────────────────────
-const state = {
-  view: 'chat',
-  provider: 'anthropic',
-  project: 'No project',
-  phase: 'Onboarding',
-  cost: 0.00,
-  onboardingStep: 1,
-  onboardingDone: false, // set true to skip onboarding
-  gates: [
-    { id: 0, name: 'Constitution', desc: 'Product constitution and first-run governance baseline', status: 'current', signer: null, ts: null, artifacts: ['CONSTITUTION.md'] },
-    { id: 1, name: 'Belief',       desc: 'Signed belief statement for the current wave', status: 'locked',  signer: null, ts: null, artifacts: ['BELIEF.md'] },
-    { id: 2, name: 'Expectation Map', desc: 'Measurable success criteria for this wave', status: 'locked', signer: null, ts: null, artifacts: ['EXPECTATION_MAP.md'] },
-    { id: 3, name: 'Plan',         desc: 'PLAN.md approved by PO', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md'] },
-    { id: 4, name: 'Trust Tier',   desc: 'All tasks declared T1/T2/T3', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md (T-tier column)'] },
-    { id: 5, name: 'Quality Check', desc: 'Critical findings resolved, QUALITY_CHECK.md signed', status: 'locked', signer: null, ts: null, artifacts: ['QUALITY_CHECK.md'] },
-  ]
-};
-
-// ─── ONBOARDING ─────────────────────────────────────────────────────────
-window.state = state;
-
-const TOTAL_STEPS = 4;
-
-function obNext() {
-  if (state.onboardingStep < TOTAL_STEPS) {
-    state.onboardingStep++;
-    renderOnboarding();
-  } else {
-    if (window.obFinish) { window.obFinish(); }
-    else {
-      document.getElementById('onboarding').classList.add('hidden');
-      toast('You\'re all set — let\'s ship 🚀', 'success');
-    }
-  }
-}
-function obBack() {
-  if (state.onboardingStep > 1) { state.onboardingStep--; renderOnboarding(); }
-}
-function selectProvider(el) {
-  document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('selected'));
-  el.classList.add('selected');
-  state.provider = el.dataset.provider;
-  const isOllama = el.dataset.provider === 'ollama';
-  document.getElementById('api-key-field').style.display = isOllama ? 'none' : 'block';
-  document.getElementById('tb-provider').textContent = el.querySelector('.provider-card-name').textContent;
-
-  // Populate model input from the loaded provider list (never hardcoded here)
-  const modelInput = document.getElementById('ob-model');
-  if (modelInput && window._providerList) {
-    const p = window._providerList.find(p => p.id === el.dataset.provider);
-    modelInput.value = p?.model || '';
-    modelInput.placeholder = isOllama
-      ? 'e.g. llama3.2, mistral, phi4 (whatever you pulled)'
-      : 'e.g. claude-sonnet-4-6';
-  }
-
-  // Auto-fetch models for Ollama (no key needed); close dropdown for others
-  closeModelDropdown();
-  if (isOllama) { fetchModels(); }
-}
-
-// ─── MODEL PICKER ────────────────────────────────────────────────────────
-let _fetchedModels = [];
-
-function toggleModelDropdown() {
-  const dd = document.getElementById('ob-model-dropdown');
-  if (dd.classList.contains('open')) { closeModelDropdown(); }
-  else if (_fetchedModels.length) { dd.classList.add('open'); }
-}
-
-function closeModelDropdown() {
-  document.getElementById('ob-model-dropdown')?.classList.remove('open');
-}
-
-async function fetchModels() {
-  const btn = document.getElementById('ob-model-fetch-btn');
-  const list = document.getElementById('ob-model-list');
-  const dropdown = document.getElementById('ob-model-dropdown');
-  const apiKey = document.getElementById('ob-apikey')?.value?.trim() || null;
-
-  btn.disabled = true;
-  btn.textContent = 'Fetching…';
-  list.innerHTML = '<div class="model-list-empty">Loading…</div>';
-  dropdown.classList.add('open');
-
-  try {
-    const models = await window.SignalOS?.provider.fetchModels(state.provider, apiKey);
-    _fetchedModels = models || [];
-    renderModelList(_fetchedModels);
-  } catch (e) {
-    list.innerHTML = `<div class="model-list-empty">Failed: ${e?.message || e}</div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Fetch models';
-  }
-}
-
-function renderModelList(models) {
-  const list = document.getElementById('ob-model-list');
-  if (!models || models.length === 0) {
-    list.innerHTML = '<div class="model-list-empty">No models found</div>';
-    return;
-  }
-  list.innerHTML = models.map(m =>
-    `<div class="model-list-item" onclick="selectModel('${m.id}')">${m.name || m.id}</div>`
-  ).join('');
-}
-
-function filterModelList(query) {
-  const q = query.toLowerCase();
-  const filtered = q ? _fetchedModels.filter(m =>
-    (m.name || m.id).toLowerCase().includes(q)
-  ) : _fetchedModels;
-  renderModelList(filtered);
-}
-
-function selectModel(modelId) {
-  const input = document.getElementById('ob-model');
-  if (input) input.value = modelId;
-  closeModelDropdown();
-  document.getElementById('ob-model-search').value = '';
-}
-
-// Close dropdown when clicking outside
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.model-picker-wrap')) closeModelDropdown();
-}, { capture: true });
-
-function browseWorkspace() {
-  if (window.browseWorkspaceReal) { window.browseWorkspaceReal(); return; }
-  // Browser fallback
-  document.getElementById('ob-workspace-path').textContent = '/Users/samer/Projects/MyProduct';
-}
-function renderOnboarding() {
-  const s = state.onboardingStep;
-  // Progress dots
-  document.querySelectorAll('.onboarding-progress-dot').forEach((d, i) => {
-    d.className = 'onboarding-progress-dot' + (i + 1 < s ? ' done' : i + 1 === s ? ' active' : '');
-  });
-  // Steps
-  for (let i = 1; i <= TOTAL_STEPS; i++) {
-    document.getElementById('ob-step-' + i).style.display = i === s ? 'block' : 'none';
-  }
-  document.getElementById('ob-back').style.visibility = s > 1 ? 'visible' : 'hidden';
-  document.getElementById('ob-next-label').textContent = s === TOTAL_STEPS ? 'Start SignalOS' : (s === 1 ? 'Get started' : 'Continue');
-}
-renderOnboarding();
-// Skip onboarding if already done (would check localStorage in real app)
-// document.getElementById('onboarding').classList.add('hidden');
-
-// ─── NAVIGATION ─────────────────────────────────────────────────────────
-function switchView(viewId, navEl) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  const v = document.getElementById('view-' + viewId);
-  if (v) v.classList.add('active');
-  if (navEl) navEl.classList.add('active');
-  const labels = { chat: 'Chat', dashboard: 'Dashboard', gates: 'Gates', brain: 'Brain', constitution: 'Constitution' };
-  document.getElementById('tb-view').textContent = labels[viewId] || viewId;
-  state.view = viewId;
-  if (viewId === 'gates') renderGates();
-}
-
-// ─── GATES ──────────────────────────────────────────────────────────────
-function renderGates() {
-  const list = document.getElementById('gates-list');
-  list.innerHTML = state.gates.map(g => `
-    <div class="gate-full-card ${g.status}" onclick="toggleGateCard(this)">
-      <div class="gate-full-header">
-        <div class="gate-full-num ${g.status}">G${g.id}</div>
-        <div class="gate-full-info">
-          <div class="gate-full-name">${g.name}</div>
-          <div class="gate-full-desc">${g.desc}</div>
-        </div>
-        <div class="gate-full-state ${g.status}">
-          ${g.status === 'signed' ? '✓ Signed' : g.status === 'current' ? '● Pending' : '🔒 Locked'}
-        </div>
-      </div>
-      ${g.status !== 'locked' ? `
-      <div class="gate-full-body" style="display:none">
-        <div class="gate-full-body-inner">
-          <div class="gate-artifact-label">Required artifacts</div>
-          ${g.artifacts.map(a => `
-            <div class="gate-artifact-item">
-              <span class="gate-artifact-icon">📄</span>
-              <span class="gate-artifact-name">${a}</span>
-              <span class="gate-artifact-status ${g.status === 'signed' ? 'ok' : 'missing'}">${g.status === 'signed' ? '✓ Present' : '⚠ Missing'}</span>
-            </div>
-          `).join('')}
-          ${g.status === 'signed' ? `
-            <div style="font-size:12px;color:var(--text-3);margin-top:12px">Signed by <strong style="color:var(--text-2)">${g.signer}</strong> · ${g.ts}</div>
-          ` : `
-            <div class="gate-sign-row">
-              <input class="gate-signer-input" placeholder="Your name">
-              <button class="gate-sign-btn" onclick="signGateView(${g.id}, this)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg>
-                Sign Gate ${g.id}
-              </button>
-            </div>
-          `}
-        </div>
-      </div>` : ''}
-    </div>
-  `).join('');
-}
-
-function toggleGateCard(el) {
-  const body = el.querySelector('.gate-full-body');
-  if (body) body.style.display = body.style.display === 'none' ? 'block' : 'none';
-}
-
-async function signGate(id, btn) {
-  const g = state.gates.find(g => g.id === id);
-  if (!g) return;
-
-  const signerInput = btn.closest('.gate-sign-row')?.querySelector('.gate-signer-input');
-  const signer = signerInput?.value?.trim();
-  if (!signer) {
-    toast('Enter your name before signing the gate', 'warning');
-    return;
-  }
-
-  // Call real backend if available
-  if (window.SignalOS) {
-    try {
-      await window.SignalOS.gates.sign(id, signer);
-    } catch (e) {
-      toast(`Sign failed: ${e?.message || e}`, 'error');
-      return;
-    }
-  }
-
-  g.status = 'signed';
-  g.signer = signer;
-  g.ts = new Date().toLocaleString();
-  btn.classList.add('signed');
-  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg> Signed`;
-  btn.closest('.gate-card-header')?.querySelector('.gate-card-status')?.classList.replace('pending', 'signed');
-
-  // Update gate dots in sidebar
-  const dots = document.querySelectorAll('.gate-dot');
-  if (dots[id]) {
-    dots[id].className = 'gate-dot signed';
-    if (dots[id + 1]) dots[id + 1].className = 'gate-dot current';
-  }
-  document.getElementById('gates-badge').textContent = 'G' + (id + 1);
-  toast(`Gate ${id} — ${g.name} signed ✓`, 'success');
-  addChatMessage('ai', `Gate ${id} (${g.name}) has been signed and written to your audit trail. The next gate is **G${id + 1}**. I'll remind you what's needed when you're ready.`);
-}
-function signGateView(id, btn) { signGate(id, btn); renderGates(); }
-
-// ─── CHAT ────────────────────────────────────────────────────────────────
-function addChatMessage(role, text) {
-  const msgs = document.getElementById('chat-messages');
-  const row = document.createElement('div');
-  row.className = 'chat-row ' + role;
-  row.innerHTML = `
-    <div class="chat-avatar ${role}">${role === 'ai' ? 'S' : 'Y'}</div>
-    <div class="chat-bubble">${text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>')}</div>
-  `;
-  msgs.appendChild(row);
-  msgs.scrollTop = msgs.scrollHeight;
-}
-
-function showTyping() {
-  const msgs = document.getElementById('chat-messages');
-  const row = document.createElement('div');
-  row.className = 'chat-row ai'; row.id = 'typing-row';
-  row.innerHTML = `<div class="chat-avatar ai">S</div><div class="chat-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>`;
-  msgs.appendChild(row); msgs.scrollTop = msgs.scrollHeight;
-}
-function hideTyping() { document.getElementById('typing-row')?.remove(); }
-
-const RESPONSES = {
-  '/signal-discovery': 'Starting Discovery. I\'ll ask you a series of structured questions about your stakeholders and their goals.\n\n**Question 1 of 8:** Who is the primary user of this product, and what is the single most painful thing they deal with today?',
-  '/signal-status':    'Current status:\n\n**Wave:** Wave 1 · Phase 1 Discovery\n**Gate:** G2 pending signature\n**Belief confidence:** 72%\n**Phase Debt:** 2 open items\n**Cost this session:** $0.42',
-  '/signal-plan':      'To write PLAN.md, I need Gate 2 signed first. The Expectation Map must be agreed before planning begins — this is a hard gate.\n\nWant me to help you complete the Expectation Map now?',
-  '/signal-brain':     'Your Brain index has 0 entries so far. It will populate automatically as gates are signed and decisions are made.\n\nYou can manually add a belief: **/signal-brain add "Users prefer async communication over sync calls"**',
-  '/signal-qa':        'Quality check requires a completed Build phase. You\'re currently in Discovery. Come back to this when Phase 3 Build is complete.',
-  'default':           'Understood. I\'m tracking that in context for this wave. Is there a specific gate or phase you want to focus on, or should I suggest the next best action?'
-};
-
-async function sendMessage() {
-  const inp = document.getElementById('chat-input');
-  const text = inp.value.trim();
-  if (!text) return;
-  addChatMessage('user', text);
-  inp.value = ''; inp.style.height = '';
-  showTyping();
-  window._recordChatSend?.(); // latency timer start (T5-6)
-
-  // Route /signal-* commands through the real sidecar when in Tauri
-  if (text.startsWith('/signal-') && window.SignalOS) {
-    const parts = text.slice(1).split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1);
-    try {
-      await window.SignalOS.signal.run(cmd, args);
-      // Response arrives via onSidecarResponse listener — nothing more to do here
-    } catch (e) {
-      hideTyping();
-      addChatMessage('ai', `⚠ Command failed: ${e?.message || e}`);
-    }
-    return;
-  }
-
-  if (window.SignalOS) {
-    setTimeout(() => {
-      hideTyping();
-      addChatMessage('ai', 'This beta runs SignalOS through slash commands. Try /signal-status, /signal-init, or /signal-brain.');
-    }, 250);
-    return;
-  }
-
-  // Fallback: local canned responses for browser dev / demo mode
-  const key = Object.keys(RESPONSES).find(k => text.toLowerCase().startsWith(k)) || 'default';
-  setTimeout(() => { hideTyping(); addChatMessage('ai', RESPONSES[key]); }, 900 + Math.random() * 400);
-}
-
-function handleChatKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-function insertCmd(cmd) {
-  const inp = document.getElementById('chat-input');
-  inp.value = cmd; inp.focus(); autoResize(inp);
-}
-function autoResize(el) {
-  el.style.height = ''; el.style.height = Math.min(el.scrollHeight, 160) + 'px';
-}
-
-// ─── COMMAND PALETTE ──────────────────────────────────────────────────────
-const COMMANDS = [
-  // ── Navigation ────────────────────────────────────────────────────────────
-  { icon: '📋', name: 'Dashboard',               sub: 'Open wave dashboard',                   action: () => { closeCmdPal(); switchView('dashboard', document.querySelector('[data-view=dashboard]')); } },
-  { icon: '🔏', name: 'Sign next gate',           sub: 'Open gate signing panel',               action: () => { closeCmdPal(); switchView('gates', document.querySelector('[data-view=gates]')); } },
-  { icon: '⚙️', name: 'Settings',                sub: 'API keys, provider, workspace',         action: () => { closeCmdPal(); toast('Settings panel coming soon', 'info'); } },
-  // ── Discovery + Planning ──────────────────────────────────────────────────
-  { icon: '🔍', name: '/signal-discovery',        sub: 'Structured stakeholder interview',       action: () => { closeCmdPal(); insertCmd('/signal-discovery'); } },
-  { icon: '📊', name: '/signal-status',           sub: 'Check current wave + gate status',      action: () => { closeCmdPal(); insertCmd('/signal-status'); } },
-  { icon: '🏁', name: '/signal-onboard',          sub: 'Onboard an existing project',            action: () => { closeCmdPal(); insertCmd('/signal-onboard'); } },
-  { icon: '🌊', name: '/signal-init',             sub: 'Initialize a new wave',                  action: () => { closeCmdPal(); insertCmd('/signal-init'); } },
-  { icon: '🔮', name: '/signal-pre-wave',         sub: 'Prepare for the next wave',              action: () => { closeCmdPal(); insertCmd('/signal-pre-wave'); } },
-  { icon: '📝', name: '/signal-plan',             sub: 'Write or update PLAN.md',               action: () => { closeCmdPal(); insertCmd('/signal-plan'); } },
-  // ── Design ───────────────────────────────────────────────────────────────
-  { icon: '🎨', name: '/signal-pre-design',       sub: 'PO brief before design phase',           action: () => { closeCmdPal(); insertCmd('/signal-pre-design'); } },
-  { icon: '✏️', name: '/signal-design',           sub: 'Design: explore / approve / iterate',   action: () => { closeCmdPal(); insertCmd('/signal-design'); } },
-  { icon: '🖼', name: '/signal-design-review',    sub: 'Review designs — rubric + AI check',    action: () => { closeCmdPal(); insertCmd('/signal-design-review'); } },
-  { icon: '🌐', name: '/signal-design-html',      sub: 'Generate production HTML from design',   action: () => { closeCmdPal(); insertCmd('/signal-design-html'); } },
-  // ── Build + Ship ─────────────────────────────────────────────────────────
-  { icon: '🔨', name: '/signal-build',            sub: 'Agentic build phase tasks',              action: () => { closeCmdPal(); insertCmd('/signal-build'); } },
-  { icon: '🔍', name: '/signal-review',           sub: 'Code review before Gate 4',              action: () => { closeCmdPal(); insertCmd('/signal-review'); } },
-  { icon: '🔍', name: '/signal-qa',               sub: 'Run quality check',                      action: () => { closeCmdPal(); insertCmd('/signal-qa'); } },
-  { icon: '🧪', name: '/signal-qa-only',          sub: 'QA without full build',                  action: () => { closeCmdPal(); insertCmd('/signal-qa-only'); } },
-  { icon: '🚀', name: '/signal-ship',             sub: 'Ship to production',                     action: () => { closeCmdPal(); insertCmd('/signal-ship'); } },
-  // ── Intelligence ─────────────────────────────────────────────────────────
-  { icon: '🤔', name: '/signal-second-opinion',   sub: 'Get a second AI opinion on a decision',  action: () => { closeCmdPal(); insertCmd('/signal-second-opinion'); } },
-  { icon: '🔬', name: '/signal-investigate',      sub: 'Investigate a bug or incident',          action: () => { closeCmdPal(); insertCmd('/signal-investigate'); } },
-  { icon: '📋', name: '/signal-wave-review',      sub: 'Wave-level retrospective',               action: () => { closeCmdPal(); insertCmd('/signal-wave-review'); } },
-  { icon: '📝', name: '/signal-debrief',          sub: 'Post-wave debrief',                      action: () => { closeCmdPal(); insertCmd('/signal-debrief'); } },
-  // ── Brain ─────────────────────────────────────────────────────────────────
-  { icon: '🧠', name: '/signal-brain',            sub: 'Search or add a brain entry',            action: () => { closeCmdPal(); switchView('brain', document.querySelector('[data-view=brain]')); } },
-];
-
-function openCmdPal() {
-  document.getElementById('cmdpal').classList.remove('hidden');
-  document.getElementById('cmdpal-input').value = '';
-  renderCmdPalResults('');
-  setTimeout(() => document.getElementById('cmdpal-input').focus(), 50);
-}
-function closeCmdPal() { document.getElementById('cmdpal').classList.add('hidden'); }
-function filterCommands(q) { renderCmdPalResults(q); }
-function renderCmdPalResults(q) {
-  const filtered = q ? COMMANDS.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) || c.sub.toLowerCase().includes(q.toLowerCase())) : COMMANDS;
-  document.getElementById('cmdpal-results').innerHTML =
-    '<div class="cmdpal-section-label">Commands</div>' +
-    filtered.map(c => `<div class="cmdpal-item" onclick="(${c.action.toString()})()"><div class="cmdpal-item-icon">${c.icon}</div><div><div class="cmdpal-item-name">${c.name}</div><div class="cmdpal-item-sub">${c.sub}</div></div></div>`).join('');
-}
-
-document.getElementById('cmdpal').addEventListener('click', e => { if (e.target === document.getElementById('cmdpal')) closeCmdPal(); });
-document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdPal(); }
-  if (e.key === 'Escape') { closeCmdPal(); document.getElementById('onboarding').classList.add('hidden'); }
-});
-
-// ─── BRAIN ───────────────────────────────────────────────────────────────
-
-// Active type filter — null = show all
-let _brainTypeFilter = null;
-let _brainAllEntries = [];
-
-const BRAIN_TYPE_CYCLE = [null, 'belief', 'decision', 'gate', 'note'];
-const BRAIN_TYPE_LABELS = { null: 'All types', belief: 'Beliefs', decision: 'Decisions', gate: 'Gates', note: 'Notes' };
-
-function cycleTypeFilter(btn) {
-  const idx = BRAIN_TYPE_CYCLE.indexOf(_brainTypeFilter);
-  _brainTypeFilter = BRAIN_TYPE_CYCLE[(idx + 1) % BRAIN_TYPE_CYCLE.length];
-  btn.textContent = (BRAIN_TYPE_LABELS[_brainTypeFilter] || 'All types') + ' ▾';
-  applyBrainFilters();
-}
-
-function filterBrainTyped(q) {
-  applyBrainFilters(q);
-}
-
-function applyBrainFilters(q) {
-  const query = q ?? document.getElementById('brain-search-input')?.value ?? '';
-  let entries = _brainAllEntries;
-  if (_brainTypeFilter) entries = entries.filter(e => (e.type || 'belief') === _brainTypeFilter);
-  if (query.trim()) {
-    const lq = query.toLowerCase();
-    entries = entries.filter(e => e.text?.toLowerCase().includes(lq));
-  }
-  renderBrainEntries(entries, _brainAllEntries.length === 0);
-}
-
-async function filterBrain(q) {
-  if (!window.SignalOS) return;
-  try {
-    const entries = await window.SignalOS.brain.search(q || '');
-    _brainAllEntries = entries || [];
-    applyBrainFilters(q);
-  } catch {}
-}
-
-function renderBrainEntries(entries, isEmpty = false) {
-  const list = document.getElementById('brain-list');
-  if (!list) return;
-  if (isEmpty || !entries || !entries.length) {
-    // Show different empty states: truly empty vs filtered empty
-    if (_brainAllEntries.length > 0 && !isEmpty) {
-      list.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">🔍</div>
-          <h3>No matches</h3>
-          <p>No brain entries match your current filter. Try a different search or type.</p>
-        </div>`;
-    } else {
-      list.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon">🧠</div>
-          <h3>Brain is empty</h3>
-          <p>Beliefs, decisions, and signed gates will appear here as your wave progresses. Start your first Discovery to populate it.</p>
-          <button class="empty-state-cta" onclick="switchView('chat', document.querySelector('[data-view=chat]')); insertCmd('/signal-discovery')">Start Discovery</button>
-        </div>`;
-    }
-    return;
-  }
-  const typeClass = { belief: 'belief', decision: 'decision', gate: 'gate', note: 'note' };
-  list.innerHTML = entries.map(e => {
-    const type = e.type || 'belief';
-    const cls  = typeClass[type] || 'note';
-    const date = e.ts ? new Date(e.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-    return `
-    <div class="brain-entry">
-      <div class="brain-entry-top">
-        <span class="brain-entry-type ${cls}">${type}</span>
-        <span class="brain-entry-date">${date}</span>
-      </div>
-      <div class="brain-entry-text">${e.text || ''}</div>
-      ${e.wave ? `<div class="brain-entry-meta">Wave ${e.wave}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function toggleAddEntry() {
-  const form = document.getElementById('brain-add-form');
-  if (!form) return;
-  const open = form.style.display !== 'none';
-  form.style.display = open ? 'none' : 'flex';
-  if (!open) document.getElementById('brain-add-text')?.focus();
-}
-
-async function saveBrainEntry() {
-  const text = document.getElementById('brain-add-text')?.value?.trim();
-  const type = document.getElementById('brain-add-type')?.value || 'belief';
-  if (!text) return;
-  if (window.SignalOS) {
-    try {
-      await window.SignalOS.brain.add(text, type);
-      toast('Entry saved to brain', 'success');
-    } catch (e) {
-      toast(`Save failed: ${e?.message || e}`, 'error');
-      return;
-    }
-  } else {
-    // Browser dev mode — add locally so UI shows it
-    _brainAllEntries.unshift({ text, type, ts: new Date().toISOString() });
-    toast('Entry added (dev mode)', 'info');
-  }
-  document.getElementById('brain-add-text').value = '';
-  toggleAddEntry();
-  // Refresh list
-  applyBrainFilters();
-}
-
-// ─── TOAST ───────────────────────────────────────────────────────────────
-function toast(msg, type = '') {
-  const icons = { success: '✓', warning: '⚠', error: '✕', info: 'ℹ' };
-  const t = document.createElement('div');
-  t.className = 'toast ' + type;
-  t.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span>${msg}`;
-  document.getElementById('toast-container').appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3500);
-}
-
-// ─── SIDEBAR WAVE ─────────────────────────────────────────────────────────
-function updateWaveStatus(name, pct, phase) {
-  document.getElementById('sb-wave-name').textContent = name;
-  document.getElementById('sb-wave-fill').style.width = pct + '%';
-  document.getElementById('sb-wave-pct').textContent = pct + '%';
-  document.getElementById('sb-wave-phase').textContent = phase;
-  document.getElementById('tb-phase').textContent = phase;
-}
-updateWaveStatus('No active wave', 0, 'Onboarding');
-document.getElementById('tb-project').textContent = state.project;
-document.getElementById('tb-cost').textContent = '$' + state.cost.toFixed(2);
-
-// ─── CONSTITUTION DATA + RENDERER ───────────────────────────────────────
-const CONSTITUTION_ARTICLES = [
-  {
-    num: 'C1', title: 'Gate-first delivery',
-    sub: 'No build work begins before Gate 2 is signed',
-    body: 'Every wave must have a signed Expectation Map (G2) before any production code is written. This prevents building the wrong thing.',
-    check: () => {
-      const g2 = state.gates?.find(g => g.id === 2);
-      if (!g2) return 'pending';
-      return g2.status === 'signed' ? 'satisfied' : 'pending';
-    }
-  },
-  {
-    num: 'C2', title: 'Workspace sandbox',
-    sub: 'All agent writes stay inside the declared workspace root',
-    body: 'The sandbox boundary is enforced at the IPC layer. Any write outside the workspace root is rejected before it reaches the filesystem.',
-    check: () => state.project ? 'satisfied' : 'pending'
-  },
-  {
-    num: 'C3', title: 'Human-signed gates only',
-    sub: 'Gate signatures cannot be automated — the PO must explicitly confirm',
-    body: 'Sign events are UI-initiated and timestamped. Automated sign-offs are architecturally blocked — the Tauri IPC requires an explicit human invocation.',
-    check: () => 'satisfied'
-  },
-  {
-    num: 'C4', title: 'Audit trail immutability',
-    sub: 'Every gate action is append-only; no deletions',
-    body: 'The audit log is a JSONL append-only file written by the governance module. No command in the system exposes a delete-audit-entry operation.',
-    check: () => 'satisfied'
-  },
-  {
-    num: 'C5', title: 'Brain entries require provenance',
-    sub: 'Every belief or decision must have a source: gate, interview, or explicit PO entry',
-    body: 'Brain entries carry an entry_type field (belief / decision / gate / note). Entries without type are rejected at the add_brain_entry layer.',
-    check: () => 'satisfied'
-  },
-  {
-    num: 'C6', title: 'Phase debt visibility',
-    sub: 'Deferred items must be declared and visible at all times',
-    body: 'Any task skipped with T2/T3 debt status is surfaced in the Phase Debt dashboard panel. No debt is hidden from the PO.',
-    check: () => 'satisfied'
-  },
-  {
-    num: 'C7', title: 'API keys never on disk',
-    sub: 'Provider credentials are stored in the OS keychain only',
-    body: 'The keychain module uses the operating system\'s credential store (macOS Keychain / Windows Credential Manager). Keys are never written to providers.json or any project file.',
-    check: () => 'satisfied'
-  },
-  {
-    num: 'C8', title: 'Constitution cannot be amended mid-wave',
-    sub: 'Changes to these rules require a new wave and PO co-sign',
-    body: 'This document is displayed read-only. Amendments are tracked in AMENDMENTS.md and require a completed wave to take effect.',
-    check: () => 'satisfied'
-  },
-];
-
-function renderConstitution() {
-  const articles = CONSTITUTION_ARTICLES;
-  const satisfied = articles.filter(a => a.check() === 'satisfied').length;
-  const pending   = articles.filter(a => a.check() === 'pending').length;
-  const violated  = articles.filter(a => a.check() === 'violated').length;
-
-  document.getElementById('const-summary').innerHTML = `
-    <div class="const-stat"><div class="const-stat-num" style="color:var(--success)">${satisfied}</div><div class="const-stat-label">Satisfied</div></div>
-    <div class="const-stat"><div class="const-stat-num" style="color:var(--warning)">${pending}</div><div class="const-stat-label">Pending</div></div>
-    <div class="const-stat"><div class="const-stat-num" style="color:var(--danger)">${violated}</div><div class="const-stat-label">Violated</div></div>
-    <div class="const-stat"><div class="const-stat-num">${articles.length}</div><div class="const-stat-label">Total</div></div>
-  `;
-
-  document.getElementById('const-articles').innerHTML = articles.map(a => {
-    const status = a.check();
-    const numClass = status === 'satisfied' ? 'ok' : status === 'violated' ? 'warn' : 'neutral';
-    return `
-    <div class="const-article">
-      <div class="const-article-header">
-        <div class="const-article-num ${numClass}">${a.num}</div>
-        <div class="const-article-info">
-          <div class="const-article-title">${a.title}</div>
-          <div class="const-article-sub">${a.sub}</div>
-        </div>
-        <span class="const-article-badge ${status}">${status}</span>
-      </div>
-      <div class="const-article-body">${a.body}</div>
-    </div>`;
-  }).join('');
-}
-
-// Re-render when switching to constitution view
-const _origSwitchView = window.switchView ?? function(){};
-window.switchView = function(viewId, navEl) {
-  _origSwitchView(viewId, navEl);
-  if (viewId === 'constitution') renderConstitution();
-  if (viewId === 'dashboard')    window.loadWorktreeStatus?.();
-};
-
-</script>
-
-<!-- ─── IPC BRIDGE (ES module) ───────────────────────────────────────────── -->
-<!-- Imports named exports from ipc.js and exposes them on window.SignalOS   -->
-<!-- so the non-module inline script above can call them.                     -->
-<script type="module">
-import * as ipc from './js/ipc.js';
-window.SignalOS = ipc;
-
-const IS_TAURI = typeof window.__TAURI__ !== 'undefined';
-
-// ─── HELPERS ────────────────────────────────────────────────────────────────
-
-function updateCostDisplay(costData) {
-  if (!costData) return;
-  const session = costData.session_usd ?? 0;
-  const budget  = costData.budget_usd  ?? 10;
-  // Topbar
-  const tbCost = document.getElementById('tb-cost');
-  if (tbCost) tbCost.textContent = '$' + session.toFixed(2);
-  // Dashboard cost card
-  const costCard = document.getElementById('dash-cost-value');
-  if (costCard) costCard.textContent = '$' + session.toFixed(2);
-  const costSub = document.getElementById('dash-cost-sub');
-  if (costSub) costSub.textContent = `of $${budget.toFixed(2)} monthly budget`;
-  const pct = budget > 0 ? Math.min((session / budget) * 100, 100) : 0;
-  const fill = document.getElementById('dash-cost-fill');
-  if (fill) fill.style.width = pct + '%';
-  const pctEl = document.getElementById('dash-cost-pct');
-  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
-}
-
-function renderSidebarGateDots(gates) {
-  const dots = document.querySelectorAll('.gate-dot');
-  gates.forEach((g, i) => { if (dots[i]) dots[i].className = 'gate-dot ' + g.status; });
-  const current = gates.find(g => g.status === 'current');
-  const badge = document.getElementById('gates-badge');
-  if (badge && current) badge.textContent = 'G' + current.id;
-}
-
-// ─── WORKTREE SYNC ───────────────────────────────────────────────────────────
-
-window.loadWorktreeStatus = async function () {
-  const el = document.getElementById('wt-content');
-  if (!el) return;
-  el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">Loading…</div>';
-  try {
-    const s = await ipc.git.status();
-    if (!s) { el.innerHTML = '<div style="font-size:12px;color:var(--text-3)">No workspace selected</div>'; return; }
-
-    const relTime = (iso) => {
-      if (!iso) return '—';
-      const diff = Date.now() - new Date(iso).getTime();
-      const m = Math.floor(diff / 60000);
-      if (m < 1)  return 'just now';
-      if (m < 60) return `${m}m ago`;
-      const h = Math.floor(m / 60);
-      if (h < 24) return `${h}h ago`;
-      return `${Math.floor(h/24)}d ago`;
-    };
-
-    const aheadTag = s.ahead > 0
-      ? `<span class="wt-ahead">↑${s.ahead} ahead</span>`
-      : s.behind > 0 ? `<span class="wt-ahead" style="background:var(--warning-bg);color:var(--warning)">↓${s.behind} behind</span>` : '';
-
-    const rows = (s.worktrees || [{ branch: s.branch, head: '', path: '' }]).map(wt => `
-      <div class="wt-row">
-        <div class="wt-dot ${s.is_clean ? 'clean' : 'dirty'}"></div>
-        <span class="wt-branch">${wt.branch || s.branch}</span>
-        <span class="wt-sha">${wt.head || ''}</span>
-        ${wt.branch === s.branch ? aheadTag : ''}
-      </div>`).join('');
-
-    el.innerHTML = rows + `<div style="font-size:11px;color:var(--text-3);margin-top:8px">Last commit: ${relTime(s.last_sync)}</div>`;
-  } catch (e) {
-    el.innerHTML = `<div style="font-size:12px;color:var(--text-3)">git unavailable: ${e?.message || e}</div>`;
-  }
-};
-
-// ─── PHASE DEBT LOADER (T4-2) ────────────────────────────────────────────────
-// Reads brain entries of type 'debt'/'risk' + unsigned gates to surface open items.
-
-async function loadPhaseDebt() {
-  const el = document.getElementById('debt-content');
-  if (!el) return;
-
-  // Try to get real entries from brain
-  let debtEntries = [];
-  try {
-    const entries = await ipc.brain.search('');
-    debtEntries = (entries || []).filter(e => e.type === 'debt' || e.type === 'risk');
-  } catch {}
-
-  // Supplement with unsigned gates from window.state
-  const gates = window.state?.gates || [];
-  const unsignedGates = gates.filter(g => g.status !== 'signed');
-
-  if (debtEntries.length === 0 && unsignedGates.length === 0) {
-    el.innerHTML = `<div style="font-size:12px;color:var(--success);font-weight:500;padding:4px 0">✓ No open debt — clean wave</div>`;
-    return;
-  }
-
-  const tierColor = { 1: '#dc2626', 2: '#f59e0b', 3: '#2563eb' };
-  const rows = [];
-
-  // Brain debt/risk entries
-  debtEntries.forEach(e => {
-    const tier = e.tier || 3;
-    const age  = e.ts ? Math.ceil((Date.now() - new Date(e.ts)) / 86400000) : null;
-    rows.push(`
-      <div class="debt-row">
-        <span class="debt-tier t${tier}" style="background:${tierColor[tier] || '#888'}1a;color:${tierColor[tier] || '#888'};font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;flex-shrink:0">T${tier}</span>
-        <span class="debt-name" style="font-size:12px;flex:1;color:var(--text-1)">${e.text}</span>
-        ${age !== null ? `<span class="debt-age" style="font-size:11px;color:var(--text-3);flex-shrink:0">${age === 0 ? 'today' : age + 'd'}</span>` : ''}
-      </div>`);
-  });
-
-  // Unsigned gates as T2 debt
-  unsignedGates.slice(0, 3).forEach(g => {
-    rows.push(`
-      <div class="debt-row">
-        <span class="debt-tier t2" style="background:#f59e0b1a;color:#f59e0b;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;flex-shrink:0">T2</span>
-        <span class="debt-name" style="font-size:12px;flex:1;color:var(--text-1)">Gate ${g.id} — ${g.name} · pending signature</span>
-        <span class="debt-age" style="font-size:11px;color:var(--text-3);flex-shrink:0">open</span>
-      </div>`);
-  });
-
-  el.innerHTML = rows.join('');
-}
-
-// ─── BELIEF CONFIDENCE LOADER (T4-3) ─────────────────────────────────────────
-// Reads brain entries and computes signal (belief/decision/gate) vs noise (note/risk) ratio.
-
-async function loadBeliefConfidence() {
-  let entries = [];
-  try {
-    entries = await ipc.brain.search('') || [];
-  } catch {}
-
-  const valueEl  = document.getElementById('belief-value');
-  const subEl    = document.getElementById('belief-sub');
-  const sBarEl   = document.getElementById('belief-signal-fill');
-  const nBarEl   = document.getElementById('belief-noise-fill');
-  const sPctEl   = document.getElementById('belief-signal-pct');
-  const nPctEl   = document.getElementById('belief-noise-pct');
-
-  if (!entries.length) {
-    if (valueEl) valueEl.textContent = '—';
-    if (subEl)   subEl.textContent   = 'No brain entries yet';
-    [sBarEl, nBarEl].forEach(el => el && (el.style.width = '0%'));
-    [sPctEl, nPctEl].forEach(el => el && (el.textContent = '—'));
-    return;
-  }
-
-  const signals = entries.filter(e => ['belief', 'decision', 'gate'].includes(e.type || 'belief')).length;
-  const noise   = entries.filter(e => ['note', 'risk', 'debt'].includes(e.type)).length;
-  const total   = entries.length;
-  const pct     = total > 0 ? Math.round((signals / total) * 100) : 0;
-  const noisePct = 100 - pct;
-
-  if (valueEl) valueEl.textContent = pct + '%';
-  if (subEl)   subEl.textContent   = `${signals} signal${signals !== 1 ? 's' : ''} · ${noise} noise item${noise !== 1 ? 's' : ''}`;
-  if (sBarEl)  sBarEl.style.width  = pct + '%';
-  if (nBarEl)  nBarEl.style.width  = noisePct + '%';
-  if (sPctEl)  sPctEl.textContent  = pct + '%';
-  if (nPctEl)  nPctEl.textContent  = noisePct + '%';
-}
-
-// ─── MENTORING ENGINE (T2-2) ─────────────────────────────────────────────────
-// Reads window.state (wave + gates) and dynamically updates:
-//   • #mentor-strip-text — gate reminder in the chat header
-//   • #welcome-bubble    — welcome message body
-//   • #chat-hints        — contextual hint chips
-
-function updateMentoringHints() {
-  const st    = window.state;
-  const gates = st?.gates || [];
-  const wave  = st?.wave  || null;
-  const phase = st?.phase || null;
-
-  // First gate that isn't signed
-  const nextGate = gates.find(g => g.status !== 'signed');
-
-  // ── Mentor strip (gate reminder) ─────────────────────────────────────────
-  const stripEl = document.getElementById('mentor-strip-text');
-  if (stripEl) {
-    if (nextGate) {
-      stripEl.textContent = `Gate ${nextGate.id} · ${nextGate.name} · pending signature`;
-    } else if (gates.length) {
-      stripEl.textContent = 'All gates signed · wave complete';
-    }
-  }
-
-  // ── Welcome bubble ───────────────────────────────────────────────────────
-  const bubbleEl = document.getElementById('welcome-bubble');
-  if (bubbleEl) {
-    const phaseLabel = phase || 'Phase 1 — Discovery';
-    const waveLabel  = wave  ? `Wave ${wave}` : 'your first wave';
-    let intro = `Welcome back. You're in <strong>${phaseLabel}</strong>.`;
-    let action = '';
-    let pills  = [];
-
-    if (!wave) {
-      intro  = 'Ready to start your first wave. Run Discovery to kick things off.';
-      action = `Type <span class="cmd-pill" onclick="insertCmd('/signal-discovery')">/signal-discovery</span> to begin a structured stakeholder interview.`;
-      pills  = ['/signal-onboard', '/signal-status'];
-    } else if (nextGate) {
-      const gateCommands = { 0: '/signal-discovery', 1: '/signal-discovery', 2: '/signal-plan', 3: '/signal-build', 4: '/signal-review', 5: '/signal-debrief' };
-      const suggestedCmd = gateCommands[nextGate.id] || '/signal-status';
-      action = `Your next action is to complete work for <strong>Gate ${nextGate.id} — ${nextGate.name}</strong> before it can be signed. `
-             + `Type <span class="cmd-pill" onclick="insertCmd('${suggestedCmd}')">${suggestedCmd}</span> to proceed.`;
-      pills  = ['/signal-status', '/signal-plan', '/signal-brain'];
-    } else {
-      intro  = `All gates signed for ${waveLabel}. Great work — ready for debrief.`;
-      action = `Type <span class="cmd-pill" onclick="insertCmd('/signal-debrief')">/signal-debrief</span> to close this wave and capture what you learned.`;
-      pills  = ['/signal-debrief', '/signal-wave-review', '/signal-pre-wave'];
-    }
-
-    bubbleEl.innerHTML = `
-      <p style="margin-bottom:10px">${intro}</p>
-      <p style="margin-bottom:12px">${action}</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${pills.map(p => `<span class="cmd-pill" onclick="insertCmd('${p}')">${p}</span>`).join('')}
-      </div>`;
-  }
-
-  // ── Hint chips ───────────────────────────────────────────────────────────
-  const hintsEl = document.getElementById('chat-hints');
-  if (!hintsEl) return;
-
-  const GATE_HINTS = {
-    0: [{ icon: '▶', label: 'Start discovery',    cmd: '/signal-discovery' }, { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '📝', label: 'Write PLAN.md',  cmd: '/signal-plan' }, { icon: '🧠', label: 'Search brain',   cmd: '/signal-brain' }],
-    1: [{ icon: '▶', label: 'Start discovery',    cmd: '/signal-discovery' }, { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '📝', label: 'Write PLAN.md',  cmd: '/signal-plan' }, { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' }],
-    2: [{ icon: '📝', label: 'Write PLAN.md',     cmd: '/signal-plan' },      { icon: '🎨', label: 'Pre-design',     cmd: '/signal-pre-design' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }, { icon: '🧠', label: 'Search brain',   cmd: '/signal-brain' }],
-    3: [{ icon: '🔨', label: 'Build phase',       cmd: '/signal-build' },     { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' },     { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '🤔', label: 'Second opinion', cmd: '/signal-second-opinion' }],
-    4: [{ icon: '🔍', label: 'Code review',       cmd: '/signal-review' },    { icon: '🔍', label: 'Run QA check',   cmd: '/signal-qa' },     { icon: '📊', label: 'Check status',   cmd: '/signal-status' }, { icon: '🔬', label: 'Investigate',    cmd: '/signal-investigate' }],
-    5: [{ icon: '🚀', label: 'Ship to prod',      cmd: '/signal-ship' },      { icon: '🔍', label: 'Final QA',       cmd: '/signal-qa' },     { icon: '📋', label: 'Wave review',    cmd: '/signal-wave-review' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }],
-  };
-  const NO_WAVE_HINTS  = [{ icon: '▶', label: 'Start discovery', cmd: '/signal-discovery' }, { icon: '🏁', label: 'Onboard project', cmd: '/signal-onboard' }, { icon: '📊', label: 'Check status', cmd: '/signal-status' }, { icon: '🧠', label: 'Search brain', cmd: '/signal-brain' }];
-  const ALL_DONE_HINTS = [{ icon: '📝', label: 'Start debrief',  cmd: '/signal-debrief' },   { icon: '📋', label: 'Wave review',     cmd: '/signal-wave-review' }, { icon: '🚀', label: 'Next wave', cmd: '/signal-pre-wave' }, { icon: '🧠', label: 'Search brain', cmd: '/signal-brain' }];
-
-  const hints = !wave ? NO_WAVE_HINTS : nextGate ? (GATE_HINTS[nextGate.id] || GATE_HINTS[0]) : ALL_DONE_HINTS;
-  hintsEl.innerHTML = hints.map(h => `<div class="hint-chip" onclick="insertCmd('${h.cmd}')">${h.icon} ${h.label}</div>`).join('');
-}
-
-// ─── CONTEXT INJECTION (T2-5) ────────────────────────────────────────────────
-// Builds a compact SignalOS context header prepended to every LLM/sidecar call.
-
-function buildLLMContext() {
-  const st = window.state;
-  if (!st) return '';
-
-  // Wave line
-  const waveLine = st.wave
-    ? `Wave: ${st.wave} · ${st.phase || 'Phase 1 — Discovery'}`
-    : 'No active wave';
-
-  // Gate summary — show first 6 gates with status symbol
-  const gateSymbols = { signed: '✓', current: '⏳', pending: '○', locked: '🔒' };
-  const gateLine = (st.gates || [])
-    .map(g => `G${g.id}:${gateSymbols[g.status] || '?'}`)
-    .join(' ');
-
-  // Provider
-  const provLine = st.provider ? `Provider: ${st.provider}` : '';
-
-  return `[SignalOS] ${waveLine} | Gates: ${gateLine}${provLine ? ' | ' + provLine : ''}\n`;
-}
-
-// ─── ONBOARDING REAL WORKSPACE BROWSE ───────────────────────────────────────
-
-window.browseWorkspaceReal = async function () {
-  if (window.__TAURI__?.dialog) {
-    try {
-      const selected = await window.__TAURI__.dialog.open({
-        directory: true, multiple: false, title: 'Select your project folder',
-      });
-      if (selected) document.getElementById('ob-workspace-path').textContent = selected;
-    } catch { /* fallback handled in inline script */ }
-  } else {
-    document.getElementById('ob-workspace-path').textContent = '/Users/samer/Projects/MyProduct';
-  }
-};
-
-// ─── ONBOARDING FINISH ──────────────────────────────────────────────────────
-
-window.obFinish = async function () {
-  const provider      = window.state?.provider || 'anthropic';
-  const apiKeyInput   = document.querySelector('.api-key-input');
-  const apiKey        = apiKeyInput?.value?.trim();
-  const workspacePath = document.getElementById('ob-workspace-path')?.textContent;
-
-  // Save model choice — written to providers.json, never hardcoded
-  const model = document.getElementById('ob-model')?.value?.trim();
-  if (model) {
-    try { await ipc.provider.setModel(provider, model); } catch {}
-  }
-
-  if (apiKey && provider !== 'ollama') {
-    try { await ipc.keychain.store(provider, apiKey); } catch {}
-  }
-  if (workspacePath && !workspacePath.includes('Click to browse')) {
-    try {
-      await ipc.workspace.set(workspacePath);
-      localStorage.setItem('signalos.workspace', workspacePath);
-    } catch {}
-  }
-  try { await ipc.provider.setActive(provider); } catch {}
-
-  document.getElementById('onboarding').classList.add('hidden');
-  // toast is defined in the inline script, call via global
-  window.toast?.('You\'re all set — let\'s ship 🚀', 'success');
-  init();
-};
-
-// ─── SIDECAR LISTENERS ──────────────────────────────────────────────────────
-
-// Chat latency tracking (T5-6) — measure time from send → first AI token
-let _chatSentAt = 0;
-const _chatLatencies = [];
-window._recordChatSend = () => { _chatSentAt = performance.now(); };
-
-ipc.onSidecarResponse((resp) => {
-  if (resp?.id === 'init') return;
-  // Record latency
-  if (_chatSentAt > 0) {
-    const ms = Math.round(performance.now() - _chatSentAt);
-    _chatLatencies.push(ms);
-    _chatSentAt = 0;
-    // Log p95 every 10 responses
-    if (_chatLatencies.length % 10 === 0) {
-      const sorted = [..._chatLatencies].sort((a, b) => a - b);
-      const p95 = sorted[Math.floor(sorted.length * 0.95)];
-      console.debug(`[SignalOS] chat latency p95=${p95}ms (n=${sorted.length})`);
-    }
-  }
-  window.hideTyping?.();
-  if (resp.output) window.addChatMessage?.('ai', resp.output);
-  else if (resp.error) window.addChatMessage?.('ai', `⚠ ${resp.error}`);
-  ipc.provider.getCost().then(updateCostDisplay).catch(() => {});
-});
-
-ipc.onSidecarLog((log) => {
-  if (log?.level === 'error') console.error('[sidecar]', log.message);
-});
-
-// ─── NATIVE MENU LISTENERS (T1-1) ────────────────────────────────────────────
-
-if (IS_TAURI) {
-  window.__TAURI__.event.listen('menu:nav', (e) => {
-    const view = e.payload;
-    // Trigger the same nav as clicking a sidebar link
-    document.querySelector(`[data-view="${view}"]`)?.click();
-  });
-  window.__TAURI__.event.listen('menu:open-workspace', () => {
-    window.browseWorkspaceReal?.();
-  });
-  window.__TAURI__.event.listen('menu:export-audit', () => {
-    document.querySelector('[data-view="audit"]')?.click();
-  });
-  window.__TAURI__.event.listen('menu:check-update', async () => {
-    try {
-      const upd = await ipc.updater.check();
-      if (upd?.available) {
-        document.getElementById('update-banner')?.classList.add('visible');
-      } else {
-        window.toast?.('You\'re on the latest version', 'success');
-      }
-    } catch {}
-  });
-}
-
-// ─── STARTUP INIT ───────────────────────────────────────────────────────────
-
-async function init() {
-  // Workspace
-  try {
-    let ws = await ipc.workspace.get();
-    if (!ws) {
-      const savedWorkspace = localStorage.getItem('signalos.workspace');
-      if (savedWorkspace) {
-        try {
-          await ipc.workspace.set(savedWorkspace);
-          ws = savedWorkspace;
-        } catch {
-          localStorage.removeItem('signalos.workspace');
-        }
-      }
-    }
-    if (ws) {
-      const name = ws.split(/[/\\]/).filter(Boolean).pop() || 'My Project';
-      const tbProj = document.getElementById('tb-project');
-      if (tbProj) tbProj.textContent = name;
-      // Skip onboarding if workspace already configured
-      document.getElementById('onboarding')?.classList.add('hidden');
-    }
-  } catch {}
-
-  // Provider + cost
-  try {
-    const [provId, costData, providers] = await Promise.all([
-      ipc.provider.getActive(),
-      ipc.provider.getCost(),
-      ipc.provider.list(),
-    ]);
-
-    // Cache provider list globally so selectProvider() can read models without hardcoding
-    window._providerList = providers || [];
-
-    if (provId && window.state) window.state.provider = provId;
-    if (provId) {
-      const p = providers?.find(p => p.id === provId);
-      const tbProv = document.getElementById('tb-provider');
-      if (tbProv) tbProv.textContent = p?.name || provId;
-      // Pre-fill model input in onboarding with the user's current configured model
-      const modelInput = document.getElementById('ob-model');
-      if (modelInput && p) modelInput.value = p.model || '';
-    }
-    updateCostDisplay(costData);
-  } catch {}
-
-  // Wave state
-  try {
-    const waveData = await ipc.wave.get();
-    if (waveData) {
-      window.updateWaveStatus?.(
-        waveData.name,
-        waveData.progress_pct ?? 0,
-        `Phase ${waveData.phase} · ${waveData.phase_name}`,
-      );
-    }
-  } catch {}
-
-  // Gate state
-  try {
-    const gateData = await ipc.gates.getAll();
-    if (gateData?.length && window.state) {
-      window.state.gates = gateData.map((g, i) => ({
-        id:        g.id,
-        name:      g.name,
-        desc:      g.desc || window.state.gates[i]?.desc || '',
-        status:    g.status,
-        signer:    g.signer || null,
-        ts:        g.signed_at ? new Date(g.signed_at).toLocaleString() : null,
-        artifacts: window.state.gates[i]?.artifacts || [],
-      }));
-      renderSidebarGateDots(window.state.gates);
-    }
-  } catch {}
-
-  // Brain (initial load, empty query)
-  try {
-    const entries = await ipc.brain.search('');
-    if (entries?.length) window.renderBrainEntries?.(entries);
-  } catch {}
-
-  // Worktree sync (T4-4) — load immediately so dashboard card is populated
-  window.loadWorktreeStatus?.();
-
-  // Phase Debt (T4-2) + Belief Confidence (T4-3) — live dashboard cards
-  loadPhaseDebt();
-  loadBeliefConfidence();
-
-  // Brain entries — also update confidence after gate state loaded
-  try {
-    const entries = await ipc.brain.search('');
-    if (entries?.length) {
-      window._brainAllEntries = entries;
-      window.renderBrainEntries?.(entries);
-    }
-  } catch {}
-
-  // Mentoring engine (T2-2) — update welcome message + hint chips after state is loaded
-  updateMentoringHints();
-
-  // Auto-updater (T1-5) — check after 2 s so we don't slow down first paint
-  setTimeout(async () => {
-    try {
-      const upd = await ipc.updater.check();
-      if (upd?.available) {
-        const banner = document.getElementById('update-banner');
-        if (banner) {
-          const vEl = document.getElementById('update-version');
-          const nEl = document.getElementById('update-notes');
-          if (vEl) vEl.textContent = `v${upd.version}`;
-          if (nEl) nEl.textContent = upd.notes || '';
-          banner.classList.add('visible');
-        }
-      }
-    } catch {}
-  }, 2000);
-
-  // File watcher (T1-4) — start watching and refresh dash on change
-  try {
-    await ipc.workspace.startWatch();
-    ipc.onWorkspaceChange(() => {
-      window.loadWorktreeStatus?.();
-      loadPhaseDebt();
-    });
-  } catch {}
-
-  // Expose globals
-  window.buildLLMContext       = buildLLMContext;
-  window.updateMentoringHints  = updateMentoringHints;
-  window.loadPhaseDebt         = loadPhaseDebt;
-  window.loadBeliefConfidence  = loadBeliefConfidence;
-}
-
-// Make state visible so module can read it
-window.state = window.state || {};
-
-init();
-</script>
+<div id="toast"></div>
+<script type="module" src="./js/app.js"></script>
 </body>
 </html>

@@ -83,7 +83,7 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
         return ok(req_id, data={"note": "cost tracked in Rust provider layer"})
 
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "1.0.0-beta2"})
+        return ok(req_id, data={"pong": True, "version": "1.0.0-beta3"})
 
     return err(req_id, f"Unknown command: {command}")
 

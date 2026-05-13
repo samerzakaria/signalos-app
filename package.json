@@ -1,8 +1,8 @@
 {
   "name": "signalos-desktop",
-  "version": "1.0.0-beta2",
+  "version": "1.0.0-beta3",
   "private": true,
-  "description": "SignalOS — AI governance runtime for non-technical founders",
+  "description": "SignalOS — guided AI workspace for non-technical founders",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
