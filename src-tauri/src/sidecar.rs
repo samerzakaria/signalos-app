@@ -54,15 +54,23 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
     // Stdout reader — emit events back to frontend
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
+        let mut stdout_buf = String::new();
         while let Some(event) = rx.recv().await {
             match event {
-                CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line).to_string();
-                    // Try to parse as SidecarResponse and emit to frontend
-                    if let Ok(resp) = serde_json::from_str::<SidecarResponse>(&text) {
-                        let _ = app_emit.emit("sidecar:response", &resp);
-                    } else {
-                        let _ = app_emit.emit("sidecar:log", &text);
+                CommandEvent::Stdout(chunk) => {
+                    stdout_buf.push_str(&String::from_utf8_lossy(&chunk));
+                    while let Some(pos) = stdout_buf.find('\n') {
+                        let line = stdout_buf[..pos].trim().to_string();
+                        stdout_buf = stdout_buf[pos + 1..].to_string();
+                        if line.is_empty() {
+                            continue;
+                        }
+
+                        if let Ok(resp) = serde_json::from_str::<SidecarResponse>(&line) {
+                            let _ = app_emit.emit("sidecar:response", &resp);
+                        } else {
+                            let _ = app_emit.emit("sidecar:log", &line);
+                        }
                     }
                 }
                 CommandEvent::Stderr(line) => {

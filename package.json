@@ -1,6 +1,6 @@
 {
   "name": "signalos-desktop",
-  "version": "1.0.0",
+  "version": "1.0.0-beta2",
   "private": true,
   "description": "SignalOS — AI governance runtime for non-technical founders",
   "scripts": {

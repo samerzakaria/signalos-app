@@ -22,7 +22,8 @@ set -euo pipefail
 
 CORE_PATH="${1:-../SignalOS-Core-v1.0.3}"
 SIDECAR_DIR="src-tauri/bin"
-SIDECAR_NAME="signalos-python"
+TARGET_TRIPLE="$(rustc -Vv | awk '/^host:/ {print $2}')"
+SIDECAR_NAME="signalos-python-${TARGET_TRIPLE}"
 
 echo "▶ SignalOS sidecar bundler"
 echo "  Core path : $CORE_PATH"
@@ -46,8 +47,11 @@ fi
 # Create output directory
 mkdir -p "$SIDECAR_DIR"
 
-# Create the IPC server entry point if it doesn't exist in Core
-IPC_ENTRY="$CORE_PATH/signalos_ipc_server.py"
+# Use the desktop IPC entry point; install Core into the active Python env so
+# PyInstaller can collect signalos_lib and its bundled command specs.
+python -m pip install "$CORE_PATH"
+
+IPC_ENTRY="python/signalos_ipc_server.py"
 if [[ ! -f "$IPC_ENTRY" ]]; then
   echo "▶ Creating IPC server entry point..."
   cat > "$IPC_ENTRY" << 'PYTHON'
@@ -151,6 +155,7 @@ pyinstaller \
   --specpath "/tmp/pyinstaller-spec" \
   --clean \
   --noconfirm \
+  --collect-all signalos_lib \
   "$IPC_ENTRY"
 
 echo ""

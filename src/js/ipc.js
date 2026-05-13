@@ -6,6 +6,27 @@
  */
 
 const IS_TAURI = typeof window.__TAURI__ !== "undefined";
+const pendingSidecar = new Map();
+const completedSidecar = new Map();
+
+if (IS_TAURI) {
+  window.__TAURI__.event.listen("sidecar:response", (e) => {
+    const resp = e.payload || {};
+    const pending = pendingSidecar.get(resp.id);
+    if (!pending) {
+      completedSidecar.set(resp.id, resp);
+      setTimeout(() => completedSidecar.delete(resp.id), 30000);
+      return;
+    }
+
+    pendingSidecar.delete(resp.id);
+    if (resp.ok) {
+      pending.resolve(resp.data ?? resp.output ?? null);
+    } else {
+      pending.reject(new Error(resp.error || "SignalOS sidecar command failed"));
+    }
+  });
+}
 
 async function invoke(cmd, args = {}) {
   if (IS_TAURI) {
@@ -13,6 +34,36 @@ async function invoke(cmd, args = {}) {
   }
   // Browser mock — returns plausible data for UI development
   return mockInvoke(cmd, args);
+}
+
+async function invokeSidecar(cmd, args = {}, timeoutMs = 30000) {
+  const id = await invoke(cmd, args);
+  if (!IS_TAURI || typeof id !== "string" || !id.startsWith("req-")) return id;
+
+  const completed = completedSidecar.get(id);
+  if (completed) {
+    completedSidecar.delete(id);
+    if (completed.ok) return completed.data ?? completed.output ?? null;
+    throw new Error(completed.error || "SignalOS sidecar command failed");
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingSidecar.delete(id);
+      reject(new Error(`Timed out waiting for ${cmd}`));
+    }, timeoutMs);
+
+    pendingSidecar.set(id, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+  });
 }
 
 // ─── WORKSPACE ────────────────────────────────────────────────────────────────
@@ -56,7 +107,7 @@ export const updater = {
 // ─── WAVE STATE ───────────────────────────────────────────────────────────────
 
 export const wave = {
-  get: () => invoke("get_wave_state"),
+  get: () => invokeSidecar("get_wave_state"),
 };
 
 // ─── GIT / WORKTREE ───────────────────────────────────────────────────────────
@@ -68,21 +119,21 @@ export const git = {
 // ─── GATES ────────────────────────────────────────────────────────────────────
 
 export const gates = {
-  getAll: ()                    => invoke("get_gate_status"),
-  sign:   (gateId, signer)      => invoke("sign_gate", { gate_id: gateId, signer }),
+  getAll: ()                    => invokeSidecar("get_gate_status"),
+  sign:   (gateId, signer)      => invokeSidecar("sign_gate", { gate_id: gateId, signer }),
 };
 
 // ─── BRAIN ────────────────────────────────────────────────────────────────────
 
 export const brain = {
-  search: (query)                => invoke("get_brain_entries",  { query }),
-  add:    (text, entryType)      => invoke("add_brain_entry",    { text, entry_type: entryType }),
+  search: (query)                => invokeSidecar("get_brain_entries",  { query }),
+  add:    (text, entryType)      => invokeSidecar("add_brain_entry",    { text, entry_type: entryType }),
 };
 
 // ─── AUDIT ────────────────────────────────────────────────────────────────────
 
 export const audit = {
-  list: (limit = 50) => invoke("get_audit_trail", { limit }),
+  list: (limit = 50) => invokeSidecar("get_audit_trail", { limit }),
 };
 
 // ─── PROVIDER + COST ──────────────────────────────────────────────────────────

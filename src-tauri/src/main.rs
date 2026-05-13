@@ -40,6 +40,7 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sidecar::spawn_python_sidecar(&app_handle).await {
                     eprintln!("[SignalOS] Failed to start Python sidecar: {e}");
+                    let _ = app_handle.emit("sidecar:error", e.to_string());
                 }
             });
 

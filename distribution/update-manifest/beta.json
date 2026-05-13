@@ -1,22 +1,22 @@
 {
-  "version": "1.0.0-beta1",
-  "notes":   " ### First public beta  ",
-  "pub_date": "2026-05-03T21:21:28Z",
+  "version": "1.0.0-beta2",
+  "notes": "Tester beta: real workspace startup state and bundled SignalOS Core sidecar.",
+  "pub_date": "2026-05-13T17:00:00Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta1/SignalOS_1.0.0-beta1_aarch64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta2/SignalOS_1.0.0-beta2_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta1/SignalOS_1.0.0-beta1_x64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta2/SignalOS_1.0.0-beta2_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta1/SignalOS_1.0.0-beta1_x64-setup.exe",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta2/SignalOS_1.0.0-beta2_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta1/signalos-app_1.0.0-beta1_amd64.AppImage",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0-beta2/signalos-app_1.0.0-beta2_amd64.AppImage",
       "signature": ""
     }
   }

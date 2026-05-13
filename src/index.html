@@ -1140,9 +1140,9 @@ a { color: inherit; text-decoration: none; }
     <div class="nav-section">
       <div class="nav-section-label">Gates</div>
       <div class="gate-row" id="gate-row">
-        <div class="gate-dot signed"  title="G0 Constitution">0</div>
-        <div class="gate-dot signed"  title="G1 Belief">1</div>
-        <div class="gate-dot current" title="G2 Expectation Map — current">2</div>
+        <div class="gate-dot current" title="G0 Constitution">0</div>
+        <div class="gate-dot locked"  title="G1 Belief">1</div>
+        <div class="gate-dot locked"  title="G2 Expectation Map">2</div>
         <div class="gate-dot locked"  title="G3 Plan">3</div>
         <div class="gate-dot locked"  title="G4 Trust Tier">4</div>
         <div class="gate-dot locked"  title="G5 Quality Check">5</div>
@@ -1172,7 +1172,7 @@ a { color: inherit; text-decoration: none; }
     <div class="topbar-spacer"></div>
     <div class="phase-badge">
       <div class="phase-badge-dot"></div>
-      <span id="tb-phase">Phase 1 · Discovery</span>
+      <span id="tb-phase">Onboarding</span>
     </div>
     <div class="cost-meter">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -1197,22 +1197,22 @@ a { color: inherit; text-decoration: none; }
           <div>
             <div class="mentor-strip">
               <div class="dot"></div>
-              <span id="mentor-strip-text">Gate 2 · Expectation Map · pending signature</span>
+              <span id="mentor-strip-text">No active wave</span>
             </div>
             <div class="chat-bubble" id="welcome-bubble">
-              <p style="margin-bottom:10px">Welcome back. You're in <strong>Phase 1 — Discovery</strong>. Your next action is to run a stakeholder interview before Gate 2 can be signed.</p>
-              <p style="margin-bottom:12px">When you're ready, type <span class="cmd-pill" onclick="insertCmd('/signal-discovery')">/signal-discovery</span> and I'll guide you through the structured interview. Or jump to:</p>
+              <p style="margin-bottom:10px">Select a workspace and start from the real project state.</p>
+              <p style="margin-bottom:12px">Use <span class="cmd-pill" onclick="insertCmd('/signal-status')">/signal-status</span> to inspect the workspace, or <span class="cmd-pill" onclick="insertCmd('/signal-init')">/signal-init</span> to initialize SignalOS in the selected folder.</p>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <span class="cmd-pill" onclick="insertCmd('/signal-status')">/signal-status</span>
-                <span class="cmd-pill" onclick="insertCmd('/signal-plan')">/signal-plan</span>
+                <span class="cmd-pill" onclick="insertCmd('/signal-init')">/signal-init</span>
                 <span class="cmd-pill" onclick="insertCmd('/signal-brain')">/signal-brain</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Gate 2 signing card -->
-        <div class="chat-row ai">
+        <!-- Gate card is rendered from real gate state after workspace load. -->
+        <div class="chat-row ai" id="initial-gate-card" style="display:none">
           <div class="chat-avatar ai">S</div>
           <div>
             <div class="chat-bubble">
@@ -1249,10 +1249,10 @@ a { color: inherit; text-decoration: none; }
         </div>
         <!-- Hint chips — dynamically updated by updateMentoringHints() (T2-2) -->
         <div class="chat-input-hints" id="chat-hints">
-          <div class="hint-chip" onclick="insertCmd('/signal-discovery')">▶ Start discovery interview</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-status')">📊 Check wave status</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-plan')">📝 Write PLAN.md</div>
-          <div class="hint-chip" onclick="insertCmd('/signal-qa')">🔍 Run quality check</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-status')">Check workspace status</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-init')">Initialize SignalOS</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-brain')">Open brain index</div>
+          <div class="hint-chip" onclick="insertCmd('/signal-discovery')">Read discovery brief</div>
         </div>
       </div>
     </div>
@@ -1267,11 +1267,11 @@ a { color: inherit; text-decoration: none; }
       <div class="dash-grid-3">
         <div class="card">
           <div class="card-header"><div class="card-title">Phase</div></div>
-          <div class="card-value" style="font-size:20px;font-weight:700">Discovery</div>
-          <div class="card-value-sub">Phase 1 of 7</div>
+          <div class="card-value" style="font-size:20px;font-weight:700">Onboarding</div>
+          <div class="card-value-sub">No active wave</div>
           <div class="phase-track" style="margin-top:14px">
-            <div class="phase-node done"><div class="phase-dot done">✓</div><div class="phase-node-label">Pre-wave</div></div>
-            <div class="phase-node active"><div class="phase-dot active">1</div><div class="phase-node-label">Discovery</div></div>
+            <div class="phase-node active"><div class="phase-dot active">0</div><div class="phase-node-label">Onboard</div></div>
+            <div class="phase-node future"><div class="phase-dot future">1</div><div class="phase-node-label">Discovery</div></div>
             <div class="phase-node future"><div class="phase-dot future">2</div><div class="phase-node-label">Plan</div></div>
             <div class="phase-node future"><div class="phase-dot future">3</div><div class="phase-node-label">Build</div></div>
             <div class="phase-node future"><div class="phase-dot future">4</div><div class="phase-node-label">Review</div></div>
@@ -1298,13 +1298,13 @@ a { color: inherit; text-decoration: none; }
 
         <div class="card">
           <div class="card-header"><div class="card-title">Session Cost</div><div class="card-action">History</div></div>
-          <div class="card-value">$0.42</div>
-          <div class="card-value-sub">of $10.00 monthly budget</div>
+          <div class="card-value" id="dash-cost-value">$0.00</div>
+          <div class="card-value-sub" id="dash-cost-sub">of $10.00 monthly budget</div>
           <div style="margin-top:14px">
             <div class="metric-row">
               <span class="metric-label">Used</span>
-              <div class="metric-bar"><div class="metric-fill" style="width:4%;background:var(--accent)"></div></div>
-              <span class="metric-val" style="color:var(--accent)">4%</span>
+              <div class="metric-bar"><div class="metric-fill" id="dash-cost-fill" style="width:0%;background:var(--accent)"></div></div>
+              <span class="metric-val" id="dash-cost-pct" style="color:var(--accent)">0%</span>
             </div>
           </div>
         </div>
@@ -1396,15 +1396,15 @@ a { color: inherit; text-decoration: none; }
 const state = {
   view: 'chat',
   provider: 'anthropic',
-  project: 'My Project',
-  phase: 'Phase 1 · Discovery',
+  project: 'No project',
+  phase: 'Onboarding',
   cost: 0.00,
   onboardingStep: 1,
   onboardingDone: false, // set true to skip onboarding
   gates: [
-    { id: 0, name: 'Constitution', desc: 'Immutable project rules', status: 'signed',  signer: 'Samer', ts: '2026-04-28 09:12', artifacts: ['CONSTITUTION.md'] },
-    { id: 1, name: 'Belief',       desc: 'Signed statement of what we believe to be true', status: 'signed',  signer: 'Samer', ts: '2026-04-29 11:45', artifacts: ['BELIEF.md'] },
-    { id: 2, name: 'Expectation Map', desc: 'Measurable success criteria for this wave', status: 'current', signer: null, ts: null, artifacts: ['EXPECTATION_MAP.md'] },
+    { id: 0, name: 'Constitution', desc: 'Product constitution and first-run governance baseline', status: 'current', signer: null, ts: null, artifacts: ['CONSTITUTION.md'] },
+    { id: 1, name: 'Belief',       desc: 'Signed belief statement for the current wave', status: 'locked',  signer: null, ts: null, artifacts: ['BELIEF.md'] },
+    { id: 2, name: 'Expectation Map', desc: 'Measurable success criteria for this wave', status: 'locked', signer: null, ts: null, artifacts: ['EXPECTATION_MAP.md'] },
     { id: 3, name: 'Plan',         desc: 'PLAN.md approved by PO', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md'] },
     { id: 4, name: 'Trust Tier',   desc: 'All tasks declared T1/T2/T3', status: 'locked',  signer: null, ts: null, artifacts: ['PLAN.md (T-tier column)'] },
     { id: 5, name: 'Quality Check', desc: 'Critical findings resolved, QUALITY_CHECK.md signed', status: 'locked', signer: null, ts: null, artifacts: ['QUALITY_CHECK.md'] },
@@ -1412,6 +1412,8 @@ const state = {
 };
 
 // ─── ONBOARDING ─────────────────────────────────────────────────────────
+window.state = state;
+
 const TOTAL_STEPS = 4;
 
 function obNext() {
@@ -1584,7 +1586,7 @@ function renderGates() {
             <div style="font-size:12px;color:var(--text-3);margin-top:12px">Signed by <strong style="color:var(--text-2)">${g.signer}</strong> · ${g.ts}</div>
           ` : `
             <div class="gate-sign-row">
-              <input class="gate-signer-input" placeholder="Your name" value="Samer">
+              <input class="gate-signer-input" placeholder="Your name">
               <button class="gate-sign-btn" onclick="signGateView(${g.id}, this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><path d="M20 6L9 17l-5-5"/></svg>
                 Sign Gate ${g.id}
@@ -1607,7 +1609,11 @@ async function signGate(id, btn) {
   if (!g) return;
 
   const signerInput = btn.closest('.gate-sign-row')?.querySelector('.gate-signer-input');
-  const signer = signerInput?.value?.trim() || 'Samer';
+  const signer = signerInput?.value?.trim();
+  if (!signer) {
+    toast('Enter your name before signing the gate', 'warning');
+    return;
+  }
 
   // Call real backend if available
   if (window.SignalOS) {
@@ -1682,9 +1688,7 @@ async function sendMessage() {
   if (text.startsWith('/signal-') && window.SignalOS) {
     const parts = text.slice(1).split(' ');
     const cmd = parts[0];
-    // T2-5: inject wave/gate context as a leading arg so the sidecar can prepend it
-    const ctx = window.buildLLMContext ? window.buildLLMContext() : '';
-    const args = ctx ? [ctx, ...parts.slice(1)] : parts.slice(1);
+    const args = parts.slice(1);
     try {
       await window.SignalOS.signal.run(cmd, args);
       // Response arrives via onSidecarResponse listener — nothing more to do here
@@ -1692,6 +1696,14 @@ async function sendMessage() {
       hideTyping();
       addChatMessage('ai', `⚠ Command failed: ${e?.message || e}`);
     }
+    return;
+  }
+
+  if (window.SignalOS) {
+    setTimeout(() => {
+      hideTyping();
+      addChatMessage('ai', 'This beta runs SignalOS through slash commands. Try /signal-status, /signal-init, or /signal-brain.');
+    }, 250);
     return;
   }
 
@@ -1894,7 +1906,7 @@ function updateWaveStatus(name, pct, phase) {
   document.getElementById('sb-wave-phase').textContent = phase;
   document.getElementById('tb-phase').textContent = phase;
 }
-updateWaveStatus('Wave 1', 18, 'Phase 1 · Discovery');
+updateWaveStatus('No active wave', 0, 'Onboarding');
 document.getElementById('tb-project').textContent = state.project;
 document.getElementById('tb-cost').textContent = '$' + state.cost.toFixed(2);
 
@@ -2013,13 +2025,16 @@ function updateCostDisplay(costData) {
   // Topbar
   const tbCost = document.getElementById('tb-cost');
   if (tbCost) tbCost.textContent = '$' + session.toFixed(2);
-  // Dashboard cost card — first .card-value is wave progress, second is cost
-  const costCard = document.querySelector('#view-dashboard .card-value');
+  // Dashboard cost card
+  const costCard = document.getElementById('dash-cost-value');
   if (costCard) costCard.textContent = '$' + session.toFixed(2);
-  const costSub = document.querySelector('#view-dashboard .card-value-sub');
+  const costSub = document.getElementById('dash-cost-sub');
   if (costSub) costSub.textContent = `of $${budget.toFixed(2)} monthly budget`;
-  const fill = document.querySelector('#view-dashboard .metric-fill');
-  if (fill && budget > 0) fill.style.width = Math.min((session / budget) * 100, 100) + '%';
+  const pct = budget > 0 ? Math.min((session / budget) * 100, 100) : 0;
+  const fill = document.getElementById('dash-cost-fill');
+  if (fill) fill.style.width = pct + '%';
+  const pctEl = document.getElementById('dash-cost-pct');
+  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
 }
 
 function renderSidebarGateDots(gates) {
@@ -2292,7 +2307,10 @@ window.obFinish = async function () {
     try { await ipc.keychain.store(provider, apiKey); } catch {}
   }
   if (workspacePath && !workspacePath.includes('Click to browse')) {
-    try { await ipc.workspace.set(workspacePath); } catch {}
+    try {
+      await ipc.workspace.set(workspacePath);
+      localStorage.setItem('signalos.workspace', workspacePath);
+    } catch {}
   }
   try { await ipc.provider.setActive(provider); } catch {}
 
@@ -2310,6 +2328,7 @@ const _chatLatencies = [];
 window._recordChatSend = () => { _chatSentAt = performance.now(); };
 
 ipc.onSidecarResponse((resp) => {
+  if (resp?.id === 'init') return;
   // Record latency
   if (_chatSentAt > 0) {
     const ms = Math.round(performance.now() - _chatSentAt);
@@ -2363,7 +2382,18 @@ if (IS_TAURI) {
 async function init() {
   // Workspace
   try {
-    const ws = await ipc.workspace.get();
+    let ws = await ipc.workspace.get();
+    if (!ws) {
+      const savedWorkspace = localStorage.getItem('signalos.workspace');
+      if (savedWorkspace) {
+        try {
+          await ipc.workspace.set(savedWorkspace);
+          ws = savedWorkspace;
+        } catch {
+          localStorage.removeItem('signalos.workspace');
+        }
+      }
+    }
     if (ws) {
       const name = ws.split(/[/\\]/).filter(Boolean).pop() || 'My Project';
       const tbProj = document.getElementById('tb-project');

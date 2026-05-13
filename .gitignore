@@ -41,3 +41,5 @@ npm-debug.log*
 
 # Signing artifacts — generated at build time, not stored in repo
 src-tauri/gen/
+src-tauri/bin/
+.sidecar-venv/
