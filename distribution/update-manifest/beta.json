@@ -1,22 +1,22 @@
 {
-  "version": "0.0.8",
-  "notes":   " ### Builder UX reset  ",
-  "pub_date": "2026-05-14T17:35:57Z",
+  "version": "0.0.9",
+  "notes":   " ### SignalOS Builder path  ",
+  "pub_date": "2026-05-14T20:01:54Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.8/SignalOS_0.0.8_aarch64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.9/SignalOS_0.0.9_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.8/SignalOS_0.0.8_x64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.9/SignalOS_0.0.9_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.8/SignalOS_0.0.8_x64-setup.exe",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.9/SignalOS_0.0.9_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.8/SignalOS_0.0.8_amd64.AppImage",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.9/SignalOS_0.0.9_amd64.AppImage",
       "signature": ""
     }
   }
