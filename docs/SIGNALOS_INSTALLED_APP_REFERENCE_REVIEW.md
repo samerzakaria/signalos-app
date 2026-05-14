@@ -124,6 +124,8 @@ Completed in `signalos-app` on 2026-05-14:
 - Local release URL validation passed for checked-in files and recorded the pre-publish private-raw 404s on 2026-05-14. Evidence: `docs/release-evidence/release-urls-local.md`.
 - Remote release URL validation passed on 2026-05-14 after moving update manifests to GitHub Pages. Evidence: `docs/release-evidence/release-urls-remote.md`.
 - CI release workflow passed for `version=0.0.7`, `channel=beta` on 2026-05-14. Evidence: `docs/release-evidence/ci-release-0.0.7-beta.md`.
+- CI Smoke workflow passed for commit `70256765be70c623085c32a4d17faa408bca41ab` on 2026-05-14. Run: `https://github.com/samerzakaria/signalos-app/actions/runs/25865410092`.
+- CI Pages workflow passed for commit `70256765be70c623085c32a4d17faa408bca41ab` on 2026-05-14. Run: `https://github.com/samerzakaria/signalos-app/actions/runs/25865409991`.
 
 ## What Is Still Missing In App Code
 
@@ -525,14 +527,12 @@ The UI must keep these labels visible so users do not mistake a preview command 
 
 ### P0: Release Candidate Proof
 
-- Run clean-machine installer-only validation.
+- Run physical or VM clean-machine Windows UI validation from the generated installer only.
 - Sign Windows installer.
 - Sign and notarize macOS build.
-- Validate Linux package.
 - Generate signed updater manifests from a real tagged release.
 - Validate update from older signed build to newer signed build.
-- Host public docs at the final docs URL.
-- Validate live provider error messages across Anthropic, OpenAI, Gemini, Qwen, OpenRouter, Ollama, and other configured providers.
+- Validate live cloud-provider error messages across Anthropic, OpenAI, Gemini, Qwen, OpenRouter, and other configured cloud providers with real provider accounts.
 
 ### P1: Real Beta Polish
 
@@ -543,7 +543,7 @@ The UI must keep these labels visible so users do not mistake a preview command 
 
 ### P2: Product Maturity
 
-- Hosted public documentation.
+- Expand hosted documentation with screenshots and release-channel screenshots.
 - More project templates based on real usage.
 - Richer audit filters and export formats.
 - Team handoff import/restore.
