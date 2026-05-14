@@ -28,6 +28,7 @@
 - Added live-provider validation for local Ollama and environment-provided cloud keys.
 - Added release URL validation for local manifests, remote updater endpoints, and public docs URLs.
 - Added GitHub Pages workflow source for publishing the landing page and docs.
+- Moved updater endpoints to GitHub Pages so installed apps do not depend on authenticated raw GitHub URLs from a private repo.
 - Added Linux package artifact verification to the release workflow.
 - Fixed manual release dispatch so the requested version is used for release notes, asset names, release tags, and manifest generation instead of accidentally using the branch name.
 - Reworked the landing page to describe the ready-to-sign installer candidate state without public-beta overclaiming.

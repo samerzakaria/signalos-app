@@ -151,11 +151,18 @@ Do not describe a build as public beta until signed packages and signed update m
 
 ## Distribution
 
-Updater manifests live in:
+Updater manifest source files live in:
 
 ```text
 distribution/update-manifest/beta.json
 distribution/update-manifest/latest.json
+```
+
+The installed app reads the public copies deployed through GitHub Pages:
+
+```text
+https://samerzakaria.github.io/signalos-app/update-manifest/beta.json
+https://samerzakaria.github.io/signalos-app/update-manifest/latest.json
 ```
 
 The Tauri updater is wired to those checked-in manifest paths. Release signatures must be populated during the signed release process.

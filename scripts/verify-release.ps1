@@ -92,10 +92,10 @@ Invoke-Check "Tauri config points at bundled sidecar and update manifests" {
     throw "bundle.externalBin must include bin/signalos-python"
   }
   $endpoints = @($config.plugins.updater.endpoints)
-  if (-not ($endpoints | Where-Object { $_ -like "*distribution/update-manifest/beta.json" })) {
+  if (-not ($endpoints | Where-Object { $_ -like "*update-manifest/beta.json" })) {
     throw "Missing beta update manifest endpoint."
   }
-  if (-not ($endpoints | Where-Object { $_ -like "*distribution/update-manifest/latest.json" })) {
+  if (-not ($endpoints | Where-Object { $_ -like "*update-manifest/latest.json" })) {
     throw "Missing latest update manifest endpoint."
   }
 }

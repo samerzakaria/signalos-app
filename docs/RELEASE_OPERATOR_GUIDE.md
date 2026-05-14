@@ -101,6 +101,13 @@ After pushing to `main` and enabling GitHub Pages, require remote URLs:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -ValidateRemoteReleaseUrls -RequireRemoteReleaseUrls
 ```
 
+Installed apps read update manifests from GitHub Pages, not private raw GitHub URLs:
+
+```text
+https://samerzakaria.github.io/signalos-app/update-manifest/beta.json
+https://samerzakaria.github.io/signalos-app/update-manifest/latest.json
+```
+
 ## Provider Gate
 
 Validate local Ollama and any cloud providers with keys in the environment:

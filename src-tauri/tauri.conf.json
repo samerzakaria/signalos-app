@@ -69,8 +69,8 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERFMENBN0E5ODJDRTZGQzIKUldUQ2I4NkNxYWNNM2lkSk8wb1l5SHZUR0Y2UVRNUDBneXFrNUQvdXVBYXh6emtQWTlBR2FlOEoK",
       "endpoints": [
-        "https://raw.githubusercontent.com/samerzakaria/signalos-app/main/distribution/update-manifest/beta.json",
-        "https://raw.githubusercontent.com/samerzakaria/signalos-app/main/distribution/update-manifest/latest.json"
+        "https://samerzakaria.github.io/signalos-app/update-manifest/beta.json",
+        "https://samerzakaria.github.io/signalos-app/update-manifest/latest.json"
       ]
     }
   }

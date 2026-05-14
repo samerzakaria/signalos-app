@@ -94,7 +94,7 @@ Completed in `signalos-app` on 2026-05-14:
 - Secrets are summarized without exposing raw values.
 - Engine diagnostics include status, ping, restart, and redacted diagnostic copy.
 - Session and monthly budget controls were added.
-- The updater endpoint now points to the checked-in beta/latest manifests.
+- The updater endpoint now points to beta/latest manifests hosted through GitHub Pages, so private-repo raw GitHub URLs are not required by installed apps.
 - Sidecar request IDs are more collision-resistant.
 - `scripts/verify-release.ps1` runs release readiness checks and can build unsigned installer bundles.
 - Command output cards now structure status/setup results instead of relying only on raw text.
@@ -121,7 +121,7 @@ Completed in `signalos-app` on 2026-05-14:
 - Local Windows unsigned package smoke passed on 2026-05-14.
 - Local installer-only runtime smoke passed on 2026-05-14. Evidence: `docs/release-evidence/installed-runtime-local.md`.
 - Local Ollama live-provider validation passed on 2026-05-14. Evidence: `docs/release-evidence/live-providers-local.md`.
-- Local release URL validation passed for checked-in files and recorded remote 404s on 2026-05-14. Evidence: `docs/release-evidence/release-urls-local.md`.
+- Local release URL validation passed for checked-in files and recorded the pre-publish private-raw 404s on 2026-05-14. Evidence: `docs/release-evidence/release-urls-local.md`.
 
 ## What Is Still Missing In App Code
 
@@ -139,7 +139,7 @@ The app-side installed-user journey is implemented in this repository. The items
 - Signed release manifests generated from a real tagged release.
 - Auto-update validation from an older signed build to a newer signed build.
 - Real next-project trial using only the installer, with no source repo available. A synthetic temp-project runtime trial passed locally; the human trial remains external.
-- Public release docs hosted at the final docs URL. The Pages workflow source exists, but GitHub Pages currently returns 404 until the changes are pushed and Pages is enabled.
+- Public release docs hosted at the final docs URL through GitHub Pages.
 - Final copy polish based on the first real user trial.
 - Real cloud-provider validation against live accounts for each configured cloud provider. Local Ollama passed; no cloud API keys are present in this machine environment.
 
@@ -256,7 +256,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -
 Pass criteria:
 
 - Local beta/latest manifests parse.
-- Raw GitHub update manifest URLs return HTTP 200 after the changes are pushed.
+- Public GitHub Pages update manifest URLs return HTTP 200 after Pages deploys.
 - GitHub Pages docs URLs return HTTP 200 after Pages is enabled and deployed.
 
 ### Gate 3: Clean-Machine Installer Test
