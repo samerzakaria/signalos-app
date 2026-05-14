@@ -111,8 +111,8 @@ Completed in `signalos-app` on 2026-05-14:
 - `scripts/smoke-installed-build.ps1` verifies the unsigned release executable launches, the bundled engine starts, MSI extraction works, and NSIS silent install/launch/uninstall works.
 - `scripts/validate-installed-runtime.ps1` installs the NSIS package to a temp folder, drives the bundled engine through JSON IPC, creates a fresh project outside this repo, runs setup/status, verifies secret redaction, verifies Brain, verifies gate status, and uninstalls.
 - `scripts/validate-live-providers.ps1` validates live provider model fetch/chat when provider keys are present and validates local Ollama when it is running.
-- `scripts/validate-release-urls.ps1` validates local update manifests and optionally fails remote release/docs URLs that are not published yet.
-- GitHub Pages workflow source now exists in `.github/workflows/pages.yml` to publish the landing page and docs after the changes are pushed to `main` and Pages is enabled.
+- `scripts/validate-release-urls.ps1` validates local update manifests and can require public remote release/docs URLs.
+- GitHub Pages is enabled and publishes the landing page, docs, and update manifests from `.github/workflows/pages.yml`.
 - The release workflow now verifies Linux package artifacts when the Linux release job runs.
 - Manual release dispatch now uses the requested version for release notes, asset names, release tags, and update manifests instead of deriving release version from the branch name.
 - Local Windows unsigned installer build passed:
@@ -122,6 +122,7 @@ Completed in `signalos-app` on 2026-05-14:
 - Local installer-only runtime smoke passed on 2026-05-14. Evidence: `docs/release-evidence/installed-runtime-local.md`.
 - Local Ollama live-provider validation passed on 2026-05-14. Evidence: `docs/release-evidence/live-providers-local.md`.
 - Local release URL validation passed for checked-in files and recorded the pre-publish private-raw 404s on 2026-05-14. Evidence: `docs/release-evidence/release-urls-local.md`.
+- Remote release URL validation passed on 2026-05-14 after moving update manifests to GitHub Pages. Evidence: `docs/release-evidence/release-urls-remote.md`.
 
 ## What Is Still Missing In App Code
 
@@ -135,11 +136,10 @@ The app-side installed-user journey is implemented in this repository. The items
 - Windows setup/chat/update-check/upgrade/uninstall validation outside the development machine.
 - Signed Windows installer and Windows reputation validation.
 - macOS signed and notarized build validation.
-- Linux packaged build validation from the Linux release job. The workflow now checks Linux artifacts, but it has not run from these unpushed local changes.
+- Linux packaged build validation from the Linux release job. The workflow now checks Linux artifacts, but a release run must complete to prove the current Linux packages.
 - Signed release manifests generated from a real tagged release.
 - Auto-update validation from an older signed build to a newer signed build.
 - Real next-project trial using only the installer, with no source repo available. A synthetic temp-project runtime trial passed locally; the human trial remains external.
-- Public release docs hosted at the final docs URL through GitHub Pages.
 - Final copy polish based on the first real user trial.
 - Real cloud-provider validation against live accounts for each configured cloud provider. Local Ollama passed; no cloud API keys are present in this machine environment.
 
