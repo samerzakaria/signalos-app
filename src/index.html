@@ -311,6 +311,53 @@ button:disabled {
   resize: vertical;
   font-size: 15px;
 }
+.builder-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+.builder-phase-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.builder-phase {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 9px;
+  min-height: 62px;
+}
+.builder-phase strong {
+  display: block;
+  font-size: 13px;
+}
+.builder-phase span {
+  display: block;
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.builder-phase.done {
+  border-color: #c8e3d3;
+  background: var(--green-soft);
+}
+.builder-phase.active {
+  border-color: #c9d8ff;
+  background: var(--blue-soft);
+}
+.builder-runbook {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
 .build-result-panel {
   margin-top: 0;
 }
@@ -1031,6 +1078,10 @@ input:focus, select:focus, textarea:focus {
   .dashboard-main {
     grid-template-columns: 1fr;
   }
+  .builder-controls,
+  .builder-phase-strip {
+    grid-template-columns: 1fr;
+  }
   .topbar {
     padding: 0 16px;
   }
@@ -1123,8 +1174,8 @@ input:focus, select:focus, textarea:focus {
         <div class="guide-layout">
           <section class="hero-action builder-hero">
             <div class="kicker" id="activeStepLabel">Build</div>
-            <h1 id="guideLead">Describe the app. SignalOS writes the first working files.</h1>
-            <p id="guideDetail">Start with a simple static app. You can refine it after the first version opens.</p>
+            <h1 id="guideLead">Describe the app. SignalOS writes the first working version.</h1>
+            <p id="guideDetail">Pick a stack, then SignalOS prepares the project, plans the work, writes files, and refreshes status.</p>
             <div class="now-line">
               <span id="projectPath">No folder selected yet.</span>
               <span id="keyStatus">AI is not connected.</span>
@@ -1132,6 +1183,20 @@ input:focus, select:focus, textarea:focus {
             <div class="field builder-prompt-field">
               <label for="buildPrompt">What do you want to build?</label>
               <textarea id="buildPrompt" class="builder-prompt" placeholder="Example: Build a clean TODO task management app with priorities, due dates, filters, and local storage."></textarea>
+            </div>
+            <div class="builder-controls">
+              <div class="field">
+                <label for="buildStack">App stack</label>
+                <select id="buildStack">
+                  <option value="react-vite" selected>React / Vite app</option>
+                  <option value="next">Next.js app</option>
+                  <option value="node-express">Node / Express app</option>
+                  <option value="python-flask">Python / Flask app</option>
+                  <option value="static">Plain HTML app</option>
+                  <option value="auto">Let SignalOS choose</option>
+                </select>
+              </div>
+              <div class="fine-print">SignalOS will prepare the project, write a plan/evidence note, generate files for this stack, then refresh status.</div>
             </div>
             <div class="action-row">
               <button class="primary" type="button" id="buildApp">Build app</button>
@@ -1143,9 +1208,11 @@ input:focus, select:focus, textarea:focus {
           <section class="panel build-result-panel">
             <h2>Build result</h2>
             <div class="fine-print" id="buildStatus">No build yet. Choose a folder, connect AI, then describe the app.</div>
+            <div class="builder-phase-strip" id="buildPhaseList"></div>
+            <div class="builder-runbook" id="buildRunbook">No run instructions yet.</div>
             <div class="artifact-list" id="buildFileList" style="margin-top:12px"></div>
             <div class="inline-actions">
-              <button class="secondary small" type="button" id="openBuiltApp">Open app</button>
+              <button class="secondary small" type="button" id="openBuiltApp">Open entry</button>
               <button class="ghost small" type="button" id="openChatFromBuild">Open chat</button>
             </div>
           </section>

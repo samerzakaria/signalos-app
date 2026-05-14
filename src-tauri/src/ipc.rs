@@ -136,6 +136,9 @@ pub fn get_project_artifacts(state: State<WorkspaceState>) -> Result<ProjectArti
     let plan_file = workspace.join("core").join("strategy").join("PLAN.md");
     let issue_report_dir = runtime_dir.join("issue-reports");
     let handoff_dir = runtime_dir.join("handoffs");
+    let package_file = workspace.join("package.json");
+    let requirements_file = workspace.join("requirements.txt");
+    let app_entry = detect_app_entry(&workspace);
     let issue_report_count = count_files_with_ext(&issue_report_dir, "md");
     let handoff_count = count_files_with_ext(&handoff_dir, "md");
 
@@ -188,6 +191,32 @@ pub fn get_project_artifacts(state: State<WorkspaceState>) -> Result<ProjectArti
                 "Project README is present.".into()
             } else {
                 "No project README found.".into()
+            },
+        ),
+        artifact(
+            "App manifest",
+            if package_file.exists() {
+                "package.json"
+            } else {
+                "requirements.txt"
+            },
+            "file",
+            if package_file.exists() {
+                "Node/JavaScript app manifest is present.".into()
+            } else if requirements_file.exists() {
+                "Python requirements file is present.".into()
+            } else {
+                "No app dependency manifest found yet.".into()
+            },
+        ),
+        artifact(
+            "App entry",
+            app_entry.as_deref().unwrap_or("index.html"),
+            "file",
+            if let Some(entry) = &app_entry {
+                format!("Generated app entry found at {entry}.")
+            } else {
+                "No generated app entry found yet.".into()
             },
         ),
         artifact(
@@ -873,6 +902,27 @@ fn count_files_with_ext(dir: &Path, ext: &str) -> usize {
 
 // â”€â”€â”€ UNIT TESTS (T5-1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+fn detect_app_entry(workspace: &Path) -> Option<String> {
+    [
+        "src/main.jsx",
+        "src/main.tsx",
+        "src/App.jsx",
+        "src/App.tsx",
+        "app/page.jsx",
+        "app/page.tsx",
+        "pages/index.jsx",
+        "pages/index.tsx",
+        "pages/index.js",
+        "public/index.html",
+        "index.html",
+        "server.js",
+        "app.py",
+    ]
+    .iter()
+    .find(|candidate| workspace.join(candidate).exists())
+    .map(|candidate| (*candidate).to_string())
+}
+
 fn sanitize_path_segment(value: &str) -> Option<String> {
     let cleaned: String = value
         .chars()
@@ -1143,6 +1193,17 @@ mod tests {
         assert!(normalize_workspace_file_path("../escape.js").is_err());
         assert!(is_reserved_generated_path(".signalos/state.json"));
         assert!(is_reserved_generated_path(".env.local"));
+    }
+
+    #[test]
+    fn generated_app_entry_is_detected() {
+        let root = std::env::temp_dir().join(format!("signalos-entry-{}", uuid()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.jsx"), "console.log('ok');").unwrap();
+
+        assert_eq!(detect_app_entry(&root).as_deref(), Some("src/main.jsx"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

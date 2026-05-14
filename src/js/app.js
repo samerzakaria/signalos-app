@@ -81,6 +81,82 @@ const WORKFLOW_RECIPES = [
   ["Team handoff", "Refresh status, add a session note, export handoff, and send the generated .signalos export file."],
 ];
 
+const BUILD_STACKS = {
+  "react-vite": {
+    label: "React / Vite app",
+    entry: "package.json",
+    run: "Run: npm install, then npm run dev",
+    required: ["package.json", "index.html", "README.md"],
+    prompt: [
+      "Create a Vite React app.",
+      "Required files include package.json, index.html, src/main.jsx, src/App.jsx, src/styles.css, and README.md.",
+      "Use React state and browser storage where useful.",
+    ],
+  },
+  next: {
+    label: "Next.js app",
+    entry: "package.json",
+    run: "Run: npm install, then npm run dev",
+    required: ["package.json", "README.md"],
+    prompt: [
+      "Create a Next.js app using the App Router.",
+      "Required files include package.json, app/page.jsx, app/layout.jsx, app/globals.css, and README.md.",
+      "Keep it local-first and avoid external services unless the user explicitly asks.",
+    ],
+  },
+  "node-express": {
+    label: "Node / Express app",
+    entry: "package.json",
+    run: "Run: npm install, then npm start",
+    required: ["package.json", "README.md"],
+    prompt: [
+      "Create a Node Express app with a simple web UI.",
+      "Required files include package.json, server.js, public/index.html, public/styles.css, public/app.js, and README.md.",
+      "Use an in-memory or local JSON file flow unless the user asks for a database.",
+    ],
+  },
+  "python-flask": {
+    label: "Python / Flask app",
+    entry: "README.md",
+    run: "Run: python -m venv .venv, install requirements.txt, then python app.py",
+    required: ["app.py", "requirements.txt", "README.md"],
+    prompt: [
+      "Create a Python Flask app with a simple web UI.",
+      "Required files include app.py, requirements.txt, templates/index.html, static/styles.css, static/app.js, and README.md.",
+      "Keep the first version local and easy to run.",
+    ],
+  },
+  static: {
+    label: "Plain HTML app",
+    entry: "index.html",
+    run: "Open index.html directly.",
+    required: ["index.html", "README.md"],
+    prompt: [
+      "Create a plain HTML, CSS, and JavaScript app.",
+      "Required files include index.html, styles.css, app.js, and README.md.",
+      "The app must run by opening index.html directly.",
+    ],
+  },
+  auto: {
+    label: "SignalOS chooses",
+    entry: "README.md",
+    run: "Follow README.md for the generated run command.",
+    required: ["README.md"],
+    prompt: [
+      "Choose the smallest appropriate app stack for the user's request.",
+      "Prefer React / Vite for browser apps, Node / Express for local API apps, and Python / Flask for Python-focused requests.",
+      "Include README.md with exact run commands.",
+    ],
+  },
+};
+
+const BUILDER_PHASES = [
+  ["prepare", "Prepare", "SignalOS setup/status"],
+  ["plan", "Plan", "Scope and tasks"],
+  ["write", "Build", "Project files"],
+  ["review", "Review", "Status and next step"],
+];
+
 const state = {
   workspace: null,
   providers: [],
@@ -110,7 +186,18 @@ const state = {
   modelDraftProvider: "",
   modelDraftSelection: "",
   modelDraftCustom: "",
-  builder: { status: "idle", message: "", files: [], summary: "" },
+  builder: {
+    status: "idle",
+    message: "",
+    files: [],
+    summary: "",
+    stack: "react-vite",
+    phase: "",
+    done: [],
+    runInstructions: "",
+    briefPath: "",
+    entryPath: "",
+  },
   aiConnection: { provider: "", status: "untested", message: "" },
   engine: { status: "unknown", message: "Not checked yet.", version: "", checkedAt: "" },
   sidecarError: "",
@@ -139,8 +226,11 @@ const el = {
   mainAction: $("#mainAction"),
   secondaryAction: $("#secondaryAction"),
   buildPrompt: $("#buildPrompt"),
+  buildStack: $("#buildStack"),
   buildApp: $("#buildApp"),
   buildStatus: $("#buildStatus"),
+  buildPhaseList: $("#buildPhaseList"),
+  buildRunbook: $("#buildRunbook"),
   buildFileList: $("#buildFileList"),
   openBuiltApp: $("#openBuiltApp"),
   openChatFromBuild: $("#openChatFromBuild"),
@@ -459,6 +549,46 @@ function selectedProviderModel() {
   return (state.activeProviderInfo?.model || "").trim();
 }
 
+function selectedBuildStack() {
+  const value = el.buildStack?.value || state.builder.stack || "react-vite";
+  return BUILD_STACKS[value] ? value : "react-vite";
+}
+
+function buildStackInfo(stackId = selectedBuildStack()) {
+  return BUILD_STACKS[stackId] || BUILD_STACKS["react-vite"];
+}
+
+function setBuilderState(patch = {}) {
+  state.builder = {
+    status: "idle",
+    message: "",
+    files: [],
+    summary: "",
+    stack: selectedBuildStack(),
+    phase: "",
+    done: [],
+    runInstructions: "",
+    briefPath: "",
+    entryPath: "",
+    ...state.builder,
+    ...patch,
+  };
+  renderBuilder();
+}
+
+function setBuilderPhase(phase, message) {
+  const done = new Set(state.builder.done || []);
+  for (const [id] of BUILDER_PHASES) {
+    if (id === phase) break;
+    done.add(id);
+  }
+  setBuilderState({
+    phase,
+    done: Array.from(done),
+    message: message || state.builder.message,
+  });
+}
+
 function providerKeyValue() {
   const controls = providerControlSets();
   const ordered = state.view === "settings" ? [...controls].reverse() : controls;
@@ -626,7 +756,7 @@ function renderGuide() {
     : "Describe the app. SignalOS will create the first working version.";
   el.guideDetail.textContent = setupStep === "project" || setupStep === "ai"
     ? action.detail
-    : "Use the builder for real file output. Use Chat only for questions and slash commands.";
+    : "The builder prepares SignalOS, records a scoped plan, writes the selected stack, and refreshes project status.";
   el.mainAction.textContent = state.busy ? "Working..." : action.label;
   el.mainAction.disabled = state.busy || Boolean(action.disabled);
   el.mainAction.onclick = () => action.run();
@@ -671,13 +801,41 @@ function renderGuide() {
 function renderBuilder() {
   if (!el.buildStatus || !el.buildFileList) return;
   const files = Array.isArray(state.builder.files) ? state.builder.files : [];
+  const stackId = state.builder.stack || selectedBuildStack();
+  const stack = buildStackInfo(stackId);
+  if (el.buildStack && el.buildStack.value !== stackId && BUILD_STACKS[stackId]) {
+    el.buildStack.value = stackId;
+  }
+  if (el.buildStack) {
+    el.buildStack.disabled = state.busy;
+  }
   const statusCopy = {
-    idle: "No build yet. Choose a folder, connect AI, then describe the app.",
-    running: "Building. SignalOS is asking AI for a file plan and will write files into the selected project folder.",
+    idle: "No build yet. Choose a folder, connect AI, pick a stack, then describe the app.",
+    running: state.builder.message || "Building through SignalOS: setup, plan, files, then review.",
     success: state.builder.message || "Build finished. Open the app or refine the prompt.",
     error: state.builder.message || "Build failed. Fix the message and try again.",
   };
   el.buildStatus.textContent = statusCopy[state.builder.status] || statusCopy.idle;
+  if (el.buildPhaseList) {
+    const done = new Set(state.builder.done || []);
+    el.buildPhaseList.innerHTML = BUILDER_PHASES.map(([id, title, detail]) => {
+      const active = state.builder.phase === id;
+      const complete = done.has(id) || (state.builder.status === "success" && id === "review");
+      return `
+        <div class="builder-phase ${active ? "active" : ""} ${complete ? "done" : ""}">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(detail)}</span>
+        </div>
+      `;
+    }).join("");
+  }
+  if (el.buildRunbook) {
+    const run = state.builder.runInstructions || stack.run;
+    const brief = state.builder.briefPath ? `\nEvidence: ${state.builder.briefPath}` : "";
+    el.buildRunbook.textContent = state.builder.status === "idle"
+      ? "Run instructions and SignalOS evidence will appear here after Build app."
+      : `${stack.label}\n${run}${brief}`;
+  }
   if (el.buildApp) {
     el.buildApp.disabled = state.busy;
     el.buildApp.textContent = state.builder.status === "running" ? "Building..." : "Build app";
@@ -697,8 +855,10 @@ function renderBuilder() {
     button.addEventListener("click", () => openProjectArtifact(button.dataset.openBuiltFile));
   });
   if (el.openBuiltApp) {
-    const hasIndex = files.some((file) => (file.relative_path || file.path || "").toLowerCase() === "index.html");
-    el.openBuiltApp.disabled = !state.workspace || !hasIndex;
+    const entry = state.builder.entryPath || stack.entry;
+    const hasEntry = files.some((file) => (file.relative_path || file.path || "").toLowerCase() === entry.toLowerCase());
+    el.openBuiltApp.textContent = entry === "index.html" ? "Open app" : "Open entry";
+    el.openBuiltApp.disabled = !state.workspace || !hasEntry;
   }
 }
 
@@ -2000,6 +2160,8 @@ function isBuildIntent(text) {
 
 async function buildProjectFromPrompt() {
   const idea = el.buildPrompt?.value?.trim() || "";
+  const stackId = selectedBuildStack();
+  const stack = buildStackInfo(stackId);
   if (!idea) {
     toast("Describe the app first.");
     el.buildPrompt?.focus();
@@ -2019,37 +2181,76 @@ async function buildProjectFromPrompt() {
   }
 
   setBusy(true);
-  state.builder = { status: "running", message: "", files: [], summary: "" };
-  renderBuilder();
+  setBuilderState({
+    status: "running",
+    stack: stackId,
+    phase: "prepare",
+    done: [],
+    files: [],
+    summary: "",
+    message: "Preparing SignalOS for this project.",
+    runInstructions: stack.run,
+    briefPath: "",
+    entryPath: stack.entry,
+  });
   addLog("Build request", idea, { kind: "ai", status: "success" });
-  addLog("SignalOS Builder", "Generating project files...", { kind: "ai", status: "running" });
+  addLog("SignalOS Builder", "Preparing project, planning scope, then generating files.", { kind: "ai", status: "running" });
   try {
+    const prep = await prepareSignalOSForBuild();
+    setBuilderPhase("plan", "Creating a SignalOS build plan and file bundle.");
     const response = await ipc.provider.chat(
       state.activeProvider,
       state.activeProviderInfo?.model || null,
-      buildProjectPrompt(idea),
+      buildProjectPrompt(idea, stackId, prep),
     );
-    const generated = parseGeneratedProject(response?.text || "");
+    const generated = parseGeneratedProject(response?.text || "", stackId);
+    const brief = buildSignalOSBuildBrief(idea, generated, stack, prep);
+    const evidence = await safeCall(
+      () => ipc.project.exportFile("builds", `build-${buildTimestamp()}.md`, brief),
+      null,
+    );
+    await safeCall(() => ipc.brain.add(brief, "decision"), null);
+
+    setBuilderPhase("write", `Writing ${generated.files.length} ${generated.stackLabel || stack.label} files.`);
     const result = await ipc.project.writeFiles(generated.files, true);
+    setBuilderPhase("review", "Refreshing SignalOS status after file write.");
+    const statusOutput = await ipc.signal.runAndWait("/signal-status", []);
+    await loadBasics();
+    await refreshProjectState(true);
+    state.statusChecked = true;
+    markOnboarding("status");
+
     state.builder = {
       status: "success",
       message: generated.summary || `Wrote ${result.files.length} files to ${basename(state.workspace)}.`,
       files: result.files,
       summary: generated.summary || "",
+      stack: generated.stack || stackId,
+      phase: "review",
+      done: BUILDER_PHASES.map(([id]) => id),
+      runInstructions: generated.runInstructions || buildStackInfo(generated.stack || stackId).run,
+      briefPath: evidence?.relative_path || "",
+      entryPath: generated.entryPath || pickBuildEntry(result.files, generated.stack || stackId),
     };
     replaceLastLog("Build complete", state.builder.message, {
       kind: "ai",
       status: "success",
       cards: [
         { label: "Files", value: `${result.files.length} written` },
-        { label: "Open", value: "Open index.html from Build result" },
+        { label: "Stack", value: buildStackInfo(state.builder.stack).label },
+        { label: "Next", value: state.builder.runInstructions },
+        { label: "Status", value: trimForCard(formatResult(statusOutput)) },
       ],
     });
-    await refreshProjectState(false);
     toast("App files written.");
   } catch (error) {
     const message = error.message || String(error);
-    state.builder = { status: "error", message, files: [], summary: "" };
+    setBuilderState({
+      status: "error",
+      message,
+      files: [],
+      summary: "",
+    });
     replaceLastLog("Build failed", message, { kind: "ai", status: "error" });
     toast("Build failed.");
   } finally {
@@ -2058,26 +2259,65 @@ async function buildProjectFromPrompt() {
   }
 }
 
-function buildProjectPrompt(idea) {
+async function prepareSignalOSForBuild() {
+  const prep = {
+    initializedBefore: Boolean(state.artifacts?.initialized),
+    initOutput: "",
+    statusOutput: "",
+    phase: state.wave?.phase_name || "",
+    nextAction: "",
+  };
+
+  setBuilderPhase("prepare", "Checking SignalOS project setup.");
+  if (!state.artifacts?.initialized) {
+    prep.initOutput = formatResult(await ipc.signal.runAndWait("/signal-init", []));
+    markOnboarding("setup");
+  }
+
+  prep.statusOutput = formatResult(await ipc.signal.runAndWait("/signal-status", []));
+  await loadBasics();
+  await refreshProjectState(true);
+  state.statusChecked = true;
+  markOnboarding("status");
+  prep.phase = state.wave?.phase_name || "";
+  prep.nextAction = nextActionTextFromState();
+  return prep;
+}
+
+function nextActionTextFromState() {
+  const gate = currentGate();
+  if (hasActiveWave() && gate) return `Work toward ${gate.name}.`;
+  if (hasActiveWave()) return "Review the latest SignalOS status.";
+  return "Continue from the generated plan and run status after changes.";
+}
+
+function buildProjectPrompt(idea, requestedStack, prep = {}) {
+  const stack = buildStackInfo(requestedStack);
   return [
-    "You are SignalOS Builder. Create the first working version of a small static web app.",
+    "You are SignalOS Builder, running inside a governed SignalOS project.",
     "Return ONLY valid JSON. No markdown, no prose, no code fences.",
     "Schema:",
-    "{\"summary\":\"short build summary\",\"files\":[{\"path\":\"index.html\",\"content\":\"...\"},{\"path\":\"styles.css\",\"content\":\"...\"},{\"path\":\"app.js\",\"content\":\"...\"},{\"path\":\"README.md\",\"content\":\"...\"}]}",
+    "{\"summary\":\"short build summary\",\"stack\":\"react-vite|next|node-express|python-flask|static\",\"entry_path\":\"path to main entry\",\"run_instructions\":\"exact local run command\",\"signalos_plan\":{\"goal\":\"...\",\"user_journey\":[\"...\"],\"scope\":[\"...\"],\"tasks\":[\"...\"],\"risks\":[\"...\"],\"acceptance\":[\"...\"]},\"files\":[{\"path\":\"relative/path\",\"content\":\"complete file contents\"}]}",
     "Rules:",
-    "- Use plain HTML, CSS, and JavaScript only. No React, no npm, no external CDN.",
-    "- The app must run by opening index.html directly.",
+    `- Requested stack: ${requestedStack}. ${stack.label}.`,
+    ...stack.prompt.map((line) => `- ${line}`),
+    "- This is not a chat answer. Generate complete files that SignalOS can write to disk.",
     "- Include complete file contents, not snippets.",
     "- Keep paths relative and inside the project folder.",
-    "- Do not create .env files or include secrets.",
-    "- Use localStorage when persistence is useful.",
-    "- Make the UI clean, practical, and not a marketing page.",
+    "- Do not write .signalos, core, integrations, .git, .env, private keys, certificates, or secrets.",
+    "- Do not use external image/CDN URLs. Keep the first build runnable after dependencies are installed.",
+    "- Include README.md with a short purpose, features, and exact run commands.",
+    "- Make the UI product-quality, practical, and not a marketing page.",
+    "- Keep the app focused on the user's requested workflow, with useful empty, error, and saved states.",
+    "- The signalos_plan must be specific enough for a user to understand what was built and what remains.",
     "",
+    `SignalOS phase: ${prep.phase || "not loaded"}`,
+    `SignalOS next action: ${prep.nextAction || "not loaded"}`,
     `User request: ${idea}`,
   ].join("\n");
 }
 
-function parseGeneratedProject(text) {
+function parseGeneratedProject(text, requestedStack) {
   const raw = safeText(text).trim();
   const jsonText = extractJsonObject(raw);
   if (!jsonText) {
@@ -2089,23 +2329,140 @@ function parseGeneratedProject(text) {
   } catch (error) {
     throw new Error("AI returned invalid build JSON. Try Build again.");
   }
+  const requested = BUILD_STACKS[requestedStack] ? requestedStack : "react-vite";
+  const returned = safeText(parsed.stack).trim();
+  const stack = BUILD_STACKS[returned] && requested === "auto" ? returned
+    : BUILD_STACKS[returned] && returned === requested ? returned
+      : requested === "auto" ? inferBuildStack(parsed.files) : requested;
   const files = Array.isArray(parsed.files) ? parsed.files : [];
   const normalized = files
     .map((file) => ({
-      path: safeText(file.path).trim(),
+      path: normalizeGeneratedPath(file.path),
       content: safeText(file.content),
     }))
     .filter((file) => file.path && file.content);
   if (!normalized.length) {
     throw new Error("AI returned no writable files.");
   }
-  if (!normalized.some((file) => file.path.toLowerCase() === "index.html")) {
-    throw new Error("AI did not include index.html, so SignalOS did not write the bundle.");
-  }
+  validateGeneratedFiles(normalized, stack);
   return {
     summary: safeText(parsed.summary, `Generated ${normalized.length} files.`),
+    stack,
+    stackLabel: buildStackInfo(stack).label,
+    entryPath: normalizeGeneratedPath(parsed.entry_path) || pickBuildEntry(normalized, stack),
+    runInstructions: safeText(parsed.run_instructions, buildStackInfo(stack).run),
+    plan: normalizeSignalOSPlan(parsed.signalos_plan),
     files: normalized,
   };
+}
+
+function normalizeGeneratedPath(value) {
+  return safeText(value)
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "")
+    .trim();
+}
+
+function inferBuildStack(files = []) {
+  const paths = (Array.isArray(files) ? files : []).map((file) => normalizeGeneratedPath(file.path).toLowerCase());
+  if (paths.includes("app.py") || paths.includes("requirements.txt")) return "python-flask";
+  if (paths.some((path) => path.startsWith("app/")) || paths.some((path) => path.startsWith("pages/"))) return "next";
+  if (paths.includes("server.js")) return "node-express";
+  if (paths.includes("src/main.jsx") || paths.includes("src/main.tsx")) return "react-vite";
+  if (paths.includes("index.html")) return "static";
+  return "react-vite";
+}
+
+function validateGeneratedFiles(files, stackId) {
+  const stack = buildStackInfo(stackId);
+  const paths = new Set(files.map((file) => file.path.toLowerCase()));
+  const missing = stack.required.filter((path) => !paths.has(path.toLowerCase()));
+  if (missing.length) {
+    throw new Error(`AI did not include required ${stack.label} file(s): ${missing.join(", ")}.`);
+  }
+  if (stackId === "react-vite" && !paths.has("src/main.jsx") && !paths.has("src/main.tsx")) {
+    throw new Error("AI did not include src/main.jsx or src/main.tsx for the React app.");
+  }
+  if (stackId === "next") {
+    const hasPage = paths.has("app/page.jsx") || paths.has("app/page.tsx") || paths.has("pages/index.jsx") || paths.has("pages/index.tsx") || paths.has("pages/index.js");
+    if (!hasPage) throw new Error("AI did not include a Next.js page file.");
+  }
+  if (stackId === "node-express" && !paths.has("server.js") && !paths.has("index.js") && !paths.has("app.js")) {
+    throw new Error("AI did not include a Node server entry file.");
+  }
+}
+
+function pickBuildEntry(files, stackId) {
+  const stack = buildStackInfo(stackId);
+  const paths = (Array.isArray(files) ? files : []).map((file) => file.relative_path || file.path || "");
+  const preferred = [
+    stack.entry,
+    "index.html",
+    "README.md",
+    "src/App.jsx",
+    "src/main.jsx",
+    "app/page.jsx",
+    "server.js",
+    "app.py",
+    "package.json",
+  ];
+  return preferred.find((path) => paths.some((item) => item.toLowerCase() === path.toLowerCase())) || paths[0] || stack.entry;
+}
+
+function normalizeSignalOSPlan(value) {
+  const plan = value && typeof value === "object" ? value : {};
+  const list = (key) => Array.isArray(plan[key])
+    ? plan[key].map((item) => safeText(item).trim()).filter(Boolean).slice(0, 12)
+    : [];
+  return {
+    goal: safeText(plan.goal, "Create the requested first working app."),
+    userJourney: list("user_journey"),
+    scope: list("scope"),
+    tasks: list("tasks"),
+    risks: list("risks"),
+    acceptance: list("acceptance"),
+  };
+}
+
+function buildSignalOSBuildBrief(idea, generated, stack, prep) {
+  const plan = generated.plan || normalizeSignalOSPlan(null);
+  const section = (title, items) => [
+    `## ${title}`,
+    ...(items.length ? items.map((item) => `- ${item}`) : ["- Not specified."]),
+    "",
+  ].join("\n");
+  return [
+    `# SignalOS Build Brief - ${new Date().toISOString()}`,
+    "",
+    `Request: ${idea}`,
+    `Stack: ${generated.stackLabel || stack.label}`,
+    `SignalOS phase before build: ${prep.phase || "not loaded"}`,
+    `SignalOS next action before build: ${prep.nextAction || "not loaded"}`,
+    "",
+    "## Goal",
+    plan.goal,
+    "",
+    section("User Journey", plan.userJourney),
+    section("Scope", plan.scope),
+    section("Tasks", plan.tasks),
+    section("Risks", plan.risks),
+    section("Acceptance", plan.acceptance),
+    "## Generated Files",
+    ...generated.files.map((file) => `- ${file.path}`),
+    "",
+    "## Run",
+    generated.runInstructions || stack.run,
+    "",
+  ].join("\n");
+}
+
+function buildTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function trimForCard(value, max = 120) {
+  const text = safeText(value).replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
 function extractJsonObject(text) {
@@ -2258,7 +2615,17 @@ function bindEvents() {
 
   $("#chooseProject").addEventListener("click", chooseWorkspace);
   el.buildApp?.addEventListener("click", buildProjectFromPrompt);
-  el.openBuiltApp?.addEventListener("click", () => openProjectArtifact("index.html"));
+  el.buildStack?.addEventListener("change", () => {
+    setBuilderState({
+      stack: selectedBuildStack(),
+      entryPath: "",
+      runInstructions: "",
+    });
+  });
+  el.openBuiltApp?.addEventListener("click", () => {
+    const stack = buildStackInfo(state.builder.stack || selectedBuildStack());
+    openProjectArtifact(state.builder.entryPath || stack.entry);
+  });
   el.openChatFromBuild?.addEventListener("click", () => switchView("chat"));
   $("#settingsChooseProject").addEventListener("click", chooseWorkspace);
   $("#forgetProject").addEventListener("click", forgetWorkspace);

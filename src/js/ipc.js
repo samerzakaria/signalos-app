@@ -241,6 +241,8 @@ function mockInvoke(cmd, args) {
           { name: "Wave plan", path: "core/strategy/PLAN.md", kind: "file", exists: true, detail: "Project plan is present." },
           { name: "Command library", path: "core/execution/commands", kind: "folder", exists: true, detail: "49 command definition files found." },
           { name: "IDE integrations", path: "integrations", kind: "folder", exists: true, detail: "IDE integration files are present." },
+          { name: "App manifest", path: "package.json", kind: "file", exists: true, detail: "Node/JavaScript app manifest is present." },
+          { name: "App entry", path: "src/main.jsx", kind: "file", exists: true, detail: "Generated app entry found at src/main.jsx." },
         ],
       };
       case "open_workspace_path": return null;
@@ -308,7 +310,7 @@ function mockInvoke(cmd, args) {
           }));
         }
         if (args.command === "ping") {
-          return { pong: true, version: "0.0.8" };
+          return { pong: true, version: "0.0.9" };
         }
         if (args.command === "/signal-init") {
           return "SignalOS project bootstrapped. Created .signalos runtime state, core strategy plan, command definitions, and IDE integrations.";
@@ -357,6 +359,36 @@ function mockInvoke(cmd, args) {
       case "test_provider_connection":
         return { ok: true, message: "Provider responded in browser preview mode.", model_count: 3 };
       case "send_provider_message":
+        if (String(args.message || "").includes("SignalOS Builder")) {
+          return {
+            text: JSON.stringify({
+              summary: "Generated a local React task management app.",
+              stack: "react-vite",
+              entry_path: "src/main.jsx",
+              run_instructions: "Run: npm install, then npm run dev",
+              signalos_plan: {
+                goal: "Create a usable first version of the requested app.",
+                user_journey: ["Open the app", "Add an item", "Edit state", "Filter the list"],
+                scope: ["Local browser app", "Clean task workflow", "Persistent local storage"],
+                tasks: ["Create React shell", "Add task state", "Add filters", "Document run command"],
+                risks: ["No backend yet", "Local-only persistence"],
+                acceptance: ["App starts locally", "User can create and complete tasks"],
+              },
+              files: [
+                { path: "package.json", content: "{\n  \"scripts\": { \"dev\": \"vite\" },\n  \"dependencies\": { \"@vitejs/plugin-react\": \"^4.0.0\", \"vite\": \"^5.0.0\", \"react\": \"^18.2.0\", \"react-dom\": \"^18.2.0\" },\n  \"devDependencies\": {}\n}\n" },
+                { path: "index.html", content: "<div id=\"root\"></div><script type=\"module\" src=\"/src/main.jsx\"></script>\n" },
+                { path: "src/main.jsx", content: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport './styles.css';\nimport App from './App.jsx';\n\ncreateRoot(document.getElementById('root')).render(<App />);\n" },
+                { path: "src/App.jsx", content: "export default function App() {\n  return <main className=\"app\"><h1>Task Manager</h1><p>Browser preview generated this starter.</p></main>;\n}\n" },
+                { path: "src/styles.css", content: "body { margin: 0; font-family: system-ui, sans-serif; background: #f6f5f2; color: #1e1d1a; } .app { max-width: 880px; margin: 48px auto; padding: 24px; background: white; border: 1px solid #e5e1d8; border-radius: 8px; }\n" },
+                { path: "README.md", content: "# Generated App\n\nRun `npm install` then `npm run dev`.\n" },
+              ],
+            }),
+            tokens_in: 1200,
+            tokens_out: 1800,
+            provider: args.provider,
+            model: args.model || "",
+          };
+        }
         return {
           text: `Browser preview response for: ${args.message || ""}`,
           tokens_in: 12,

@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-05-14
 
+## [0.0.9] - 2026-05-14
+
+### SignalOS Builder path
+
+- Changed Builder from static-only output to a stack selector with React / Vite, Next.js, Node / Express, Python / Flask, plain HTML, and Auto options.
+- Made React / Vite the default browser-app stack instead of plain HTML.
+- Made Build run through SignalOS preparation: initialize when needed, run status, generate a scoped plan, write a `.signalos/builds/` evidence brief, save a decision note, write files, and refresh status.
+- Added run instructions and phase progress for Prepare, Plan, Build, and Review.
+- Added generated app manifest and app entry detection to Project/Dashboard artifacts.
+
 ## [0.0.8] - 2026-05-14
 
 ### Builder UX reset

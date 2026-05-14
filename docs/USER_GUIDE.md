@@ -21,14 +21,15 @@ This guide is for a user who has only the installed SignalOS App and a project f
 6. Select a fetched model, or choose Other model and type one.
 7. Save and test the AI connection.
 8. Open Build.
-9. Describe the app you want.
-10. Press Build app.
-11. Open `index.html` from the Build result.
-12. Use Project if you also want SignalOS governance files and `/signal-status`.
+9. Choose the app stack, such as React / Vite, Next.js, Express, Flask, plain HTML, or Auto.
+10. Describe the app you want.
+11. Press Build app.
+12. Follow the run instructions shown in Build result.
+13. Use Project or Dashboard to inspect SignalOS setup, generated app files, and next status.
 
 ## Main Views
 
-- Build: describe an app and write the first working static files into the selected project folder.
+- Build: describe an app, choose a stack, run SignalOS setup/status, record a build brief, and write the first working files into the selected project folder.
 - Project: choose the folder, connect AI, check setup, and inspect project files.
 - Chat: ask AI questions and run `/signal-*` commands. Build requests are moved to Build instead of returning walls of code.
 - Dashboard: see project readiness, AI state, engine state, gates, files, and the first-project checklist.
@@ -62,11 +63,23 @@ Command labels matter:
 
 1. Open Build.
 2. Write a direct app request, such as `Build a TODO task management app with priorities, due dates, filters, and local storage`.
-3. Press Build app.
-4. Open `index.html` from the Build result.
-5. Refine the prompt and Build again when you want a new version.
+3. Choose a stack. React / Vite is the default for browser apps.
+4. Press Build app.
+5. Follow the run instructions shown in the Build result.
+6. Refine the prompt and Build again when you want a new version.
 
-The Builder writes plain HTML, CSS, JavaScript, and README files. It does not create `.env` files; use Secrets for secret values.
+The Builder does not bypass SignalOS. It prepares the project with `/signal-init` when needed, runs `/signal-status`, asks the provider for a scoped file bundle, writes a build brief into `.signalos/builds/`, saves a decision note, writes files, and refreshes status again.
+
+Supported first-build stacks:
+
+- React / Vite
+- Next.js
+- Node / Express
+- Python / Flask
+- Plain HTML
+- Auto stack selection
+
+The Builder does not create `.env` files or include secrets; use Secrets for secret values.
 
 ## Local Privacy Mode
 

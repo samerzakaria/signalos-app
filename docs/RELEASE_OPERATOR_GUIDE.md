@@ -32,8 +32,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -
 Expected Windows outputs:
 
 ```text
-src-tauri/target/release/bundle/nsis/SignalOS_0.0.7_x64-setup.exe
-src-tauri/target/release/bundle/msi/SignalOS_0.0.7_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/SignalOS_0.0.9_x64-setup.exe
+src-tauri/target/release/bundle/msi/SignalOS_0.0.9_x64_en-US.msi
 ```
 
 ## Clean-Machine Validation

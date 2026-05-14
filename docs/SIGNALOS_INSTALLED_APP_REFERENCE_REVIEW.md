@@ -20,6 +20,7 @@ The app-side journey now exists:
 - Chat with the selected AI provider.
 - Run `/signal-*` commands through the bundled engine.
 - Set up and check a project.
+- Build a first app through the SignalOS path: setup/status, build brief, selected stack files, and status refresh.
 - See setup/status results instead of only a generic "Done".
 - Inspect created project artifacts.
 - Use Dashboard, Guide, Notes, History, Settings, and gate signing.
@@ -72,7 +73,9 @@ Completed in `signalos-app` on 2026-05-14:
 
 - Workspace scrolling was fixed so the user can move through the screen.
 - The first screen is now Build, not a crowded all-in-one guide.
-- Build turns a plain app request into real static project files instead of dumping scaffold text into chat.
+- Build turns a plain app request into real project files instead of dumping scaffold text into chat.
+- Build no longer forces plain HTML. It supports React / Vite, Next.js, Node / Express, Python / Flask, plain HTML, and Auto stack selection.
+- Build now runs SignalOS preparation before generation: `/signal-init` when needed, `/signal-status`, a scoped build plan/evidence brief in `.signalos/builds/`, a saved decision note, file writing, and a final status refresh.
 - Project, Chat, Secrets, Dashboard, Settings, and History are separate surfaces.
 - Chat now routes build requests back to Build instead of pretending a text answer created files.
 - `signalos signal-*` input is routed as a command instead of normal AI chat.
@@ -86,6 +89,8 @@ Completed in `signalos-app` on 2026-05-14:
   - command definitions
   - IDE integration files
   - README
+  - app dependency manifest
+  - generated app entry
 - Project artifact paths can be opened from the UI.
 - The command catalog labels ready, advanced, and preview commands.
 - Dashboard is now a real view with project, AI, engine, next action, gates, and files.
