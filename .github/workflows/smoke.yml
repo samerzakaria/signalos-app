@@ -110,7 +110,7 @@ jobs:
 
       # Full debug build — confirms the binary links correctly
       - name: Build debug binary
-        run: cargo tauri build --debug ${{ matrix.args }}
+        run: cargo tauri build --debug --no-bundle ${{ matrix.args }}
 
       - name: Verify binary exists (Linux / macOS)
         if: matrix.platform != 'windows'
