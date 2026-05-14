@@ -3,218 +3,251 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SignalOS — Guided AI Work for Founders</title>
+<title>SignalOS App</title>
 <style>
   :root {
-    --ink:    #0f0f0f;
-    --muted:  #666;
-    --accent: #1B4FD8;
-    --bg:     #f8f8f7;
-    --white:  #ffffff;
-    --border: #e5e5e5;
-    --radius: 10px;
+    --ink: #1e1d1a;
+    --muted: #68645d;
+    --bg: #f6f5f2;
+    --panel: #ffffff;
+    --line: #e5e1d8;
+    --blue: #2457d6;
+    --green: #27885c;
+    --amber: #a86310;
+    --radius: 8px;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--ink); line-height: 1.5; }
-
-  /* Nav */
-  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; background: var(--white); border-bottom: 1px solid var(--border); }
-  .logo { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
-  .logo span { color: var(--accent); }
-  .nav-links { display: flex; gap: 24px; }
-  .nav-links a { font-size: 13px; color: var(--muted); text-decoration: none; }
-  .nav-links a:hover { color: var(--ink); }
-
-  /* Hero */
-  .hero { max-width: 720px; margin: 0 auto; padding: 80px 24px 64px; text-align: center; }
-  .badge { display: inline-block; background: #DBEAFE; color: var(--accent); font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 20px; margin-bottom: 20px; }
-  h1 { font-size: 48px; font-weight: 800; line-height: 1.1; letter-spacing: -1.5px; margin-bottom: 20px; }
-  h1 em { font-style: normal; color: var(--accent); }
-  .hero-sub { font-size: 18px; color: var(--muted); max-width: 520px; margin: 0 auto 36px; }
-
-  /* Download buttons */
-  .download-group { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
-  .btn-download {
-    display: flex; align-items: center; gap: 8px;
-    background: var(--accent); color: white;
-    font-size: 14px; font-weight: 600;
-    padding: 12px 22px; border-radius: var(--radius);
-    text-decoration: none; border: none; cursor: pointer;
-    transition: opacity 0.15s;
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.5;
   }
-  .btn-download:hover { opacity: 0.88; }
-  .btn-download.secondary { background: var(--white); color: var(--ink); border: 1px solid var(--border); }
-  .btn-download.secondary:hover { background: var(--bg); }
-  .download-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
-
-  /* Detected OS highlight */
-  .btn-download.detected { box-shadow: 0 0 0 3px #BFDBFE; }
-
-  /* Features */
-  .features { max-width: 900px; margin: 0 auto; padding: 48px 24px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .feature { background: var(--white); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
-  .feature-icon { font-size: 22px; margin-bottom: 10px; }
-  .feature-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
-  .feature-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
-
-  /* How it works */
-  .steps { max-width: 660px; margin: 0 auto; padding: 0 24px 64px; }
-  .steps h2 { font-size: 22px; font-weight: 700; margin-bottom: 24px; text-align: center; }
-  .step { display: flex; gap: 16px; margin-bottom: 20px; align-items: flex-start; }
-  .step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: white; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
-  .step-text strong { display: block; font-size: 14px; font-weight: 600; margin-bottom: 2px; }
-  .step-text span { font-size: 13px; color: var(--muted); }
-
-  /* Footer */
-  footer { border-top: 1px solid var(--border); padding: 24px 48px; display: flex; justify-content: space-between; align-items: center; }
-  footer p { font-size: 12px; color: var(--muted); }
-  footer a { font-size: 12px; color: var(--muted); text-decoration: none; }
-
-  @media (max-width: 640px) {
-    h1 { font-size: 32px; }
-    .features { grid-template-columns: 1fr; }
-    nav { padding: 14px 20px; }
-    .nav-links { display: none; }
-    footer { flex-direction: column; gap: 8px; text-align: center; }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 18px 44px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 780;
+  }
+  .mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--blue);
+  }
+  .links {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  a {
+    color: var(--blue);
+    text-decoration: none;
+    font-weight: 650;
+  }
+  .links a {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  main {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 54px 24px;
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
+    gap: 34px;
+    align-items: center;
+  }
+  .badge {
+    display: inline-flex;
+    border: 1px solid #cfd9ff;
+    background: #eef3ff;
+    color: var(--blue);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 760;
+  }
+  h1 {
+    margin: 16px 0 12px;
+    font-size: clamp(36px, 7vw, 64px);
+    line-height: 1.02;
+    letter-spacing: 0;
+  }
+  .lead {
+    color: var(--muted);
+    font-size: 18px;
+    max-width: 640px;
+  }
+  .download {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 26px;
+  }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    border-radius: var(--radius);
+    padding: 0 16px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+  }
+  .button.primary {
+    background: var(--blue);
+    color: white;
+    border-color: var(--blue);
+  }
+  .panel {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    padding: 18px;
+  }
+  .status {
+    display: grid;
+    gap: 10px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-top: 5px;
+    background: var(--green);
+  }
+  .dot.warn { background: var(--amber); }
+  .row strong {
+    display: block;
+  }
+  .row span {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 36px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    padding: 16px;
+  }
+  .card h2 {
+    margin: 0 0 8px;
+    font-size: 16px;
+  }
+  .card p,
+  .fine {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  footer {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 28px 24px 42px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  @media (max-width: 780px) {
+    nav { padding: 14px 18px; }
+    .hero,
+    .grid { grid-template-columns: 1fr; }
+    .links { display: none; }
   }
 </style>
 </head>
 <body>
-
 <nav>
-  <div class="logo">Signal<span>OS</span></div>
-  <div class="nav-links">
-    <a href="#features">Features</a>
-    <a href="#how">How it works</a>
-    <a href="https://github.com/signalos/signalos-core" target="_blank">GitHub</a>
-    <a href="/docs">Docs</a>
+  <div class="brand"><div class="mark" aria-hidden="true"></div><span>SignalOS App</span></div>
+  <div class="links">
+    <a href="docs/USER_GUIDE.md">User Guide</a>
+    <a href="docs/RELEASE_OPERATOR_GUIDE.md">Release Guide</a>
+    <a href="https://github.com/samerzakaria/signalos-app/releases">Releases</a>
   </div>
 </nav>
 
-<section class="hero">
-  <div class="badge">Now in preview · v0.0.7 beta</div>
-  <h1>Move one clear <em>step</em><br>at a time</h1>
-  <p class="hero-sub">SignalOS helps non-technical founders choose a project, connect AI, and keep work moving with a simple guided flow.</p>
+<main>
+  <section class="hero">
+    <div>
+      <div class="badge">Ready-to-sign installer candidate</div>
+      <h1>Use SignalOS from an installed desktop app.</h1>
+      <p class="lead">Choose a project folder, connect AI, run setup/status commands, see what changed, export reports, and move one clear step at a time.</p>
+      <div class="download">
+        <a class="button primary" href="https://github.com/samerzakaria/signalos-app/releases/download/v0.0.7/SignalOS_0.0.7_x64-setup.exe">Download Windows setup</a>
+        <a class="button" href="https://github.com/samerzakaria/signalos-app/releases/tag/v0.0.7">All release assets</a>
+      </div>
+      <p class="fine" style="margin-top:10px">Unsigned internal builds may show OS trust warnings. Public beta requires signed packages and signed update manifests.</p>
+    </div>
+    <div class="panel status">
+      <div class="row">
+        <div class="dot"></div>
+        <div><strong>App journey implemented</strong><span>Chat, Dashboard, Settings, Guide, Notes, History, gate signing, exports, model fetch, and engine recovery.</span></div>
+      </div>
+      <div class="row">
+        <div class="dot"></div>
+        <div><strong>Unsigned Windows build passes locally</strong><span>NSIS and MSI bundles are produced by the release verification script.</span></div>
+      </div>
+      <div class="row">
+        <div class="dot warn"></div>
+        <div><strong>External proof still required</strong><span>Clean-machine validation, code signing, notarization, and signed update proof are release gates.</span></div>
+      </div>
+    </div>
+  </section>
 
-  <div class="download-group" id="downloads">
-    <a href="https://github.com/samerzakaria/signalos-app/releases/download/v0.0.7/SignalOS_0.0.7_x64-setup.exe" class="btn-download" data-os="windows">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
-      Download for Windows
-    </a>
-    <a href="https://github.com/samerzakaria/signalos-app/releases/tag/v0.0.7" class="btn-download secondary" data-os="macos">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
-      Download for macOS
-    </a>
-    <a href="https://github.com/samerzakaria/signalos-app/releases/tag/v0.0.7" class="btn-download secondary" data-os="linux">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.581 19.049c-.55-.446-.336-1.431-.907-1.917.553-3.365-.997-6.331-2.845-8.232C14.3 6.227 11.977 5 9.9 5c-2.237 0-3.837.825-5.361 2.005C2.994 8.215 2 10.079 2 12.5c0 1.58.898 3.404 1.537 4.184.638.776.846 1.188 1.332 2.015.489.833.658 1.28.945 1.942.286.661.475 1.073 1.082 1.428.604.353 2.147.748 3.107.748l4.027.065c.851 0 1.951-.273 2.498-.744.547-.469.738-1.343 1.228-1.779.49-.435 1.185-.533 1.666-.918.48-.384.554-.966.16-1.392z"/></svg>
-      Download for Linux
-    </a>
-  </div>
-  <p class="download-note" id="version-note">Loading latest version…</p>
-</section>
-
-<section class="features" id="features">
-  <div class="feature">
-    <div class="feature-icon">💬</div>
-    <div class="feature-title">One clear next step</div>
-    <div class="feature-desc">Open the app and press the main button. SignalOS keeps the harder details out of the way.</div>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">🔏</div>
-    <div class="feature-title">Simple approvals</div>
-    <div class="feature-desc">Project steps and approvals are shown in plain language, with an audit trail saved automatically.</div>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">📊</div>
-    <div class="feature-title">Project status</div>
-    <div class="feature-desc">See whether the project is ready, what changed, and what SignalOS recommends next.</div>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">🔑</div>
-    <div class="feature-title">Use your AI key</div>
-    <div class="feature-desc">Connect Anthropic, OpenAI, Gemini, or a local AI service. Keys are saved securely on your computer.</div>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">🧠</div>
-    <div class="feature-title">Notes built in</div>
-    <div class="feature-desc">Important beliefs, decisions, and project notes stay attached to the work.</div>
-  </div>
-  <div class="feature">
-    <div class="feature-icon">💰</div>
-    <div class="feature-title">Cost visibility</div>
-    <div class="feature-desc">Session cost is visible in the app so testers know what the AI connection is using.</div>
-  </div>
-</section>
-
-<section class="steps" id="how">
-  <h2>Up and running in 4 steps</h2>
-  <div class="step">
-    <div class="step-num">1</div>
-    <div class="step-text">
-      <strong>Download and open</strong>
-      <span>Windows testers download the setup.exe installer. The beta is unsigned, so Windows may show a SmartScreen warning.</span>
+  <section class="grid">
+    <div class="card">
+      <h2>First run</h2>
+      <p>Choose a folder, connect AI, fetch models, run `/signal-init`, then confirm the project files shown in the app.</p>
     </div>
-  </div>
-  <div class="step">
-    <div class="step-num">2</div>
-    <div class="step-text">
-      <strong>Add your API key</strong>
-      <span>Paste your Anthropic (or other) key. It's stored in your OS keychain — never written to disk.</span>
+    <div class="card">
+      <h2>Project control</h2>
+      <p>Dashboard shows readiness, AI, engine, next action, gates, files, and the first-project checklist.</p>
     </div>
-  </div>
-  <div class="step">
-    <div class="step-num">3</div>
-    <div class="step-text">
-      <strong>Point to your project</strong>
-      <span>Select your project folder. SignalOS keeps everything inside it.</span>
+    <div class="card">
+      <h2>Operational safety</h2>
+      <p>Keys stay in the OS credential manager. Secret files are summarized without values. Reports are redacted.</p>
     </div>
-  </div>
-  <div class="step">
-    <div class="step-num">4</div>
-    <div class="step-text">
-      <strong>Follow the next button</strong>
-      <span>SignalOS shows one main action at a time, from project check to setup.</span>
+    <div class="card">
+      <h2>AI setup</h2>
+      <p>Fetch model names from providers, select a model, or choose Other model and type one manually.</p>
     </div>
-  </div>
-</section>
+    <div class="card">
+      <h2>Recovery</h2>
+      <p>Settings includes engine ping, restart, diagnostics, saved-key delete/replace, budget, and update channel checks.</p>
+    </div>
+    <div class="card">
+      <h2>Handoff</h2>
+      <p>Export issue reports and team handoffs into the selected project's `.signalos` folder.</p>
+    </div>
+  </section>
+</main>
 
 <footer>
-  <p>© 2026 SignalOS. All rights reserved.</p>
-  <a href="/privacy">Privacy</a>
+  Copyright 2026 SignalOS. Proprietary software.
 </footer>
-
-<script>
-// Auto-detect OS and highlight the right download button
-(function() {
-  const ua = navigator.userAgent;
-  let os = "windows";
-  if (/Mac/i.test(ua)) os = "macos";
-  else if (/Linux/i.test(ua)) os = "linux";
-
-  document.querySelectorAll(".btn-download").forEach(btn => {
-    if (btn.dataset.os === os) {
-      btn.classList.add("detected");
-      btn.classList.remove("secondary");
-      // Move to front
-      btn.parentNode.insertBefore(btn, btn.parentNode.firstChild);
-    }
-  });
-
-  // Fetch latest version from update manifest
-  fetch("/releases/latest.json")
-    .then(r => r.json())
-    .then(data => {
-      document.getElementById("version-note").textContent =
-        `Latest: v${data.version} · Released ${new Date(data.pub_date).toLocaleDateString()}`;
-    })
-    .catch(() => {
-      document.getElementById("version-note").textContent = "Signed · Notarized · Auto-updating";
-    });
-})();
-</script>
-
-<!-- Cloudflare Web Analytics — replace PLACEHOLDER_TOKEN with your real token from dash.cloudflare.com/web-analytics -->
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js"
-  data-cf-beacon='{"token": "PLACEHOLDER_TOKEN", "spa": false}'></script>
 </body>
 </html>

@@ -312,6 +312,8 @@ impl CostAccumulator {
 
 // ─── GLOBAL STATE ────────────────────────────────────────────────────────────
 
+const ACTIVE_PROVIDER_FILE: &str = "active-provider.txt";
+
 pub struct ProviderState {
     pub active: Mutex<Provider>,
     pub cost: Mutex<CostAccumulator>,
@@ -322,23 +324,37 @@ pub struct ProviderState {
 impl ProviderState {
     pub fn new(app_config_dir: PathBuf) -> Self {
         let configs = load_provider_configs(&app_config_dir);
-        let default_model = configs
-            .get("anthropic")
+        let active_provider = load_active_provider(&app_config_dir);
+        let active_model = configs
+            .get(active_provider.id())
             .map(|c| c.model.clone())
             .unwrap_or_default();
 
         Self {
-            active: Mutex::new(Provider::Anthropic),
+            active: Mutex::new(active_provider.clone()),
             cost: Mutex::new(CostAccumulator {
                 budget_usd: 10.0,
-                provider: "Anthropic Claude".into(),
-                model: default_model,
+                provider: active_provider.display_name().into(),
+                model: active_model,
                 ..Default::default()
             }),
             configs: Mutex::new(configs),
             app_config_dir,
         }
     }
+}
+
+fn load_active_provider(app_config_dir: &PathBuf) -> Provider {
+    let path = app_config_dir.join(ACTIVE_PROVIDER_FILE);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| Provider::from_str(raw.trim()))
+        .unwrap_or(Provider::Anthropic)
+}
+
+fn persist_active_provider(app_config_dir: &PathBuf, provider: &Provider) {
+    let _ = std::fs::create_dir_all(app_config_dir);
+    let _ = std::fs::write(app_config_dir.join(ACTIVE_PROVIDER_FILE), provider.id());
 }
 
 // ─── TAURI COMMANDS ──────────────────────────────────────────────────────────
@@ -353,6 +369,22 @@ pub struct ProviderInfo {
     pub needs_key: bool,
     pub price_in_1m: f64,
     pub price_out_1m: f64,
+}
+
+#[derive(Serialize)]
+pub struct ProviderConnectionStatus {
+    pub ok: bool,
+    pub message: String,
+    pub model_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct ProviderChatResponse {
+    pub text: String,
+    pub tokens_in: Option<u64>,
+    pub tokens_out: Option<u64>,
+    pub provider: String,
+    pub model: String,
 }
 
 /// List all providers with the user's currently configured model and pricing.
@@ -390,6 +422,7 @@ pub fn set_active_provider(provider: String, state: State<ProviderState>) -> Res
     let p =
         Provider::from_str(&provider).ok_or_else(|| format!("Unknown provider: {}", provider))?;
     *state.active.lock().unwrap() = p.clone();
+    persist_active_provider(&state.app_config_dir, &p);
     let configs = state.configs.lock().unwrap();
     let model = configs
         .get(p.id())
@@ -487,6 +520,112 @@ pub fn set_monthly_budget(budget_usd: f64, state: State<ProviderState>) {
     state.cost.lock().unwrap().budget_usd = budget_usd;
 }
 
+#[tauri::command]
+pub async fn test_provider_connection(
+    provider: String,
+    api_key: Option<String>,
+) -> Result<ProviderConnectionStatus, String> {
+    let models = fetch_provider_models(provider.clone(), api_key).await?;
+    Ok(ProviderConnectionStatus {
+        ok: true,
+        message: if models.is_empty() {
+            "Provider responded, but no models were returned.".into()
+        } else {
+            format!("Provider responded with {} available models.", models.len())
+        },
+        model_count: models.len(),
+    })
+}
+
+#[tauri::command]
+pub async fn send_provider_message(
+    provider: String,
+    model: Option<String>,
+    message: String,
+    state: State<'_, ProviderState>,
+) -> Result<ProviderChatResponse, String> {
+    let provider_id = provider.trim().to_lowercase();
+    let provider_enum =
+        Provider::from_str(&provider_id).ok_or_else(|| format!("Unknown provider: {provider}"))?;
+    let selected_model = resolve_model(&state, provider_enum.id(), model)?;
+    let key = if provider_enum.needs_api_key() {
+        crate::keychain::get_api_key(provider_enum.id().to_string())?
+    } else {
+        None
+    };
+
+    let response = match provider_enum {
+        Provider::Anthropic => chat_anthropic(&key, &selected_model, &message).await?,
+        Provider::OpenAI => {
+            chat_openai(&key, Provider::OpenAI.api_base(), &selected_model, &message).await?
+        }
+        Provider::Gemini => chat_gemini(&key, &selected_model, &message).await?,
+        Provider::Ollama => chat_ollama(&selected_model, &message).await?,
+        Provider::Qwen => {
+            chat_openai(&key, Provider::Qwen.api_base(), &selected_model, &message).await?
+        }
+        Provider::OpenRouter => {
+            chat_openai(
+                &key,
+                Provider::OpenRouter.api_base(),
+                &selected_model,
+                &message,
+            )
+            .await?
+        }
+        Provider::DeepSeek => {
+            chat_openai(
+                &key,
+                Provider::DeepSeek.api_base(),
+                &selected_model,
+                &message,
+            )
+            .await?
+        }
+        Provider::Mistral => {
+            chat_openai(
+                &key,
+                Provider::Mistral.api_base(),
+                &selected_model,
+                &message,
+            )
+            .await?
+        }
+        Provider::Groq => {
+            chat_openai(&key, Provider::Groq.api_base(), &selected_model, &message).await?
+        }
+        Provider::Cerebras => {
+            chat_openai(
+                &key,
+                Provider::Cerebras.api_base(),
+                &selected_model,
+                &message,
+            )
+            .await?
+        }
+        Provider::Together => {
+            chat_openai(
+                &key,
+                Provider::Together.api_base(),
+                &selected_model,
+                &message,
+            )
+            .await?
+        }
+        Provider::XAI => {
+            chat_openai(&key, Provider::XAI.api_base(), &selected_model, &message).await?
+        }
+    };
+
+    record_chat_cost(
+        &state,
+        provider_enum.id(),
+        response.tokens_in,
+        response.tokens_out,
+    );
+    Ok(response)
+}
+
 // ─── LIVE MODEL FETCHING ─────────────────────────────────────────────────────
 //
 // Hits the provider's own /models endpoint so the user always sees the real,
@@ -506,21 +645,39 @@ pub async fn fetch_provider_models(
     provider: String,
     api_key: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
-    match provider.as_str() {
-        "anthropic" => fetch_anthropic(&api_key).await,
-        "openai" => fetch_openai(&api_key).await,
-        "gemini" => fetch_gemini(&api_key).await,
+    let provider_id = provider.trim().to_lowercase();
+    let resolved_api_key = match api_key {
+        Some(key) if !key.trim().is_empty() => Some(key.trim().to_string()),
+        _ if provider_id != "ollama" => crate::keychain::get_api_key(provider_id.clone())?,
+        _ => None,
+    };
+
+    match provider_id.as_str() {
+        "anthropic" => fetch_anthropic(&resolved_api_key).await,
+        "openai" => fetch_openai(&resolved_api_key).await,
+        "gemini" => fetch_gemini(&resolved_api_key).await,
         "qwen" => {
-            fetch_openai_compatible(&api_key, Provider::Qwen.api_base(), "Qwen", &["qwen"]).await
+            fetch_openai_compatible(
+                &resolved_api_key,
+                Provider::Qwen.api_base(),
+                "Qwen",
+                &["qwen"],
+            )
+            .await
         }
         "ollama" => fetch_ollama().await,
         "openrouter" => {
-            fetch_openai_compatible(&api_key, Provider::OpenRouter.api_base(), "OpenRouter", &[])
-                .await
+            fetch_openai_compatible(
+                &resolved_api_key,
+                Provider::OpenRouter.api_base(),
+                "OpenRouter",
+                &[],
+            )
+            .await
         }
         "deepseek" => {
             fetch_openai_compatible(
-                &api_key,
+                &resolved_api_key,
                 Provider::DeepSeek.api_base(),
                 "DeepSeek",
                 &["deepseek"],
@@ -529,23 +686,42 @@ pub async fn fetch_provider_models(
         }
         "mistral" => {
             fetch_openai_compatible(
-                &api_key,
+                &resolved_api_key,
                 Provider::Mistral.api_base(),
                 "Mistral",
                 &["mistral"],
             )
             .await
         }
-        "groq" => fetch_openai_compatible(&api_key, Provider::Groq.api_base(), "Groq", &[]).await,
+        "groq" => {
+            fetch_openai_compatible(&resolved_api_key, Provider::Groq.api_base(), "Groq", &[]).await
+        }
         "cerebras" => {
-            fetch_openai_compatible(&api_key, Provider::Cerebras.api_base(), "Cerebras", &[]).await
+            fetch_openai_compatible(
+                &resolved_api_key,
+                Provider::Cerebras.api_base(),
+                "Cerebras",
+                &[],
+            )
+            .await
         }
         "together" => {
-            fetch_openai_compatible(&api_key, Provider::Together.api_base(), "Together AI", &[])
-                .await
+            fetch_openai_compatible(
+                &resolved_api_key,
+                Provider::Together.api_base(),
+                "Together AI",
+                &[],
+            )
+            .await
         }
         "xai" => {
-            fetch_openai_compatible(&api_key, Provider::XAI.api_base(), "xAI", &["grok"]).await
+            fetch_openai_compatible(
+                &resolved_api_key,
+                Provider::XAI.api_base(),
+                "xAI",
+                &["grok"],
+            )
+            .await
         }
         _ => Err(format!("Unknown provider: {provider}")),
     }
@@ -693,6 +869,214 @@ async fn fetch_openai_compatible(
 
     models.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(models)
+}
+
+fn resolve_model(
+    state: &State<'_, ProviderState>,
+    provider_id: &str,
+    model: Option<String>,
+) -> Result<String, String> {
+    if let Some(value) = model
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+    {
+        return Ok(value);
+    }
+
+    let configs = state.configs.lock().unwrap();
+    let configured = configs
+        .get(provider_id)
+        .map(|cfg| cfg.model.trim().to_string())
+        .filter(|m| !m.is_empty());
+    configured.ok_or_else(|| {
+        format!("No model is configured for {provider_id}. Fetch models or choose Other model.")
+    })
+}
+
+fn record_chat_cost(
+    state: &State<'_, ProviderState>,
+    provider_id: &str,
+    tokens_in: Option<u64>,
+    tokens_out: Option<u64>,
+) {
+    let (Some(tokens_in), Some(tokens_out)) = (tokens_in, tokens_out) else {
+        return;
+    };
+    let configs = state.configs.lock().unwrap();
+    let Some(cfg) = configs.get(provider_id).cloned() else {
+        return;
+    };
+    drop(configs);
+    state
+        .cost
+        .lock()
+        .unwrap()
+        .record(tokens_in, tokens_out, &cfg);
+}
+
+async fn chat_anthropic(
+    api_key: &Option<String>,
+    model: &str,
+    message: &str,
+) -> Result<ProviderChatResponse, String> {
+    let key = api_key.as_deref().ok_or("Anthropic requires an API key")?;
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 1024,
+        "messages": [{ "role": "user", "content": message }],
+    });
+    let resp = chat_json(
+        "Anthropic",
+        reqwest::Client::new()
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body),
+    )
+    .await?;
+
+    let text = resp["content"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
+    Ok(ProviderChatResponse {
+        text,
+        tokens_in: resp["usage"]["input_tokens"].as_u64(),
+        tokens_out: resp["usage"]["output_tokens"].as_u64(),
+        provider: "anthropic".into(),
+        model: model.into(),
+    })
+}
+
+async fn chat_openai(
+    api_key: &Option<String>,
+    base_url: &str,
+    model: &str,
+    message: &str,
+) -> Result<ProviderChatResponse, String> {
+    let key = api_key
+        .as_deref()
+        .ok_or("This provider requires an API key")?;
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": message }],
+    });
+    let resp = chat_json(
+        "AI provider",
+        reqwest::Client::new()
+            .post(url)
+            .bearer_auth(key)
+            .json(&body),
+    )
+    .await?;
+    let text = resp["choices"]
+        .as_array()
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice["message"]["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Ok(ProviderChatResponse {
+        text,
+        tokens_in: resp["usage"]["prompt_tokens"].as_u64(),
+        tokens_out: resp["usage"]["completion_tokens"].as_u64(),
+        provider: "openai-compatible".into(),
+        model: model.into(),
+    })
+}
+
+async fn chat_gemini(
+    api_key: &Option<String>,
+    model: &str,
+    message: &str,
+) -> Result<ProviderChatResponse, String> {
+    let key = api_key.as_deref().ok_or("Gemini requires an API key")?;
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    );
+    let body = serde_json::json!({
+        "contents": [{ "parts": [{ "text": message }] }],
+    });
+    let resp = chat_json("Gemini", reqwest::Client::new().post(url).json(&body)).await?;
+    let text = resp["candidates"]
+        .as_array()
+        .and_then(|candidates| candidates.first())
+        .and_then(|candidate| candidate["content"]["parts"].as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+
+    Ok(ProviderChatResponse {
+        text,
+        tokens_in: resp["usageMetadata"]["promptTokenCount"].as_u64(),
+        tokens_out: resp["usageMetadata"]["candidatesTokenCount"].as_u64(),
+        provider: "gemini".into(),
+        model: model.into(),
+    })
+}
+
+async fn chat_ollama(model: &str, message: &str) -> Result<ProviderChatResponse, String> {
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": message,
+        "stream": false,
+    });
+    let resp = chat_json(
+        "Ollama",
+        reqwest::Client::new()
+            .post("http://localhost:11434/api/generate")
+            .json(&body),
+    )
+    .await?;
+
+    Ok(ProviderChatResponse {
+        text: resp["response"].as_str().unwrap_or("").to_string(),
+        tokens_in: resp["prompt_eval_count"].as_u64(),
+        tokens_out: resp["eval_count"].as_u64(),
+        provider: "ollama".into(),
+        model: model.into(),
+    })
+}
+
+async fn chat_json(
+    display_name: &str,
+    request: reqwest::RequestBuilder,
+) -> Result<serde_json::Value, String> {
+    let response = request
+        .send()
+        .await
+        .map_err(|e| provider_request_error(display_name, e))?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        let suffix = if detail.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", detail.trim().chars().take(240).collect::<String>())
+        };
+        return Err(format!(
+            "{display_name} chat failed: HTTP {}{}",
+            status.as_u16(),
+            suffix
+        ));
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| format!("{display_name} chat returned an unreadable response"))
 }
 
 async fn fetch_json(

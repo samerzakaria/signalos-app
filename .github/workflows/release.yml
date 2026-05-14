@@ -119,7 +119,15 @@ jobs:
         id: channel
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          INPUT_VERSION="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            TAG="v${INPUT_VERSION#v}"
+          else
+            TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          fi
+          V="${TAG#v}"
+          echo "tag=$TAG"       >> $GITHUB_OUTPUT
+          echo "version=$V"     >> $GITHUB_OUTPUT
           if [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == v0.* ]] || [[ "${{ github.event.inputs.channel }}" == "beta" ]]; then
             echo "prerelease=true"  >> $GITHUB_OUTPUT
           else
@@ -131,7 +139,7 @@ jobs:
         id: notes
         shell: bash
         run: |
-          V="${GITHUB_REF_NAME#v}"
+          V="${{ steps.channel.outputs.version }}"
           NOTES=$(awk "/^## \[$V\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
           if [ -z "$NOTES" ]; then
             NOTES="See CHANGELOG.md for release notes."
@@ -178,11 +186,27 @@ jobs:
           # They are NOT set here so that empty-string secrets never reach Tauri.
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
 
+      - name: Smoke unsigned Windows package
+        if: matrix.platform == 'windows'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke-installed-build.ps1 -InstallNsis
+
+      - name: Verify Linux package artifacts
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          appimage=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" -type f | head -1)
+          deb=$(find src-tauri/target/release/bundle/deb -name "*.deb" -type f | head -1)
+          test -n "$appimage" && test -s "$appimage"
+          test -n "$deb" && test -s "$deb"
+          echo "AppImage: $appimage"
+          echo "Deb: $deb"
+
       - name: Normalize Windows beta asset names
         if: matrix.platform == 'windows'
         shell: powershell
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $version = "${{ steps.channel.outputs.version }}"
           $assets = @(
             @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe"; Name = "SignalOS_${version}_x64-setup.exe" },
             @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe.sig"; Name = "SignalOS_${version}_x64-setup.exe.sig" },
@@ -205,6 +229,7 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.channel.outputs.tag }}
           draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
@@ -218,6 +243,7 @@ jobs:
         if: matrix.platform == 'windows'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.channel.outputs.tag }}
           draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
@@ -232,6 +258,7 @@ jobs:
         if: matrix.platform == 'linux'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.channel.outputs.tag }}
           draft: false
           prerelease: ${{ steps.channel.outputs.prerelease }}
           body: ${{ steps.notes.outputs.notes }}
@@ -256,12 +283,17 @@ jobs:
         id: meta
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          INPUT_VERSION="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            TAG="v${INPUT_VERSION#v}"
+          else
+            TAG="${GITHUB_REF_NAME:-v0.0.0}"
+          fi
           V="${TAG#v}"
           echo "version=$V" >> $GITHUB_OUTPUT
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "date=$DATE"  >> $GITHUB_OUTPUT
-          if [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == v0.* ]]; then
+          if [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == v0.* ]] || [[ "${{ github.event.inputs.channel }}" == "beta" ]]; then
             echo "channel=beta"   >> $GITHUB_OUTPUT
           else
             echo "channel=stable" >> $GITHUB_OUTPUT

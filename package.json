@@ -2,7 +2,7 @@
   "name": "signalos-desktop",
   "version": "0.0.7",
   "private": true,
-  "description": "SignalOS — guided AI workspace for non-technical founders",
+  "description": "SignalOS guided AI workspace for non-technical founders",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",

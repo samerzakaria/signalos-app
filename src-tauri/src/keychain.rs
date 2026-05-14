@@ -5,7 +5,6 @@
 /// Linux  → libsecret / GNOME Keyring
 ///
 /// Keys are NEVER written to disk or included in log output.
-
 use keyring::Entry;
 
 const SERVICE: &str = "com.signalos.desktop";
@@ -21,20 +20,26 @@ pub fn store_api_key(provider: String, key: String) -> Result<(), String> {
 
 pub fn get_api_key(provider: String) -> Result<Option<String>, String> {
     validate_provider(&provider)?;
-    match Entry::new(SERVICE, &provider).map_err(|e| e.to_string())?.get_password() {
-        Ok(key)                              => Ok(Some(key)),
-        Err(keyring::Error::NoEntry)         => Ok(None),
-        Err(e)                               => Err(format!("Keychain read error: {}", e)),
+    match Entry::new(SERVICE, &provider)
+        .map_err(|e| e.to_string())?
+        .get_password()
+    {
+        Ok(key) => Ok(Some(key)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Keychain read error: {}", e)),
     }
 }
 
 #[tauri::command]
 pub fn has_api_key(provider: String) -> Result<bool, String> {
     validate_provider(&provider)?;
-    match Entry::new(SERVICE, &provider).map_err(|e| e.to_string())?.get_password() {
-        Ok(_)                        => Ok(true),
+    match Entry::new(SERVICE, &provider)
+        .map_err(|e| e.to_string())?
+        .get_password()
+    {
+        Ok(_) => Ok(true),
         Err(keyring::Error::NoEntry) => Ok(false),
-        Err(e)                       => Err(format!("Keychain error: {}", e)),
+        Err(e) => Err(format!("Keychain error: {}", e)),
     }
 }
 

@@ -1,0 +1,210 @@
+param(
+  [switch]$BuildInstaller,
+  [switch]$SmokeInstalledBuild,
+  [switch]$InstallNsisSmoke,
+  [switch]$InstalledRuntimeSmoke,
+  [switch]$LiveProviderValidation,
+  [switch]$RequireCloudProviderKeys,
+  [switch]$ValidateRemoteReleaseUrls,
+  [switch]$RequireRemoteReleaseUrls
+)
+
+$ErrorActionPreference = "Stop"
+$Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$Failures = New-Object System.Collections.Generic.List[string]
+
+function Invoke-Check {
+  param(
+    [string]$Name,
+    [scriptblock]$Body
+  )
+  try {
+    & $Body
+    Write-Host "[PASS] $Name"
+  } catch {
+    Write-Host "[FAIL] $Name - $($_.Exception.Message)"
+    $Failures.Add("$Name - $($_.Exception.Message)")
+  }
+}
+
+function Invoke-Step {
+  param(
+    [string]$Name,
+    [string]$WorkingDirectory,
+    [string]$Command,
+    [string[]]$Arguments = @()
+  )
+  Write-Host "[RUN ] $Name"
+  Push-Location $WorkingDirectory
+  try {
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) {
+      throw "$Command exited with code $LASTEXITCODE"
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
+function Get-HostTriple {
+  $hostLine = rustc -Vv | Select-String "^host:"
+  if (-not $hostLine) {
+    throw "Could not read rustc host triple."
+  }
+  return ($hostLine.ToString() -split "\s+")[1]
+}
+
+Invoke-Check "Reference review exists" {
+  $path = Join-Path $Root "docs\SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md"
+  if (-not (Test-Path $path)) { throw "Missing $path" }
+}
+
+Invoke-Check "Public docs are present and app-side missing is none" {
+  $required = @(
+    "docs\SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md",
+    "docs\USER_GUIDE.md",
+    "docs\RELEASE_OPERATOR_GUIDE.md",
+    "docs\PROVIDER_VALIDATION_GUIDE.md",
+    "docs\CLEAN_MACHINE_VALIDATION.md"
+  )
+  foreach ($rel in $required) {
+    $path = Join-Path $Root $rel
+    if (-not (Test-Path $path)) { throw "Missing $rel" }
+  }
+  $reference = Get-Content (Join-Path $Root "docs\SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md") -Raw
+  if ($reference -notmatch "## What Is Still Missing In App Code\s+None\.") {
+    throw "Reference review must state that app-side missing items are none."
+  }
+}
+
+Invoke-Check "Bundled sidecar exists for host target" {
+  $triple = Get-HostTriple
+  $name = if ($env:OS -eq "Windows_NT") { "signalos-python-$triple.exe" } else { "signalos-python-$triple" }
+  $path = Join-Path $Root "src-tauri\bin\$name"
+  if (-not (Test-Path $path)) { throw "Missing sidecar $path. Run scripts\bundle-sidecar.ps1 first." }
+  if ((Get-Item $path).Length -lt 1000000) { throw "Sidecar binary is unexpectedly small: $path" }
+}
+
+Invoke-Check "Tauri config points at bundled sidecar and update manifests" {
+  $configPath = Join-Path $Root "src-tauri\tauri.conf.json"
+  $config = Get-Content $configPath -Raw | ConvertFrom-Json
+  if ($config.bundle.externalBin -notcontains "bin/signalos-python") {
+    throw "bundle.externalBin must include bin/signalos-python"
+  }
+  $endpoints = @($config.plugins.updater.endpoints)
+  if (-not ($endpoints | Where-Object { $_ -like "*distribution/update-manifest/beta.json" })) {
+    throw "Missing beta update manifest endpoint."
+  }
+  if (-not ($endpoints | Where-Object { $_ -like "*distribution/update-manifest/latest.json" })) {
+    throw "Missing latest update manifest endpoint."
+  }
+}
+
+Invoke-Check "Update manifests are structurally valid" {
+  foreach ($name in @("beta.json", "latest.json")) {
+    $path = Join-Path $Root "distribution\update-manifest\$name"
+    if (-not (Test-Path $path)) { throw "Missing $path" }
+    $manifest = Get-Content $path -Raw | ConvertFrom-Json
+    if (-not $manifest.version) { throw "$name missing version" }
+    foreach ($platform in @("darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64")) {
+      $entry = $manifest.platforms.PSObject.Properties[$platform].Value
+      if (-not $entry.url) { throw "$name missing URL for $platform" }
+    }
+  }
+}
+
+Invoke-Check "Release workflows expose non-signing proof gates" {
+  $releasePath = Join-Path $Root ".github\workflows\release.yml"
+  $pagesPath = Join-Path $Root ".github\workflows\pages.yml"
+  if (-not (Test-Path $releasePath)) { throw "Missing release workflow" }
+  if (-not (Test-Path $pagesPath)) { throw "Missing Pages workflow" }
+  $release = Get-Content $releasePath -Raw
+  if ($release -notmatch "Verify Linux package artifacts") {
+    throw "Release workflow must verify Linux package artifacts."
+  }
+  if ($release -notmatch "github\.event\.inputs\.version") {
+    throw "Release workflow must honor manual dispatch version input."
+  }
+  if ($release -notmatch "tag_name:\s*\$\{\{\s*steps\.channel\.outputs\.tag\s*\}\}") {
+    throw "Release uploads must use the resolved release tag."
+  }
+  $pages = Get-Content $pagesPath -Raw
+  if ($pages -notmatch "deploy-pages") {
+    throw "Pages workflow must deploy public docs."
+  }
+}
+
+Invoke-Step "Frontend syntax check: app.js" $Root "node" @("--check", "src\js\app.js")
+Invoke-Step "Frontend syntax check: ipc.js" $Root "node" @("--check", "src\js\ipc.js")
+Invoke-Step "Python safety tests" $Root "python" @("-m", "pytest", "python")
+Invoke-Step "Rust compile check" (Join-Path $Root "src-tauri") "cargo" @("check")
+Invoke-Step "Rust tests" (Join-Path $Root "src-tauri") "cargo" @("test")
+
+if ($BuildInstaller) {
+  Invoke-Step "Build Tauri installer bundle" $Root "cargo" @("tauri", "build")
+  Invoke-Check "Installer artifact exists" {
+    $bundle = Join-Path $Root "src-tauri\target\release\bundle"
+    if (-not (Test-Path $bundle)) { throw "Missing bundle directory $bundle" }
+    $artifacts = Get-ChildItem -Path $bundle -Recurse -File |
+      Where-Object { $_.Extension -in @(".exe", ".msi", ".dmg", ".AppImage", ".deb") }
+    if (-not $artifacts) { throw "No installer artifacts found under $bundle" }
+  }
+}
+
+if ($SmokeInstalledBuild) {
+  $smokeArgs = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts\smoke-installed-build.ps1"
+  )
+  if ($InstallNsisSmoke) { $smokeArgs += "-InstallNsis" }
+  Invoke-Step "Unsigned installed-build smoke" $Root "powershell" $smokeArgs
+}
+
+if ($InstalledRuntimeSmoke) {
+  Invoke-Step "Installer-only runtime smoke" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts\validate-installed-runtime.ps1"
+  )
+}
+
+if ($LiveProviderValidation) {
+  $providerArgs = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts\validate-live-providers.ps1"
+  )
+  if ($RequireCloudProviderKeys) { $providerArgs += "-RequireCloudKeys" }
+  Invoke-Step "Live provider validation" $Root "powershell" $providerArgs
+}
+
+if ($ValidateRemoteReleaseUrls) {
+  $urlArgs = @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts\validate-release-urls.ps1"
+  )
+  if ($RequireRemoteReleaseUrls) { $urlArgs += "-RequireRemote" }
+  Invoke-Step "Release URL validation" $Root "powershell" $urlArgs
+}
+
+if ($Failures.Count -gt 0) {
+  Write-Host ""
+  Write-Host "Release readiness failed:"
+  foreach ($failure in $Failures) {
+    Write-Host " - $failure"
+  }
+  exit 1
+}
+
+Write-Host ""
+Write-Host "Release readiness checks passed."

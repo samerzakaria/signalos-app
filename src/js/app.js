@@ -1,6 +1,85 @@
 import * as ipc from "./ipc.js";
 
 const LS_WORKSPACE = "signalos.workspace";
+const LS_TRANSCRIPT_PREFIX = "signalos.transcript.";
+const LS_GATE_SIGNER = "signalos.gateSigner";
+const LS_ONBOARDING_PREFIX = "signalos.onboarding.";
+const LS_UPDATE_CHANNEL = "signalos.updateChannel";
+
+const COMMAND_CATALOG = [
+  { command: "/signal-status", label: "Check project", status: "ready", detail: "Loads phase, gates, and next action." },
+  { command: "/signal-init", label: "Set up project", status: "ready", detail: "Creates local SignalOS project files." },
+  { command: "/signal-brain", label: "Show notes", status: "ready", detail: "Lists or searches project notes." },
+  { command: "/signal-plan", label: "Plan tools", status: "advanced", detail: "Runs render, validate, and list subcommands." },
+  { command: "/signal-qa", label: "QA", status: "advanced", detail: "Runs the QA command through the bundled core." },
+  { command: "/signal-qa-only", label: "QA only", status: "advanced", detail: "Runs QA-only checks through the bundled core." },
+  { command: "/signal-learn", label: "Learn", status: "advanced", detail: "Runs the learning/brain workflow." },
+  { command: "/signal-cso", label: "Security", status: "advanced", detail: "Runs security review workflows." },
+  { command: "/signal-autoplan", label: "Auto plan", status: "advanced", detail: "Runs velocity planning tools." },
+  { command: "/signal-context-restore", label: "Context restore", status: "advanced", detail: "Restores project context." },
+  { command: "/signal-setup-deploy", label: "Setup deploy", status: "advanced", detail: "Creates deployment records." },
+  { command: "/signal-land-deploy", label: "Land deploy", status: "advanced", detail: "Runs deployment landing workflow." },
+  { command: "/signal-canary-deploy", label: "Canary deploy", status: "advanced", detail: "Runs canary deployment workflow." },
+  { command: "/signal-benchmark", label: "Benchmark", status: "advanced", detail: "Runs benchmark workflow." },
+  { command: "/signal-devex-plan", label: "Devex plan", status: "advanced", detail: "Runs developer-experience planning." },
+  { command: "/signal-devex", label: "Devex", status: "advanced", detail: "Runs developer-experience workflow." },
+  { command: "/signal-retro-global", label: "Global retro", status: "advanced", detail: "Runs retrospective workflow." },
+  { command: "/signal-careful", label: "Careful mode", status: "advanced", detail: "Runs safety workflow." },
+  { command: "/signal-freeze", label: "Freeze", status: "advanced", detail: "Freezes unsafe work." },
+  { command: "/signal-guard", label: "Guard", status: "advanced", detail: "Runs guard checks." },
+  { command: "/signal-unfreeze", label: "Unfreeze", status: "advanced", detail: "Releases a freeze." },
+  { command: "/signal-second-opinion", label: "Second opinion", status: "advanced", detail: "Runs second-opinion workflow." },
+  { command: "/signal-second-opinion-record", label: "Record opinion", status: "advanced", detail: "Records a second-opinion result." },
+  { command: "/signal-investigate", label: "Investigate", status: "advanced", detail: "Runs investigation workflow." },
+  { command: "/signal-build", label: "Build", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-debrief", label: "Debrief", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-design", label: "Design", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-design-html", label: "Design HTML", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-design-review", label: "Design review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-discovery", label: "Discovery", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-observe", label: "Observe", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-onboard", label: "Onboard", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-pause", label: "Pause", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-pre-design", label: "Pre-design", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-pre-wave", label: "Pre-wave", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-review", label: "Review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-ship", label: "Ship", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  { command: "/signal-wave-review", label: "Wave review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+];
+
+const PROJECT_TEMPLATES = [
+  {
+    id: "founder-mvp",
+    name: "Founder MVP",
+    detail: "Use when the project needs sharp scope, launch evidence, and quick risk control.",
+    note: "Template: Founder MVP\nFocus: narrow offer, first-user journey, launch blockers, proof checklist, and risk log.",
+  },
+  {
+    id: "engineering-delivery",
+    name: "Engineering delivery",
+    detail: "Use when implementation, tests, release readiness, and handoff quality matter most.",
+    note: "Template: Engineering delivery\nFocus: implementation plan, acceptance tests, release gates, rollback path, and engineering notes.",
+  },
+  {
+    id: "qa-hardening",
+    name: "QA hardening",
+    detail: "Use when the product exists but needs a serious bug, UX, and release-readiness pass.",
+    note: "Template: QA hardening\nFocus: critical journeys, failing states, install validation, regression risk, and test evidence.",
+  },
+  {
+    id: "release-candidate",
+    name: "Release candidate",
+    detail: "Use when the work is close to ship and every remaining gate must be explicit.",
+    note: "Template: Release candidate\nFocus: signed build, update proof, installer lifecycle, docs, support report, and final acceptance.",
+  },
+];
+
+const WORKFLOW_RECIPES = [
+  ["New product", "Choose project, connect AI, run /signal-init, add first decision note, run /signal-status, then sign the first ready gate."],
+  ["Bug fix", "Add a QA note, ask AI for risk, run the relevant command, record evidence, then export a handoff report."],
+  ["Release check", "Run status, inspect Dashboard files, export issue report, validate installer checklist, then keep signing gates external."],
+  ["Team handoff", "Refresh status, add a session note, export handoff, and send the generated .signalos export file."],
+];
 
 const state = {
   workspace: null,
@@ -14,12 +93,31 @@ const state = {
   brain: [],
   audit: [],
   secrets: [],
+  artifacts: null,
   attachments: [],
   git: null,
   statusChecked: false,
   busy: false,
+  runningCommand: null,
+  commandStartedAt: 0,
+  commandTimer: null,
   view: "guide",
+  guideTab: null,
+  modelOptions: [],
+  modelOptionsProvider: "",
+  modelOptionsLoading: false,
+  modelOptionsError: "",
+  modelDraftProvider: "",
+  modelDraftSelection: "",
+  modelDraftCustom: "",
+  aiConnection: { provider: "", status: "untested", message: "" },
+  engine: { status: "unknown", message: "Not checked yet.", version: "", checkedAt: "" },
   sidecarError: "",
+  lastSetup: null,
+  gateSigner: localStorage.getItem(LS_GATE_SIGNER) || "",
+  updateChannel: localStorage.getItem(LS_UPDATE_CHANNEL) || "beta",
+  onboarding: {},
+  transcriptWorkspace: "",
   log: [],
 };
 
@@ -44,9 +142,12 @@ const el = {
   statusText: $("#statusText"),
   nextActionText: $("#nextActionText"),
   providerSelect: $("#providerSelect"),
+  providerModelSelect: $("#providerModelSelect"),
   providerModel: $("#providerModel"),
+  fetchModels: $("#fetchModels"),
   providerKey: $("#providerKey"),
   keyField: $("#keyField"),
+  modelHelp: $("#modelHelp"),
   providerHelp: $("#providerHelp"),
   gateList: $("#gateList"),
   activityLog: $("#activityLog"),
@@ -57,7 +158,28 @@ const el = {
   attachmentList: $("#attachmentList"),
   commandForm: $("#commandForm"),
   commandInput: $("#commandInput"),
+  cancelCommand: $("#cancelCommand"),
   sidecarWarning: $("#sidecarWarning"),
+  setupResultPanel: $("#setupResultPanel"),
+  setupResultMeta: $("#setupResultMeta"),
+  setupArtifactList: $("#setupArtifactList"),
+  runStatusFromResult: $("#runStatusFromResult"),
+  copyDiagnostics: $("#copyDiagnostics"),
+  commandCatalog: $("#commandCatalog"),
+  dashboardProject: $("#dashboardProject"),
+  dashboardProjectNote: $("#dashboardProjectNote"),
+  dashboardAi: $("#dashboardAi"),
+  dashboardAiNote: $("#dashboardAiNote"),
+  dashboardEngine: $("#dashboardEngine"),
+  dashboardEngineNote: $("#dashboardEngineNote"),
+  dashboardNext: $("#dashboardNext"),
+  dashboardNextNote: $("#dashboardNextNote"),
+  dashboardGateList: $("#dashboardGateList"),
+  dashboardArtifactList: $("#dashboardArtifactList"),
+  dashboardRunStatus: $("#dashboardRunStatus"),
+  dashboardOpenChat: $("#dashboardOpenChat"),
+  dashboardExportHandoff: $("#dashboardExportHandoff"),
+  onboardingChecklist: $("#onboardingChecklist"),
   brainSearch: $("#brainSearch"),
   brainList: $("#brainList"),
   brainForm: $("#brainForm"),
@@ -65,11 +187,42 @@ const el = {
   brainText: $("#brainText"),
   historyList: $("#historyList"),
   statusSummary: $("#statusSummary"),
+  historyArtifactList: $("#historyArtifactList"),
+  exportHandoff: $("#exportHandoff"),
+  exportIssueReport: $("#exportIssueReport"),
   settingsWorkspace: $("#settingsWorkspace"),
+  updateChannelSelect: $("#updateChannelSelect"),
+  updateChannelSummary: $("#updateChannelSummary"),
+  settingsCheckUpdates: $("#settingsCheckUpdates"),
   settingsProvider: $("#settingsProvider"),
   settingsModel: $("#settingsModel"),
   settingsCost: $("#settingsCost"),
+  budgetInput: $("#budgetInput"),
+  saveBudget: $("#saveBudget"),
+  resetSessionCost: $("#resetSessionCost"),
   settingsSecrets: $("#settingsSecrets"),
+  settingsProviderSelect: $("#settingsProviderSelect"),
+  settingsProviderModelSelect: $("#settingsProviderModelSelect"),
+  settingsProviderModel: $("#settingsProviderModel"),
+  settingsFetchModels: $("#settingsFetchModels"),
+  settingsProviderKey: $("#settingsProviderKey"),
+  settingsKeyField: $("#settingsKeyField"),
+  settingsModelHelp: $("#settingsModelHelp"),
+  settingsProviderHelp: $("#settingsProviderHelp"),
+  settingsSaveProvider: $("#settingsSaveProvider"),
+  settingsDeleteKey: $("#settingsDeleteKey"),
+  settingsKeyStorage: $("#settingsKeyStorage"),
+  settingsRefreshSecrets: $("#settingsRefreshSecrets"),
+  settingsSecretList: $("#settingsSecretList"),
+  engineStatus: $("#engineStatus"),
+  engineDetails: $("#engineDetails"),
+  testEngine: $("#testEngine"),
+  restartEngine: $("#restartEngine"),
+  copySettingsDiagnostics: $("#copySettingsDiagnostics"),
+  settingsExportIssueReport: $("#settingsExportIssueReport"),
+  gateSigner: $("#gateSigner"),
+  templateGrid: $("#templateGrid"),
+  recipeList: $("#recipeList"),
   toast: $("#toast"),
 };
 
@@ -115,13 +268,108 @@ function toast(message) {
   toast.timer = setTimeout(() => el.toast.classList.remove("show"), 2600);
 }
 
+async function copyText(value, message = "Copied.") {
+  const text = safeText(value);
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+  } catch (error) {
+    window.prompt("Copy this value", text);
+  }
+}
+
+function transcriptKey(workspace = state.workspace) {
+  return workspace ? `${LS_TRANSCRIPT_PREFIX}${encodeURIComponent(workspace)}` : "";
+}
+
+function onboardingKey(workspace = state.workspace) {
+  return workspace ? `${LS_ONBOARDING_PREFIX}${encodeURIComponent(workspace)}` : "";
+}
+
+function loadTranscript() {
+  const key = transcriptKey();
+  if (!key) {
+    state.log = [];
+    return;
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    state.log = Array.isArray(parsed) ? parsed.slice(-80) : [];
+  } catch (error) {
+    state.log = [];
+  }
+}
+
+function persistTranscript() {
+  const key = transcriptKey();
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify(state.log.slice(-80)));
+}
+
+function loadOnboarding() {
+  const key = onboardingKey();
+  if (!key) {
+    state.onboarding = {};
+    return;
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "{}");
+    state.onboarding = parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    state.onboarding = {};
+  }
+}
+
+function persistOnboarding() {
+  const key = onboardingKey();
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify(state.onboarding));
+}
+
+function markOnboarding(step) {
+  if (!state.workspace || !step) return;
+  state.onboarding = { ...state.onboarding, [step]: new Date().toISOString() };
+  persistOnboarding();
+}
+
+function commandInfo(command) {
+  const normalized = safeText(command).trim();
+  const match = COMMAND_CATALOG.find((item) => item.command === normalized);
+  return match || {
+    command: normalized,
+    label: normalized || "Command",
+    status: "preview",
+    detail: "May run as an advanced command or return a command brief.",
+  };
+}
+
+function statusLabel(status) {
+  if (status === "ready") return "Ready";
+  if (status === "preview") return "Preview";
+  if (status === "advanced") return "Advanced";
+  if (status === "error") return "Error";
+  return "Info";
+}
+
+function formatTime(ts = Date.now()) {
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (error) {
+    return "";
+  }
+}
+
 function providerNeedsKey() {
   return Boolean(state.activeProviderInfo?.needs_key);
 }
 
 function aiReady() {
   if (!state.activeProviderInfo) return false;
-  return !providerNeedsKey() || state.hasKey;
+  const hasCredentials = !providerNeedsKey() || state.hasKey;
+  return hasCredentials
+    && state.aiConnection.provider === state.activeProvider
+    && state.aiConnection.status === "ok";
 }
 
 function hasActiveWave() {
@@ -140,6 +388,73 @@ function currentStep() {
   return "start";
 }
 
+const guideSteps = ["project", "ai", "status", "start"];
+
+function stepDoneMap() {
+  return {
+    project: Boolean(state.workspace),
+    ai: aiReady(),
+    status: state.statusChecked || hasActiveWave(),
+    start: hasActiveWave(),
+  };
+}
+
+function selectedGuideStep() {
+  if (!guideSteps.includes(state.guideTab)) {
+    state.guideTab = currentStep();
+  }
+  return state.guideTab;
+}
+
+function modelLabel(model) {
+  if (!model?.id) return "";
+  return model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id;
+}
+
+function providerControlSets() {
+  return [
+    {
+      providerSelect: el.providerSelect,
+      providerModelSelect: el.providerModelSelect,
+      providerModel: el.providerModel,
+      fetchModels: el.fetchModels,
+      providerKey: el.providerKey,
+      keyField: el.keyField,
+      modelHelp: el.modelHelp,
+      providerHelp: el.providerHelp,
+    },
+    {
+      providerSelect: el.settingsProviderSelect,
+      providerModelSelect: el.settingsProviderModelSelect,
+      providerModel: el.settingsProviderModel,
+      fetchModels: el.settingsFetchModels,
+      providerKey: el.settingsProviderKey,
+      keyField: el.settingsKeyField,
+      modelHelp: el.settingsModelHelp,
+      providerHelp: el.settingsProviderHelp,
+    },
+  ].filter((controls) => controls.providerSelect);
+}
+
+function selectedProviderModel() {
+  if (state.modelDraftProvider === state.activeProvider) {
+    return state.modelDraftSelection === "__custom"
+      ? state.modelDraftCustom.trim()
+      : state.modelDraftSelection.trim();
+  }
+  return (state.activeProviderInfo?.model || "").trim();
+}
+
+function providerKeyValue() {
+  const controls = providerControlSets();
+  const ordered = state.view === "settings" ? [...controls].reverse() : controls;
+  for (const control of ordered) {
+    const value = control.providerKey?.value?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
 function nextAction() {
   const step = currentStep();
   if (step === "project") {
@@ -154,12 +469,14 @@ function nextAction() {
 
   if (step === "ai") {
     const needsKey = providerNeedsKey();
+    const hasCredentials = !needsKey || state.hasKey || providerKeyValue();
+    const shouldSave = Boolean(providerKeyValue()) || state.modelDraftProvider === state.activeProvider;
     return {
-      label: "Save AI connection",
-      title: needsKey ? "Paste the AI key once, then save." : "Save the AI connection.",
-      detail: "This unlocks one-click project checks and guided SignalOS actions.",
-      run: saveProvider,
-      disabled: needsKey && !state.hasKey && !el.providerKey.value.trim(),
+      label: shouldSave ? "Save and test AI" : "Test AI connection",
+      title: needsKey && !hasCredentials ? "Paste the AI key once, then test it." : "Test the AI connection.",
+      detail: "SignalOS will only mark AI ready after the selected provider responds.",
+      run: shouldSave ? saveProvider : validateProviderConnection,
+      disabled: !hasCredentials,
       secondary: { label: "Use local AI", run: useLocalProvider },
     };
   }
@@ -179,7 +496,7 @@ function nextAction() {
       label: "Set up project",
       title: "Set up this project for guided work.",
       detail: "This creates the local SignalOS project files so the team can start safely.",
-      run: () => runSignalCommand("/signal-init"),
+      run: () => runSignalCommand("/signal-init", [], { markChecked: true }),
       secondary: { label: "Check again", run: checkStatus },
     };
   }
@@ -202,9 +519,15 @@ function render() {
   renderGates();
   renderActivity();
   renderAttachments();
+  renderSetupResult();
+  renderCommandCatalog();
+  renderDashboard();
+  renderOnboardingChecklist();
   renderBrain();
   renderHistory();
   renderSettings();
+  renderEngine();
+  renderHelp();
 }
 
 function renderShell() {
@@ -215,6 +538,12 @@ function renderShell() {
   el.projectPath.textContent = state.workspace || "No folder selected yet.";
   el.providerLabel.textContent = state.activeProviderInfo?.name || "AI not connected";
   el.costLabel.textContent = currency.format(Number(state.cost?.session_usd || 0));
+  if (el.cancelCommand) {
+    el.cancelCommand.disabled = !state.runningCommand;
+  }
+  if (el.gateSigner && document.activeElement !== el.gateSigner) {
+    el.gateSigner.value = state.gateSigner;
+  }
 
   if (state.sidecarError) {
     el.sidecarWarning.textContent = `The SignalOS engine did not start: ${state.sidecarError}`;
@@ -229,10 +558,12 @@ function renderShell() {
   el.statusPill.innerHTML = `<span class="pill-dot"></span><span>${error ? "Needs fix" : ready ? "Ready" : "Setting up"}</span>`;
 
   const titles = {
-    guide: ["Guide", "One clear next step at a time."],
+    guide: ["Chat", "AI chat, slash commands, and the next safe action."],
+    dashboard: ["Dashboard", "Current project state, gates, files, and next action."],
     brain: ["Notes", "Saved beliefs, decisions, notes, and QA evidence."],
     history: ["History", "Audit trail and current project status."],
     settings: ["Settings", "Workspace, AI connection, and secrets."],
+    help: ["Guide", "First-run flow and recovery reference."],
   };
   const [title, subtitle] = titles[state.view] || titles.guide;
   el.viewTitle.textContent = title;
@@ -244,17 +575,17 @@ function renderShell() {
 
 function renderSteps() {
   const step = currentStep();
-  const done = {
-    project: Boolean(state.workspace),
-    ai: aiReady(),
-    status: state.statusChecked || hasActiveWave(),
-    start: hasActiveWave(),
-  };
+  const done = stepDoneMap();
+  const selected = selectedGuideStep();
 
   $$("[data-step], [data-step-row]").forEach((node) => {
     const id = node.dataset.step || node.dataset.stepRow;
     node.classList.toggle("active", id === step);
     node.classList.toggle("done", Boolean(done[id]));
+    node.classList.toggle("selected", id === selected);
+    if (node.dataset.stepTab) {
+      node.setAttribute("aria-selected", id === selected ? "true" : "false");
+    }
   });
 }
 
@@ -279,11 +610,17 @@ function renderGuide() {
   el.secondaryAction.onclick = () => (action.secondary?.run || refreshAll)();
 
   const providerName = state.activeProviderInfo?.name || "No provider selected";
-  el.keyStatus.textContent = aiReady()
-    ? `${providerName} is ready.`
-    : providerNeedsKey()
-      ? `${providerName} needs an API key.`
-      : "Choose and save an AI provider.";
+  const connectionForProvider = state.aiConnection.provider === state.activeProvider
+    ? state.aiConnection
+    : { status: "untested", message: "" };
+  const keyStatus = aiReady()
+    ? `${providerName} connected.`
+    : connectionForProvider.status === "error"
+      ? `Could not connect: ${connectionForProvider.message}`
+      : providerNeedsKey() && !state.hasKey && !providerKeyValue()
+        ? `${providerName} needs an API key.`
+        : `${providerName} is saved but not tested.`;
+  el.keyStatus.textContent = keyStatus;
 
   el.statusText.textContent = state.statusChecked
     ? (state.wave?.phase_name ? `${state.wave.phase_name}. ${state.wave?.progress_pct || 0}% complete.` : "Status loaded.")
@@ -293,6 +630,15 @@ function renderGuide() {
   el.nextActionText.textContent = hasActiveWave()
     ? (gate ? `Work toward ${gate.name}.` : "Review the latest status.")
     : "Set up the project after the check.";
+
+  const selected = selectedGuideStep();
+  $$("[data-step-tab], .phase-pane").forEach((node) => {
+    const id = node.dataset.stepTab || node.dataset.stepRow;
+    node.classList.toggle("selected", id === selected);
+    if (node.dataset.stepTab) {
+      node.setAttribute("aria-selected", id === selected ? "true" : "false");
+    }
+  });
 }
 
 function renderProviderForm() {
@@ -307,39 +653,104 @@ function renderProviderForm() {
   const moreOptions = more.length
     ? `<optgroup label="More providers">${more.map(renderOption).join("")}</optgroup>`
     : "";
-  el.providerSelect.innerHTML = `${primaryOptions}${moreOptions}`;
+  const providerOptions = `${primaryOptions}${moreOptions}`;
+  providerControlSets().forEach((controls) => renderProviderControls(controls, providerOptions));
+}
 
-  if (document.activeElement !== el.providerModel) {
-    el.providerModel.value = state.activeProviderInfo?.model || "";
+function renderProviderControls(controls, providerOptions) {
+  controls.providerSelect.innerHTML = providerOptions;
+  controls.providerSelect.value = state.activeProvider;
+
+  const configuredModel = state.activeProviderInfo?.model || "";
+  const fetchedForActive = state.modelOptionsProvider === state.activeProvider;
+  const fetchedModels = fetchedForActive ? state.modelOptions : [];
+  const hasConfiguredOption = fetchedModels.some((model) => model.id === configuredModel);
+  const hasDraft = state.modelDraftProvider === state.activeProvider;
+  const draftSelection = hasDraft
+    ? state.modelDraftSelection
+    : (configuredModel && !hasConfiguredOption ? "__custom" : configuredModel);
+  const selectOptions = [
+    `<option value="" ${draftSelection === "" ? "selected" : ""}>Use provider default</option>`,
+    ...fetchedModels.map((model) => {
+      const selected = model.id === draftSelection ? "selected" : "";
+      return `<option value="${escapeHtml(model.id)}" ${selected}>${escapeHtml(modelLabel(model))}</option>`;
+    }),
+    `<option value="__custom" ${draftSelection === "__custom" ? "selected" : ""}>Other model...</option>`,
+  ];
+  controls.providerModelSelect.innerHTML = selectOptions.join("");
+
+  const customModel = controls.providerModelSelect.value === "__custom";
+  if (document.activeElement !== controls.providerModel) {
+    controls.providerModel.value = customModel ? (hasDraft ? state.modelDraftCustom : configuredModel) : "";
+  }
+  controls.providerModel.classList.toggle("hidden", !customModel);
+  controls.fetchModels.textContent = state.modelOptionsLoading ? "Fetching..." : "Fetch models";
+  controls.fetchModels.disabled = state.modelOptionsLoading || state.busy;
+
+  if (state.modelOptionsLoading) {
+    controls.modelHelp.textContent = "Fetching available models from the provider.";
+  } else if (state.modelOptionsError && fetchedForActive) {
+    controls.modelHelp.textContent = state.modelOptionsError;
+  } else if (fetchedModels.length) {
+    controls.modelHelp.textContent = "Select a fetched model, or choose Other model to type one.";
+  } else if (providerNeedsKey() && !state.hasKey && !providerKeyValue()) {
+    controls.modelHelp.textContent = "Paste or save an API key, then fetch available models.";
+  } else {
+    controls.modelHelp.textContent = "Fetch models from the selected AI service, or choose Other model.";
   }
 
-  el.keyField.style.display = providerNeedsKey() ? "grid" : "none";
-  el.providerHelp.textContent = providerNeedsKey()
-    ? (state.hasKey ? "A key is already saved on this computer." : "Keys are saved securely on this computer.")
-    : "This AI service does not need a key.";
+  controls.keyField.style.display = providerNeedsKey() ? "grid" : "none";
+  const connectionForProvider = state.aiConnection.provider === state.activeProvider
+    ? state.aiConnection
+    : { status: "untested", message: "" };
+  controls.providerHelp.textContent = connectionForProvider.status === "ok"
+    ? `Connected. ${connectionForProvider.message}`
+    : connectionForProvider.status === "error"
+      ? `Not connected. ${connectionForProvider.message}`
+      : providerNeedsKey()
+        ? (state.hasKey ? "A key is saved. Test the connection before using chat." : "Keys are saved securely on this computer.")
+        : "Test the local AI connection before using chat.";
 }
 
 function renderGates() {
+  renderGateList(el.gateList, { actions: true });
+}
+
+function renderGateList(target, options = {}) {
+  if (!target) return;
   if (!state.workspace) {
-    el.gateList.innerHTML = `<div class="empty">Choose a project to see steps.</div>`;
+    target.innerHTML = `<div class="empty">Choose a project to see steps.</div>`;
     return;
   }
 
   if (!state.gates.length) {
-    el.gateList.innerHTML = `<div class="empty">No project step status loaded yet.</div>`;
+    target.innerHTML = `<div class="empty">No project step status loaded yet.</div>`;
     return;
   }
 
-  el.gateList.innerHTML = state.gates.map((gate) => `
+  target.innerHTML = state.gates.map((gate) => {
+    const gateId = gate.id ?? "";
+    const status = gate.status || "open";
+    const statusKey = safeText(status).toLowerCase();
+    const canSign = options.actions && !["signed", "locked"].includes(statusKey);
+    return `
     <div class="gate ${escapeHtml(gate.status || "")}">
       <div class="gate-id">G${escapeHtml(gate.id)}</div>
       <div>
         <div class="item-title">${escapeHtml(gate.name || `Gate ${gate.id}`)}</div>
         <div class="item-meta">${escapeHtml(gate.desc || "")}</div>
       </div>
-      <div class="gate-status">${escapeHtml(gate.status || "open")}</div>
+      <div class="gate-actions">
+        <div class="gate-status">${escapeHtml(status)}</div>
+        ${canSign ? `<button class="secondary small" type="button" data-sign-gate="${escapeHtml(gateId)}">Sign</button>` : ""}
+      </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
+
+  target.querySelectorAll("[data-sign-gate]").forEach((button) => {
+    button.addEventListener("click", () => signGate(button.dataset.signGate));
+  });
 }
 
 function renderActivity() {
@@ -347,21 +758,39 @@ function renderActivity() {
     el.activityLog.innerHTML = `
       <div class="empty">
         <div>
-          <strong>Nothing has run yet.</strong>
-          <div>Use the big next button or check the project.</div>
+          <strong>No messages yet.</strong>
+          <div>Ask AI here after the connection test passes, or run a slash command.</div>
         </div>
       </div>
     `;
     return;
   }
 
-  el.activityLog.innerHTML = state.log.map((entry) => `
-    <div class="log-entry">
+  el.activityLog.innerHTML = state.log.map((entry) => {
+    const status = entry.status || "";
+    const kind = entry.kind || "";
+    const meta = [entry.command, formatTime(entry.ts)].filter(Boolean).join(" . ");
+    const cards = renderResultCards(entry.cards);
+    return `
+    <div class="log-entry ${escapeHtml([status, kind].filter(Boolean).join(" "))}">
       <strong>${escapeHtml(entry.title)}</strong>
+      ${meta ? `<div class="log-meta">${escapeHtml(meta)}</div>` : ""}
       <pre>${escapeHtml(entry.body)}</pre>
+      ${cards}
     </div>
-  `).join("");
+  `;
+  }).join("");
   el.activityLog.scrollTop = el.activityLog.scrollHeight;
+}
+
+function renderResultCards(cards) {
+  if (!Array.isArray(cards) || !cards.length) return "";
+  return `<div class="result-grid">${cards.map((card) => `
+    <div class="result-card">
+      <strong>${escapeHtml(card.label || "Result")}</strong>
+      <span>${escapeHtml(card.value || "")}</span>
+    </div>
+  `).join("")}</div>`;
 }
 
 function renderAttachments() {
@@ -392,6 +821,166 @@ function renderAttachments() {
   });
 }
 
+function renderSetupResult() {
+  if (!el.setupResultMeta || !el.setupArtifactList) return;
+  const initialized = Boolean(state.artifacts?.initialized);
+  const last = state.lastSetup;
+  if (!state.workspace) {
+    el.setupResultMeta.textContent = "Choose a project folder to see setup results.";
+  } else if (last?.status === "running") {
+    el.setupResultMeta.textContent = "Setup is running. SignalOS is creating or checking local project files.";
+  } else if (last?.status === "ok") {
+    el.setupResultMeta.textContent = initialized
+      ? "Setup finished and the expected project files are visible."
+      : "Setup finished, but expected project files are still missing.";
+  } else if (last?.status === "error") {
+    el.setupResultMeta.textContent = "Setup did not finish. Check the command result and engine status.";
+  } else if (initialized) {
+    el.setupResultMeta.textContent = "This folder already has the expected SignalOS project files.";
+  } else {
+    el.setupResultMeta.textContent = "Run setup to create local SignalOS files in this project folder.";
+  }
+  renderArtifactList(el.setupArtifactList, state.artifacts);
+}
+
+function renderArtifactList(target, artifactState) {
+  if (!target) return;
+  if (!state.workspace) {
+    target.innerHTML = `<div class="empty compact-empty">No project selected.</div>`;
+    return;
+  }
+  const artifacts = Array.isArray(artifactState?.artifacts) ? artifactState.artifacts : [];
+  if (!artifacts.length) {
+    target.innerHTML = `<div class="empty compact-empty">No artifact check has run yet.</div>`;
+    return;
+  }
+  target.innerHTML = artifacts.map((artifact) => {
+    const ok = Boolean(artifact.exists);
+    return `
+      <div class="artifact-row">
+        <div>
+          <div class="item-title">${escapeHtml(artifact.name || artifact.path)}</div>
+          <div class="item-meta">${escapeHtml(artifact.path || "")}</div>
+          <div class="item-meta">${escapeHtml(artifact.detail || "")}</div>
+        </div>
+        <div class="gate-actions">
+          <span class="artifact-state ${ok ? "ok" : "missing"}">${ok ? "Found" : "Missing"}</span>
+          ${ok ? `<button class="ghost small" type="button" data-open-artifact="${escapeHtml(artifact.path || "")}">Open</button>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  target.querySelectorAll("[data-open-artifact]").forEach((button) => {
+    button.addEventListener("click", () => openProjectArtifact(button.dataset.openArtifact));
+  });
+}
+
+function renderCommandCatalog() {
+  renderCommandChips();
+  if (!el.commandCatalog) return;
+  el.commandCatalog.innerHTML = COMMAND_CATALOG.map((item) => `
+    <div class="command-row">
+      <div>
+        <div class="item-title">${escapeHtml(item.label)}</div>
+        <div class="item-meta">${escapeHtml(item.command)} . ${escapeHtml(item.detail)}</div>
+      </div>
+      <span class="command-badge ${escapeHtml(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+    </div>
+  `).join("");
+}
+
+function renderCommandChips() {
+  $$(".chip").forEach((button) => {
+    const info = commandInfo(button.dataset.command);
+    button.className = `chip ${info.status}`;
+    button.innerHTML = `${escapeHtml(info.label)} <span class="chip-status ${escapeHtml(info.status)}">${escapeHtml(statusLabel(info.status))}</span>`;
+    button.title = `${info.command}: ${info.detail}`;
+  });
+}
+
+async function openProjectArtifact(relativePath) {
+  if (!relativePath) return;
+  try {
+    await ipc.project.openPath(relativePath);
+  } catch (error) {
+    toast(error.message || "Could not open project file.");
+  }
+}
+
+function renderDashboard() {
+  if (!el.dashboardProject) return;
+  const initialized = Boolean(state.artifacts?.initialized);
+  const engineOk = state.engine.status === "ok" && !state.sidecarError;
+  const gate = currentGate();
+  el.dashboardProject.textContent = state.workspace ? basename(state.workspace) : "No project";
+  el.dashboardProjectNote.textContent = state.workspace
+    ? (initialized ? "SignalOS project files are present." : "Setup files are missing.")
+    : "Choose a folder to begin.";
+  el.dashboardAi.textContent = aiReady() ? "Connected" : "Not ready";
+  el.dashboardAiNote.textContent = state.activeProviderInfo
+    ? `${state.activeProviderInfo.name}${state.activeProviderInfo.model ? ` . ${state.activeProviderInfo.model}` : ""}`
+    : "Choose an AI provider.";
+  el.dashboardEngine.textContent = engineOk ? "Ready" : state.engine.status === "error" ? "Needs fix" : "Unknown";
+  el.dashboardEngineNote.textContent = state.sidecarError || state.engine.message || "Test the engine in Settings.";
+  el.dashboardNext.textContent = gate ? `G${gate.id} ${gate.name || ""}`.trim() : currentStepLabel();
+  el.dashboardNextNote.textContent = hasActiveWave()
+    ? (gate?.desc || "Run status to refresh the next action.")
+    : initialized
+      ? "Run status to load the active wave."
+      : "Set up the project from Chat.";
+  renderGateList(el.dashboardGateList, { actions: false });
+  renderArtifactList(el.dashboardArtifactList, state.artifacts);
+}
+
+function onboardingItems() {
+  const initialized = Boolean(state.artifacts?.initialized);
+  return [
+    ["project", "Project selected", Boolean(state.workspace)],
+    ["ai", "AI connected", aiReady()],
+    ["setup", "Project setup visible", initialized || Boolean(state.onboarding.setup)],
+    ["status", "Status checked", state.statusChecked || hasActiveWave() || Boolean(state.onboarding.status)],
+    ["note", "First note saved", Boolean(state.onboarding.note)],
+    ["gate", "First gate action recorded", Boolean(state.onboarding.gate)],
+  ];
+}
+
+function renderOnboardingChecklist() {
+  if (!el.onboardingChecklist) return;
+  el.onboardingChecklist.innerHTML = onboardingItems().map(([key, label, done]) => `
+    <div class="check-row ${done ? "done" : ""}">
+      <div class="check-state">${done ? "OK" : ""}</div>
+      <div>
+        <div class="item-title">${escapeHtml(label)}</div>
+        <div class="item-meta">${escapeHtml(onboardingHint(key, done))}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+function onboardingHint(key, done) {
+  if (done) return "Completed for this project.";
+  const hints = {
+    project: "Choose the folder the user will actually work in.",
+    ai: "Fetch models, select one, then save and test the provider.",
+    setup: "Run /signal-init and confirm project files are visible.",
+    status: "Run /signal-status after setup.",
+    note: "Save one useful decision, constraint, or QA note.",
+    gate: "Use gate signing once a gate is ready.",
+  };
+  return hints[key] || "Not completed yet.";
+}
+
+function currentStepLabel() {
+  const labels = {
+    project: "Choose project",
+    ai: "Connect AI",
+    status: "Check status",
+    start: "Start work",
+  };
+  return labels[currentStep()] || "Next step";
+}
+
 function renderBrain() {
   if (!state.workspace) {
     el.brainList.innerHTML = `<div class="empty">Choose a project before using notes.</div>`;
@@ -416,18 +1005,18 @@ function renderHistory() {
   } else if (!state.audit.length) {
     el.historyList.innerHTML = `<div class="empty">No audit entries yet.</div>`;
   } else {
-    el.historyList.innerHTML = state.audit.map((entry) => {
+    el.historyList.innerHTML = `<div class="timeline">${state.audit.map((entry) => {
       const title = entry.event || entry.action || entry.type || "Audit entry";
       const body = entry.message || entry.summary || entry.path || JSON.stringify(entry, null, 2);
       const meta = entry.ts || entry.time || entry.created_at || "";
       return `
-        <div class="item">
+        <div class="timeline-entry">
           <div class="item-title">${escapeHtml(title)}</div>
           <div>${escapeHtml(body)}</div>
           <div class="item-meta">${escapeHtml(meta)}</div>
         </div>
       `;
-    }).join("");
+    }).join("")}</div>`;
   }
 
   const branch = state.git?.branch ? `Branch ${state.git.branch}` : "No Git branch loaded";
@@ -438,14 +1027,79 @@ function renderHistory() {
     branch,
     clean,
   ].filter(Boolean).join(" . ");
+  renderArtifactList(el.historyArtifactList, state.artifacts);
 }
 
 function renderSettings() {
   el.settingsWorkspace.textContent = state.workspace || "No project chosen";
+  if (el.updateChannelSelect && document.activeElement !== el.updateChannelSelect) {
+    el.updateChannelSelect.value = state.updateChannel;
+  }
+  if (el.updateChannelSummary) {
+    el.updateChannelSummary.textContent = `Release channel is ${state.updateChannel}. Update checks use the selected manifest channel when available.`;
+  }
   el.settingsProvider.textContent = state.activeProviderInfo?.name || "Not connected";
   el.settingsModel.textContent = state.activeProviderInfo?.model || "Not set";
-  el.settingsCost.textContent = `${currency.format(Number(state.cost?.session_usd || 0))} this session`;
+  const sessionCost = Number(state.cost?.session_usd || 0);
+  const monthlyCost = Number(state.cost?.monthly_usd || 0);
+  const budget = Number(state.cost?.budget_usd || 0);
+  el.settingsCost.textContent = `${currency.format(sessionCost)} this session . ${currency.format(monthlyCost)} monthly${budget ? ` of ${currency.format(budget)}` : ""}`;
+  if (el.budgetInput && document.activeElement !== el.budgetInput) {
+    el.budgetInput.value = budget ? String(budget) : "";
+  }
   el.settingsSecrets.textContent = secretSummary();
+  if (el.settingsKeyStorage) {
+    const providerId = state.activeProvider || "provider";
+    el.settingsKeyStorage.textContent = providerNeedsKey()
+      ? `AI keys are stored in the operating system credential manager under service com.signalos.desktop and provider ${providerId}. Saved key values are never displayed.`
+      : "This AI service does not store an API key.";
+  }
+  if (el.settingsDeleteKey) {
+    el.settingsDeleteKey.disabled = state.busy || !providerNeedsKey() || !state.hasKey;
+  }
+  renderSecretLocations();
+}
+
+function renderHelp() {
+  if (el.templateGrid) {
+    el.templateGrid.innerHTML = PROJECT_TEMPLATES.map((template) => `
+      <div class="template-card">
+        <div>
+          <strong>${escapeHtml(template.name)}</strong>
+          <span>${escapeHtml(template.detail)}</span>
+        </div>
+        <button class="secondary small" type="button" data-apply-template="${escapeHtml(template.id)}">Use</button>
+      </div>
+    `).join("");
+    el.templateGrid.querySelectorAll("[data-apply-template]").forEach((button) => {
+      button.addEventListener("click", () => applyProjectTemplate(button.dataset.applyTemplate));
+    });
+  }
+
+  if (el.recipeList) {
+    el.recipeList.innerHTML = WORKFLOW_RECIPES.map(([title, detail]) => `
+      <div class="item">
+        <div class="item-title">${escapeHtml(title)}</div>
+        <div class="item-meta">${escapeHtml(detail)}</div>
+      </div>
+    `).join("");
+  }
+}
+
+function renderEngine() {
+  if (!el.engineStatus || !el.engineDetails) return;
+  const status = state.sidecarError ? "error" : state.engine.status;
+  const label = status === "ok" ? "Ready" : status === "error" ? "Needs fix" : "Unknown";
+  el.engineStatus.className = `engine-state ${status === "ok" ? "ok" : status === "error" ? "error" : "warn"}`;
+  el.engineStatus.textContent = label;
+  el.engineDetails.textContent = state.sidecarError
+    ? `Engine failed: ${state.sidecarError}`
+    : [
+        state.engine.message || "Not checked yet.",
+        state.engine.version ? `Version ${state.engine.version}` : "",
+        state.engine.pid ? `PID ${state.engine.pid}` : "",
+        state.engine.checkedAt ? `Checked ${formatTime(state.engine.checkedAt)}` : "",
+      ].filter(Boolean).join(" . ");
 }
 
 function secretSummary() {
@@ -459,6 +1113,56 @@ function secretSummary() {
   const suffix = variableNames.length ? ` Variables: ${variableNames.join(", ")}.` : "";
   const fileLabel = files.length === 1 ? "secret file" : "secret files";
   return `${files.length} ${fileLabel} found. Values stay hidden.${suffix}`;
+}
+
+function secretRelativePath(file) {
+  return safeText(file?.path || file?.file || file?.name, "Secret file");
+}
+
+function secretAbsolutePath(file) {
+  const rel = secretRelativePath(file);
+  if (/^([A-Za-z]:[\\/]|\\\\|\/)/.test(rel) || !state.workspace) return rel;
+  const sep = state.workspace.includes("\\") ? "\\" : "/";
+  return `${state.workspace.replace(/[\\/]$/, "")}${sep}${rel.replace(/[\\/]/g, sep)}`;
+}
+
+function renderSecretLocations() {
+  if (!el.settingsSecretList) return;
+  if (!state.workspace) {
+    el.settingsSecretList.innerHTML = `<div class="empty compact-empty">Choose a project to see secret file locations.</div>`;
+    return;
+  }
+
+  const files = Array.isArray(state.secrets) ? state.secrets : [];
+  if (!files.length) {
+    el.settingsSecretList.innerHTML = `<div class="empty compact-empty">No .env or key files found in this project.</div>`;
+    return;
+  }
+
+  el.settingsSecretList.innerHTML = files.map((file, index) => {
+    const rel = secretRelativePath(file);
+    const full = secretAbsolutePath(file);
+    const variables = Array.isArray(file.variables) && file.variables.length
+      ? `Variables: ${file.variables.slice(0, 12).map(escapeHtml).join(", ")}`
+      : "Values are hidden.";
+    return `
+      <div class="item secret-location">
+        <div>
+          <div class="item-title">${escapeHtml(rel)}</div>
+          <div class="item-meta">${escapeHtml(full)}</div>
+          <div class="item-meta">${variables}</div>
+        </div>
+        <button class="ghost small" type="button" data-copy-secret-path="${index}">Copy path</button>
+      </div>
+    `;
+  }).join("");
+
+  $$("[data-copy-secret-path]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const file = files[Number(button.dataset.copySecretPath)];
+      copyText(secretAbsolutePath(file), "Path copied.");
+    });
+  });
 }
 
 function setBusy(isBusy) {
@@ -481,11 +1185,20 @@ async function loadBasics() {
     state.workspace = restored;
   }
 
+  if (state.workspace !== state.transcriptWorkspace) {
+    state.transcriptWorkspace = state.workspace || "";
+    loadTranscript();
+    loadOnboarding();
+  }
+
   state.providers = await safeCall(() => ipc.provider.list(), []);
   state.activeProvider = await safeCall(() => ipc.provider.getActive(), state.activeProvider);
   state.activeProviderInfo = state.providers.find((provider) => provider.id === state.activeProvider) || state.providers[0] || null;
   if (state.activeProviderInfo && state.activeProviderInfo.id !== state.activeProvider) {
     state.activeProvider = state.activeProviderInfo.id;
+  }
+  if (state.aiConnection.provider && state.aiConnection.provider !== state.activeProvider) {
+    state.aiConnection = { provider: state.activeProvider, status: "untested", message: "" };
   }
   state.hasKey = state.activeProviderInfo
     ? await safeCall(() => ipc.keychain.has(state.activeProviderInfo.id), false)
@@ -500,18 +1213,20 @@ async function refreshProjectState(markChecked = false) {
     state.brain = [];
     state.audit = [];
     state.secrets = [];
+    state.artifacts = null;
     state.git = null;
     render();
     return;
   }
 
-  const [wave, gates, brain, audit, secrets, git] = await Promise.all([
+  const [wave, gates, brain, audit, secrets, git, artifacts] = await Promise.all([
     safeCall(() => ipc.wave.get(), null),
     safeCall(() => ipc.gates.getAll(), []),
     safeCall(() => ipc.brain.search(el.brainSearch.value.trim()), []),
     safeCall(() => ipc.audit.list(50), []),
     safeCall(() => ipc.security.secrets(), []),
     safeCall(() => ipc.git.status(), null),
+    safeCall(() => ipc.project.artifacts(), null),
   ]);
 
   state.wave = wave;
@@ -520,6 +1235,7 @@ async function refreshProjectState(markChecked = false) {
   state.audit = Array.isArray(audit) ? audit : [];
   state.secrets = Array.isArray(secrets) ? secrets : [];
   state.git = git;
+  state.artifacts = artifacts;
   if (markChecked) state.statusChecked = true;
   render();
 }
@@ -539,6 +1255,13 @@ async function chooseWorkspace() {
     localStorage.setItem(LS_WORKSPACE, selected);
     state.workspace = selected;
     state.statusChecked = false;
+    state.guideTab = null;
+    state.lastSetup = null;
+    state.artifacts = null;
+    state.transcriptWorkspace = selected;
+    loadTranscript();
+    loadOnboarding();
+    markOnboarding("project");
     await safeCall(() => ipc.workspace.startWatch(), null);
     await refreshProjectState(false);
     toast("Project folder saved.");
@@ -569,17 +1292,23 @@ async function forgetWorkspace() {
   state.gates = [];
   state.brain = [];
   state.audit = [];
+  state.secrets = [];
   state.git = null;
   state.statusChecked = false;
+  state.guideTab = null;
+  state.artifacts = null;
+  state.transcriptWorkspace = "";
+  state.log = [];
+  state.onboarding = {};
   render();
   toast("Project forgotten in this app.");
 }
 
 async function saveProvider() {
-  const provider = el.providerSelect.value || state.activeProvider;
+  const provider = state.activeProvider;
   const info = state.providers.find((item) => item.id === provider);
-  const model = el.providerModel.value.trim();
-  const key = el.providerKey.value.trim();
+  const model = selectedProviderModel();
+  const key = providerKeyValue();
 
   if (info?.needs_key && !state.hasKey && !key) {
     toast("Paste the AI key first.");
@@ -592,12 +1321,190 @@ async function saveProvider() {
     if (model) await ipc.provider.setModel(provider, model);
     if (info?.needs_key && key) {
       await ipc.keychain.store(provider, key);
-      el.providerKey.value = "";
+      providerControlSets().forEach((controls) => {
+        controls.providerKey.value = "";
+      });
     }
+    state.modelDraftProvider = "";
+    state.modelDraftSelection = "";
+    state.modelDraftCustom = "";
+    state.guideTab = null;
     await loadBasics();
-    toast("AI connection saved.");
+    await validateProviderConnection({ keepBusy: true, silentSuccess: true });
   } catch (error) {
     toast(error.message || "Could not save AI service.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function validateProviderConnection(options = {}) {
+  const provider = state.activeProvider;
+  const info = state.providers.find((item) => item.id === provider);
+  const key = providerKeyValue();
+
+  if (info?.needs_key && !state.hasKey && !key) {
+    toast("Paste the AI key first.");
+    return false;
+  }
+
+  if (!options.keepBusy) setBusy(true);
+  state.aiConnection = { provider, status: "testing", message: "Testing connection..." };
+  render();
+  try {
+    const result = await ipc.provider.test(provider, key || null);
+    state.aiConnection = {
+      provider,
+      status: result?.ok ? "ok" : "error",
+      message: result?.message || "Provider responded.",
+    };
+    state.guideTab = null;
+    if (state.aiConnection.status === "ok") markOnboarding("ai");
+    addLog("AI connected", state.aiConnection.message, { status: "success" });
+    if (!options.silentSuccess) toast("AI connection works.");
+    await loadBasics();
+    render();
+    return true;
+  } catch (error) {
+    const message = friendlyProviderError(error, provider);
+    state.aiConnection = {
+      provider,
+      status: "error",
+      message,
+    };
+    addLog("AI connection failed", state.aiConnection.message, { status: "error" });
+    toast("AI connection failed.");
+    render();
+    return false;
+  } finally {
+    if (!options.keepBusy) setBusy(false);
+  }
+}
+
+async function fetchModelsForActiveProvider() {
+  const provider = state.activeProvider;
+  const info = state.providers.find((item) => item.id === provider);
+  const key = providerKeyValue();
+
+  if (info?.needs_key && !state.hasKey && !key) {
+    toast("Paste the AI key first, or save the key and fetch again.");
+    return;
+  }
+
+  state.modelOptionsLoading = true;
+  state.modelOptionsError = "";
+  state.modelOptions = [];
+  state.modelOptionsProvider = provider;
+  renderProviderForm();
+
+  try {
+    const models = await ipc.provider.fetchModels(provider, key || null);
+    state.modelOptions = Array.isArray(models) ? models : [];
+    state.modelOptionsProvider = provider;
+    state.modelOptionsError = state.modelOptions.length
+      ? ""
+      : "No models were returned. Choose Other model to type one.";
+    state.aiConnection = {
+      provider,
+      status: "ok",
+      message: state.modelOptions.length
+        ? `Provider responded with ${state.modelOptions.length} available models.`
+        : "Provider responded, but no models were returned.",
+    };
+    state.guideTab = null;
+    toast(state.modelOptions.length ? "Models fetched." : "No models returned.");
+  } catch (error) {
+    state.modelOptions = [];
+    state.modelOptionsProvider = provider;
+    state.modelOptionsError = friendlyProviderError(error, provider);
+    state.aiConnection = {
+      provider,
+      status: "error",
+      message: state.modelOptionsError,
+    };
+    toast("Could not fetch models.");
+  } finally {
+    state.modelOptionsLoading = false;
+    renderProviderForm();
+  }
+}
+
+async function deleteSavedProviderKey() {
+  if (!state.activeProviderInfo?.needs_key) {
+    toast("This AI service does not use a saved key.");
+    return;
+  }
+  if (!state.hasKey) {
+    toast("No saved key for this AI service.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    await ipc.keychain.delete(state.activeProvider);
+    state.hasKey = false;
+    state.aiConnection = { provider: state.activeProvider, status: "untested", message: "" };
+    providerControlSets().forEach((controls) => {
+      controls.providerKey.value = "";
+    });
+    render();
+    toast("Saved AI key deleted.");
+  } catch (error) {
+    toast(error.message || "Could not delete saved key.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function saveBudget() {
+  const value = Number(el.budgetInput?.value || 0);
+  if (!Number.isFinite(value) || value < 0) {
+    toast("Enter a valid budget.");
+    return;
+  }
+  setBusy(true);
+  try {
+    await ipc.provider.setBudget(value);
+    await loadBasics();
+    toast("Budget saved.");
+  } catch (error) {
+    toast(error.message || "Could not save budget.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function resetSessionCost() {
+  setBusy(true);
+  try {
+    await ipc.provider.resetSession();
+    await loadBasics();
+    toast("Session cost reset.");
+  } catch (error) {
+    toast(error.message || "Could not reset cost.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function applyProjectTemplate(templateId) {
+  const template = PROJECT_TEMPLATES.find((item) => item.id === templateId);
+  if (!template) return;
+  if (!state.workspace) {
+    toast("Choose a project first.");
+    await chooseWorkspace();
+    return;
+  }
+
+  setBusy(true);
+  try {
+    await ipc.brain.add(template.note, "decision");
+    markOnboarding("note");
+    addLog("Template applied", `${template.name} saved to Notes.`, { status: "success" });
+    await refreshProjectState(false);
+    toast("Template saved to Notes.");
+  } catch (error) {
+    toast(error.message || "Could not apply template.");
   } finally {
     setBusy(false);
   }
@@ -607,8 +1514,15 @@ async function useLocalProvider() {
   setBusy(true);
   try {
     await ipc.provider.setActive("ollama");
+    state.modelOptions = [];
+    state.modelOptionsProvider = "";
+    state.modelOptionsError = "";
+    state.modelDraftProvider = "";
+    state.modelDraftSelection = "";
+    state.modelDraftCustom = "";
+    state.guideTab = null;
     await loadBasics();
-    toast("Local AI selected.");
+    await validateProviderConnection({ keepBusy: true, silentSuccess: true });
   } catch (error) {
     toast(error.message || "Could not select local AI.");
   } finally {
@@ -622,6 +1536,46 @@ async function checkStatus() {
     return;
   }
   await runSignalCommand("/signal-status", [], { markChecked: true });
+}
+
+async function signGate(gateId) {
+  if (!state.workspace) {
+    toast("Choose a project first.");
+    return;
+  }
+  const signer = safeText(state.gateSigner).trim();
+  if (!signer) {
+    toast("Enter signer name first.");
+    el.gateSigner?.focus();
+    return;
+  }
+
+  setBusy(true);
+  addLog(`Signing G${gateId}`, `Signer: ${signer}`, {
+    kind: "command",
+    status: "running",
+    command: `gate:sign G${gateId}`,
+  });
+  try {
+    await ipc.gates.sign(Number(gateId), signer);
+    replaceLastLog(`Signed G${gateId}`, `Signed by ${signer}.`, {
+      kind: "command",
+      status: "success",
+      command: `gate:sign G${gateId}`,
+    });
+    await refreshProjectState(true);
+    markOnboarding("gate");
+    toast(`G${gateId} signed.`);
+  } catch (error) {
+    replaceLastLog(`Could not sign G${gateId}`, error.message || String(error), {
+      kind: "command",
+      status: "error",
+      command: `gate:sign G${gateId}`,
+    });
+    toast("Gate signing failed.");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function parseCommand(input) {
@@ -643,18 +1597,270 @@ async function runSignalCommand(commandInput, args = [], options = {}) {
     : parseCommand(commandInput);
   if (!parsed) return;
 
+  const info = commandInfo(parsed.command);
+  const isSetup = parsed.command === "/signal-init" || parsed.command === "signal-init";
+  if (isSetup) {
+    state.lastSetup = { status: "running", command: parsed.command, startedAt: Date.now() };
+  }
+
+  state.runningCommand = parsed.command;
   setBusy(true);
-  addLog("Working on it", "Waiting for the SignalOS engine...");
+  startCommandProgress(parsed.command, info.detail || "Waiting for the SignalOS engine.");
+  addLog(
+    info.status === "preview" ? "Preview command" : info.label,
+    info.status === "preview"
+      ? "This command may return a command brief instead of executing work."
+      : "Waiting for the SignalOS engine...",
+    { kind: "command", status: "running", command: parsed.command },
+  );
   try {
     const result = await ipc.signal.runAndWait(parsed.command, parsed.args);
-    replaceLastLog("Done", formatResult(result));
     await loadBasics();
     await refreshProjectState(Boolean(options.markChecked));
     if (options.markChecked) state.statusChecked = true;
-    toast("Done.");
+    state.guideTab = null;
+    if (isSetup) {
+      state.lastSetup = {
+        status: state.artifacts?.initialized ? "ok" : "error",
+        command: parsed.command,
+        completedAt: Date.now(),
+        output: formatResult(result),
+      };
+      replaceLastLog(
+        state.artifacts?.initialized ? "Project setup complete" : "Setup needs attention",
+        formatSetupResult(result),
+        {
+          kind: "command",
+          status: state.artifacts?.initialized ? "success" : "error",
+          command: parsed.command,
+          cards: buildCommandCards(parsed.command, result),
+        },
+      );
+      if (state.artifacts?.initialized) markOnboarding("setup");
+      state.guideTab = "start";
+      toast(state.artifacts?.initialized ? "Project setup complete." : "Setup finished but files are missing.");
+    } else {
+      if (parsed.command === "/signal-status") markOnboarding("status");
+      replaceLastLog(`${info.label} complete`, formatResult(result), {
+        kind: "command",
+        status: "success",
+        command: parsed.command,
+        cards: buildCommandCards(parsed.command, result),
+      });
+      toast(`${info.label} complete.`);
+    }
   } catch (error) {
-    replaceLastLog("Could not finish", error.message || String(error));
+    if (isSetup) {
+      state.lastSetup = {
+        status: "error",
+        command: parsed.command,
+        completedAt: Date.now(),
+        output: error.message || String(error),
+      };
+    }
+    replaceLastLog("Could not finish", nextStepError(error), {
+      kind: "command",
+      status: "error",
+      command: parsed.command,
+    });
     toast("Command failed.");
+  } finally {
+    stopCommandProgress();
+    state.runningCommand = null;
+    setBusy(false);
+  }
+}
+
+function formatSetupResult(result) {
+  const output = formatResult(result);
+  const artifacts = Array.isArray(state.artifacts?.artifacts) ? state.artifacts.artifacts : [];
+  const found = artifacts.filter((artifact) => artifact.exists).length;
+  const total = artifacts.length;
+  const next = state.wave?.phase_name
+    ? `Current phase: ${state.wave.phase_name}.`
+    : "Run /signal-status to load the current phase.";
+  return [
+    output,
+    total ? `Project files found: ${found}/${total}.` : "",
+    next,
+  ].filter(Boolean).join("\n\n");
+}
+
+function buildCommandCards(command, result) {
+  const text = formatResult(result);
+  const artifacts = Array.isArray(state.artifacts?.artifacts) ? state.artifacts.artifacts : [];
+  const found = artifacts.filter((artifact) => artifact.exists).length;
+  const total = artifacts.length;
+  const info = commandInfo(command);
+  const cards = [
+    { label: "Command", value: `${info.label} (${statusLabel(info.status)})` },
+  ];
+
+  if (command === "/signal-init" || command === "signal-init") {
+    cards.push({
+      label: "Setup",
+      value: state.artifacts?.initialized ? "Expected project files found" : "Expected files still missing",
+    });
+    if (total) cards.push({ label: "Project files", value: `${found}/${total} found` });
+  }
+
+  if (command === "/signal-status" || command === "signal-status" || command === "/signal-init" || command === "signal-init") {
+    const phase = state.wave?.phase_name || extractResultField(text, "Phase") || extractResultField(text, "Current phase");
+    const next = extractResultField(text, "Next action") || extractResultField(text, "Next");
+    cards.push({ label: "Phase", value: phase || "Not loaded" });
+    cards.push({ label: "Next action", value: next || nextAction().title });
+    if (state.gates.length) cards.push({ label: "Gates", value: `${state.gates.length} loaded` });
+  }
+
+  if (info.status === "advanced" || info.status === "preview") {
+    const mode = detectCommandOutputMode(text);
+    const next = commandNextStep(command, info.status, mode);
+    cards.push({ label: "Output", value: mode });
+    cards.push({ label: "Next", value: next });
+  }
+
+  if (!cards.some((card) => card.label === "Output")) {
+    cards.push({ label: "Output", value: `${text.split(/\r?\n/).filter(Boolean).length || 1} line result` });
+  }
+
+  return cards.slice(0, 8);
+}
+
+function extractResultField(text, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = safeText(text).match(new RegExp(`${escaped}\\s*:\\s*([^\\n.]+)`, "i"));
+  return match ? match[1].trim() : "";
+}
+
+function detectCommandOutputMode(text) {
+  const value = safeText(text);
+  if (/command brief|not wired|preview|spec/i.test(value)) return "Command brief";
+  if (/error|failed|traceback|exception/i.test(value)) return "Error";
+  if (/created|updated|wrote|saved|signed|complete|done/i.test(value)) return "Executed";
+  if (/usage:|options:|arguments:/i.test(value)) return "CLI help";
+  return value.length > 600 ? "Detailed output" : "Short output";
+}
+
+function commandNextStep(command, status, mode) {
+  if (mode === "Error") return "Open Settings, copy diagnostics, then retry after fixing the engine or input.";
+  if (status === "preview") return "Use the brief as guidance, then run a ready command or ask AI to plan the action.";
+  if (/plan/i.test(command)) return "Open the generated plan artifact or run /signal-status.";
+  if (/qa|guard|careful|cso/i.test(command)) return "Record evidence in Notes and export a handoff if the result matters.";
+  if (/deploy|ship|canary|land/i.test(command)) return "Verify release gates, then export an issue report before proceeding.";
+  return "Review the output, save a note if it changes the project, then run /signal-status.";
+}
+
+function nextStepError(error) {
+  const text = error?.message || String(error);
+  if (/sidecar|engine|not started/i.test(text)) {
+    return `${text}\n\nOpen Settings, test the SignalOS engine, then try the command again.`;
+  }
+  if (/timed out/i.test(text)) {
+    return `${text}\n\nThe command may still be running or the engine may be stuck. Test the engine in Settings.`;
+  }
+  return text;
+}
+
+function friendlyProviderError(error, provider = state.activeProvider) {
+  const raw = error?.message || String(error || "Connection failed.");
+  const name = state.providers.find((item) => item.id === provider)?.name || provider || "AI provider";
+  if (/401|403|unauthorized|forbidden|api key|invalid key|authentication/i.test(raw)) {
+    return `${name} rejected the key. Replace the saved key, then test the connection again.`;
+  }
+  if (/404|model/i.test(raw)) {
+    return `${name} could not use that model. Fetch models or choose Other model and type a valid model name.`;
+  }
+  if (/429|rate limit|quota/i.test(raw)) {
+    return `${name} rate limit or quota was reached. Try later or choose another provider.`;
+  }
+  if (/network|dns|timed out|timeout|connect|connection/i.test(raw)) {
+    return `SignalOS could not reach ${name}. Check network access or local Ollama status, then test again.`;
+  }
+  return raw;
+}
+
+function startCommandProgress(command, detail) {
+  stopCommandProgress();
+  state.commandStartedAt = Date.now();
+  state.commandTimer = window.setInterval(() => {
+    if (!state.runningCommand) return;
+    const elapsed = Math.max(1, Math.round((Date.now() - state.commandStartedAt) / 1000));
+    replaceLastLog("Still working", `${detail}\n\nElapsed: ${elapsed}s`, {
+      kind: "command",
+      status: "running",
+      command,
+    });
+  }, 2500);
+}
+
+function stopCommandProgress() {
+  if (state.commandTimer) {
+    window.clearInterval(state.commandTimer);
+    state.commandTimer = null;
+  }
+}
+
+async function cancelRunningCommand() {
+  if (!state.runningCommand) return;
+  const command = state.runningCommand;
+  ipc.signal.cancelPending("Command stopped by user.");
+  stopCommandProgress();
+  state.runningCommand = null;
+  state.busy = false;
+  replaceLastLog("Command stopped", `${command} was stopped. Restarting the SignalOS engine before the next command.`, {
+    kind: "command",
+    status: "error",
+    command,
+  });
+  await restartEngineStatus({ silent: true });
+  render();
+  toast("Command stopped.");
+}
+
+async function askSignalOS(question) {
+  if (!state.workspace) {
+    toast("Choose a project first.");
+    await chooseWorkspace();
+    return;
+  }
+  if (!aiReady()) {
+    state.guideTab = "ai";
+    render();
+    toast("Test the AI connection first.");
+    return;
+  }
+
+  const context = state.attachments
+    .filter((item) => item.status === "accepted")
+    .map((item) => `${item.name}\n${item.summary}`)
+    .join("\n\n");
+  const prompt = [
+    question,
+    state.workspace ? `\nProject folder: ${state.workspace}` : "",
+    context ? `\nAttached safe context:\n${context}` : "",
+  ].filter(Boolean).join("\n");
+
+  setBusy(true);
+  addLog("You", question, { kind: "ai", status: "success" });
+  addLog("SignalOS AI", "Thinking...", { kind: "ai", status: "running" });
+  try {
+    const response = await ipc.provider.chat(
+      state.activeProvider,
+      state.activeProviderInfo?.model || null,
+      prompt,
+    );
+    replaceLastLog("AI response", response?.text || "The provider returned an empty response.", {
+      kind: "ai",
+      status: "success",
+    });
+    await loadBasics();
+    renderSettings();
+  } catch (error) {
+    replaceLastLog("AI request failed", friendlyProviderError(error, state.activeProvider), {
+      kind: "ai",
+      status: "error",
+    });
+    toast("AI request failed.");
   } finally {
     setBusy(false);
   }
@@ -671,7 +1877,7 @@ async function handleAttachmentFiles(fileList) {
   if (!files.length) return;
 
   setBusy(true);
-  addLog("Reading files", "Checking file types and removing secrets...");
+  addLog("Reading files", "Checking file types and removing secrets...", { status: "running" });
   try {
     const payloads = [];
     let totalBytes = 0;
@@ -694,11 +1900,11 @@ async function handleAttachmentFiles(fileList) {
     state.attachments = [...state.attachments, ...items].slice(-12);
     const accepted = items.filter((item) => item.status === "accepted").length;
     const blocked = items.length - accepted;
-    replaceLastLog("Files checked", `${accepted} ready. ${blocked} blocked. Secret values are not kept in chat context.`);
+    replaceLastLog("Files checked", `${accepted} ready. ${blocked} blocked. Secret values are not kept in chat context.`, { status: "success" });
     renderAttachments();
     toast(blocked ? "Files checked. Some were blocked." : "Files ready.");
   } catch (error) {
-    replaceLastLog("Could not read files", error.message || String(error));
+    replaceLastLog("Could not read files", error.message || String(error), { status: "error" });
     toast("Could not attach those files.");
   } finally {
     el.attachmentInput.value = "";
@@ -718,18 +1924,35 @@ function readFileBase64(file) {
   });
 }
 
-function addLog(title, body) {
-  state.log.push({ title, body, ts: Date.now() });
-  state.log = state.log.slice(-12);
+function addLog(title, body, options = {}) {
+  state.log.push({
+    title,
+    body: safeText(body),
+    ts: Date.now(),
+    kind: options.kind || "",
+    status: options.status || "",
+    command: options.command || "",
+    cards: Array.isArray(options.cards) ? options.cards : [],
+  });
+  state.log = state.log.slice(-80);
+  persistTranscript();
   renderActivity();
 }
 
-function replaceLastLog(title, body) {
+function replaceLastLog(title, body, options = {}) {
   if (!state.log.length) {
-    addLog(title, body);
+    addLog(title, body, options);
     return;
   }
-  state.log[state.log.length - 1] = { title, body, ts: Date.now() };
+  state.log[state.log.length - 1] = {
+    ...state.log[state.log.length - 1],
+    title,
+    body: safeText(body),
+    ts: Date.now(),
+    ...options,
+    cards: Array.isArray(options.cards) ? options.cards : [],
+  };
+  persistTranscript();
   renderActivity();
 }
 
@@ -738,16 +1961,78 @@ function switchView(view) {
   render();
 }
 
+async function selectProvider(selected) {
+  state.activeProvider = selected;
+  state.activeProviderInfo = state.providers.find((provider) => provider.id === selected) || null;
+  state.hasKey = state.activeProviderInfo
+    ? await safeCall(() => ipc.keychain.has(state.activeProviderInfo.id), false)
+    : false;
+  state.modelOptions = [];
+  state.modelOptionsProvider = "";
+  state.modelOptionsError = "";
+  state.modelDraftProvider = "";
+  state.modelDraftSelection = "";
+  state.modelDraftCustom = "";
+  state.aiConnection = { provider: selected, status: "untested", message: "" };
+  render();
+}
+
+function updateModelDraft(selection) {
+  state.modelDraftProvider = state.activeProvider;
+  state.modelDraftSelection = selection;
+  if (state.modelDraftSelection === "__custom") {
+    state.modelDraftCustom = state.modelDraftCustom || state.activeProviderInfo?.model || "";
+  } else {
+    state.modelDraftCustom = "";
+  }
+  renderProviderForm();
+}
+
 function bindEvents() {
   $("[data-view='guide']").addEventListener("click", () => switchView("guide"));
+  $("[data-view='dashboard']").addEventListener("click", () => switchView("dashboard"));
   $("[data-view='brain']").addEventListener("click", () => switchView("brain"));
   $("[data-view='history']").addEventListener("click", () => switchView("history"));
   $("[data-view='settings']").addEventListener("click", () => switchView("settings"));
+  $("[data-view='help']").addEventListener("click", () => switchView("help"));
+  $$("[data-step-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.guideTab = button.dataset.stepTab;
+      render();
+    });
+  });
 
   $("#chooseProject").addEventListener("click", chooseWorkspace);
   $("#settingsChooseProject").addEventListener("click", chooseWorkspace);
   $("#forgetProject").addEventListener("click", forgetWorkspace);
   $("#saveProvider").addEventListener("click", saveProvider);
+  el.settingsSaveProvider?.addEventListener("click", saveProvider);
+  el.settingsDeleteKey?.addEventListener("click", deleteSavedProviderKey);
+  el.settingsRefreshSecrets?.addEventListener("click", () => refreshProjectState(false));
+  el.saveBudget?.addEventListener("click", saveBudget);
+  el.resetSessionCost?.addEventListener("click", resetSessionCost);
+  el.runStatusFromResult?.addEventListener("click", checkStatus);
+  el.copyDiagnostics?.addEventListener("click", copyAppDiagnostics);
+  el.testEngine?.addEventListener("click", () => testEngineStatus());
+  el.restartEngine?.addEventListener("click", () => restartEngineStatus());
+  el.copySettingsDiagnostics?.addEventListener("click", copyAppDiagnostics);
+  el.settingsExportIssueReport?.addEventListener("click", exportIssueReport);
+  el.cancelCommand?.addEventListener("click", cancelRunningCommand);
+  el.dashboardRunStatus?.addEventListener("click", checkStatus);
+  el.dashboardOpenChat?.addEventListener("click", () => switchView("guide"));
+  el.dashboardExportHandoff?.addEventListener("click", exportHandoffReport);
+  el.exportHandoff?.addEventListener("click", exportHandoffReport);
+  el.exportIssueReport?.addEventListener("click", exportIssueReport);
+  el.settingsCheckUpdates?.addEventListener("click", checkForUpdates);
+  el.updateChannelSelect?.addEventListener("change", () => {
+    state.updateChannel = el.updateChannelSelect.value === "stable" ? "stable" : "beta";
+    localStorage.setItem(LS_UPDATE_CHANNEL, state.updateChannel);
+    renderSettings();
+  });
+  el.gateSigner?.addEventListener("input", () => {
+    state.gateSigner = el.gateSigner.value.trim();
+    localStorage.setItem(LS_GATE_SIGNER, state.gateSigner);
+  });
   $("#quickOllama").addEventListener("click", useLocalProvider);
   $("#refreshButton").addEventListener("click", () => refreshProjectState(true));
   el.attachmentPick.addEventListener("click", () => el.attachmentInput.click());
@@ -769,32 +2054,30 @@ function bindEvents() {
     handleAttachmentFiles(event.dataTransfer?.files);
   });
 
-  el.providerSelect.addEventListener("change", async () => {
-    const selected = el.providerSelect.value;
-    state.activeProvider = selected;
-    state.activeProviderInfo = state.providers.find((provider) => provider.id === selected) || null;
-    state.hasKey = state.activeProviderInfo
-      ? await safeCall(() => ipc.keychain.has(state.activeProviderInfo.id), false)
-      : false;
-    render();
+  providerControlSets().forEach((controls) => {
+    controls.providerSelect.addEventListener("change", () => selectProvider(controls.providerSelect.value));
+    controls.fetchModels.addEventListener("click", fetchModelsForActiveProvider);
+    controls.providerModelSelect.addEventListener("change", () => {
+      updateModelDraft(controls.providerModelSelect.value);
+    });
+    controls.providerModel.addEventListener("input", () => {
+      state.modelDraftProvider = state.activeProvider;
+      state.modelDraftSelection = "__custom";
+      state.modelDraftCustom = controls.providerModel.value;
+    });
+    controls.providerKey.addEventListener("input", () => {
+      renderGuide();
+      renderProviderForm();
+      renderSettings();
+    });
   });
-
-  el.providerKey.addEventListener("input", renderGuide);
 
   el.commandForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = el.commandInput.value.trim();
     el.commandInput.value = "";
     if (value && !value.startsWith("/")) {
-      const context = state.attachments
-        .filter((item) => item.status === "accepted")
-        .map((item) => `${item.name}\n${item.summary}`)
-        .join("\n\n");
-      const body = context
-        ? `${value}\n\nAttached context:\n${context}`
-        : value;
-      addLog("Question ready", body);
-      toast("Question is ready with safe context.");
+      askSignalOS(value);
       return;
     }
     runSignalCommand(value);
@@ -812,6 +2095,7 @@ function bindEvents() {
     try {
       await ipc.brain.add(text, el.brainType.value);
       el.brainText.value = "";
+      markOnboarding("note");
       await refreshProjectState(false);
       toast("Saved to Brain.");
     } catch (error) {
@@ -831,11 +2115,11 @@ function bindEvents() {
   if (listen) {
     listen("menu:open-workspace", chooseWorkspace);
     listen("menu:check-update", checkForUpdates);
-    listen("menu:export-audit", () => switchView("history"));
+    listen("menu:export-audit", exportHandoffReport);
     listen("menu:nav", (event) => {
       const mapped = {
         chat: "guide",
-        dashboard: "history",
+        dashboard: "dashboard",
         brain: "brain",
         audit: "history",
       };
@@ -843,17 +2127,263 @@ function bindEvents() {
     });
     listen("sidecar:error", (event) => {
       state.sidecarError = safeText(event.payload, "Unknown sidecar error");
+      state.engine = { status: "error", message: state.sidecarError, version: "", checkedAt: Date.now() };
+      addLog("Engine failed", state.sidecarError, { status: "error" });
+      render();
+    });
+    listen("sidecar:stderr", (event) => {
+      state.engine = {
+        ...state.engine,
+        status: state.engine.status === "ok" ? "ok" : "unknown",
+        message: safeText(event.payload, "Engine wrote a diagnostic message."),
+        checkedAt: Date.now(),
+      };
+      renderEngine();
+    });
+    listen("sidecar:status", (event) => {
+      state.engine = normalizeEngineRuntime(event.payload);
+      if (state.engine.status === "ok") state.sidecarError = "";
+      render();
+    });
+    listen("sidecar:terminated", (event) => {
+      state.engine = {
+        status: "error",
+        message: `Engine terminated${event.payload === null || event.payload === undefined ? "" : ` with code ${event.payload}`}.`,
+        version: state.engine.version,
+        checkedAt: Date.now(),
+      };
       render();
     });
   }
 }
 
+async function testEngineStatus(options = {}) {
+  const runtime = await safeCall(() => ipc.engine.status(), null);
+  if (runtime) {
+    state.engine = normalizeEngineRuntime(runtime);
+    renderEngine();
+  }
+  state.engine = { ...state.engine, status: "unknown", message: "Testing engine...", checkedAt: Date.now() };
+  renderEngine();
+  try {
+    const result = await ipc.engine.ping();
+    state.sidecarError = "";
+    state.engine = {
+      status: "ok",
+      message: "Engine responded to ping.",
+      version: safeText(result?.version),
+      checkedAt: Date.now(),
+    };
+    if (!options.silent) {
+      addLog("Engine ready", state.engine.message, { status: "success" });
+      toast("SignalOS engine is ready.");
+    }
+    render();
+    return true;
+  } catch (error) {
+    state.engine = {
+      status: "error",
+      message: error.message || String(error),
+      version: "",
+      checkedAt: Date.now(),
+    };
+    state.sidecarError = state.engine.message;
+    if (!options.silent) {
+      addLog("Engine check failed", state.engine.message, { status: "error" });
+      toast("SignalOS engine needs attention.");
+    }
+    render();
+    return false;
+  }
+}
+
+async function restartEngineStatus(options = {}) {
+  state.engine = { ...state.engine, status: "unknown", message: "Restarting engine...", checkedAt: Date.now() };
+  state.sidecarError = "";
+  renderEngine();
+  try {
+    const runtime = await ipc.engine.restart();
+    state.engine = normalizeEngineRuntime(runtime, "Engine restarted.");
+    state.sidecarError = "";
+    if (!options.silent) {
+      addLog("Engine restarted", state.engine.message, { status: "success" });
+      toast("SignalOS engine restarted.");
+    }
+    render();
+    return true;
+  } catch (error) {
+    state.engine = {
+      status: "error",
+      message: error.message || String(error),
+      version: "",
+      checkedAt: Date.now(),
+    };
+    state.sidecarError = state.engine.message;
+    if (!options.silent) {
+      addLog("Engine restart failed", state.engine.message, { status: "error" });
+      toast("Engine restart failed.");
+    }
+    render();
+    return false;
+  }
+}
+
+function normalizeEngineRuntime(runtime, fallback = "") {
+  const running = Boolean(runtime?.running);
+  return {
+    status: running ? "ok" : "error",
+    message: runtime?.last_error || runtime?.last_event || fallback || (running ? "Engine is running." : "Engine is not running."),
+    version: state.engine.version || "",
+    checkedAt: runtime?.updated_at_ms ? Number(runtime.updated_at_ms) : Date.now(),
+    pid: runtime?.pid || null,
+    generation: runtime?.generation || 0,
+  };
+}
+
+function diagnosticsPayload() {
+  return {
+    generated_at: new Date().toISOString(),
+    workspace: state.workspace,
+    app_view: state.view,
+    engine: state.engine,
+    sidecar_error: state.sidecarError,
+    ai: {
+      provider: state.activeProvider,
+      provider_name: state.activeProviderInfo?.name || "",
+      model: state.activeProviderInfo?.model || "",
+      has_saved_key: Boolean(state.hasKey),
+      connection: state.aiConnection,
+    },
+    project: {
+      status_checked: state.statusChecked,
+      wave: state.wave,
+      gates: state.gates,
+      artifacts: state.artifacts,
+      git: state.git,
+      secret_file_count: Array.isArray(state.secrets) ? state.secrets.length : 0,
+    },
+    recent_log: state.log.slice(-10),
+  };
+}
+
+function timestampSlug() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function markdownList(items) {
+  return items.filter(Boolean).map((item) => `- ${safeText(item).replace(/\n/g, " ")}`).join("\n");
+}
+
+function issueReportMarkdown() {
+  const diagnostics = diagnosticsPayload();
+  return [
+    "# SignalOS Issue Report",
+    "",
+    `Generated: ${diagnostics.generated_at}`,
+    `Workspace: ${diagnostics.workspace || "No project selected"}`,
+    "",
+    "## Summary",
+    markdownList([
+      `App view: ${diagnostics.app_view}`,
+      `Engine: ${diagnostics.engine?.status || "unknown"} - ${diagnostics.engine?.message || ""}`,
+      `AI: ${diagnostics.ai?.provider_name || diagnostics.ai?.provider || "not selected"} / ${diagnostics.ai?.model || "no model"}`,
+      `AI connected: ${diagnostics.ai?.connection?.status || "untested"}`,
+      `Secret files found: ${diagnostics.project?.secret_file_count || 0}`,
+    ]),
+    "",
+    "## Recent Activity",
+    markdownList(state.log.slice(-12).map((entry) => {
+      const label = [entry.title, entry.command, entry.status].filter(Boolean).join(" | ");
+      return `${label}: ${safeText(entry.body).slice(0, 500)}`;
+    })),
+    "",
+    "## Redacted Diagnostics",
+    "```json",
+    JSON.stringify(diagnostics, null, 2),
+    "```",
+  ].join("\n");
+}
+
+function handoffMarkdown() {
+  const gate = currentGate();
+  const artifacts = Array.isArray(state.artifacts?.artifacts) ? state.artifacts.artifacts : [];
+  return [
+    "# SignalOS Team Handoff",
+    "",
+    `Generated: ${new Date().toISOString()}`,
+    `Project: ${state.workspace ? basename(state.workspace) : "No project selected"}`,
+    `Workspace: ${state.workspace || "No project selected"}`,
+    "",
+    "## Current State",
+    markdownList([
+      `Wave: ${state.wave?.name || "No active wave"}`,
+      `Phase: ${state.wave?.phase_name || "Unknown"}`,
+      `Next gate: ${gate ? `G${gate.id} ${gate.name || ""}`.trim() : "Not loaded"}`,
+      `AI: ${aiReady() ? "connected" : "not ready"}`,
+      `Engine: ${state.engine.status || "unknown"}`,
+    ]),
+    "",
+    "## Project Files",
+    markdownList(artifacts.map((artifact) => `${artifact.exists ? "Found" : "Missing"} ${artifact.path}: ${artifact.detail}`)),
+    "",
+    "## Recent Notes",
+    markdownList(state.brain.slice(0, 10).map((entry) => `${entry.type || "note"}: ${entry.text || ""}`)),
+    "",
+    "## Recent Activity",
+    markdownList(state.log.slice(-12).map((entry) => `${entry.title}${entry.command ? ` (${entry.command})` : ""}: ${safeText(entry.body).slice(0, 500)}`)),
+    "",
+    "## Next Operating Rule",
+    "Run `/signal-status`, verify the project files shown in Dashboard, and record evidence before signing the next gate.",
+  ].join("\n");
+}
+
+async function exportWorkspaceFile(kind, filename, content, label) {
+  if (!state.workspace) {
+    toast("Choose a project first.");
+    await chooseWorkspace();
+    return null;
+  }
+
+  setBusy(true);
+  try {
+    const result = await ipc.project.exportFile(kind, filename, content);
+    addLog(label, `Written to ${result.relative_path}.`, { status: "success" });
+    await refreshProjectState(false);
+    toast(`${label} exported.`);
+    return result;
+  } catch (error) {
+    addLog(`${label} failed`, error.message || String(error), { status: "error" });
+    toast(`${label} failed.`);
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function exportIssueReport() {
+  const filename = `issue-report-${timestampSlug()}.md`;
+  await exportWorkspaceFile("issue-reports", filename, issueReportMarkdown(), "Issue report");
+}
+
+async function exportHandoffReport() {
+  const filename = `team-handoff-${timestampSlug()}.md`;
+  await exportWorkspaceFile("handoffs", filename, handoffMarkdown(), "Team handoff");
+}
+
+function copyAppDiagnostics() {
+  copyText(JSON.stringify(diagnosticsPayload(), null, 2), "Diagnostics copied.");
+}
+
 async function checkForUpdates() {
-  const update = await safeCall(() => ipc.updater.check(), { available: false });
+  const update = await safeCall(() => ipc.updater.check(state.updateChannel), { available: false });
   if (update?.available) {
-    toast(`Update available: ${update.version}`);
+    toast(`Update available on ${update.channel || state.updateChannel}: ${update.version}`);
+  } else if (update?.signatures_missing) {
+    toast(`No ${state.updateChannel} update. Manifest signatures are not release-ready yet.`);
+  } else if (update?.error) {
+    toast(`Update check failed: ${update.error}`);
   } else {
-    toast("No update available.");
+    toast(`No ${state.updateChannel} update available.`);
   }
 }
 
@@ -863,6 +2393,7 @@ async function init() {
   await loadBasics();
   render();
   await refreshProjectState(false);
+  setTimeout(() => testEngineStatus({ silent: true }), 1500);
 }
 
 init();

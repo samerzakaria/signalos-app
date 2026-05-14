@@ -29,7 +29,10 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body {
+  height: 100%;
+  min-height: 0;
+}
 body {
   margin: 0;
   overflow: hidden;
@@ -54,7 +57,8 @@ button:disabled {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100vh;
-  min-height: 620px;
+  height: 100dvh;
+  min-height: 0;
 }
 
 .sidebar {
@@ -193,6 +197,9 @@ button:disabled {
   display: grid;
   grid-template-rows: 70px minmax(0, 1fr);
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .topbar {
   display: flex;
@@ -242,7 +249,10 @@ button:disabled {
 .pill.error .pill-dot { background: var(--red); }
 
 .main {
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 28px;
 }
 .view { display: none; }
@@ -253,6 +263,7 @@ button:disabled {
   grid-template-columns: minmax(380px, 1fr) 360px;
   gap: 22px;
   max-width: 1220px;
+  align-items: start;
 }
 .hero-action {
   border: 1px solid var(--line);
@@ -323,6 +334,66 @@ button:disabled {
   gap: 12px;
   margin-top: 18px;
 }
+.phase-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.phase-tab {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  text-align: left;
+}
+.phase-tab:hover,
+.phase-tab.selected {
+  border-color: #c9d8ff;
+  background: var(--blue-soft);
+  color: var(--text);
+}
+.phase-tab strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+}
+.phase-tab em {
+  display: block;
+  color: var(--faint);
+  font-size: 11px;
+  font-style: normal;
+}
+.tab-index {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  background: white;
+  color: var(--faint);
+  font-weight: 780;
+  font-size: 12px;
+}
+.phase-tab.done .tab-index {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.phase-tab.active .tab-index {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+.phase-panels {
+  min-width: 0;
+}
 .setup-row,
 .panel {
   border: 1px solid var(--line);
@@ -372,6 +443,12 @@ button:disabled {
   margin: 0;
   color: var(--muted);
 }
+.phase-pane {
+  display: none;
+}
+.phase-pane.selected {
+  display: grid;
+}
 
 .side-panel {
   display: grid;
@@ -410,6 +487,17 @@ textarea {
 input:focus, select:focus, textarea:focus {
   outline: 2px solid #c9d8ff;
   border-color: var(--blue);
+}
+.model-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.model-custom {
+  margin-top: 8px;
+}
+.hidden {
+  display: none !important;
 }
 .inline-actions {
   display: flex;
@@ -450,9 +538,18 @@ input:focus, select:focus, textarea:focus {
   background: white;
   padding: 12px;
 }
+.log-entry.running { border-color: #ead2ad; background: #fffaf0; }
+.log-entry.success { border-color: #c8e3d3; background: #f7fcf9; }
+.log-entry.error { border-color: #efc4c4; background: #fff8f8; }
+.log-entry.ai { border-color: #c9d8ff; background: #f8fbff; }
 .log-entry strong {
   display: block;
   margin-bottom: 5px;
+}
+.log-meta {
+  color: var(--faint);
+  font-size: 11px;
+  margin-bottom: 6px;
 }
 .log-entry pre {
   margin: 0;
@@ -462,9 +559,87 @@ input:focus, select:focus, textarea:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
+.result-grid,
+.onboarding-list,
+.template-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.result-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.result-card,
+.check-row,
+.template-card,
+.timeline-entry {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 10px;
+}
+.result-card strong,
+.template-card strong {
+  display: block;
+  margin-bottom: 3px;
+}
+.result-card span,
+.template-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.check-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.check-state {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f0eee8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+.check-row.done .check-state {
+  background: var(--green);
+  color: white;
+}
+.timeline {
+  display: grid;
+  gap: 10px;
+}
+.timeline-entry {
+  position: relative;
+  padding-left: 36px;
+}
+.timeline-entry::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 15px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--blue);
+}
+.timeline-entry .item-meta {
+  word-break: break-word;
+}
+.template-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
 .command-form {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 10px;
   padding: 12px;
   border-top: 1px solid var(--line);
@@ -536,14 +711,94 @@ input:focus, select:focus, textarea:focus {
   color: var(--muted);
   padding: 7px 10px;
   font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 .chip:hover { color: var(--blue); border-color: #c9d8ff; }
+.chip.ready { border-color: #c8e3d3; color: var(--green); }
+.chip.preview { border-color: #ead2ad; color: var(--amber); }
+.chip-status,
+.command-badge,
+.artifact-state,
+.engine-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 760;
+  background: #f0eee8;
+  color: var(--muted);
+}
+.chip-status.ready,
+.command-badge.ready,
+.artifact-state.ok,
+.engine-state.ok {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.chip-status.preview,
+.command-badge.preview,
+.engine-state.warn {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.chip-status.advanced,
+.command-badge.advanced {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.chip-status.blocked,
+.command-badge.blocked,
+.artifact-state.missing,
+.engine-state.error {
+  background: var(--red-soft);
+  color: var(--red);
+}
 
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 20px;
   max-width: 1220px;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 1220px;
+}
+.dashboard-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 20px;
+  max-width: 1220px;
+  margin-top: 20px;
+}
+.stat {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px;
+}
+.stat-label {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.stat-value {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 780;
+}
+.stat-note {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .list {
   display: grid;
@@ -574,19 +829,68 @@ input:focus, select:focus, textarea:focus {
   text-align: center;
   padding: 24px;
 }
+.compact-empty {
+  min-height: 90px;
+  padding: 16px;
+}
+.settings-secret-list {
+  margin-top: 12px;
+}
+.setup-result {
+  margin-top: 18px;
+}
+.artifact-list,
+.command-catalog,
+.diagnostic-list {
+  display: grid;
+  gap: 8px;
+}
+.artifact-row,
+.command-row,
+.diagnostic-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: white;
+  padding: 10px;
+}
+.artifact-row .item-meta,
+.command-row .item-meta,
+.diagnostic-row .item-meta {
+  word-break: break-word;
+}
+.secret-location {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+.secret-location .item-meta {
+  word-break: break-word;
+}
 .gate-list {
   display: grid;
   gap: 8px;
 }
 .gate {
   display: grid;
-  grid-template-columns: 34px 1fr auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: white;
+}
+.gate-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .gate-id {
   width: 30px;
@@ -648,7 +952,9 @@ input:focus, select:focus, textarea:focus {
     display: none;
   }
   .guide-layout,
-  .split {
+  .split,
+  .dashboard-grid,
+  .dashboard-main {
     grid-template-columns: 1fr;
   }
   .topbar {
@@ -656,6 +962,9 @@ input:focus, select:focus, textarea:focus {
   }
   .main {
     padding: 16px;
+  }
+  .phase-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .topbar .pill {
     display: none;
@@ -711,18 +1020,20 @@ input:focus, select:focus, textarea:focus {
     </div>
 
     <nav class="nav">
-      <button type="button" class="active" data-view="guide">Guide</button>
+      <button type="button" class="active" data-view="guide">Chat</button>
+      <button type="button" data-view="dashboard">Dashboard</button>
       <button type="button" data-view="brain">Notes</button>
       <button type="button" data-view="history">History</button>
       <button type="button" data-view="settings">Settings</button>
+      <button type="button" data-view="help">Guide</button>
     </nav>
   </aside>
 
   <section class="workspace">
     <header class="topbar">
       <div class="crumb">
-        <div class="crumb-title" id="viewTitle">Guide</div>
-        <div class="crumb-sub" id="viewSubtitle">One clear next step at a time.</div>
+        <div class="crumb-title" id="viewTitle">Chat</div>
+        <div class="crumb-sub" id="viewSubtitle">AI chat, slash commands, and the next safe action.</div>
       </div>
       <div class="topbar-spacer"></div>
       <div class="pill" id="statusPill"><span class="pill-dot"></span><span>Setting up</span></div>
@@ -746,44 +1057,13 @@ input:focus, select:focus, textarea:focus {
               </div>
             </section>
 
-            <div class="board" id="guideChecklist">
-              <div class="setup-row" data-step-row="project">
-                <div class="setup-index">1</div>
-                <div>
-                  <h3>Project folder</h3>
-                  <p id="projectPath">No folder selected yet.</p>
-                </div>
-              </div>
-              <div class="setup-row" data-step-row="ai">
-                <div class="setup-index">2</div>
-                <div>
-                  <h3>AI connection</h3>
-                  <p id="keyStatus">Choose an AI service and save the key once.</p>
-                </div>
-              </div>
-              <div class="setup-row" data-step-row="status">
-                <div class="setup-index">3</div>
-                <div>
-                  <h3>Project check</h3>
-                  <p id="statusText">Not checked yet.</p>
-                </div>
-              </div>
-              <div class="setup-row" data-step-row="start">
-                <div class="setup-index">4</div>
-                <div>
-                  <h3>Next safe action</h3>
-                  <p id="nextActionText">The app will show this after setup.</p>
-                </div>
-              </div>
-            </div>
-
             <section class="command-panel">
               <div class="command-log" id="activityLog"></div>
               <div class="attachment-drop" id="attachmentDrop">
                 <div class="attachment-copy">
                   <div>
-                    <strong>Drop files here</strong>
-                    <div class="fine-print">Images, PDF, Office files, text, logs, code, and zip references. Secrets are blocked or redacted.</div>
+                    <strong>Attachments</strong>
+                    <div class="fine-print">Secrets are blocked or redacted before they reach AI.</div>
                   </div>
                   <button class="secondary small" type="button" id="attachmentPick">Choose files</button>
                 </div>
@@ -793,13 +1073,76 @@ input:focus, select:focus, textarea:focus {
               </div>
               <form class="command-form" id="commandForm">
                 <button class="secondary attach-button" type="button" id="attachmentButton" title="Attach files">+</button>
-                <input id="commandInput" autocomplete="off" placeholder="Ask SignalOS, or press the next button">
-                <button class="primary" type="submit">Run</button>
+                <input id="commandInput" autocomplete="off" placeholder="Ask AI or run /signal-status">
+                <button class="primary" type="submit">Send</button>
+                <button class="ghost" type="button" id="cancelCommand">Stop</button>
               </form>
               <div class="chips">
                 <button class="chip" type="button" data-command="/signal-status">Check project</button>
                 <button class="chip" type="button" data-command="/signal-init">Set up project</button>
                 <button class="chip" type="button" data-command="/signal-brain">Show notes</button>
+              </div>
+            </section>
+
+            <div class="board" id="guideChecklist">
+              <div class="phase-tabs" role="tablist" aria-label="Guide phases">
+                <button class="phase-tab" type="button" role="tab" data-step-row="project" data-step-tab="project" aria-controls="phase-project">
+                  <span class="tab-index">1</span>
+                  <span><strong>Project</strong><em>Folder</em></span>
+                </button>
+                <button class="phase-tab" type="button" role="tab" data-step-row="ai" data-step-tab="ai" aria-controls="phase-ai">
+                  <span class="tab-index">2</span>
+                  <span><strong>AI</strong><em>Connection</em></span>
+                </button>
+                <button class="phase-tab" type="button" role="tab" data-step-row="status" data-step-tab="status" aria-controls="phase-status">
+                  <span class="tab-index">3</span>
+                  <span><strong>Status</strong><em>Project check</em></span>
+                </button>
+                <button class="phase-tab" type="button" role="tab" data-step-row="start" data-step-tab="start" aria-controls="phase-start">
+                  <span class="tab-index">4</span>
+                  <span><strong>Start</strong><em>Next action</em></span>
+                </button>
+              </div>
+
+              <div class="phase-panels">
+                <div class="setup-row phase-pane" id="phase-project" role="tabpanel" data-step-row="project">
+                  <div class="setup-index">1</div>
+                  <div>
+                    <h3>Project folder</h3>
+                    <p id="projectPath">No folder selected yet.</p>
+                  </div>
+                </div>
+                <div class="setup-row phase-pane" id="phase-ai" role="tabpanel" data-step-row="ai">
+                  <div class="setup-index">2</div>
+                  <div>
+                    <h3>AI connection</h3>
+                    <p id="keyStatus">Choose an AI service and save the key once.</p>
+                  </div>
+                </div>
+                <div class="setup-row phase-pane" id="phase-status" role="tabpanel" data-step-row="status">
+                  <div class="setup-index">3</div>
+                  <div>
+                    <h3>Project check</h3>
+                    <p id="statusText">Not checked yet.</p>
+                  </div>
+                </div>
+                <div class="setup-row phase-pane" id="phase-start" role="tabpanel" data-step-row="start">
+                  <div class="setup-index">4</div>
+                  <div>
+                    <h3>Next safe action</h3>
+                    <p id="nextActionText">The app will show this after setup.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <section class="panel setup-result" id="setupResultPanel">
+              <h2>Project result</h2>
+              <div class="fine-print" id="setupResultMeta">Run setup or status to see what SignalOS changed in this project.</div>
+              <div class="artifact-list" id="setupArtifactList" style="margin-top:12px"></div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="runStatusFromResult">Run status</button>
+                <button class="ghost small" type="button" id="copyDiagnostics">Copy diagnostics</button>
               </div>
             </section>
           </div>
@@ -821,8 +1164,13 @@ input:focus, select:focus, textarea:focus {
                 <select id="providerSelect"></select>
               </div>
               <div class="field">
-                <label for="providerModel">Model</label>
-                <input id="providerModel" placeholder="Use provider default">
+                <label for="providerModelSelect">Model</label>
+                <div class="model-control">
+                  <select id="providerModelSelect"></select>
+                  <button class="secondary small" type="button" id="fetchModels">Fetch models</button>
+                </div>
+                <input id="providerModel" class="model-custom hidden" placeholder="Type model name">
+                <div class="fine-print" id="modelHelp">Fetch models from the selected AI service, or choose Other model.</div>
               </div>
               <div class="field" id="keyField">
                 <label for="providerKey">AI key</label>
@@ -837,10 +1185,62 @@ input:focus, select:focus, textarea:focus {
             </section>
 
             <section class="panel">
+              <h2>Commands</h2>
+              <div class="command-catalog" id="commandCatalog"></div>
+            </section>
+
+            <section class="panel">
               <h2>Project steps</h2>
+              <div class="field">
+                <label for="gateSigner">Signer name</label>
+                <input id="gateSigner" autocomplete="name" placeholder="Your name for gate signing">
+              </div>
               <div class="gate-list" id="gateList"></div>
             </section>
           </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-dashboard">
+        <div class="dashboard-grid">
+          <div class="stat">
+            <div class="stat-label">Project</div>
+            <div class="stat-value" id="dashboardProject">No project</div>
+            <div class="stat-note" id="dashboardProjectNote">Choose a folder to begin.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">AI</div>
+            <div class="stat-value" id="dashboardAi">Not connected</div>
+            <div class="stat-note" id="dashboardAiNote">Connect a provider before chat.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Engine</div>
+            <div class="stat-value" id="dashboardEngine">Unknown</div>
+            <div class="stat-note" id="dashboardEngineNote">Test the engine in Settings.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Next</div>
+            <div class="stat-value" id="dashboardNext">Setup</div>
+            <div class="stat-note" id="dashboardNextNote">SignalOS will show the next action.</div>
+          </div>
+        </div>
+
+        <div class="dashboard-main">
+          <section class="panel">
+            <h2>Current work</h2>
+            <div class="fine-print">Complete these proof points before using SignalOS as the project guide.</div>
+            <div class="onboarding-list" id="onboardingChecklist"></div>
+            <div class="gate-list" id="dashboardGateList"></div>
+          </section>
+          <section class="panel">
+            <h2>Project files</h2>
+            <div class="artifact-list" id="dashboardArtifactList"></div>
+            <div class="inline-actions">
+              <button class="secondary small" type="button" id="dashboardRunStatus">Run status</button>
+              <button class="ghost small" type="button" id="dashboardOpenChat">Open chat</button>
+              <button class="ghost small" type="button" id="dashboardExportHandoff">Export handoff</button>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -888,8 +1288,11 @@ input:focus, select:focus, textarea:focus {
           <section class="panel">
             <h2>Current status</h2>
             <div id="statusSummary" class="fine-print">No project status loaded yet.</div>
+            <div class="artifact-list" id="historyArtifactList" style="margin-top:12px"></div>
             <div class="inline-actions">
               <button class="secondary small" type="button" id="refreshButton">Refresh</button>
+              <button class="ghost small" type="button" id="exportHandoff">Export handoff</button>
+              <button class="ghost small" type="button" id="exportIssueReport">Export issue report</button>
             </div>
           </section>
         </div>
@@ -898,7 +1301,7 @@ input:focus, select:focus, textarea:focus {
       <section class="view" id="view-settings">
         <div class="split">
           <section class="panel">
-            <h2>Settings</h2>
+            <h2>Workspace</h2>
             <div class="item">
               <div class="item-title">Workspace</div>
               <div class="item-meta" id="settingsWorkspace">No project chosen</div>
@@ -906,21 +1309,159 @@ input:focus, select:focus, textarea:focus {
                 <button class="secondary small" type="button" id="settingsChooseProject">Choose folder</button>
               </div>
             </div>
+
             <div class="item">
-              <div class="item-title">AI service</div>
-              <div class="item-meta" id="settingsProvider">Not connected</div>
+              <div class="item-title">Updates</div>
+              <div class="item-meta" id="updateChannelSummary">Release channel is beta.</div>
+              <div class="field">
+                <label for="updateChannelSelect">Release channel</label>
+                <select id="updateChannelSelect">
+                  <option value="beta">Beta</option>
+                  <option value="stable">Stable</option>
+                </select>
+              </div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="settingsCheckUpdates">Check updates</button>
+              </div>
             </div>
+
             <div class="item">
-              <div class="item-title">Model</div>
-              <div class="item-meta" id="settingsModel">Not set</div>
+              <div class="item-title">AI connection</div>
+              <div class="item-meta">
+                <span id="settingsProvider">Not connected</span>
+                <span> . </span>
+                <span id="settingsModel">Not set</span>
+              </div>
+              <div class="field">
+                <label for="settingsProviderSelect">AI service</label>
+                <select id="settingsProviderSelect"></select>
+              </div>
+              <div class="field">
+                <label for="settingsProviderModelSelect">Model</label>
+                <div class="model-control">
+                  <select id="settingsProviderModelSelect"></select>
+                  <button class="secondary small" type="button" id="settingsFetchModels">Fetch models</button>
+                </div>
+                <input id="settingsProviderModel" class="model-custom hidden" placeholder="Type model name">
+                <div class="fine-print" id="settingsModelHelp">Fetch models from the selected AI service, or choose Other model.</div>
+              </div>
+              <div class="field" id="settingsKeyField">
+                <label for="settingsProviderKey">AI key</label>
+                <input id="settingsProviderKey" type="password" autocomplete="off" placeholder="Paste a new key to replace the saved key">
+              </div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="settingsSaveProvider">Save AI connection</button>
+                <button class="ghost small" type="button" id="settingsDeleteKey">Delete saved key</button>
+              </div>
+              <div class="fine-print" id="settingsProviderHelp">Keys are saved securely on this computer.</div>
+              <div class="fine-print" id="settingsKeyStorage">AI keys are stored in the operating system credential manager.</div>
             </div>
+
             <div class="item">
-              <div class="item-title">Cost</div>
+              <div class="item-title">Session cost</div>
               <div class="item-meta" id="settingsCost">$0.00 this session</div>
+              <div class="field">
+                <label for="budgetInput">Monthly budget USD</label>
+                <input id="budgetInput" type="number" min="0" step="1" placeholder="10">
+              </div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="saveBudget">Save budget</button>
+                <button class="ghost small" type="button" id="resetSessionCost">Reset session</button>
+              </div>
             </div>
+          </section>
+
+          <section class="panel">
+            <h2>Engine</h2>
+            <div class="diagnostic-list">
+              <div class="diagnostic-row">
+                <div>
+                  <div class="item-title">SignalOS engine</div>
+                  <div class="item-meta" id="engineDetails">Not checked yet.</div>
+                </div>
+                <span class="engine-state warn" id="engineStatus">Unknown</span>
+              </div>
+            </div>
+            <div class="inline-actions">
+              <button class="secondary small" type="button" id="testEngine">Test engine</button>
+              <button class="secondary small" type="button" id="restartEngine">Restart engine</button>
+              <button class="ghost small" type="button" id="copySettingsDiagnostics">Copy diagnostics</button>
+              <button class="ghost small" type="button" id="settingsExportIssueReport">Export issue report</button>
+            </div>
+
+            <h2 style="margin-top:18px">Secrets</h2>
             <div class="item">
-              <div class="item-title">Project secrets</div>
+              <div class="item-title">Project secret files</div>
               <div class="item-meta" id="settingsSecrets">Choose a project to check secrets.</div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="settingsRefreshSecrets">Refresh</button>
+              </div>
+            </div>
+            <div class="list settings-secret-list" id="settingsSecretList"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-help">
+        <div class="split">
+          <section class="panel">
+            <h2>First project journey</h2>
+            <div class="list">
+              <div class="item">
+                <div class="item-title">1. Choose a project folder</div>
+                <div class="item-meta">Pick the folder you will actually work in. SignalOS stores its local state inside that project.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">2. Connect AI</div>
+                <div class="item-meta">Select a provider, fetch models, choose a model, and test the connection. Keys stay in the operating system credential manager.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">3. Set up project</div>
+                <div class="item-meta">Run setup from Chat. Confirm the Project result panel shows the expected local files.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">4. Work from Dashboard</div>
+                <div class="item-meta">Use the current gate, next action, project files, and command results to move one step at a time.</div>
+              </div>
+            </div>
+
+            <h2 style="margin-top:18px">Project templates</h2>
+            <div class="template-grid" id="templateGrid"></div>
+          </section>
+          <section class="panel">
+            <h2>Recovery</h2>
+            <div class="list">
+              <div class="item">
+                <div class="item-title">AI not connected</div>
+                <div class="item-meta">Open Settings, fetch models, select a model, then save and test the connection.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">Engine failed</div>
+                <div class="item-meta">Open Settings, restart the engine, then run status again. Copy diagnostics if it still fails.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">Setup unclear</div>
+                <div class="item-meta">Run status and inspect Project result. Missing files are shown directly in the artifact list.</div>
+              </div>
+            </div>
+
+            <h2 style="margin-top:18px">Workflow recipes</h2>
+            <div class="list" id="recipeList"></div>
+
+            <h2 style="margin-top:18px">Local privacy mode</h2>
+            <div class="list">
+              <div class="item">
+                <div class="item-title">Use Ollama</div>
+                <div class="item-meta">Select Ollama, fetch local models, and keep cloud AI disconnected for local-only drafting.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">Do not attach secrets</div>
+                <div class="item-meta">Secret files are blocked or summarized, but users should still avoid putting credentials into chat.</div>
+              </div>
+              <div class="item">
+                <div class="item-title">Export redacted reports</div>
+                <div class="item-meta">Issue reports and handoff reports include state, paths, and errors, but not raw API keys.</div>
+              </div>
             </div>
           </section>
         </div>

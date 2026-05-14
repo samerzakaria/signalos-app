@@ -1,57 +1,131 @@
-/// sidecar.rs — Python subprocess manager
+/// sidecar.rs - Python subprocess manager
 ///
-/// Spawns the signalos Python CLI as a long-running sidecar process.
-/// All /signal-* commands are sent over stdin as JSON messages and
-/// responses are read from stdout. stderr is forwarded to the Tauri
-/// webview as log events.
-
+/// Runs the bundled SignalOS Core sidecar and exposes a restartable runtime for
+/// the desktop UI. All /signal-* commands are sent over stdin as JSON messages;
+/// responses are emitted back to the frontend as Tauri events.
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 
-/// A message sent to the Python sidecar over stdin
 #[derive(Serialize, Debug)]
 pub struct SidecarRequest {
-    pub id:      String,
+    pub id: String,
     pub command: String,
-    pub args:    Vec<String>,
-    pub cwd:     Option<String>,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
 }
 
-/// A response received from the Python sidecar over stdout
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SidecarResponse {
-    pub id:      String,
-    pub ok:      bool,
-    pub output:  Option<String>,
-    pub error:   Option<String>,
-    pub data:    Option<serde_json::Value>,
+    pub id: String,
+    pub ok: bool,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub data: Option<serde_json::Value>,
 }
 
-/// Global sidecar child handle (write side only; reads handled in spawn loop)
-static SIDECAR_TX: OnceLock<tokio::sync::mpsc::Sender<SidecarRequest>> = OnceLock::new();
+#[derive(Serialize, Clone, Debug)]
+pub struct SidecarRuntimeStatus {
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub generation: u64,
+    pub last_event: String,
+    pub last_error: Option<String>,
+    pub updated_at_ms: u128,
+}
+
+impl Default for SidecarRuntimeStatus {
+    fn default() -> Self {
+        Self {
+            running: false,
+            pid: None,
+            generation: 0,
+            last_event: "Not started".into(),
+            last_error: None,
+            updated_at_ms: now_ms(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum SidecarControl {
+    Request(SidecarRequest),
+    Stop,
+}
+
+struct SidecarManager {
+    tx: Mutex<Option<tokio::sync::mpsc::Sender<SidecarControl>>>,
+    status: Mutex<SidecarRuntimeStatus>,
+    next_generation: AtomicU64,
+}
+
+impl Default for SidecarManager {
+    fn default() -> Self {
+        Self {
+            tx: Mutex::new(None),
+            status: Mutex::new(SidecarRuntimeStatus::default()),
+            next_generation: AtomicU64::new(1),
+        }
+    }
+}
+
+static MANAGER: OnceLock<SidecarManager> = OnceLock::new();
+
+fn manager() -> &'static SidecarManager {
+    MANAGER.get_or_init(SidecarManager::default)
+}
 
 /// Spawn the Python sidecar and set up stdin/stdout IPC channels.
 pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
-    let shell = app.shell();
+    start_python_sidecar(app, false).await
+}
 
-    // The sidecar binary name must match tauri.conf.json → bundle.externalBin
-    // In dev, this resolves to `python3 -m signalos.ipc_server`
-    // In release, it resolves to the bundled `signalos-python` binary
+#[tauri::command]
+pub fn get_sidecar_status() -> SidecarRuntimeStatus {
+    manager().status.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub async fn restart_python_sidecar(app: AppHandle) -> Result<SidecarRuntimeStatus, String> {
+    stop_current_sidecar();
+    start_python_sidecar(&app, true)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(get_sidecar_status())
+}
+
+async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result<()> {
+    if replace_existing {
+        stop_current_sidecar();
+    } else if manager().tx.lock().unwrap().is_some() {
+        return Ok(());
+    }
+
+    let shell = app.shell();
     let (mut rx, mut child) = shell
         .sidecar("signalos-python")
         .context("Failed to find signalos-python sidecar")?
         .spawn()
         .context("Failed to spawn signalos-python")?;
 
-    let (tx, mut cmd_rx) = tokio::sync::mpsc::channel::<SidecarRequest>(64);
-    SIDECAR_TX.set(tx).ok();
+    let pid = child.pid();
+    let generation = manager().next_generation.fetch_add(1, Ordering::Relaxed);
+    let (tx, mut cmd_rx) = tokio::sync::mpsc::channel::<SidecarControl>(64);
+    *manager().tx.lock().unwrap() = Some(tx);
+    update_status(generation, |status| {
+        status.running = true;
+        status.pid = Some(pid);
+        status.last_event = "Engine started".into();
+        status.last_error = None;
+    });
 
+    let _ = app.emit("sidecar:status", get_sidecar_status());
     let app_emit = app.clone();
 
-    // Stdout reader — emit events back to frontend
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
         let mut stdout_buf = String::new();
@@ -66,6 +140,10 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
                             continue;
                         }
 
+                        update_status(generation, |status| {
+                            status.last_event = "Engine response received".into();
+                            status.last_error = None;
+                        });
                         if let Ok(resp) = serde_json::from_str::<SidecarResponse>(&line) {
                             let _ = app_emit.emit("sidecar:response", &resp);
                         } else {
@@ -76,15 +154,34 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
                 CommandEvent::Stderr(line) => {
                     let text = String::from_utf8_lossy(&line).to_string();
                     eprintln!("[signalos-py] {}", text);
+                    update_status(generation, |status| {
+                        status.last_event = "Engine diagnostic output".into();
+                    });
                     let _ = app_emit.emit("sidecar:stderr", &text);
                 }
                 CommandEvent::Error(e) => {
                     eprintln!("[sidecar] error: {}", e);
+                    update_status(generation, |status| {
+                        status.running = false;
+                        status.last_event = "Engine error".into();
+                        status.last_error = Some(e.clone());
+                    });
+                    clear_sender_if_generation(generation);
                     let _ = app_emit.emit("sidecar:error", &e);
+                    let _ = app_emit.emit("sidecar:status", get_sidecar_status());
                 }
                 CommandEvent::Terminated(status) => {
                     eprintln!("[sidecar] terminated: {:?}", status);
+                    update_status(generation, |runtime| {
+                        runtime.running = false;
+                        runtime.pid = None;
+                        runtime.last_event = "Engine terminated".into();
+                        runtime.last_error =
+                            status.code.map(|code| format!("Exited with code {code}"));
+                    });
+                    clear_sender_if_generation(generation);
                     let _ = app_emit.emit("sidecar:terminated", &status.code);
+                    let _ = app_emit.emit("sidecar:status", get_sidecar_status());
                     break;
                 }
                 _ => {}
@@ -92,12 +189,24 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
         }
     });
 
-    // Stdin writer — forward queued commands to Python
     tauri::async_runtime::spawn(async move {
         while let Some(req) = cmd_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&req) {
-                let line = format!("{}\n", json);
-                let _ = child.write(line.as_bytes());
+            match req {
+                SidecarControl::Request(req) => {
+                    if let Ok(json) = serde_json::to_string(&req) {
+                        let line = format!("{}\n", json);
+                        if let Err(error) = child.write(line.as_bytes()) {
+                            update_status(generation, |status| {
+                                status.last_event = "Engine stdin write failed".into();
+                                status.last_error = Some(error.to_string());
+                            });
+                        }
+                    }
+                }
+                SidecarControl::Stop => {
+                    let _ = child.kill();
+                    break;
+                }
             }
         }
     });
@@ -105,10 +214,44 @@ pub async fn spawn_python_sidecar(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// Send a command to the Python sidecar. Returns immediately — response
-/// arrives as a `sidecar:response` event on the frontend.
+fn stop_current_sidecar() {
+    if let Some(tx) = manager().tx.lock().unwrap().take() {
+        let _ = tx.try_send(SidecarControl::Stop);
+    }
+}
+
 pub fn send_command(req: SidecarRequest) -> Result<()> {
-    let tx = SIDECAR_TX.get().context("Sidecar not started")?;
-    tx.try_send(req).context("Sidecar command queue full")?;
+    let tx = manager()
+        .tx
+        .lock()
+        .unwrap()
+        .clone()
+        .context("Sidecar not started")?;
+    tx.try_send(SidecarControl::Request(req))
+        .context("Sidecar command queue full")?;
     Ok(())
+}
+
+fn update_status(generation: u64, update: impl FnOnce(&mut SidecarRuntimeStatus)) {
+    let mut status = manager().status.lock().unwrap();
+    if generation < status.generation {
+        return;
+    }
+    status.generation = generation;
+    status.updated_at_ms = now_ms();
+    update(&mut status);
+}
+
+fn clear_sender_if_generation(generation: u64) {
+    let current_generation = manager().status.lock().unwrap().generation;
+    if generation == current_generation {
+        *manager().tx.lock().unwrap() = None;
+    }
+}
+
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }

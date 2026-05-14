@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# update-manifest.sh — update a SignalOS update manifest locally
+# update-manifest.sh - update a SignalOS update manifest locally.
 #
 # Usage:
 #   ./scripts/update-manifest.sh <version> [stable|beta]
@@ -8,10 +8,9 @@
 #   ./scripts/update-manifest.sh 1.0.1
 #   ./scripts/update-manifest.sh 1.0.2-beta.1 beta
 #
-# The script writes distribution/update-manifest/latest.json (stable)
-# or distribution/update-manifest/beta.json (beta).
-# Signatures are left empty — they are filled by CI after the build artifacts
-# are available.
+# The script writes distribution/update-manifest/latest.json for stable
+# or distribution/update-manifest/beta.json for beta.
+# Signatures are left empty. CI fills them after build artifacts are available.
 
 set -euo pipefail
 
@@ -20,7 +19,6 @@ CHANNEL="${2:-stable}"
 DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 REPO="samerzakaria/signalos-app"
 
-# Read release notes for this version from CHANGELOG.md
 NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null | head -5 | tr '\n' ' ' || true)
 NOTES="${NOTES:-SignalOS v${VERSION}}"
 
@@ -33,28 +31,28 @@ fi
 cat > "$OUT" << EOF
 {
   "version": "$VERSION",
-  "notes":   "$NOTES",
+  "notes": "$NOTES",
   "pub_date": "$DATE",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_aarch64.dmg",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64.dmg",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url":       "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64-setup.exe",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/$REPO/releases/download/v$VERSION/signalos-app_${VERSION}_amd64.AppImage",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/signalos-app_${VERSION}_amd64.AppImage",
       "signature": ""
     }
   }
 }
 EOF
 
-echo "✓ Wrote $OUT (v$VERSION · channel: $CHANNEL)"
-echo "  Signatures are empty — CI will populate them from .sig release assets."
+echo "[OK] Wrote $OUT (v$VERSION, channel: $CHANNEL)"
+echo "Signatures are empty. CI will populate them from .sig release assets."

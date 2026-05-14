@@ -1,80 +1,176 @@
 # SignalOS App
 
-The SignalOS desktop application — a standalone AI governance runtime for non-technical founders.
+SignalOS App is the native desktop shell for the vendored SignalOS Core runtime. It is built for an installer-first workflow: an end user installs the app, chooses a separate project folder, connects an AI provider or local model, and uses SignalOS without this repository.
 
-No IDE required. Chat-first interface. Ships as a native app on macOS, Windows, and Linux.
+Current status: ready-to-sign installer candidate. The app-side first-run journey is implemented; code signing, notarization, release signatures, and clean-machine installer validation are release gates.
 
-## What it is
+## What It Does
 
-SignalOS App wraps the SignalOS Core governance engine in a native desktop UI. The desktop repository vendors the packaged Core runtime under `python/signalos_lib`, so release builds can be produced from this repo without checking out a separate private repository.
+- Chat-first workspace for plain AI questions and `/signal-*` commands.
+- Guided project setup with visible setup/status results and project artifacts.
+- Dashboard for project readiness, AI state, engine health, next action, gates, and files.
+- Gate signing UI with signer name and audit-oriented command output.
+- First-project proof checklist for project, AI, setup, status, first note, and first gate action.
+- Notes and Brain search for project memory.
+- Multi-provider AI setup with model fetch, model picker, and manual "Other model" entry.
+- OS keychain storage for API keys; raw keys are not shown after save.
+- Secret summary that shows risky file names and variable names without exposing values.
+- Engine diagnostics with ping, status, restart, and redacted diagnostic copy.
+- Redacted issue-report export and team handoff export into the selected project.
+- Project templates, workflow recipes, and local privacy guidance in the in-app guide.
+- Beta/stable update-channel preference for release checks.
+- Cost controls for session spend and monthly budget.
+- Release readiness script for local checks and unsigned installer builds.
 
-- **Chat interface** — talk to SignalOS in plain language
-- **Gate signing** — one-click G0–G5 with full audit trail
-- **Live dashboard** — wave health, phase debt, belief confidence
-- **Brain browser** — search every belief and decision ever made
-- **BYOK** — bring your own API key (Anthropic, OpenAI, Gemini, or Ollama)
-- **Cost meter** — see exactly what each session costs
+## End User Requirements
+
+An installed user should only need:
+
+- The SignalOS installer for their operating system.
+- A writable project folder.
+- An AI provider key, or Ollama running locally with a pulled model.
+- Network access for cloud AI providers.
+
+They should not need:
+
+- This `signalos-app` repository.
+- The separate SignalOS core repository.
+- Python installed system-wide.
+- Rust, Node, Cargo, Tauri, or build tools.
 
 ## Architecture
 
-```
+```text
 signalos-app/
-├── src/                  # Frontend (HTML/CSS/JS — rendered in OS webview)
-│   └── index.html        # Full app shell
-├── src-tauri/            # Rust backend (Tauri 2)
-│   ├── src/
-│   │   ├── main.rs       # App entry point
-│   │   ├── ipc.rs        # IPC command handlers
-│   │   ├── sidecar.rs    # Python subprocess manager
-│   │   └── keychain.rs   # OS keychain (macOS / Windows / Linux)
-│   ├── Cargo.toml
-│   └── tauri.conf.json   # Signing-ready config
-├── distribution/
-│   ├── landing/          # Download landing page
-│   └── update-manifest/  # Auto-update JSON manifests
-├── SIGNING.md            # Step-by-step signing checklist
-└── README.md
+|-- src/                         Frontend app shell
+|   |-- index.html               HTML/CSS UI
+|   `-- js/
+|       |-- app.js               Workspace behavior
+|       `-- ipc.js               Tauri IPC wrapper and browser mock
+|-- src-tauri/                   Rust backend (Tauri 2)
+|   |-- src/
+|   |   |-- main.rs              App entry point and command registration
+|   |   |-- ipc.rs               Project, AI, notes, command, and artifact IPC
+|   |   |-- provider.rs          AI provider integration
+|   |   |-- sidecar.rs           Python SignalOS Core sidecar manager
+|   |   `-- keychain.rs          OS credential storage
+|   |-- Cargo.toml
+|   `-- tauri.conf.json          App, bundle, signing, and updater config
+|-- python/                      Vendored SignalOS Core runtime
+|-- distribution/
+|   |-- landing/                 Download landing page
+|   `-- update-manifest/         Beta/latest updater manifests
+|-- docs/
+|   `-- SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md
+|-- scripts/
+|   |-- bundle-sidecar.ps1       Build the bundled Python sidecar
+|   |-- verify-release.ps1       Local release readiness checks
+|   |-- test-installer.ps1       Windows manual installed-app checklist
+|   `-- test-installer.sh        Cross-platform manual installed-app checklist
+|-- SIGNING.md                   Signing and notarization checklist
+`-- README.md
 ```
 
-**Tauri 2** (Rust) — native window, IPC, OS keychain, auto-updater  
-**Python sidecar** — the existing SignalOS Core CLI spawned as a subprocess  
-**OS webview** — WKWebView (macOS), WebView2 (Windows), WebKitGTK (Linux)
+Tauri owns the native window, menus, IPC, updater, and OS integration. The Rust backend launches the bundled Python sidecar and keeps AI keys in the OS credential store. The webview frontend provides the installed-user journey.
 
 ## Development
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs) stable toolchain
-- [Node.js](https://nodejs.org) 18+
-- Python 3.11+ with SignalOS Core installed
-- Tauri CLI: `cargo install tauri-cli`
+- Rust stable toolchain.
+- Node.js 18+.
+- Python 3.11+ for sidecar bundling and local development.
+- Tauri CLI: `cargo install tauri-cli`.
 
-### Run in dev mode
+### Run The App
 
-```bash
-# Install frontend deps (none currently — vanilla JS)
-# Start the Tauri dev server
+```powershell
 cargo tauri dev
 ```
 
-### Build for release
+The browser mock can be opened directly from `src/index.html`, but real app behavior should be verified through Tauri because keychain, sidecar, updater, and file opening are native features.
 
-```bash
-cargo tauri build
+### Verify Release Readiness
+
+Run the local readiness checks:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1
 ```
 
-Unsigned binaries are produced by default. See [SIGNING.md](SIGNING.md) to enable code signing.
+Build unsigned local installer bundles:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BuildInstaller -SmokeInstalledBuild -InstallNsisSmoke
+```
+
+Expected Windows outputs:
+
+```text
+src-tauri/target/release/bundle/nsis/SignalOS_0.0.7_x64-setup.exe
+src-tauri/target/release/bundle/msi/SignalOS_0.0.7_x64_en-US.msi
+```
+
+Run the local unsigned package smoke again without rebuilding, if needed:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -SmokeInstalledBuild -InstallNsisSmoke
+```
+
+If the smoke command reports that SignalOS is already running, close SignalOS and retry.
+
+Run the installer-only runtime smoke:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -InstalledRuntimeSmoke
+```
+
+Run live provider validation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -LiveProviderValidation
+```
+
+Validate local and remote release URLs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -ValidateRemoteReleaseUrls
+```
+
+Run the manual installed-app checklist on a clean Windows machine or VM:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-installer.ps1
+```
 
 ## Signing
 
-The app is **signing-ready** — all configuration placeholders are in `tauri.conf.json`. See [SIGNING.md](SIGNING.md) for the exact accounts, certificates, and CI secrets needed to enable signed builds for macOS and Windows.
+The product is ready to sign, but signing is intentionally not completed in this stage. See [SIGNING.md](SIGNING.md) for certificates, notarization, updater signing, and CI secrets.
+
+Do not describe a build as public beta until signed packages and signed update manifests have been validated from a tagged release.
 
 ## Distribution
 
-Releases are hosted on GitHub Releases. The auto-updater checks `https://cdn.signalos.io/updates/{{target}}/{{arch}}/latest.json` on every launch.
+Updater manifests live in:
 
-The landing page lives in `distribution/landing/index.html`.
+```text
+distribution/update-manifest/beta.json
+distribution/update-manifest/latest.json
+```
+
+The Tauri updater is wired to those checked-in manifest paths. Release signatures must be populated during the signed release process.
+
+## Reference
+
+The installed-app product review, user guide, roadmap, and acceptance checklist are in [docs/SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md](docs/SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md).
+
+Additional operating docs:
+
+- [User Guide](docs/USER_GUIDE.md)
+- [Release Operator Guide](docs/RELEASE_OPERATOR_GUIDE.md)
+- [Provider Validation Guide](docs/PROVIDER_VALIDATION_GUIDE.md)
+- [Clean-Machine Validation](docs/CLEAN_MACHINE_VALIDATION.md)
 
 ## License
 
-Proprietary — © 2026 SignalOS
+Proprietary - Copyright 2026 SignalOS

@@ -1,5 +1,5 @@
-/**
- * ipc.js — Frontend ↔ Tauri bridge
+﻿/**
+ * ipc.js - Frontend â†” Tauri bridge
  *
  * Wraps all Tauri invoke() calls in typed async functions.
  * Falls back to mock data when running outside Tauri (browser dev mode).
@@ -35,7 +35,7 @@ async function invoke(cmd, args = {}) {
   if (IS_TAURI) {
     return invokeTauri(cmd, args);
   }
-  // Browser mock — returns plausible data for UI development
+  // Browser mock - returns plausible data for UI development
   return mockInvoke(cmd, args);
 }
 
@@ -69,7 +69,14 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000) {
   });
 }
 
-// ─── WORKSPACE ────────────────────────────────────────────────────────────────
+function rejectPendingSidecars(message = "Command stopped by user.") {
+  for (const [, pending] of pendingSidecar.entries()) {
+    pending.reject(new Error(message));
+  }
+  pendingSidecar.clear();
+}
+
+// â”€â”€â”€ WORKSPACE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const workspace = {
   set:      (path)         => invoke("set_workspace",           { path }),
@@ -78,18 +85,32 @@ export const workspace = {
   startWatch: ()           => invoke("start_workspace_watch"),
 };
 
+export const project = {
+  artifacts: () => invoke("get_project_artifacts"),
+  openPath: (relativePath) => invoke("open_workspace_path", { relative_path: relativePath }),
+  exportFile: (kind, filename, content) =>
+    invoke("write_workspace_export", { kind, filename, content }),
+};
+
 // Listen for workspace file-system change events (T1-4)
 export function onWorkspaceChange(cb) {
   if (!IS_TAURI || typeof listenTauri !== "function") return () => {};
   return listenTauri("workspace:changed", (e) => cb(e.payload));
 }
 
-// ─── SIGNAL COMMANDS ──────────────────────────────────────────────────────────
+// â”€â”€â”€ SIGNAL COMMANDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const signal = {
   run: (command, args = []) => invoke("run_signal_command", { command, args }),
   runAndWait: (command, args = [], timeoutMs = 120000) =>
     invokeSidecar("run_signal_command", { command, args }, timeoutMs),
+  cancelPending: (message) => rejectPendingSidecars(message),
+};
+
+export const engine = {
+  ping: () => invokeSidecar("run_signal_command", { command: "ping", args: [] }, 8000),
+  status: () => invoke("get_sidecar_status"),
+  restart: () => invoke("restart_python_sidecar"),
 };
 
 // Listen for async sidecar responses
@@ -103,39 +124,39 @@ export function onSidecarLog(cb) {
   return listenTauri("sidecar:log", (e) => cb(e.payload));
 }
 
-// ─── AUTO-UPDATER (T1-5) ─────────────────────────────────────────────────────
+// â”€â”€â”€ AUTO-UPDATER (T1-5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const updater = {
-  check: () => invoke("check_for_updates"),
+  check: (channel = "beta") => invoke("check_for_updates", { channel }),
 };
 
-// ─── WAVE STATE ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ WAVE STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const wave = {
   get: () => invokeSidecar("get_wave_state"),
 };
 
-// ─── GIT / WORKTREE ───────────────────────────────────────────────────────────
+// â”€â”€â”€ GIT / WORKTREE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const git = {
   status: () => invoke("get_git_status"),
 };
 
-// ─── GATES ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ GATES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const gates = {
   getAll: ()                    => invokeSidecar("get_gate_status"),
   sign:   (gateId, signer)      => invokeSidecar("sign_gate", { gate_id: gateId, signer }),
 };
 
-// ─── BRAIN ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ BRAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const brain = {
   search: (query)                => invokeSidecar("get_brain_entries",  { query }),
   add:    (text, entryType)      => invokeSidecar("add_brain_entry",    { text, entry_type: entryType }),
 };
 
-// ─── AUDIT ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ AUDIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const audit = {
   list: (limit = 50) => invokeSidecar("get_audit_trail", { limit }),
@@ -153,13 +174,13 @@ export const attachments = {
   ),
 };
 
-// ─── PROVIDER + COST ──────────────────────────────────────────────────────────
+// â”€â”€â”€ PROVIDER + COST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const provider = {
   list:         ()              => invoke("list_providers"),
   getActive:    ()              => invoke("get_active_provider"),
   setActive:    (p)             => invoke("set_active_provider",      { provider: p }),
-  // Model + pricing are user-configurable — persisted to providers.json, never hardcoded
+  // Model + pricing are user-configurable - persisted to providers.json, never hardcoded
   setModel:     (p, model)      => invoke("set_provider_model",       { provider: p, model }),
   setPricing:   (p, i, o)       => invoke("set_provider_pricing",     { provider: p, price_in_1m: i, price_out_1m: o }),
   getCost:      ()              => invoke("get_cost_state"),
@@ -168,9 +189,12 @@ export const provider = {
   setBudget:    (usd)           => invoke("set_monthly_budget",       { budget_usd: usd }),
   // Fetch live model list from provider API (requires api_key for cloud providers)
   fetchModels:  (p, apiKey)     => invoke("fetch_provider_models",   { provider: p, api_key: apiKey || null }),
+  test:         (p, apiKey)     => invoke("test_provider_connection", { provider: p, api_key: apiKey || null }),
+  chat:         (p, model, message) =>
+    invoke("send_provider_message", { provider: p, model: model || null, message }),
 };
 
-// ─── KEYCHAIN ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ KEYCHAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const keychain = {
   store:  (p, key) => invoke("store_api_key",  { provider: p, key }),
@@ -178,7 +202,7 @@ export const keychain = {
   delete: (p)      => invoke("delete_api_key", { provider: p }),
 };
 
-// ─── MOCK DATA (browser dev mode) ─────────────────────────────────────────────
+// â”€â”€â”€ MOCK DATA (browser dev mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function mockInvoke(cmd, args) {
   const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,7 +210,38 @@ function mockInvoke(cmd, args) {
     switch (cmd) {
       case "get_workspace":       return null;
       case "get_active_provider": return "anthropic";
-      // Mock provider list — model names match providers.json defaults.
+      case "get_sidecar_status": return {
+        running: true,
+        pid: 12345,
+        generation: 1,
+        last_event: "Engine started",
+        last_error: null,
+        updated_at_ms: Date.now(),
+      };
+      case "restart_python_sidecar": return {
+        running: true,
+        pid: 12346,
+        generation: 2,
+        last_event: "Engine restarted",
+        last_error: null,
+        updated_at_ms: Date.now(),
+      };
+      case "get_project_artifacts": return {
+        workspace: "Browser preview",
+        initialized: true,
+        artifacts: [
+          { name: "Runtime state", path: ".signalos", kind: "folder", exists: true, detail: "Local SignalOS runtime folder is present." },
+          { name: "Wave plan", path: "core/strategy/PLAN.md", kind: "file", exists: true, detail: "Project plan is present." },
+          { name: "Command library", path: "core/execution/commands", kind: "folder", exists: true, detail: "49 command definition files found." },
+          { name: "IDE integrations", path: "integrations", kind: "folder", exists: true, detail: "IDE integration files are present." },
+        ],
+      };
+      case "open_workspace_path": return null;
+      case "write_workspace_export": return {
+        relative_path: `.signalos/${args.kind || "exports"}/${args.filename || "signalos-export.md"}`,
+        absolute_path: `Browser preview/${args.filename || "signalos-export.md"}`,
+      };
+      // Mock provider list - model names match providers.json defaults.
       // In the real app these come from the user's providers.json, not this file.
       case "list_providers": return [
         { id: "anthropic", name: "Anthropic Claude", model: "claude-sonnet-4-6",  needs_key: true,  price_in_1m: 3.00,  price_out_1m: 15.00 },
@@ -217,7 +272,7 @@ function mockInvoke(cmd, args) {
       case "get_audit_trail":         return [];
       case "get_gate_status":         return null;
       case "get_wave_state":          return null;
-      case "check_for_updates":       return { available: false };
+      case "check_for_updates":       return { available: false, channel: args.channel || "beta" };
       case "start_workspace_watch":   return null;
       case "run_signal_command":
         if (args.command === "attachment:analyze") {
@@ -232,6 +287,18 @@ function mockInvoke(cmd, args) {
               : "File checked. Secret values are not shown in browser preview mode.",
             redacted: true,
           }));
+        }
+        if (args.command === "ping") {
+          return { pong: true, version: "0.0.7" };
+        }
+        if (args.command === "/signal-init") {
+          return "SignalOS project bootstrapped. Created .signalos runtime state, core strategy plan, command definitions, and IDE integrations.";
+        }
+        if (args.command === "/signal-status") {
+          return "SignalOS status loaded. Phase: Onboarding. Next action: edit core/strategy/PLAN.md.";
+        }
+        if (args.command === "/signal-brain") {
+          return "No notes yet.";
         }
         return null;
       // Mock model lists for browser dev mode
@@ -268,6 +335,16 @@ function mockInvoke(cmd, args) {
         }
         return [];
       }
+      case "test_provider_connection":
+        return { ok: true, message: "Provider responded in browser preview mode.", model_count: 3 };
+      case "send_provider_message":
+        return {
+          text: `Browser preview response for: ${args.message || ""}`,
+          tokens_in: 12,
+          tokens_out: 18,
+          provider: args.provider,
+          model: args.model || "",
+        };
       default:                  return null;
     }
   });
