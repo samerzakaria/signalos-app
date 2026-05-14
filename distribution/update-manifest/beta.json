@@ -1,7 +1,7 @@
 {
   "version": "0.0.7",
   "notes":   " ### Standalone app repo  ",
-  "pub_date": "2026-05-13T22:40:26Z",
+  "pub_date": "2026-05-14T14:12:53Z",
   "platforms": {
     "darwin-aarch64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v0.0.7/SignalOS_0.0.7_aarch64.dmg",
