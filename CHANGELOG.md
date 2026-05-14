@@ -33,6 +33,7 @@
 - Fixed manual release dispatch so the requested version is used for release notes, asset names, release tags, and manifest generation instead of accidentally using the branch name.
 - Reworked the landing page to describe the ready-to-sign installer candidate state without public-beta overclaiming.
 - Verified local checks on Windows: `node --check`, `cargo check`, `cargo test`, Python tests, unsigned NSIS/MSI bundle generation, unsigned installed-build smoke, installer-only runtime smoke, local Ollama live-provider validation, and release URL validation.
+- Verified CI release workflow for beta `0.0.7`, including Windows unsigned installer smoke and Linux package artifact verification.
 
 ## [0.0.7] - 2026-05-14
 

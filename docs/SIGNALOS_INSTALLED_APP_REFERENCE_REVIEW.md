@@ -123,6 +123,7 @@ Completed in `signalos-app` on 2026-05-14:
 - Local Ollama live-provider validation passed on 2026-05-14. Evidence: `docs/release-evidence/live-providers-local.md`.
 - Local release URL validation passed for checked-in files and recorded the pre-publish private-raw 404s on 2026-05-14. Evidence: `docs/release-evidence/release-urls-local.md`.
 - Remote release URL validation passed on 2026-05-14 after moving update manifests to GitHub Pages. Evidence: `docs/release-evidence/release-urls-remote.md`.
+- CI release workflow passed for `version=0.0.7`, `channel=beta` on 2026-05-14. Evidence: `docs/release-evidence/ci-release-0.0.7-beta.md`.
 
 ## What Is Still Missing In App Code
 
@@ -136,7 +137,6 @@ The app-side installed-user journey is implemented in this repository. The items
 - Windows setup/chat/update-check/upgrade/uninstall validation outside the development machine.
 - Signed Windows installer and Windows reputation validation.
 - macOS signed and notarized build validation.
-- Linux packaged build validation from the Linux release job. The workflow now checks Linux artifacts, but a release run must complete to prove the current Linux packages.
 - Signed release manifests generated from a real tagged release.
 - Auto-update validation from an older signed build to a newer signed build.
 - Real next-project trial using only the installer, with no source repo available. A synthetic temp-project runtime trial passed locally; the human trial remains external.
