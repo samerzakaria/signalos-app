@@ -90,6 +90,13 @@ export const project = {
   openPath: (relativePath) => invoke("open_workspace_path", { relative_path: relativePath }),
   exportFile: (kind, filename, content) =>
     invoke("write_workspace_export", { kind, filename, content }),
+  writeFiles: (files, overwrite = true) =>
+    invoke("write_workspace_files", { files, overwrite }),
+};
+
+export const secrets = {
+  upsert: (name, value, filename = ".env.local") =>
+    invoke("upsert_workspace_secret", { name, value, filename }),
 };
 
 // Listen for workspace file-system change events (T1-4)
@@ -241,6 +248,18 @@ function mockInvoke(cmd, args) {
         relative_path: `.signalos/${args.kind || "exports"}/${args.filename || "signalos-export.md"}`,
         absolute_path: `Browser preview/${args.filename || "signalos-export.md"}`,
       };
+      case "write_workspace_files": return {
+        files: (args.files || []).map((file) => ({
+          relative_path: file.path,
+          absolute_path: `Browser preview/${file.path}`,
+          bytes: String(file.content || "").length,
+        })),
+      };
+      case "upsert_workspace_secret": return {
+        relative_path: args.filename || ".env.local",
+        absolute_path: `Browser preview/${args.filename || ".env.local"}`,
+        bytes: 24,
+      };
       // Mock provider list - model names match providers.json defaults.
       // In the real app these come from the user's providers.json, not this file.
       case "list_providers": return [
@@ -289,7 +308,7 @@ function mockInvoke(cmd, args) {
           }));
         }
         if (args.command === "ping") {
-          return { pong: true, version: "0.0.7" };
+          return { pong: true, version: "0.0.8" };
         }
         if (args.command === "/signal-init") {
           return "SignalOS project bootstrapped. Created .signalos runtime state, core strategy plan, command definitions, and IDE integrations.";

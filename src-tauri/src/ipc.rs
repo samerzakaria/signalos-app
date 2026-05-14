@@ -3,7 +3,7 @@
 /// Every function here is exposed to the frontend via invoke().
 /// All file writes are validated against the sandbox boundary before execution.
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -90,6 +90,24 @@ pub struct ProjectArtifacts {
 pub struct WorkspaceExport {
     pub relative_path: String,
     pub absolute_path: String,
+}
+
+#[derive(Deserialize)]
+pub struct WorkspaceFileInput {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceFileWrite {
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub bytes: usize,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceFileWriteResult {
+    pub files: Vec<WorkspaceFileWrite>,
 }
 
 #[tauri::command]
@@ -275,6 +293,153 @@ pub fn write_workspace_export(
     Ok(WorkspaceExport {
         relative_path,
         absolute_path: target.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn write_workspace_files(
+    files: Vec<WorkspaceFileInput>,
+    overwrite: bool,
+    state: State<WorkspaceState>,
+) -> Result<WorkspaceFileWriteResult, String> {
+    if files.is_empty() {
+        return Err("No files were generated.".into());
+    }
+    if files.len() > 40 {
+        return Err("Too many files at once. Keep generated projects under 40 files.".into());
+    }
+
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+
+    let workspace_root = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+
+    let mut total_bytes = 0usize;
+    let mut planned: Vec<(PathBuf, String, String)> = Vec::new();
+
+    for file in files {
+        let rel = normalize_workspace_file_path(&file.path)?;
+        if is_reserved_generated_path(&rel) {
+            return Err(format!(
+                "Refused to write {rel}. SignalOS system folders and secret files are managed separately."
+            ));
+        }
+
+        let bytes = file.content.as_bytes().len();
+        if bytes > 400_000 {
+            return Err(format!("{rel} is too large. Keep generated files under 400 KB."));
+        }
+        total_bytes += bytes;
+        if total_bytes > 2_000_000 {
+            return Err("Generated project is too large. Keep the first build under 2 MB.".into());
+        }
+
+        let target = workspace_root.join(&rel);
+        if let Some(parent) = target.parent() {
+            if parent.exists() {
+                let parent_root = parent
+                    .canonicalize()
+                    .map_err(|e| format!("Cannot resolve target folder: {e}"))?;
+                if !parent_root.starts_with(&workspace_root) {
+                    return Err(format!("Refused to write outside workspace: {rel}"));
+                }
+            }
+        }
+        if target.exists() && !overwrite {
+            return Err(format!("{rel} already exists."));
+        }
+        planned.push((target, rel, file.content));
+    }
+
+    let mut written = Vec::new();
+    for (target, rel, content) in planned {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Could not create folder for {rel}: {e}"))?;
+        }
+        std::fs::write(&target, content.as_bytes())
+            .map_err(|e| format!("Could not write {rel}: {e}"))?;
+        written.push(WorkspaceFileWrite {
+            relative_path: rel,
+            absolute_path: target.to_string_lossy().to_string(),
+            bytes: content.as_bytes().len(),
+        });
+    }
+
+    Ok(WorkspaceFileWriteResult { files: written })
+}
+
+#[tauri::command]
+pub fn upsert_workspace_secret(
+    name: String,
+    value: String,
+    filename: Option<String>,
+    state: State<WorkspaceState>,
+) -> Result<WorkspaceFileWrite, String> {
+    let key = normalize_secret_name(&name)?;
+    if value.len() > 20_000 {
+        return Err("Secret value is too large.".into());
+    }
+
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+
+    let workspace_root = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+    let file_name = filename
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(".env.local");
+    let safe_filename = normalize_secret_filename(file_name)?;
+    let target = workspace_root.join(&safe_filename);
+
+    if !target.starts_with(&workspace_root) {
+        return Err("Refused to write a secret outside the workspace.".into());
+    }
+
+    let existing = std::fs::read_to_string(&target).unwrap_or_default();
+    let mut found = false;
+    let mut lines: Vec<String> = existing
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                return line.to_string();
+            }
+            if let Some((left, _)) = trimmed.split_once('=') {
+                if left.trim() == key {
+                    found = true;
+                    return format!("{key}={}", quote_env_value(&value));
+                }
+            }
+            line.to_string()
+        })
+        .collect();
+    if !found {
+        lines.push(format!("{key}={}", quote_env_value(&value)));
+    }
+    let mut content = lines.join("\n");
+    content.push('\n');
+
+    std::fs::write(&target, content.as_bytes())
+        .map_err(|e| format!("Could not save secret to {safe_filename}: {e}"))?;
+
+    Ok(WorkspaceFileWrite {
+        relative_path: safe_filename,
+        absolute_path: target.to_string_lossy().to_string(),
+        bytes: content.len(),
     })
 }
 
@@ -573,9 +738,7 @@ pub async fn check_for_updates(channel: Option<String>) -> Result<serde_json::Va
     } else {
         "beta.json"
     };
-    let url = format!(
-        "https://raw.githubusercontent.com/samerzakaria/signalos-app/main/distribution/update-manifest/{manifest}"
-    );
+    let url = format!("https://samerzakaria.github.io/signalos-app/update-manifest/{manifest}");
     let current_version = env!("CARGO_PKG_VERSION");
 
     let response = match reqwest::get(&url).await {
@@ -737,6 +900,94 @@ fn sanitize_filename(value: &str) -> Option<String> {
     }
 }
 
+fn normalize_workspace_file_path(value: &str) -> Result<String, String> {
+    let cleaned = value.replace('\\', "/");
+    let cleaned = cleaned.trim().trim_start_matches('/').to_string();
+    if cleaned.is_empty() {
+        return Err("Generated file path is empty.".into());
+    }
+    if cleaned.len() > 180 {
+        return Err(format!("Generated file path is too long: {cleaned}"));
+    }
+    if cleaned.contains('\0') || cleaned.contains(':') {
+        return Err(format!("Invalid generated file path: {cleaned}"));
+    }
+
+    let mut parts = Vec::new();
+    for part in cleaned.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(format!("Generated file escapes the workspace: {cleaned}"));
+        }
+        let safe: String = part
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+            .take(80)
+            .collect();
+        let safe = safe.trim().to_string();
+        if safe.is_empty() || safe == "." || safe == ".." {
+            return Err(format!("Invalid generated file path segment in {cleaned}"));
+        }
+        parts.push(safe);
+    }
+    if parts.is_empty() {
+        return Err("Generated file path is empty.".into());
+    }
+    Ok(parts.join("/"))
+}
+
+fn is_reserved_generated_path(rel: &str) -> bool {
+    let lower = rel.to_ascii_lowercase();
+    lower == ".env"
+        || lower.starts_with(".env.")
+        || lower.starts_with(".signalos/")
+        || lower.starts_with("core/")
+        || lower.starts_with("integrations/")
+        || lower.starts_with(".git/")
+        || lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.ends_with(".p12")
+        || lower.ends_with(".pfx")
+}
+
+fn normalize_secret_name(value: &str) -> Result<String, String> {
+    let key = value.trim().to_ascii_uppercase();
+    if key.is_empty() {
+        return Err("Secret name is required.".into());
+    }
+    if key.len() > 80
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        || key.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
+        return Err("Use a secret name like OPENAI_API_KEY or DATABASE_URL.".into());
+    }
+    Ok(key)
+}
+
+fn normalize_secret_filename(value: &str) -> Result<String, String> {
+    let cleaned = value.trim().replace('\\', "/");
+    if cleaned.contains('/') || cleaned.contains("..") {
+        return Err("Secrets can only be saved to a local .env file in the project root.".into());
+    }
+    if cleaned == ".env" || cleaned.starts_with(".env.") {
+        return Ok(cleaned);
+    }
+    Err("Secrets must be saved to .env, .env.local, or another .env.* file.".into())
+}
+
+fn quote_env_value(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,5 +1132,31 @@ mod tests {
             sanitize_path_segment("../audit logs").as_deref(),
             Some("auditlogs")
         );
+    }
+
+    #[test]
+    fn generated_file_paths_are_normalized() {
+        assert_eq!(
+            normalize_workspace_file_path("src\\app.js").unwrap(),
+            "src/app.js"
+        );
+        assert!(normalize_workspace_file_path("../escape.js").is_err());
+        assert!(is_reserved_generated_path(".signalos/state.json"));
+        assert!(is_reserved_generated_path(".env.local"));
+    }
+
+    #[test]
+    fn secret_names_and_files_are_limited() {
+        assert_eq!(
+            normalize_secret_name("openai_api_key").unwrap(),
+            "OPENAI_API_KEY"
+        );
+        assert!(normalize_secret_name("1BAD").is_err());
+        assert_eq!(
+            normalize_secret_filename(".env.local").unwrap(),
+            ".env.local"
+        );
+        assert!(normalize_secret_filename("../.env").is_err());
+        assert_eq!(quote_env_value("a\"b"), "\"a\\\"b\"");
     }
 }

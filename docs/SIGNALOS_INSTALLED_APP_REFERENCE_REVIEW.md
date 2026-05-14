@@ -71,8 +71,11 @@ These were the major product gaps found during the installed-app review:
 Completed in `signalos-app` on 2026-05-14:
 
 - Workspace scrolling was fixed so the user can move through the screen.
-- The Guide was changed to phase tabs so old phases no longer dominate the page.
-- Chat is now the primary first screen.
+- The first screen is now Build, not a crowded all-in-one guide.
+- Build turns a plain app request into real static project files instead of dumping scaffold text into chat.
+- Project, Chat, Secrets, Dashboard, Settings, and History are separate surfaces.
+- Chat now routes build requests back to Build instead of pretending a text answer created files.
+- `signalos signal-*` input is routed as a command instead of normal AI chat.
 - Chat and command results persist per project folder.
 - Slash commands show running/progress state.
 - Long-running command work can be stopped by restarting the engine.
@@ -90,8 +93,9 @@ Completed in `signalos-app` on 2026-05-14:
 - Gate signing is visible in the UI and accepts a signer name.
 - AI setup supports provider selection, key save, fetched models, model picker, and manual "Other model" entry.
 - AI readiness requires a real provider test.
-- Settings exposes project, provider, model, key replacement, saved-key delete, secrets summary, engine diagnostics, and budget controls.
-- Secrets are summarized without exposing raw values.
+- Settings exposes provider, model, key replacement, saved-key delete, engine diagnostics, updates, and budget controls.
+- Secrets has a dedicated page for saving `.env.local`, `.env`, or `.env.development` values without exposing raw values.
+- Project secret values are written locally through a sandboxed app command and are not sent to AI prompts.
 - Engine diagnostics include status, ping, restart, and redacted diagnostic copy.
 - Session and monthly budget controls were added.
 - The updater endpoint now points to beta/latest manifests hosted through GitHub Pages, so private-repo raw GitHub URLs are not required by installed apps.

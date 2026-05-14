@@ -20,18 +20,21 @@ This guide is for a user who has only the installed SignalOS App and a project f
 5. Fetch models.
 6. Select a fetched model, or choose Other model and type one.
 7. Save and test the AI connection.
-8. Run `/signal-init`.
-9. Confirm the Project result panel shows `.signalos/` and `core/strategy/PLAN.md`.
-10. Run `/signal-status`.
+8. Open Build.
+9. Describe the app you want.
+10. Press Build app.
+11. Open `index.html` from the Build result.
+12. Use Project if you also want SignalOS governance files and `/signal-status`.
 
 ## Main Views
 
-- Chat: ask AI questions and run `/signal-*` commands.
+- Build: describe an app and write the first working static files into the selected project folder.
+- Project: choose the folder, connect AI, check setup, and inspect project files.
+- Chat: ask AI questions and run `/signal-*` commands. Build requests are moved to Build instead of returning walls of code.
 - Dashboard: see project readiness, AI state, engine state, gates, files, and the first-project checklist.
-- Notes: save and search decisions, assumptions, QA evidence, and session notes.
+- Secrets: add or update `.env.local` values without showing the values back in the UI or sending them to AI.
+- Settings: manage AI provider, model, saved key state, engine diagnostics, budget, updates, and issue reports.
 - History: review the audit timeline and export a team handoff.
-- Settings: manage project folder, AI provider, model, saved key state, engine diagnostics, secrets, budget, updates, and issue reports.
-- Guide: apply templates, read workflow recipes, and review local privacy mode.
 
 ## Commands To Start With
 
@@ -51,8 +54,19 @@ Command labels matter:
 
 - API keys are stored in the operating system credential manager.
 - Raw API key values are not shown after saving.
+- Project secrets can be saved from Secrets into `.env.local`, `.env`, or `.env.development`.
 - Secret files are summarized by file and variable name, not raw value.
 - Do not paste credentials, private keys, database dumps, or `.env` values into chat.
+
+## Build An App
+
+1. Open Build.
+2. Write a direct app request, such as `Build a TODO task management app with priorities, due dates, filters, and local storage`.
+3. Press Build app.
+4. Open `index.html` from the Build result.
+5. Refine the prompt and Build again when you want a new version.
+
+The Builder writes plain HTML, CSS, JavaScript, and README files. It does not create `.env` files; use Secrets for secret values.
 
 ## Local Privacy Mode
 
@@ -79,7 +93,7 @@ Reports include project state, recent activity, engine status, AI provider state
 
 If AI is not connected:
 
-1. Open Settings.
+1. Open Project or Settings.
 2. Fetch models.
 3. Select a model.
 4. Save and test AI.

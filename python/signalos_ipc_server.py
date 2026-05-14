@@ -100,7 +100,7 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
         return ok(req_id, data=analyze_payload(payload_json))
 
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "0.0.7"})
+        return ok(req_id, data={"pong": True, "version": "0.0.8"})
 
     return err(req_id, f"Unknown command: {command}")
 
@@ -133,7 +133,9 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         return ["status", "--repo-root", cwd]
 
     if command == "signal-init":
-        return ["init", *(cleaned_args or [cwd])]
+        if cleaned_args:
+            return ["init", *(([cwd] if cleaned_args[0].startswith("-") else []) + cleaned_args)]
+        return ["init", cwd, "--force"]
 
     if command == "signal-brain":
         if not cleaned_args:

@@ -110,6 +110,7 @@ const state = {
   modelDraftProvider: "",
   modelDraftSelection: "",
   modelDraftCustom: "",
+  builder: { status: "idle", message: "", files: [], summary: "" },
   aiConnection: { provider: "", status: "untested", message: "" },
   engine: { status: "unknown", message: "Not checked yet.", version: "", checkedAt: "" },
   sidecarError: "",
@@ -137,8 +138,16 @@ const el = {
   guideDetail: $("#guideDetail"),
   mainAction: $("#mainAction"),
   secondaryAction: $("#secondaryAction"),
+  buildPrompt: $("#buildPrompt"),
+  buildApp: $("#buildApp"),
+  buildStatus: $("#buildStatus"),
+  buildFileList: $("#buildFileList"),
+  openBuiltApp: $("#openBuiltApp"),
+  openChatFromBuild: $("#openChatFromBuild"),
   projectPath: $("#projectPath"),
+  projectPathDetail: $("#projectPathDetail"),
   keyStatus: $("#keyStatus"),
+  keyStatusDetail: $("#keyStatusDetail"),
   statusText: $("#statusText"),
   nextActionText: $("#nextActionText"),
   providerSelect: $("#providerSelect"),
@@ -214,6 +223,11 @@ const el = {
   settingsKeyStorage: $("#settingsKeyStorage"),
   settingsRefreshSecrets: $("#settingsRefreshSecrets"),
   settingsSecretList: $("#settingsSecretList"),
+  secretName: $("#secretName"),
+  secretValue: $("#secretValue"),
+  secretFile: $("#secretFile"),
+  saveSecret: $("#saveSecret"),
+  clearSecretForm: $("#clearSecretForm"),
   engineStatus: $("#engineStatus"),
   engineDetails: $("#engineDetails"),
   testEngine: $("#testEngine"),
@@ -515,6 +529,7 @@ function render() {
   renderShell();
   renderSteps();
   renderGuide();
+  renderBuilder();
   renderProviderForm();
   renderGates();
   renderActivity();
@@ -536,6 +551,7 @@ function renderShell() {
   el.workspaceLabel.textContent = projectName;
   el.waveLabel.textContent = waveName;
   el.projectPath.textContent = state.workspace || "No folder selected yet.";
+  if (el.projectPathDetail) el.projectPathDetail.textContent = state.workspace || "No folder selected yet.";
   el.providerLabel.textContent = state.activeProviderInfo?.name || "AI not connected";
   el.costLabel.textContent = currency.format(Number(state.cost?.session_usd || 0));
   if (el.cancelCommand) {
@@ -558,11 +574,14 @@ function renderShell() {
   el.statusPill.innerHTML = `<span class="pill-dot"></span><span>${error ? "Needs fix" : ready ? "Ready" : "Setting up"}</span>`;
 
   const titles = {
-    guide: ["Chat", "AI chat, slash commands, and the next safe action."],
+    guide: ["Build", "Describe the app and generate the first working files."],
+    project: ["Project", "Folder, AI connection, setup status, and generated files."],
+    chat: ["Chat", "AI chat, slash commands, and command output."],
     dashboard: ["Dashboard", "Current project state, gates, files, and next action."],
+    secrets: ["Secrets", "Project .env values stored locally and hidden from AI."],
     brain: ["Notes", "Saved beliefs, decisions, notes, and QA evidence."],
     history: ["History", "Audit trail and current project status."],
-    settings: ["Settings", "Workspace, AI connection, and secrets."],
+    settings: ["Settings", "Workspace, AI connection, engine, and updates."],
     help: ["Guide", "First-run flow and recovery reference."],
   };
   const [title, subtitle] = titles[state.view] || titles.guide;
@@ -598,9 +617,16 @@ function renderGuide() {
     start: "Step 4 of 4",
   };
 
-  el.activeStepLabel.textContent = stepNames[currentStep()] || "Next step";
-  el.guideLead.textContent = action.title;
-  el.guideDetail.textContent = action.detail;
+  const setupStep = currentStep();
+  el.activeStepLabel.textContent = setupStep === "project" || setupStep === "ai"
+    ? (stepNames[setupStep] || "Next step")
+    : "Build";
+  el.guideLead.textContent = setupStep === "project" || setupStep === "ai"
+    ? action.title
+    : "Describe the app. SignalOS will create the first working version.";
+  el.guideDetail.textContent = setupStep === "project" || setupStep === "ai"
+    ? action.detail
+    : "Use the builder for real file output. Use Chat only for questions and slash commands.";
   el.mainAction.textContent = state.busy ? "Working..." : action.label;
   el.mainAction.disabled = state.busy || Boolean(action.disabled);
   el.mainAction.onclick = () => action.run();
@@ -621,6 +647,7 @@ function renderGuide() {
         ? `${providerName} needs an API key.`
         : `${providerName} is saved but not tested.`;
   el.keyStatus.textContent = keyStatus;
+  if (el.keyStatusDetail) el.keyStatusDetail.textContent = keyStatus;
 
   el.statusText.textContent = state.statusChecked
     ? (state.wave?.phase_name ? `${state.wave.phase_name}. ${state.wave?.progress_pct || 0}% complete.` : "Status loaded.")
@@ -639,6 +666,40 @@ function renderGuide() {
       node.setAttribute("aria-selected", id === selected ? "true" : "false");
     }
   });
+}
+
+function renderBuilder() {
+  if (!el.buildStatus || !el.buildFileList) return;
+  const files = Array.isArray(state.builder.files) ? state.builder.files : [];
+  const statusCopy = {
+    idle: "No build yet. Choose a folder, connect AI, then describe the app.",
+    running: "Building. SignalOS is asking AI for a file plan and will write files into the selected project folder.",
+    success: state.builder.message || "Build finished. Open the app or refine the prompt.",
+    error: state.builder.message || "Build failed. Fix the message and try again.",
+  };
+  el.buildStatus.textContent = statusCopy[state.builder.status] || statusCopy.idle;
+  if (el.buildApp) {
+    el.buildApp.disabled = state.busy;
+    el.buildApp.textContent = state.builder.status === "running" ? "Building..." : "Build app";
+  }
+  el.buildFileList.innerHTML = files.length
+    ? files.map((file) => `
+      <div class="artifact-row">
+        <div>
+          <div class="item-title">${escapeHtml(file.relative_path || file.path || "Generated file")}</div>
+          <div class="item-meta">${escapeHtml(file.bytes ? `${file.bytes} bytes` : "Ready")}</div>
+        </div>
+        <button class="ghost small" type="button" data-open-built-file="${escapeHtml(file.relative_path || file.path || "")}">Open</button>
+      </div>
+    `).join("")
+    : `<div class="empty compact-empty">Generated files will appear here.</div>`;
+  el.buildFileList.querySelectorAll("[data-open-built-file]").forEach((button) => {
+    button.addEventListener("click", () => openProjectArtifact(button.dataset.openBuiltFile));
+  });
+  if (el.openBuiltApp) {
+    const hasIndex = files.some((file) => (file.relative_path || file.path || "").toLowerCase() === "index.html");
+    el.openBuiltApp.disabled = !state.workspace || !hasIndex;
+  }
 }
 
 function renderProviderForm() {
@@ -1456,6 +1517,41 @@ async function deleteSavedProviderKey() {
   }
 }
 
+async function saveProjectSecret() {
+  const name = el.secretName?.value?.trim() || "";
+  const value = el.secretValue?.value || "";
+  const filename = el.secretFile?.value || ".env.local";
+  if (!state.workspace) {
+    toast("Choose a project first.");
+    await chooseWorkspace();
+    if (!state.workspace) return;
+  }
+  if (!name || !value) {
+    toast("Enter a secret name and value.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const result = await ipc.secrets.upsert(name, value, filename);
+    if (el.secretValue) el.secretValue.value = "";
+    addLog("Secret saved", `${name.toUpperCase()} saved to ${result.relative_path}. Value hidden.`, { status: "success" });
+    await refreshProjectState(false);
+    toast("Secret saved locally.");
+  } catch (error) {
+    addLog("Secret save failed", error.message || String(error), { status: "error" });
+    toast(error.message || "Could not save secret.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function clearSecretForm() {
+  if (el.secretName) el.secretName.value = "";
+  if (el.secretValue) el.secretValue.value = "";
+  if (el.secretFile) el.secretFile.value = ".env.local";
+}
+
 async function saveBudget() {
   const value = Number(el.budgetInput?.value || 0);
   if (!Number.isFinite(value) || value < 0) {
@@ -1581,8 +1677,19 @@ async function signGate(gateId) {
 function parseCommand(input) {
   const parts = input.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return null;
+  if (parts[0].toLowerCase() === "signalos" && parts[1]) {
+    const command = parts[1].startsWith("/") ? parts[1] : `/${parts[1]}`;
+    return { command, args: parts.slice(2) };
+  }
   const command = parts[0].startsWith("/") ? parts[0] : `/${parts[0]}`;
   return { command, args: parts.slice(1) };
+}
+
+function looksLikeSignalCommand(value) {
+  const trimmed = value.trim();
+  return trimmed.startsWith("/")
+    || /^signalos\s+signal-/i.test(trimmed)
+    || /^signal-[a-z0-9-]+/i.test(trimmed);
 }
 
 async function runSignalCommand(commandInput, args = [], options = {}) {
@@ -1706,7 +1813,7 @@ function buildCommandCards(command, result) {
 
   if (command === "/signal-status" || command === "signal-status" || command === "/signal-init" || command === "signal-init") {
     const phase = state.wave?.phase_name || extractResultField(text, "Phase") || extractResultField(text, "Current phase");
-    const next = extractResultField(text, "Next action") || extractResultField(text, "Next");
+    const next = extractResultField(text, "Next action") || extractResultField(text, "Next") || extractStatusCardNextAction(text);
     cards.push({ label: "Phase", value: phase || "Not loaded" });
     cards.push({ label: "Next action", value: next || nextAction().title });
     if (state.gates.length) cards.push({ label: "Gates", value: `${state.gates.length} loaded` });
@@ -1724,6 +1831,19 @@ function buildCommandCards(command, result) {
   }
 
   return cards.slice(0, 8);
+}
+
+function extractStatusCardNextAction(text) {
+  const lines = safeText(text).split(/\r?\n/);
+  const marker = lines.findIndex((line) => /NEXT ACTION/i.test(line));
+  if (marker < 0) return "";
+  for (const line of lines.slice(marker + 1, marker + 5)) {
+    const cleaned = line
+      .replace(/[║╚═╔╗╠╣]/g, "")
+      .trim();
+    if (cleaned && !/^[-=]+$/.test(cleaned)) return cleaned;
+  }
+  return "";
 }
 
 function extractResultField(text, label) {
@@ -1818,6 +1938,12 @@ async function cancelRunningCommand() {
 }
 
 async function askSignalOS(question) {
+  if (isBuildIntent(question)) {
+    if (el.buildPrompt) el.buildPrompt.value = question;
+    switchView("guide");
+    toast("That is a build request. Review it, then press Build app.");
+    return;
+  }
   if (!state.workspace) {
     toast("Choose a project first.");
     await chooseWorkspace();
@@ -1864,6 +1990,131 @@ async function askSignalOS(question) {
   } finally {
     setBusy(false);
   }
+}
+
+function isBuildIntent(text) {
+  const value = safeText(text).toLowerCase();
+  return /\b(build|create|make|scaffold|generate|start fresh|implement|want to do|want)\b/.test(value)
+    && /\b(app|site|website|todo|task|dashboard|tool|project|management)\b/.test(value);
+}
+
+async function buildProjectFromPrompt() {
+  const idea = el.buildPrompt?.value?.trim() || "";
+  if (!idea) {
+    toast("Describe the app first.");
+    el.buildPrompt?.focus();
+    return;
+  }
+  if (!state.workspace) {
+    toast("Choose a project folder first.");
+    await chooseWorkspace();
+    if (!state.workspace) return;
+  }
+  if (!aiReady()) {
+    state.guideTab = "ai";
+    switchView("project");
+    render();
+    toast("Connect and test AI first.");
+    return;
+  }
+
+  setBusy(true);
+  state.builder = { status: "running", message: "", files: [], summary: "" };
+  renderBuilder();
+  addLog("Build request", idea, { kind: "ai", status: "success" });
+  addLog("SignalOS Builder", "Generating project files...", { kind: "ai", status: "running" });
+  try {
+    const response = await ipc.provider.chat(
+      state.activeProvider,
+      state.activeProviderInfo?.model || null,
+      buildProjectPrompt(idea),
+    );
+    const generated = parseGeneratedProject(response?.text || "");
+    const result = await ipc.project.writeFiles(generated.files, true);
+    state.builder = {
+      status: "success",
+      message: generated.summary || `Wrote ${result.files.length} files to ${basename(state.workspace)}.`,
+      files: result.files,
+      summary: generated.summary || "",
+    };
+    replaceLastLog("Build complete", state.builder.message, {
+      kind: "ai",
+      status: "success",
+      cards: [
+        { label: "Files", value: `${result.files.length} written` },
+        { label: "Open", value: "Open index.html from Build result" },
+      ],
+    });
+    await refreshProjectState(false);
+    toast("App files written.");
+  } catch (error) {
+    const message = error.message || String(error);
+    state.builder = { status: "error", message, files: [], summary: "" };
+    replaceLastLog("Build failed", message, { kind: "ai", status: "error" });
+    toast("Build failed.");
+  } finally {
+    setBusy(false);
+    renderBuilder();
+  }
+}
+
+function buildProjectPrompt(idea) {
+  return [
+    "You are SignalOS Builder. Create the first working version of a small static web app.",
+    "Return ONLY valid JSON. No markdown, no prose, no code fences.",
+    "Schema:",
+    "{\"summary\":\"short build summary\",\"files\":[{\"path\":\"index.html\",\"content\":\"...\"},{\"path\":\"styles.css\",\"content\":\"...\"},{\"path\":\"app.js\",\"content\":\"...\"},{\"path\":\"README.md\",\"content\":\"...\"}]}",
+    "Rules:",
+    "- Use plain HTML, CSS, and JavaScript only. No React, no npm, no external CDN.",
+    "- The app must run by opening index.html directly.",
+    "- Include complete file contents, not snippets.",
+    "- Keep paths relative and inside the project folder.",
+    "- Do not create .env files or include secrets.",
+    "- Use localStorage when persistence is useful.",
+    "- Make the UI clean, practical, and not a marketing page.",
+    "",
+    `User request: ${idea}`,
+  ].join("\n");
+}
+
+function parseGeneratedProject(text) {
+  const raw = safeText(text).trim();
+  const jsonText = extractJsonObject(raw);
+  if (!jsonText) {
+    throw new Error("AI did not return a file bundle. Try Build again or use a more direct app description.");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error("AI returned invalid build JSON. Try Build again.");
+  }
+  const files = Array.isArray(parsed.files) ? parsed.files : [];
+  const normalized = files
+    .map((file) => ({
+      path: safeText(file.path).trim(),
+      content: safeText(file.content),
+    }))
+    .filter((file) => file.path && file.content);
+  if (!normalized.length) {
+    throw new Error("AI returned no writable files.");
+  }
+  if (!normalized.some((file) => file.path.toLowerCase() === "index.html")) {
+    throw new Error("AI did not include index.html, so SignalOS did not write the bundle.");
+  }
+  return {
+    summary: safeText(parsed.summary, `Generated ${normalized.length} files.`),
+    files: normalized,
+  };
+}
+
+function extractJsonObject(text) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) return "";
+  return candidate.slice(start, end + 1);
 }
 
 function formatResult(result) {
@@ -1989,12 +2240,15 @@ function updateModelDraft(selection) {
 }
 
 function bindEvents() {
-  $("[data-view='guide']").addEventListener("click", () => switchView("guide"));
-  $("[data-view='dashboard']").addEventListener("click", () => switchView("dashboard"));
-  $("[data-view='brain']").addEventListener("click", () => switchView("brain"));
-  $("[data-view='history']").addEventListener("click", () => switchView("history"));
-  $("[data-view='settings']").addEventListener("click", () => switchView("settings"));
-  $("[data-view='help']").addEventListener("click", () => switchView("help"));
+  $("[data-view='guide']")?.addEventListener("click", () => switchView("guide"));
+  $("[data-view='project']")?.addEventListener("click", () => switchView("project"));
+  $("[data-view='chat']")?.addEventListener("click", () => switchView("chat"));
+  $("[data-view='dashboard']")?.addEventListener("click", () => switchView("dashboard"));
+  $("[data-view='brain']")?.addEventListener("click", () => switchView("brain"));
+  $("[data-view='secrets']")?.addEventListener("click", () => switchView("secrets"));
+  $("[data-view='history']")?.addEventListener("click", () => switchView("history"));
+  $("[data-view='settings']")?.addEventListener("click", () => switchView("settings"));
+  $("[data-view='help']")?.addEventListener("click", () => switchView("help"));
   $$("[data-step-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.guideTab = button.dataset.stepTab;
@@ -2003,12 +2257,17 @@ function bindEvents() {
   });
 
   $("#chooseProject").addEventListener("click", chooseWorkspace);
+  el.buildApp?.addEventListener("click", buildProjectFromPrompt);
+  el.openBuiltApp?.addEventListener("click", () => openProjectArtifact("index.html"));
+  el.openChatFromBuild?.addEventListener("click", () => switchView("chat"));
   $("#settingsChooseProject").addEventListener("click", chooseWorkspace);
   $("#forgetProject").addEventListener("click", forgetWorkspace);
   $("#saveProvider").addEventListener("click", saveProvider);
   el.settingsSaveProvider?.addEventListener("click", saveProvider);
   el.settingsDeleteKey?.addEventListener("click", deleteSavedProviderKey);
   el.settingsRefreshSecrets?.addEventListener("click", () => refreshProjectState(false));
+  el.saveSecret?.addEventListener("click", saveProjectSecret);
+  el.clearSecretForm?.addEventListener("click", clearSecretForm);
   el.saveBudget?.addEventListener("click", saveBudget);
   el.resetSessionCost?.addEventListener("click", resetSessionCost);
   el.runStatusFromResult?.addEventListener("click", checkStatus);
@@ -2019,7 +2278,7 @@ function bindEvents() {
   el.settingsExportIssueReport?.addEventListener("click", exportIssueReport);
   el.cancelCommand?.addEventListener("click", cancelRunningCommand);
   el.dashboardRunStatus?.addEventListener("click", checkStatus);
-  el.dashboardOpenChat?.addEventListener("click", () => switchView("guide"));
+  el.dashboardOpenChat?.addEventListener("click", () => switchView("chat"));
   el.dashboardExportHandoff?.addEventListener("click", exportHandoffReport);
   el.exportHandoff?.addEventListener("click", exportHandoffReport);
   el.exportIssueReport?.addEventListener("click", exportIssueReport);
@@ -2076,7 +2335,7 @@ function bindEvents() {
     event.preventDefault();
     const value = el.commandInput.value.trim();
     el.commandInput.value = "";
-    if (value && !value.startsWith("/")) {
+    if (value && !looksLikeSignalCommand(value)) {
       askSignalOS(value);
       return;
     }
@@ -2118,7 +2377,7 @@ function bindEvents() {
     listen("menu:export-audit", exportHandoffReport);
     listen("menu:nav", (event) => {
       const mapped = {
-        chat: "guide",
+        chat: "chat",
         dashboard: "dashboard",
         brain: "brain",
         audit: "history",

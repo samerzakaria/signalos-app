@@ -922,7 +922,7 @@ async fn chat_anthropic(
     let key = api_key.as_deref().ok_or("Anthropic requires an API key")?;
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": 1024,
+        "max_tokens": 8192,
         "messages": [{ "role": "user", "content": message }],
     });
     let resp = chat_json(

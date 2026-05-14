@@ -2,9 +2,26 @@
 
 ## [Unreleased] - 2026-05-14
 
+## [0.0.8] - 2026-05-14
+
+### Builder UX reset
+
+- Changed the first screen to Build, with one app description box and a Build app action.
+- Added generated-file writing so Build creates real `index.html`, CSS, JavaScript, and README files in the selected project folder.
+- Split Project, Chat, Secrets, Dashboard, Settings, and History into separate views instead of crowding the first screen.
+- Added a dedicated Secrets page for local `.env.local`, `.env`, and `.env.development` values.
+- Routed build requests out of Chat and into Build, and routed `signalos signal-*` text as SignalOS commands.
+- Fixed installed-app setup for non-empty project folders by running project initialization with the selected folder and `--force`.
+- Increased Anthropic response budget for Builder file bundles.
+- Moved in-app update checks to the public GitHub Pages manifest URL.
+
 ### Installed-app hardening
 
-- Reworked the first-run journey around Chat, Dashboard, Guide, Settings, Notes, History, and gate signing instead of a single locked guide screen.
+- Reworked the first screen into a Build surface that turns a plain app request into real static project files, with Project, Chat, Secrets, Dashboard, Settings, and History separated into their own views.
+- Added sandboxed generated-file writing for Builder output and a dedicated Secrets page for local `.env.local` / `.env` / `.env.development` values.
+- Routed `signalos signal-*` text input as SignalOS commands instead of normal AI chat, and routed build-intent chat messages back to Build.
+- Made `/signal-init` from the installed app initialize non-empty selected project folders with the expected SignalOS project files instead of failing on normal app folders.
+- Reworked the first-run journey around Build, Project, Chat, Dashboard, Secrets, Settings, History, and gate signing instead of a single locked guide screen.
 - Added scrollable workspace layout, phase tabs, persistent project transcript, and clear command progress states.
 - Added model fetching, model picker selection, and manual "Other model" entry for AI setup.
 - Made Settings operational with project controls, AI provider/model/key replacement, saved-key delete, secret summaries, engine diagnostics, and budget controls.

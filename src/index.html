@@ -35,7 +35,7 @@ html, body {
 }
 body {
   margin: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--bg);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -56,9 +56,8 @@ button:disabled {
 #app {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
-  height: 100vh;
-  height: 100dvh;
-  min-height: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -123,7 +122,7 @@ button:disabled {
 }
 
 .steps {
-  display: grid;
+  display: none;
   gap: 8px;
 }
 .step {
@@ -195,20 +194,25 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-rows: 70px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  height: 100%;
-  overflow: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
 }
 .topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 26px;
+  min-height: 58px;
+  padding: 10px 22px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, .78);
   backdrop-filter: blur(14px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 .crumb {
   min-width: 0;
@@ -250,19 +254,17 @@ button:disabled {
 
 .main {
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  padding: 28px;
+  overflow: visible;
+  padding: 18px 22px 30px;
 }
 .view { display: none; }
 .view.active { display: block; }
 
 .guide-layout {
   display: grid;
-  grid-template-columns: minmax(380px, 1fr) 360px;
-  gap: 22px;
-  max-width: 1220px;
+  grid-template-columns: minmax(0, 920px);
+  gap: 14px;
+  max-width: 980px;
   align-items: start;
 }
 .hero-action {
@@ -270,7 +272,16 @@ button:disabled {
   border-radius: var(--radius);
   background: var(--panel);
   box-shadow: var(--shadow);
-  padding: 28px;
+  padding: 20px;
+}
+.now-line {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
 }
 .kicker {
   color: var(--blue);
@@ -280,24 +291,41 @@ button:disabled {
   text-transform: uppercase;
 }
 .hero-action h1 {
-  margin: 10px 0 8px;
-  max-width: 720px;
-  font-size: clamp(30px, 4vw, 48px);
-  line-height: 1.05;
+  margin: 8px 0 6px;
+  max-width: 760px;
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.12;
   letter-spacing: 0;
 }
 .hero-action p {
   margin: 0;
   max-width: 700px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 14px;
+}
+.builder-prompt-field {
+  margin-top: 16px;
+}
+.builder-prompt {
+  min-height: 130px;
+  resize: vertical;
+  font-size: 15px;
+}
+.build-result-panel {
+  margin-top: 0;
+}
+.chat-panel {
+  margin-top: 0;
+}
+.chat-panel .command-log {
+  min-height: 360px;
 }
 .action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 .primary,
 .secondary,
@@ -331,8 +359,8 @@ button:disabled {
 
 .board {
   display: grid;
-  gap: 12px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 12px;
 }
 .phase-tabs {
   display: grid;
@@ -344,8 +372,8 @@ button:disabled {
   grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 58px;
-  padding: 9px;
+  min-height: 48px;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -366,7 +394,7 @@ button:disabled {
 .phase-tab em {
   display: block;
   color: var(--faint);
-  font-size: 11px;
+  font-size: 10px;
   font-style: normal;
 }
 .tab-index {
@@ -404,7 +432,7 @@ button:disabled {
   display: grid;
   grid-template-columns: 38px 1fr;
   gap: 12px;
-  padding: 14px;
+  padding: 12px;
 }
 .setup-row.done {
   border-color: #c8e3d3;
@@ -453,6 +481,52 @@ button:disabled {
 .side-panel {
   display: grid;
   gap: 14px;
+}
+.setup-drawer {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  overflow: hidden;
+}
+.setup-drawer > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  padding: 13px 15px;
+  font-weight: 780;
+}
+.setup-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+.setup-drawer > summary::after {
+  content: "+";
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  background: white;
+  color: var(--muted);
+}
+.setup-drawer[open] > summary::after {
+  content: "-";
+}
+.setup-drawer small {
+  color: var(--faint);
+  font-weight: 650;
+}
+.setup-drawer-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+.setup-drawer .panel {
+  box-shadow: none;
 }
 .panel {
   padding: 16px;
@@ -517,15 +591,15 @@ input:focus, select:focus, textarea:focus {
 }
 
 .command-panel {
-  margin-top: 20px;
+  margin-top: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
   overflow: hidden;
 }
 .command-log {
-  min-height: 170px;
-  max-height: 330px;
+  min-height: 150px;
+  max-height: none;
   overflow: auto;
   padding: 16px;
   display: grid;
@@ -821,7 +895,7 @@ input:focus, select:focus, textarea:focus {
 .empty {
   display: grid;
   place-items: center;
-  min-height: 220px;
+  min-height: 130px;
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius);
   background: var(--panel-soft);
@@ -1020,12 +1094,13 @@ input:focus, select:focus, textarea:focus {
     </div>
 
     <nav class="nav">
-      <button type="button" class="active" data-view="guide">Chat</button>
+      <button type="button" class="active" data-view="guide">Build</button>
+      <button type="button" data-view="project">Project</button>
+      <button type="button" data-view="chat">Chat</button>
       <button type="button" data-view="dashboard">Dashboard</button>
-      <button type="button" data-view="brain">Notes</button>
-      <button type="button" data-view="history">History</button>
+      <button type="button" data-view="secrets">Secrets</button>
       <button type="button" data-view="settings">Settings</button>
-      <button type="button" data-view="help">Guide</button>
+      <button type="button" data-view="history">History</button>
     </nav>
   </aside>
 
@@ -1046,46 +1121,42 @@ input:focus, select:focus, textarea:focus {
 
       <section class="view active" id="view-guide">
         <div class="guide-layout">
+          <section class="hero-action builder-hero">
+            <div class="kicker" id="activeStepLabel">Build</div>
+            <h1 id="guideLead">Describe the app. SignalOS writes the first working files.</h1>
+            <p id="guideDetail">Start with a simple static app. You can refine it after the first version opens.</p>
+            <div class="now-line">
+              <span id="projectPath">No folder selected yet.</span>
+              <span id="keyStatus">AI is not connected.</span>
+            </div>
+            <div class="field builder-prompt-field">
+              <label for="buildPrompt">What do you want to build?</label>
+              <textarea id="buildPrompt" class="builder-prompt" placeholder="Example: Build a clean TODO task management app with priorities, due dates, filters, and local storage."></textarea>
+            </div>
+            <div class="action-row">
+              <button class="primary" type="button" id="buildApp">Build app</button>
+              <button class="secondary" type="button" id="mainAction">Choose project folder</button>
+              <button class="ghost" type="button" id="secondaryAction">Check project</button>
+            </div>
+          </section>
+
+          <section class="panel build-result-panel">
+            <h2>Build result</h2>
+            <div class="fine-print" id="buildStatus">No build yet. Choose a folder, connect AI, then describe the app.</div>
+            <div class="artifact-list" id="buildFileList" style="margin-top:12px"></div>
+            <div class="inline-actions">
+              <button class="secondary small" type="button" id="openBuiltApp">Open app</button>
+              <button class="ghost small" type="button" id="openChatFromBuild">Open chat</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-project">
+        <div class="guide-layout">
           <div>
-            <section class="hero-action">
-              <div class="kicker" id="activeStepLabel">Next step</div>
-              <h1 id="guideLead">Choose a project folder to begin.</h1>
-              <p id="guideDetail">SignalOS will guide you one step at a time and only show the next useful action.</p>
-              <div class="action-row">
-                <button class="primary" type="button" id="mainAction">Choose project folder</button>
-                <button class="secondary" type="button" id="secondaryAction">Check project</button>
-              </div>
-            </section>
-
-            <section class="command-panel">
-              <div class="command-log" id="activityLog"></div>
-              <div class="attachment-drop" id="attachmentDrop">
-                <div class="attachment-copy">
-                  <div>
-                    <strong>Attachments</strong>
-                    <div class="fine-print">Secrets are blocked or redacted before they reach AI.</div>
-                  </div>
-                  <button class="secondary small" type="button" id="attachmentPick">Choose files</button>
-                </div>
-                <div class="attachment-list" id="attachmentList"></div>
-                <input id="attachmentInput" type="file" multiple hidden
-                  accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.pptx,.xlsx,.txt,.md,.csv,.json,.log,.js,.jsx,.ts,.tsx,.py,.rs,.go,.java,.kt,.swift,.c,.cc,.cpp,.h,.hpp,.cs,.php,.rb,.sh,.ps1,.bat,.cmd,.html,.css,.scss,.xml,.yaml,.yml,.toml,.ini,.zip">
-              </div>
-              <form class="command-form" id="commandForm">
-                <button class="secondary attach-button" type="button" id="attachmentButton" title="Attach files">+</button>
-                <input id="commandInput" autocomplete="off" placeholder="Ask AI or run /signal-status">
-                <button class="primary" type="submit">Send</button>
-                <button class="ghost" type="button" id="cancelCommand">Stop</button>
-              </form>
-              <div class="chips">
-                <button class="chip" type="button" data-command="/signal-status">Check project</button>
-                <button class="chip" type="button" data-command="/signal-init">Set up project</button>
-                <button class="chip" type="button" data-command="/signal-brain">Show notes</button>
-              </div>
-            </section>
-
             <div class="board" id="guideChecklist">
-              <div class="phase-tabs" role="tablist" aria-label="Guide phases">
+              <div class="phase-tabs" role="tablist" aria-label="Project phases">
                 <button class="phase-tab" type="button" role="tab" data-step-row="project" data-step-tab="project" aria-controls="phase-project">
                   <span class="tab-index">1</span>
                   <span><strong>Project</strong><em>Folder</em></span>
@@ -1109,14 +1180,14 @@ input:focus, select:focus, textarea:focus {
                   <div class="setup-index">1</div>
                   <div>
                     <h3>Project folder</h3>
-                    <p id="projectPath">No folder selected yet.</p>
+                    <p id="projectPathDetail">No folder selected yet.</p>
                   </div>
                 </div>
                 <div class="setup-row phase-pane" id="phase-ai" role="tabpanel" data-step-row="ai">
                   <div class="setup-index">2</div>
                   <div>
                     <h3>AI connection</h3>
-                    <p id="keyStatus">Choose an AI service and save the key once.</p>
+                    <p id="keyStatusDetail">Choose an AI service and save the key once.</p>
                   </div>
                 </div>
                 <div class="setup-row phase-pane" id="phase-status" role="tabpanel" data-step-row="status">
@@ -1137,7 +1208,7 @@ input:focus, select:focus, textarea:focus {
             </div>
 
             <section class="panel setup-result" id="setupResultPanel">
-              <h2>Project result</h2>
+              <h2>Project files</h2>
               <div class="fine-print" id="setupResultMeta">Run setup or status to see what SignalOS changed in this project.</div>
               <div class="artifact-list" id="setupArtifactList" style="margin-top:12px"></div>
               <div class="inline-actions">
@@ -1150,7 +1221,7 @@ input:focus, select:focus, textarea:focus {
           <aside class="side-panel">
             <section class="panel">
               <h2>Project</h2>
-              <p class="fine-print">Pick the folder your team will work in. SignalOS keeps everything inside that folder.</p>
+              <p class="fine-print">Pick the folder where SignalOS can write app files.</p>
               <div class="inline-actions">
                 <button class="secondary small" type="button" id="chooseProject">Choose folder</button>
                 <button class="ghost small" type="button" id="forgetProject">Forget</button>
@@ -1183,7 +1254,40 @@ input:focus, select:focus, textarea:focus {
               <div class="fine-print" id="providerHelp">Keys are saved securely on this computer.</div>
               <div class="fine-print">Project .env values and AI keys are kept out of AI prompts.</div>
             </section>
+          </aside>
+        </div>
+      </section>
 
+      <section class="view" id="view-chat">
+        <div class="split">
+          <section class="command-panel chat-panel">
+            <div class="command-log" id="activityLog"></div>
+            <div class="attachment-drop" id="attachmentDrop">
+              <div class="attachment-copy">
+                <div>
+                  <strong>Attachments</strong>
+                  <div class="fine-print">Secrets are blocked or redacted before they reach AI.</div>
+                </div>
+                <button class="secondary small" type="button" id="attachmentPick">Choose files</button>
+              </div>
+              <div class="attachment-list" id="attachmentList"></div>
+              <input id="attachmentInput" type="file" multiple hidden
+                accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.pptx,.xlsx,.txt,.md,.csv,.json,.log,.js,.jsx,.ts,.tsx,.py,.rs,.go,.java,.kt,.swift,.c,.cc,.cpp,.h,.hpp,.cs,.php,.rb,.sh,.ps1,.bat,.cmd,.html,.css,.scss,.xml,.yaml,.yml,.toml,.ini,.zip">
+            </div>
+            <form class="command-form" id="commandForm">
+              <button class="secondary attach-button" type="button" id="attachmentButton" title="Attach files">+</button>
+              <input id="commandInput" autocomplete="off" placeholder="Ask AI or run /signal-status">
+              <button class="primary" type="submit">Send</button>
+              <button class="ghost" type="button" id="cancelCommand">Stop</button>
+            </form>
+            <div class="chips">
+              <button class="chip" type="button" data-command="/signal-status">Check project</button>
+              <button class="chip" type="button" data-command="/signal-init">Set up project</button>
+              <button class="chip" type="button" data-command="/signal-brain">Show notes</button>
+            </div>
+          </section>
+
+          <aside class="side-panel">
             <section class="panel">
               <h2>Commands</h2>
               <div class="command-catalog" id="commandCatalog"></div>
@@ -1275,6 +1379,49 @@ input:focus, select:focus, textarea:focus {
                 <button class="primary small" type="submit">Save note</button>
               </div>
             </form>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-secrets">
+        <div class="split">
+          <section class="panel">
+            <h2>Secrets</h2>
+            <div class="item">
+              <div class="item-title">Add or update project secret</div>
+              <div class="item-meta">Saved to a local `.env.local` file. Values are never shown back in the app or sent to AI.</div>
+              <div class="field">
+                <label for="secretName">Name</label>
+                <input id="secretName" autocomplete="off" placeholder="OPENAI_API_KEY">
+              </div>
+              <div class="field">
+                <label for="secretValue">Value</label>
+                <input id="secretValue" type="password" autocomplete="off" placeholder="Paste secret value">
+              </div>
+              <div class="field">
+                <label for="secretFile">File</label>
+                <select id="secretFile">
+                  <option value=".env.local">.env.local</option>
+                  <option value=".env">.env</option>
+                  <option value=".env.development">.env.development</option>
+                </select>
+              </div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="saveSecret">Save secret</button>
+                <button class="ghost small" type="button" id="clearSecretForm">Clear</button>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>Secret files</h2>
+            <div class="item">
+              <div class="item-title">Project secret files</div>
+              <div class="item-meta" id="settingsSecrets">Choose a project to check secrets.</div>
+              <div class="inline-actions">
+                <button class="secondary small" type="button" id="settingsRefreshSecrets">Refresh</button>
+              </div>
+            </div>
+            <div class="list settings-secret-list" id="settingsSecretList"></div>
           </section>
         </div>
       </section>
@@ -1388,16 +1535,6 @@ input:focus, select:focus, textarea:focus {
               <button class="ghost small" type="button" id="copySettingsDiagnostics">Copy diagnostics</button>
               <button class="ghost small" type="button" id="settingsExportIssueReport">Export issue report</button>
             </div>
-
-            <h2 style="margin-top:18px">Secrets</h2>
-            <div class="item">
-              <div class="item-title">Project secret files</div>
-              <div class="item-meta" id="settingsSecrets">Choose a project to check secrets.</div>
-              <div class="inline-actions">
-                <button class="secondary small" type="button" id="settingsRefreshSecrets">Refresh</button>
-              </div>
-            </div>
-            <div class="list settings-secret-list" id="settingsSecretList"></div>
           </section>
         </div>
       </section>

@@ -66,6 +66,8 @@ fn main() {
             ipc::get_project_artifacts,
             ipc::open_workspace_path,
             ipc::write_workspace_export,
+            ipc::write_workspace_files,
+            ipc::upsert_workspace_secret,
             ipc::get_git_status,        // live branch / worktree info
             ipc::start_workspace_watch, // file watcher -> workspace:changed events (T1-4)
             // â”€â”€ Auto-updater (T1-5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
