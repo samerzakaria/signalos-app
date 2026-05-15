@@ -236,26 +236,47 @@ pub async fn start_preview(
     let workspace_clone = active_canon.clone();
     let key_clone = key.clone();
     tauri::async_runtime::spawn(async move {
-        // Install phase
+        // Install phase — interruptible by Stop. run_blocking selects on the
+        // shared stop_rx so clicking Stop during `npm install` actually
+        // tree-kills the install subprocess instead of waiting it out.
         if let Some((bin, args)) = contract.install {
             update_runtime(&key_clone, |r| r.status = "installing".into());
             emit_event(&app_clone, &key_clone, "status", "Installing dependencies");
-            let install_ok = run_blocking(
+            let outcome = run_blocking(
                 &app_clone,
                 &key_clone,
                 bin,
                 args,
                 &workspace_clone,
                 contract.port_regex,
+                &mut stop_rx,
             )
             .await;
-            if !install_ok {
-                update_runtime(&key_clone, |r| {
-                    r.status = "error".into();
-                    r.last_error = Some("install failed".into());
-                });
-                emit_event(&app_clone, &key_clone, "error", "Install failed.");
-                return;
+            match outcome {
+                RunOutcome::Success => {}
+                RunOutcome::Failed => {
+                    update_runtime(&key_clone, |r| {
+                        r.status = "error".into();
+                        r.last_error = Some("install failed".into());
+                    });
+                    emit_event(&app_clone, &key_clone, "error", "Install failed.");
+                    return;
+                }
+                RunOutcome::Stopped => {
+                    // User clicked Stop mid-install. Mark as stopped (not error)
+                    // so the UI shows "Stopped" not "Errored — check log".
+                    update_runtime(&key_clone, |r| {
+                        r.status = "stopped".into();
+                        r.last_error = None;
+                    });
+                    emit_event(
+                        &app_clone,
+                        &key_clone,
+                        "exit",
+                        "stopped by user during install",
+                    );
+                    return;
+                }
             }
         }
         // Run phase — keep child alive, capture port from stdout
@@ -389,14 +410,22 @@ pub async fn start_preview(
     }))
 }
 
-/// Run an install/build command to completion. Returns true on success.
+/// Three-state outcome for `run_blocking`. The caller distinguishes between
+/// "the command failed on its own" (Failed → status=error) and "the user
+/// clicked Stop mid-run" (Stopped → status=stopped). Conflating them puts
+/// "errored" on the UI for a clean user-initiated cancel, which is wrong.
+enum RunOutcome {
+    Success,
+    Failed,
+    Stopped,
+}
+
+/// Run an install/build command to completion or until the user hits Stop.
 ///
-/// KNOWN LIMITATION (tracked for Wave 6): the install phase is not
-/// interruptible by Stop. `stop_rx` is awaited later in the parent's
-/// `tokio::select!` — so pressing Stop during `npm install` queues the
-/// stop message but install runs to completion before it's received.
-/// The fix is to thread a `&mut mpsc::Receiver<()>` through here and do
-/// `tokio::select!{ _ = stop_rx.recv() => tree_kill(child.id().unwrap_or(0)); }`.
+/// The install phase is now interruptible: we race `child.wait()` against
+/// `stop_rx.recv()` in a `tokio::select!`. If Stop wins, we tree-kill the
+/// install subprocess (including grandchildren — npm spawns node spawns…)
+/// and return `Stopped`.
 async fn run_blocking(
     app: &AppHandle,
     key: &str,
@@ -404,7 +433,8 @@ async fn run_blocking(
     args: &[&str],
     cwd: &PathBuf,
     _port_regex: &str,
-) -> bool {
+    stop_rx: &mut tokio::sync::mpsc::Receiver<()>,
+) -> RunOutcome {
     let mut cmd = Command::new(bin);
     cmd.args(args)
         .current_dir(cwd)
@@ -414,9 +444,10 @@ async fn run_blocking(
         Ok(c) => c,
         Err(e) => {
             emit_event(app, key, "error", &format!("spawn failed: {e}"));
-            return false;
+            return RunOutcome::Failed;
         }
     };
+    let install_pid = child.id();
     if let Some(out) = child.stdout.take() {
         let app_c = app.clone();
         let key_c = key.to_string();
@@ -437,8 +468,26 @@ async fn run_blocking(
             }
         });
     }
-    let status = child.wait().await;
-    matches!(status, Ok(s) if s.success())
+    tokio::select! {
+        // Honor Stop arriving during install.
+        _ = stop_rx.recv() => {
+            emit_event(app, key, "status", "Stopping install");
+            let _ = child.kill().await;
+            if let Some(pid) = install_pid {
+                crate::sidecar::tree_kill(pid);
+            }
+            // Drain any final exit so we don't leave a zombie.
+            let _ = child.wait().await;
+            RunOutcome::Stopped
+        }
+        status = child.wait() => {
+            if matches!(status, Ok(ref s) if s.success()) {
+                RunOutcome::Success
+            } else {
+                RunOutcome::Failed
+            }
+        }
+    }
 }
 
 /// Stop the preview process. Idempotent.
