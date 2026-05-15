@@ -4,6 +4,17 @@ This file lists the three release gates that the v1.0 push **cannot** finish wit
 
 Last updated: 2026-05-15 — after the Wave 1–5 merge to `main` (PR #1).
 
+---
+
+## Two ship paths
+
+| Path | When | Doc |
+|---|---|---|
+| **Internal testing** (attested by name, not signed) | Shipping to known testers now, certs not yet acquired | [INTERNAL_TESTING_BUILD.md](INTERNAL_TESTING_BUILD.md) |
+| **Signed public release** (Authenticode + notarized + minisign-stamped) | Public download / auto-updater required | this file (R1–R3 below) |
+
+The current v1.0 ship plan is the **internal testing** path. R1–R3 below remain blocked on your credentials. Run `scripts/build-internal.ps1` (or `.sh`) to produce the internal artifacts.
+
 The implementation gates (G0–G4) are signed in `.signalos/AUDIT_TRAIL.jsonl`. The remaining gates are the operational/external ones: code signing, notarization, updater signatures, clean-machine validation.
 
 ---

@@ -1,6 +1,38 @@
 # Changelog
 
-## [Unreleased] - 2026-05-14
+## [Unreleased] - 2026-05-15
+
+### v1.0 / Waves 1–5 (G0..G4) signed — internal testing build
+
+- Wave 1 / G0 Stabilize: first-run wizard (7 steps), `/signal-init` mode-aware (full/keep/minimal/skip), real chat-ping AI test, refreshed provider defaults, redact-on-export, Replit-style Secrets manager (list/reveal/edit/delete/diff).
+- Wave 2 / G1 Build: PhaseContract + progress event stream, three-pane shell (left collapsible + center chat + right preview), `LocalProcessSupervisor` (npm install / dev / Python flask serve), iframe preview pane, mocks purged.
+- Wave 3 / G2 Land — Fully wired & enforced: 12-rule enforcement engine, atomic audit-append, gate-gating + plan-gating on Build, self-healing Builder retries, file diff preview before write, override modal with audited reason, wave freeze respected.
+- Wave 4 / G3 Harden: HTTP timeouts on every reqwest call, per-model `max_tokens`, real Stop (tree-kills sidecar + restarts engine), CSP tightened, destructive-action confirms.
+- Wave 5 / G4 Verify: test-debt store + IPC, mutation-threshold gate, test-first gate, L0/L1 gate runners, GitHub Actions workflow, 9-test live integration suite.
+- Streaming AI tokens across all 12 providers via `streamingProviderChat` helper (5 high-token callers).
+- §11.1 deeper UX: Files / Gov / Mem left-pane tabs with intent-driven auto-switch, file tree with diff badges, per-file regenerate, Builder-aware conversation history.
+- Interactive 23-slide onboarding tour at `docs/onboarding-tour.html`, design-system-unified.
+- Identity + role assignment in wizard; tree-kill on sidecar Stop; install phase interruptible by Stop.
+- Caret version specifiers pinned; signed-gates cache; non-destructive `set_workspace`.
+
+### Internal testing build path
+
+- Added `scripts/build-internal.ps1` + `scripts/build-internal.sh` — unsigned installer + JSON attestation (`distribution/internal/attestation-<short-commit>.json`) keyed by `git config user.name` + `user.email`. Schema: `signalos.attestation.v1`.
+- Added `docs/INTERNAL_TESTING_BUILD.md` with the tester distribution checklist (SmartScreen / Gatekeeper bypass instructions, SHA-256 verification).
+- Audit-logs every internal build to `.signalos/AUDIT_TRAIL.jsonl` (`action: "build:internal-attest"`).
+- Signing-ready, not signed: same build infrastructure will land Authenticode / Developer ID / minisign signatures when credentials exist. See `docs/RELEASE_GATES_RUNBOOK.md`.
+
+### Real bugs found by the live smoke and fixed in the same push
+
+- Bundled sidecar exe was at v0.0.7 (pre-Wave-2) — rebuilt via `scripts/bundle-sidecar.ps1`.
+- `capabilities/default.json` missing `shell:allow-spawn` for sidecar — desktop booted but Python sidecar never spawned. Fixed.
+
+### Not yet shipped (intentional — see RELEASE_GATES_RUNBOOK.md)
+
+- Authenticode / Developer ID code signing
+- macOS notarization
+- Minisign signatures in `distribution/update-manifest/*.json`
+- Clean-machine VM validation
 
 ## [0.0.9] - 2026-05-14
 
