@@ -47,3 +47,6 @@ npm-debug.log*
 src-tauri/gen/
 src-tauri/bin/
 .sidecar-venv/
+
+# Claude Code — per-developer permission allow-list (machine-specific)
+.claude/settings.local.json
