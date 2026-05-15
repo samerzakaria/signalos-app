@@ -45,18 +45,33 @@ export function attachPreviewPane({ container, toast }) {
     if (!evt || !state.key || evt.key !== state.key) return;
     state.log.push(evt);
     if (state.log.length > 300) state.log = state.log.slice(-200);
+
+    // Status state machine — explicit transitions only.
+    // Order matters: do NOT regress out of "running" except on exit/error.
     if (evt.kind === "port" && evt.message.startsWith("http://")) {
       state.url = evt.message;
       state.status = "running";
-    }
-    if (evt.kind === "status") {
+    } else if (evt.kind === "status" && state.status !== "running") {
+      // Once we're "running", incoming "Starting dev server" messages from
+      // late-arriving stdout shouldn't flip us back. Only react to status
+      // messages while we're not yet running.
       const m = evt.message.toLowerCase();
-      if (m.includes("install")) state.status = "installing";
-      else if (m.includes("start")) state.status = "starting";
+      if      (m.includes("install"))  state.status = "installing";
+      else if (m.includes("start"))    state.status = "starting";
       else if (m.includes("stopping")) state.status = "stopped";
+    } else if (evt.kind === "exit") {
+      // Parse the exit code from "exited with code N" or "stopped by user".
+      const m = String(evt.message || "");
+      if (/stopped by user/i.test(m)) {
+        state.status = "stopped";
+      } else {
+        const codeMatch = m.match(/code\s+(-?\d+)/i);
+        const code = codeMatch ? Number(codeMatch[1]) : -1;
+        state.status = code === 0 ? "stopped" : "error";
+      }
+    } else if (evt.kind === "error") {
+      state.status = "error";
     }
-    if (evt.kind === "exit") state.status = "stopped";
-    if (evt.kind === "error") state.status = "error";
     render();
   });
 }

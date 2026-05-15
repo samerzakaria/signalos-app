@@ -231,7 +231,13 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                     }
                 }
                 SidecarControl::Stop => {
+                    // Tree-kill: the PyInstaller launcher exe spawns a real
+                    // Python interpreter as a child. `child.kill()` only
+                    // hits the launcher; the interpreter survives and
+                    // keeps owning stdout. taskkill /T walks the tree.
+                    let pid_to_kill = child.pid();
                     let _ = child.kill();
+                    tree_kill(pid_to_kill);
                     break;
                 }
             }
@@ -281,4 +287,30 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+/// Cross-platform tree-kill (sidecar.rs + runtime.rs share this).
+///
+/// PyInstaller-bundled sidecars and npm dev servers spawn child processes
+/// (the launcher exe → real Python; `npm` → `node` → `vite`). Killing only
+/// the immediate process leaves the children alive and chewing CPU/ports.
+///
+/// Windows: `taskkill /T /F /PID <pid>` walks the process tree.
+/// Unix: send SIGKILL to the process group (negative pid) via the `kill`
+/// command. Falls back to a plain SIGKILL if the group send fails.
+pub fn tree_kill(pid: u32) {
+    use std::process::Command;
+    if cfg!(windows) {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .output();
+    } else {
+        // Negative pid means "process group" for /bin/kill.
+        let _ = Command::new("kill")
+            .args(["-9", &format!("-{pid}")])
+            .output();
+        // Fallback: kill the leader directly in case the child wasn't in
+        // its own process group.
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+    }
 }

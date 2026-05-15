@@ -110,8 +110,14 @@ pub fn set_workspace(path: String, state: State<WorkspaceState>) -> Result<(), S
             path
         ));
     }
-    *state.0.lock().unwrap() = Some(p.clone());
-    audit(&p, "workspace:set", path);
+    *state.0.lock().unwrap() = Some(p);
+    // Non-destructive: setting the active workspace is a pure state change.
+    // We deliberately do NOT call `audit(...)` here — `audit()` writes to
+    // `.signalos/AUDIT_TRAIL.jsonl`, which would force-create that folder
+    // (and any parents) in the user's project the moment they select it
+    // for browsing. The first audit entry lands when the user takes a
+    // state-mutating action (init / file write / secret / gate sign / etc.)
+    // — i.e. the same moment SignalOS first writes anything else.
     Ok(())
 }
 

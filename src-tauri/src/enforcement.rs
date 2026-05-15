@@ -10,7 +10,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 use tauri::State;
 
 use crate::governance::{append_audit, AuditEntry};
@@ -322,12 +323,65 @@ fn mode_str(m: &Mode) -> String {
     }
 }
 
+/// Cache key: workspace path → (gates.json mtime, audit.jsonl mtime, audit byte count, parsed signed gates).
+///
+/// `read_signed_gates` was called once per build_precheck AND once per
+/// enforcement_state poll (which the topbar pill refreshes on a timer).
+/// Re-parsing the entire AUDIT_TRAIL.jsonl every time was O(n) wasted work
+/// where n is the audit length — and the audit grows monotonically.
+///
+/// New strategy:
+///   1. Read mtime + size of gates.json and AUDIT_TRAIL.jsonl
+///   2. If both match the cached snapshot, return the cached Vec<u8>
+///   3. Otherwise re-parse and update the cache
+///
+/// gates.json doesn't grow but it can change atomically (rename swap), so
+/// we key on mtime. AUDIT_TRAIL.jsonl only appends, so size is a stable
+/// fingerprint — change detected = re-parse.
+#[derive(Default, Clone)]
+struct GatesCache {
+    gates_json_mtime: Option<SystemTime>,
+    audit_mtime: Option<SystemTime>,
+    audit_len: u64,
+    workspace: PathBuf,
+    signed: Vec<u8>,
+}
+
+fn cache() -> &'static Mutex<GatesCache> {
+    static CACHE: OnceLock<Mutex<GatesCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(GatesCache::default()))
+}
+
 /// Read signed gate IDs from .signalos/gates.json or AUDIT_TRAIL.jsonl
 /// gate:sign entries. The bundled SignalOS Core writes gates.json; the
 /// desktop's own gate-sign command writes audit entries. We accept both.
+///
+/// Cached by mtime + length — returns instantly when nothing changed.
 fn read_signed_gates(workspace: &Path) -> Vec<u8> {
+    let gates_path = workspace.join(".signalos").join("gates.json");
+    let audit_path = workspace.join(".signalos").join("AUDIT_TRAIL.jsonl");
+
+    let gates_mtime = std::fs::metadata(&gates_path)
+        .and_then(|m| m.modified())
+        .ok();
+    let (audit_mtime, audit_len) = std::fs::metadata(&audit_path)
+        .map(|m| (m.modified().ok(), m.len()))
+        .unwrap_or((None, 0));
+
+    // Cache lookup.
+    {
+        let c = cache().lock().unwrap();
+        if c.workspace == workspace
+            && c.gates_json_mtime == gates_mtime
+            && c.audit_mtime == audit_mtime
+            && c.audit_len == audit_len
+        {
+            return c.signed.clone();
+        }
+    }
+
+    // Cache miss / stale: re-parse from both sources.
     let mut signed = HashSet::new();
-    // Source 1: gates.json
     if let Some(gates) = crate::governance::load_gate_state(workspace) {
         for g in gates {
             if matches!(g.status, crate::governance::GateStatus::Signed) {
@@ -335,8 +389,6 @@ fn read_signed_gates(workspace: &Path) -> Vec<u8> {
             }
         }
     }
-    // Source 2: AUDIT_TRAIL.jsonl
-    let audit_path: PathBuf = workspace.join(".signalos").join("AUDIT_TRAIL.jsonl");
     if let Ok(content) = std::fs::read_to_string(&audit_path) {
         for line in content.lines() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
@@ -354,5 +406,15 @@ fn read_signed_gates(workspace: &Path) -> Vec<u8> {
     }
     let mut out: Vec<u8> = signed.into_iter().collect();
     out.sort();
+
+    // Update cache.
+    {
+        let mut c = cache().lock().unwrap();
+        c.workspace = workspace.to_path_buf();
+        c.gates_json_mtime = gates_mtime;
+        c.audit_mtime = audit_mtime;
+        c.audit_len = audit_len;
+        c.signed = out.clone();
+    }
     out
 }

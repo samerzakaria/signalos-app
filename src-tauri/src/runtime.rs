@@ -355,7 +355,13 @@ pub async fn start_preview(
         // Wait for either stop signal or child exit.
         tokio::select! {
             _ = stop_rx.recv() => {
+                // Tree-kill: `npm` spawns `node`, `node` spawns vite, vite
+                // spawns more. child.kill() only hits npm. Walk the tree.
+                let pid_to_kill = child.id();
                 let _ = child.kill().await;
+                if let Some(pid) = pid_to_kill {
+                    crate::sidecar::tree_kill(pid);
+                }
                 emit_event(&app_clone, &key_clone, "exit", "stopped by user");
                 update_runtime(&key_clone, |r| r.status = "stopped".into());
             }

@@ -44,6 +44,8 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+      - name: Ensure sidecar binary exists for target
+        run: bash scripts/ensure-sidecar.sh
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -86,6 +88,9 @@ jobs:
             pkg-config
       - uses: actions-rs/toolchain@v1
         with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - name: cargo check (all targets)
@@ -130,6 +135,9 @@ jobs:
             pkg-config
       - uses: actions-rs/toolchain@v1
         with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
       - name: cargo build --release (workspace)
         working-directory: src-tauri
         run: cargo build --release
@@ -158,6 +166,9 @@ jobs:
             pkg-config
       - uses: actions-rs/toolchain@v1
         with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - name: Run extended test-gates
@@ -183,6 +194,9 @@ jobs:
             pkg-config
       - uses: actions-rs/toolchain@v1
         with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
       - name: cargo test --release (full)
         working-directory: src-tauri
         run: cargo test --release
