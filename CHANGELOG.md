@@ -2,6 +2,8 @@
 
 ## [Unreleased] - 2026-05-15
 
+## [1.0.0-internal1] - 2026-05-15
+
 ### v1.0 / Waves 1–5 (G0..G4) signed — internal testing build
 
 - Wave 1 / G0 Stabilize: first-run wizard (7 steps), `/signal-init` mode-aware (full/keep/minimal/skip), real chat-ping AI test, refreshed provider defaults, redact-on-export, Replit-style Secrets manager (list/reveal/edit/delete/diff).

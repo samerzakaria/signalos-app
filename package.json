@@ -1,6 +1,6 @@
 {
   "name": "signalos-desktop",
-  "version": "0.0.9",
+  "version": "1.0.0-internal1",
   "private": true,
   "description": "SignalOS guided AI workspace for non-technical founders",
   "scripts": {
