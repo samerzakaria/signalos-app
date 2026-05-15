@@ -8,8 +8,12 @@
 #
 # Output for each run:
 #   src-tauri/target/release/bundle/nsis/SignalOS_<version>_x64-setup.exe   (Windows)
-#   src-tauri/target/release/bundle/msi/SignalOS_<version>_x64_en-US.msi   (Windows MSI)
 #   distribution/internal/attestation-<commit>.json — signed-by-name record
+#
+# Note: MSI is intentionally NOT built here. Windows Installer requires
+# numeric-only pre-release identifiers (<=65535), so versions like
+# "1.0.0-internal1" or "1.0.0-beta3" cannot be packaged as MSI. NSIS handles
+# them fine. Signed public builds with numeric versions can re-enable MSI.
 #
 # What the attestation file contains:
 #   - builder name + email (from `git config`)
@@ -32,23 +36,23 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path "$PSScriptRoot\.."
 Set-Location $RepoRoot
 
-# ─── 1. Identity (who is attesting?) ────────────────────────────────────────
+# --- 1. Identity (who is attesting?) ----------------------------------------
 $BuilderName  = git config user.name
 $BuilderEmail = git config user.email
 if (-not $BuilderName -or -not $BuilderEmail) {
     Write-Error "git config user.name / user.email must be set to attest a build."
     exit 1
 }
-Write-Host "── Builder identity ─────────────────────────────────────────"
+Write-Host "-- Builder identity -----------------------------------------"
 Write-Host "  Name:    $BuilderName"
 Write-Host "  Email:   $BuilderEmail"
 
-# ─── 2. Git state (clean? in sync?) ─────────────────────────────────────────
+# --- 2. Git state (clean? in sync?) -----------------------------------------
 $Commit       = (git rev-parse HEAD).Trim()
 $ShortCommit  = (git rev-parse --short HEAD).Trim()
 $Branch       = (git rev-parse --abbrev-ref HEAD).Trim()
 $IsClean      = -not (git status --porcelain)
-Write-Host "── Source state ─────────────────────────────────────────────"
+Write-Host "-- Source state ---------------------------------------------"
 Write-Host "  Commit:  $Commit"
 Write-Host "  Branch:  $Branch"
 Write-Host "  Clean:   $IsClean"
@@ -57,14 +61,14 @@ if (-not $IsClean -and $Strict) {
     exit 1
 }
 
-# ─── 3. Version from tauri.conf.json ────────────────────────────────────────
+# --- 3. Version from tauri.conf.json ----------------------------------------
 $TauriConf = Get-Content "src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json
 $Version = $TauriConf.version
 Write-Host "  Version: $Version"
 
-# ─── 4. Build the installer (unsigned) ─────────────────────────────────────
+# --- 4. Build the installer (unsigned) -------------------------------------
 if (-not $SkipBuild) {
-    Write-Host "── Building installer (unsigned) ────────────────────────────"
+    Write-Host "-- Building installer (unsigned) ----------------------------"
     # Ensure sidecar binary exists for the host triple before cargo runs.
     bash scripts/ensure-sidecar.sh --build
     if ($LASTEXITCODE -ne 0) {
@@ -72,20 +76,21 @@ if (-not $SkipBuild) {
         exit 1
     }
     # Use cargo-tauri to produce the bundle. NOT calling tauri-cli's signing
-    # path; --bundles nsis,msi is the unsigned-installer path.
-    cargo tauri build --bundles nsis,msi
+    # path; --bundles nsis is the unsigned Windows installer path.
+    # MSI omitted: rejects non-numeric pre-release tags like "internal1".
+    cargo tauri build --bundles nsis
     if ($LASTEXITCODE -ne 0) {
         Write-Error "cargo tauri build failed — see above."
         exit 1
     }
 } else {
-    Write-Host "── Skipping build (using existing artifacts) ────────────────"
+    Write-Host "-- Skipping build (using existing artifacts) ----------------"
 }
 
-# ─── 5. Find the artifacts + compute SHA-256 ────────────────────────────────
+# --- 5. Find the artifacts + compute SHA-256 --------------------------------
 $BundleDir = "src-tauri\target\release\bundle"
 $Artifacts = @()
-foreach ($pattern in @("nsis\*.exe", "msi\*.msi", "deb\*.deb", "appimage\*.AppImage", "dmg\*.dmg")) {
+foreach ($pattern in @("nsis\*.exe", "deb\*.deb", "appimage\*.AppImage", "dmg\*.dmg")) {
     $full = Join-Path $BundleDir $pattern
     Get-ChildItem $full -ErrorAction SilentlyContinue | ForEach-Object {
         $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
@@ -105,7 +110,7 @@ if ($Artifacts.Count -eq 0) {
     exit 1
 }
 
-# ─── 6. Write the attestation ───────────────────────────────────────────────
+# --- 6. Write the attestation -----------------------------------------------
 $AttestDir = "distribution\internal"
 New-Item -ItemType Directory -Force -Path $AttestDir | Out-Null
 $AttestPath = Join-Path $AttestDir "attestation-$ShortCommit.json"
@@ -140,11 +145,11 @@ $Attestation = [ordered]@{
 $Json = $Attestation | ConvertTo-Json -Depth 6
 Set-Content -Path $AttestPath -Value $Json -Encoding UTF8
 Write-Host
-Write-Host "── Attestation written ─────────────────────────────────────"
+Write-Host "-- Attestation written -------------------------------------"
 Write-Host "  $AttestPath"
 Write-Host
 
-# ─── 7. Audit-log this attestation ──────────────────────────────────────────
+# --- 7. Audit-log this attestation ------------------------------------------
 $AuditPath = ".signalos\AUDIT_TRAIL.jsonl"
 $AuditEntry = [ordered]@{
     ts         = $Ts
@@ -155,9 +160,9 @@ $AuditEntry = [ordered]@{
 Add-Content -Path $AuditPath -Value $AuditEntry -Encoding UTF8
 Write-Host "  Audit entry appended to $AuditPath"
 
-# ─── 8. Hand-off summary for the operator ───────────────────────────────────
+# --- 8. Hand-off summary for the operator -----------------------------------
 Write-Host
-Write-Host "═══════════════════════════════════════════════════════════════"
+Write-Host "==============================================================="
 Write-Host "  Internal-testing build is ready."
 Write-Host "  Attested by: $BuilderName <$BuilderEmail>"
 Write-Host "  Not code-signed. Not notarized. Not for public release."
@@ -173,4 +178,4 @@ Write-Host "  - On macOS, right-click the .dmg's app -> 'Open' on first launch."
 Write-Host "  - Report bugs to: $BuilderEmail"
 Write-Host
 Write-Host "  When ready for signed public beta: see docs/RELEASE_GATES_RUNBOOK.md"
-Write-Host "═══════════════════════════════════════════════════════════════"
+Write-Host "==============================================================="
