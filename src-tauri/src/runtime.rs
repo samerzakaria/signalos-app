@@ -390,6 +390,13 @@ pub async fn start_preview(
 }
 
 /// Run an install/build command to completion. Returns true on success.
+///
+/// KNOWN LIMITATION (tracked for Wave 6): the install phase is not
+/// interruptible by Stop. `stop_rx` is awaited later in the parent's
+/// `tokio::select!` — so pressing Stop during `npm install` queues the
+/// stop message but install runs to completion before it's received.
+/// The fix is to thread a `&mut mpsc::Receiver<()>` through here and do
+/// `tokio::select!{ _ = stop_rx.recv() => tree_kill(child.id().unwrap_or(0)); }`.
 async fn run_blocking(
     app: &AppHandle,
     key: &str,
