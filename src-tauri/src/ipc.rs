@@ -1,4 +1,4 @@
-﻿/// ipc.rs - Tauri command handlers
+/// ipc.rs - Tauri command handlers
 ///
 /// Every function here is exposed to the frontend via invoke().
 /// All file writes are validated against the sandbox boundary before execution.
@@ -9,7 +9,91 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
+use crate::governance::{append_audit, AuditEntry};
 use crate::sidecar::{send_command, SidecarRequest};
+
+// ─── Wave 3 / G2-20: shared audit helper ──────────────────────────────────────
+//
+// Every state-changing IPC command writes one line to .signalos/AUDIT_TRAIL.jsonl
+// before the action's success path returns. Best-effort: if the write fails the
+// command still completes, but the failure is logged to stderr so it surfaces
+// in the sidecar:stderr stream.
+fn audit(workspace: &Path, action: &str, detail: String) {
+    let entry = AuditEntry {
+        ts: chrono_iso8601(),
+        action: action.to_string(),
+        actor: "app".to_string(),
+        gate_id: None,
+        detail,
+    };
+    if let Err(e) = append_audit(workspace, &entry) {
+        eprintln!("[audit] failed to write {action}: {e}");
+    }
+}
+
+pub fn ipc_chrono_iso8601() -> String {
+    chrono_iso8601()
+}
+
+fn chrono_iso8601() -> String {
+    // RFC 3339 / ISO 8601 without bringing in `chrono`. Uses the platform clock.
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Manual UTC formatting. Good enough for log lines; not parsing-grade.
+    let days = secs / 86400;
+    let mut year = 1970i64;
+    let mut d = days as i64;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let ylen = if leap { 366 } else { 365 };
+        if d < ylen {
+            break;
+        }
+        d -= ylen;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let mut months = [
+        31u32,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 0usize;
+    let mut day = d as u32;
+    for (i, m) in months.iter().enumerate() {
+        if day < *m {
+            month = i;
+            break;
+        }
+        day -= *m;
+    }
+    let _ = &mut months;
+    let secs_of_day = secs % 86400;
+    let hour = (secs_of_day / 3600) as u32;
+    let minute = ((secs_of_day % 3600) / 60) as u32;
+    let second = (secs_of_day % 60) as u32;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year,
+        month + 1,
+        day + 1,
+        hour,
+        minute,
+        second
+    )
+}
 
 // â”€â”€â”€ WORKSPACE STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -27,6 +111,13 @@ pub fn set_workspace(path: String, state: State<WorkspaceState>) -> Result<(), S
         ));
     }
     *state.0.lock().unwrap() = Some(p);
+    // Non-destructive: setting the active workspace is a pure state change.
+    // We deliberately do NOT call `audit(...)` here — `audit()` writes to
+    // `.signalos/AUDIT_TRAIL.jsonl`, which would force-create that folder
+    // (and any parents) in the user's project the moment they select it
+    // for browsing. The first audit entry lands when the user takes a
+    // state-mutating action (init / file write / secret / gate sign / etc.)
+    // — i.e. the same moment SignalOS first writes anything else.
     Ok(())
 }
 
@@ -283,6 +374,136 @@ pub fn open_workspace_path(
 
 // â”€â”€â”€ SIGNAL COMMAND EXECUTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+/// Wave 5 closeout — read a single file from inside the workspace sandbox.
+/// Used by the file-tree pane and the Builder conversation-history loader.
+/// Refuses to read files outside the workspace root or above MAX_READ bytes.
+#[tauri::command]
+pub fn read_workspace_file(
+    relative_path: String,
+    state: State<WorkspaceState>,
+) -> Result<String, String> {
+    const MAX_READ: u64 = 2_000_000; // 2 MB
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let root = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+    let rel = normalize_workspace_file_path(&relative_path)?;
+    let target = root.join(&rel);
+    let canon = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {rel}: {e}"))?;
+    if !canon.starts_with(&root) {
+        return Err("Refused to read outside the workspace.".into());
+    }
+    let meta = std::fs::metadata(&canon).map_err(|e| format!("stat {rel}: {e}"))?;
+    if meta.len() > MAX_READ {
+        return Err(format!(
+            "{rel} is {} bytes (cap is 2 MB). Use Open in IDE for large files.",
+            meta.len()
+        ));
+    }
+    std::fs::read_to_string(&canon).map_err(|e| format!("read {rel}: {e}"))
+}
+
+#[derive(Serialize, Clone)]
+pub struct WorkspaceEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub bytes: Option<u64>,
+    pub modified_ms: Option<u128>,
+}
+
+#[tauri::command]
+pub fn list_workspace_dir(
+    relative_path: Option<String>,
+    state: State<WorkspaceState>,
+) -> Result<Vec<WorkspaceEntry>, String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let root = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+    let rel = relative_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(".");
+    let target = if rel == "." {
+        root.clone()
+    } else {
+        let normalized = normalize_workspace_file_path(rel)?;
+        root.join(normalized)
+    };
+    let canon = target
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve: {e}"))?;
+    if !canon.starts_with(&root) {
+        return Err("Refused to list outside the workspace.".into());
+    }
+    let skip: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        ".venv",
+        "venv",
+        ".sidecar-venv",
+        "__pycache__",
+        ".next",
+        ".turbo",
+        ".cache",
+    ];
+    let mut entries = Vec::new();
+    for ent in std::fs::read_dir(&canon).map_err(|e| format!("read_dir: {e}"))? {
+        let Ok(ent) = ent else { continue };
+        let name = ent.file_name().to_string_lossy().to_string();
+        if skip.contains(&name.as_str()) {
+            continue;
+        }
+        let path = ent.path();
+        let rel_path = match path.strip_prefix(&root) {
+            Ok(p) => p.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        let Ok(meta) = ent.metadata() else { continue };
+        let kind = if meta.is_dir() { "dir" } else { "file" };
+        let bytes = if meta.is_file() {
+            Some(meta.len())
+        } else {
+            None
+        };
+        let modified_ms = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis());
+        entries.push(WorkspaceEntry {
+            name,
+            path: rel_path,
+            kind: kind.into(),
+            bytes,
+            modified_ms,
+        });
+    }
+    entries.sort_by(|a, b| match (a.kind.as_str(), b.kind.as_str()) {
+        ("dir", "file") => std::cmp::Ordering::Less,
+        ("file", "dir") => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(entries)
+}
+
 #[tauri::command]
 pub fn write_workspace_export(
     kind: String,
@@ -293,6 +514,10 @@ pub fn write_workspace_export(
     if content.len() > 2_000_000 {
         return Err("Export is too large. Keep reports under 2 MB.".into());
     }
+    // Wave 1 / G0-5: every JS-built report is redacted server-side before
+    // it touches disk. The JS layer cannot bypass this; secrets typed into
+    // chat or pasted into notes cannot leak into issue reports or handoffs.
+    let content = redact_for_export(&content);
 
     let workspace = state
         .0
@@ -319,9 +544,94 @@ pub fn write_workspace_export(
     std::fs::write(&target, content).map_err(|e| format!("Could not write export: {e}"))?;
 
     let relative_path = format!(".signalos/{safe_kind}/{safe_filename}");
+    audit(&workspace_root, "export:write", relative_path.clone());
     Ok(WorkspaceExport {
         relative_path,
         absolute_path: target.to_string_lossy().to_string(),
+    })
+}
+
+#[derive(Serialize, Clone)]
+pub struct WorkspaceFileDiff {
+    pub path: String,
+    pub status: String, // "new" | "modified" | "unchanged"
+    pub bytes_new: usize,
+    pub bytes_old: Option<usize>,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceFileDiffResult {
+    pub diffs: Vec<WorkspaceFileDiff>,
+    pub total_new: usize,
+    pub total_modified: usize,
+    pub total_unchanged: usize,
+}
+
+/// Wave 3 / G2-24: file diff preview. Returns what would happen if the
+/// caller wrote these files — new vs modified vs unchanged — without
+/// actually writing anything. The frontend renders this before the user
+/// confirms a Build write.
+#[tauri::command]
+pub fn preview_workspace_files(
+    files: Vec<WorkspaceFileInput>,
+    state: State<WorkspaceState>,
+) -> Result<WorkspaceFileDiffResult, String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let workspace_root = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+
+    let mut diffs = Vec::with_capacity(files.len());
+    let mut total_new = 0usize;
+    let mut total_modified = 0usize;
+    let mut total_unchanged = 0usize;
+
+    for file in files {
+        let rel = normalize_workspace_file_path(&file.path)?;
+        if is_reserved_generated_path(&rel) {
+            return Err(format!(
+                "Refused to preview {rel}. SignalOS system folders and secret files are managed separately."
+            ));
+        }
+        let target = workspace_root.join(&rel);
+        let bytes_new = file.content.len();
+        let (status, bytes_old) = if target.is_file() {
+            match std::fs::read(&target) {
+                Ok(existing) => {
+                    if existing == file.content.as_bytes() {
+                        total_unchanged += 1;
+                        ("unchanged".to_string(), Some(existing.len()))
+                    } else {
+                        total_modified += 1;
+                        ("modified".to_string(), Some(existing.len()))
+                    }
+                }
+                Err(_) => {
+                    total_modified += 1;
+                    ("modified".to_string(), None)
+                }
+            }
+        } else {
+            total_new += 1;
+            ("new".to_string(), None)
+        };
+        diffs.push(WorkspaceFileDiff {
+            path: rel,
+            status,
+            bytes_new,
+            bytes_old,
+        });
+    }
+    Ok(WorkspaceFileDiffResult {
+        diffs,
+        total_new,
+        total_modified,
+        total_unchanged,
     })
 }
 
@@ -360,9 +670,11 @@ pub fn write_workspace_files(
             ));
         }
 
-        let bytes = file.content.as_bytes().len();
+        let bytes = file.content.len();
         if bytes > 400_000 {
-            return Err(format!("{rel} is too large. Keep generated files under 400 KB."));
+            return Err(format!(
+                "{rel} is too large. Keep generated files under 400 KB."
+            ));
         }
         total_bytes += bytes;
         if total_bytes > 2_000_000 {
@@ -397,11 +709,464 @@ pub fn write_workspace_files(
         written.push(WorkspaceFileWrite {
             relative_path: rel,
             absolute_path: target.to_string_lossy().to_string(),
-            bytes: content.as_bytes().len(),
+            bytes: content.len(),
         });
     }
 
+    audit(
+        &workspace_root,
+        "files:write",
+        format!("{} files", written.len()),
+    );
     Ok(WorkspaceFileWriteResult { files: written })
+}
+
+// ─── Wave 3 — Identity + role assignment (wizard step 4.5) ───────────────────
+//
+// Stored at .signalos/identity.json so the bundled SignalOS Core and the
+// gate-signing rule both see the same actor + role. Role enforcement on
+// gate sign reads this file.
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Identity {
+    pub name: String,
+    pub role: String, // PO | PE | QA | DevOps
+}
+
+#[tauri::command]
+pub fn set_identity(
+    name: String,
+    role: String,
+    state: State<WorkspaceState>,
+) -> Result<Identity, String> {
+    let role_norm = role.trim().to_uppercase();
+    if !["PO", "PE", "QA", "DEVOPS"].contains(&role_norm.as_str()) {
+        return Err(format!("Role must be PO, PE, QA, or DevOps — got '{role}'"));
+    }
+    let role_canonical = if role_norm == "DEVOPS" {
+        "DevOps".to_string()
+    } else {
+        role_norm
+    };
+    let identity = Identity {
+        name: name.trim().to_string(),
+        role: role_canonical,
+    };
+    if identity.name.is_empty() {
+        return Err("Name is required.".into());
+    }
+    let ws = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let dir = ws.join(".signalos");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create .signalos: {e}"))?;
+    let path = dir.join("identity.json");
+    let json = serde_json::to_string_pretty(&identity).map_err(|e| format!("Serialize: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("Write identity.json: {e}"))?;
+    audit(
+        &ws,
+        "identity:set",
+        format!("{} as {}", identity.name, identity.role),
+    );
+    Ok(identity)
+}
+
+#[tauri::command]
+pub fn get_identity(state: State<WorkspaceState>) -> Result<Option<Identity>, String> {
+    let ws = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let path = ws.join(".signalos").join("identity.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("Read identity.json: {e}"))?;
+    Ok(serde_json::from_str(&content).ok())
+}
+
+/// Role required to sign each gate, per docs §11.4d rule 6.
+/// PO signs G0/G1/G3 ; PE signs G3/G4 ; QA signs G4/G5 ; DevOps signs deploy gates.
+fn role_can_sign(role: &str, gate_id: u8) -> bool {
+    match (role, gate_id) {
+        ("PO", 0) | ("PO", 1) | ("PO", 2) | ("PO", 3) => true,
+        ("PE", 3) | ("PE", 4) => true,
+        ("QA", 4) | ("QA", 5) => true,
+        ("DevOps", _) => true, // DevOps can sign deploy-related ops; gates 0-5 PO/PE/QA also allowed via direct check.
+        _ => false,
+    }
+}
+
+/// Check whether the current identity may sign a gate.
+#[tauri::command]
+pub fn check_role_for_gate(gate_id: u8, state: State<WorkspaceState>) -> Result<bool, String> {
+    let Some(id) = get_identity(state)? else {
+        return Err("Identity not set. Run the wizard or set role in Settings.".into());
+    };
+    Ok(role_can_sign(&id.role, gate_id))
+}
+
+// ─── Wave 1 / G0-6 — Replit-style secrets manager ────────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct SecretEntry {
+    pub name: String,
+    pub masked_value: String,
+    pub public_prefix: bool,
+    pub updated_at: u64, // file mtime, ms since epoch
+    pub file: String,
+}
+
+#[derive(Deserialize)]
+pub struct EnvDiffPlan {
+    pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct EnvDiffResult {
+    pub file: String,
+    pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub unchanged: Vec<String>,
+    pub removed: Vec<String>,
+    pub applied: bool,
+}
+
+/// Parse a .env file and return its variable list (masked).
+#[tauri::command]
+pub fn list_workspace_secrets(
+    filename: Option<String>,
+    state: State<WorkspaceState>,
+) -> Result<Vec<SecretEntry>, String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let safe = normalize_secret_filename(filename.as_deref().unwrap_or(".env.local"))?;
+    let path = workspace.join(&safe);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Could not read {safe}: {e}"))?;
+    let updated_at = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_start_matches('\u{feff}').trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key_raw, val)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key_raw.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        let public = is_public_prefixed(&key);
+        let unquoted = unquote_env_value(val);
+        let masked_value = if public {
+            unquoted
+        } else if unquoted.is_empty() {
+            String::new()
+        } else {
+            "•".repeat(unquoted.chars().count().min(18))
+        };
+        out.push(SecretEntry {
+            name: key,
+            masked_value,
+            public_prefix: public,
+            updated_at,
+            file: safe.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Return the plaintext value of a single secret. The only IPC path that
+/// returns secrets in clear. Caller is expected to audit-log the reveal;
+/// the Rust layer also writes an audit entry.
+#[tauri::command]
+pub fn reveal_workspace_secret(
+    name: String,
+    filename: Option<String>,
+    state: State<WorkspaceState>,
+) -> Result<String, String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let key = normalize_secret_name(&name)?;
+    let safe = normalize_secret_filename(filename.as_deref().unwrap_or(".env.local"))?;
+    let path = workspace.join(&safe);
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Could not read {safe}: {e}"))?;
+    for line in content.lines() {
+        let trimmed = line.trim_start_matches('\u{feff}').trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            if k.trim() == key {
+                append_secret_audit(&workspace, "secret:reveal", &key, &safe);
+                return Ok(unquote_env_value(v));
+            }
+        }
+    }
+    Err(format!("{key} not found in {safe}"))
+}
+
+/// Remove a single KEY= line from the .env file. Preserves comments and order.
+/// Atomic via temp-file + rename.
+#[tauri::command]
+pub fn delete_workspace_secret(
+    name: String,
+    filename: Option<String>,
+    state: State<WorkspaceState>,
+) -> Result<(), String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let key = normalize_secret_name(&name)?;
+    let safe = normalize_secret_filename(filename.as_deref().unwrap_or(".env.local"))?;
+    let path = workspace.join(&safe);
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Could not read {safe}: {e}"))?;
+    let mut found = false;
+    let kept: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start_matches('\u{feff}').trim();
+            if trimmed.starts_with('#') {
+                return true;
+            }
+            if let Some((k, _)) = trimmed.split_once('=') {
+                if k.trim() == key {
+                    found = true;
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    if !found {
+        return Err(format!("{key} not found in {safe}"));
+    }
+    let mut out = kept.join("\n");
+    out.push('\n');
+    atomic_write(&path, out.as_bytes())?;
+    append_secret_audit(&workspace, "secret:delete", &key, &safe);
+    Ok(())
+}
+
+/// Bulk apply a pasted .env block. Returns the diff and writes atomically.
+/// If `allow_removals` is false and the diff has removals, the call fails
+/// without writing.
+#[tauri::command]
+pub fn apply_workspace_env_diff(
+    filename: Option<String>,
+    env_text: String,
+    allow_removals: bool,
+    state: State<WorkspaceState>,
+) -> Result<EnvDiffResult, String> {
+    let workspace = state
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No workspace selected")?;
+    let safe = normalize_secret_filename(filename.as_deref().unwrap_or(".env.local"))?;
+    let path = workspace.join(&safe);
+
+    let new_pairs = parse_env_block(&env_text)?;
+    let old_pairs = if path.exists() {
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| format!("Could not read {safe}: {e}"))?;
+        parse_env_block(&content)?
+    } else {
+        Vec::new()
+    };
+
+    let old_map: std::collections::HashMap<&str, &str> = old_pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let new_map: std::collections::HashMap<&str, &str> = new_pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut added = Vec::new();
+    let mut changed = Vec::new();
+    let mut unchanged = Vec::new();
+    let mut removed = Vec::new();
+    for (k, v) in &new_pairs {
+        match old_map.get(k.as_str()) {
+            None => added.push(k.clone()),
+            Some(old_v) if old_v != &v.as_str() => changed.push(k.clone()),
+            Some(_) => unchanged.push(k.clone()),
+        }
+    }
+    for (k, _) in &old_pairs {
+        if !new_map.contains_key(k.as_str()) {
+            removed.push(k.clone());
+        }
+    }
+
+    if !removed.is_empty() && !allow_removals {
+        return Ok(EnvDiffResult {
+            file: safe,
+            added,
+            changed,
+            unchanged,
+            removed,
+            applied: false,
+        });
+    }
+
+    // Rebuild file: comments preserved are not feasible without full AST;
+    // we write the new pairs in encounter order and append a trailing newline.
+    // Comments inside `env_text` are preserved verbatim.
+    let mut out = String::new();
+    for line in env_text.lines() {
+        let trimmed = line.trim_start_matches('\u{feff}').trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if let Some((k, v)) = trimmed.split_once('=') {
+            let key = k.trim();
+            if let Ok(norm) = normalize_secret_name(key) {
+                out.push_str(&format!(
+                    "{norm}={}\n",
+                    quote_env_value(&unquote_env_value(v))
+                ));
+            }
+        }
+    }
+
+    atomic_write(&path, out.as_bytes())?;
+    append_secret_audit(&workspace, "secret:bulk-apply", "", &safe);
+
+    Ok(EnvDiffResult {
+        file: safe,
+        added,
+        changed,
+        unchanged,
+        removed,
+        applied: true,
+    })
+}
+
+fn parse_env_block(text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut pairs = Vec::new();
+    for (lineno, raw) in text.lines().enumerate() {
+        let trimmed = raw.trim_start_matches('\u{feff}').trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = trimmed.split_once('=') else {
+            return Err(format!("Line {} is not KEY=value: {trimmed}", lineno + 1));
+        };
+        let key = normalize_secret_name(k.trim())?;
+        let value = unquote_env_value(v);
+        pairs.push((key, value));
+    }
+    Ok(pairs)
+}
+
+fn unquote_env_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2)
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2)
+    {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return inner
+            .replace("\\\"", "\"")
+            .replace("\\'", "'")
+            .replace("\\n", "\n")
+            .replace("\\\\", "\\");
+    }
+    trimmed.to_string()
+}
+
+fn is_public_prefixed(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    upper.starts_with("NEXT_PUBLIC_")
+        || upper.starts_with("VITE_")
+        || upper.starts_with("REACT_APP_")
+        || upper.starts_with("EXPO_PUBLIC_")
+        || upper.starts_with("PUBLIC_")
+}
+
+fn atomic_write(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "Target has no parent directory".to_string())?;
+    let tmp = parent.join(format!(
+        ".{}.tmp",
+        target
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "out".into())
+    ));
+    {
+        let mut f =
+            std::fs::File::create(&tmp).map_err(|e| format!("Could not create temp file: {e}"))?;
+        f.write_all(bytes)
+            .map_err(|e| format!("Could not write temp file: {e}"))?;
+        f.sync_all()
+            .map_err(|e| format!("Could not fsync temp file: {e}"))?;
+    }
+    std::fs::rename(&tmp, target).map_err(|e| format!("Could not rename temp file: {e}"))
+}
+
+fn append_secret_audit(workspace: &Path, action: &str, name: &str, file: &str) {
+    use std::io::Write;
+    let dir = workspace.join(".signalos");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("AUDIT_TRAIL.jsonl");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = serde_json::json!({
+        "ts": ts,
+        "action": action,
+        "name": name,
+        "file": file,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "{}", entry);
+    }
 }
 
 #[tauri::command]
@@ -465,6 +1230,11 @@ pub fn upsert_workspace_secret(
     std::fs::write(&target, content.as_bytes())
         .map_err(|e| format!("Could not save secret to {safe_filename}: {e}"))?;
 
+    audit(
+        &workspace_root,
+        "secret:upsert",
+        format!("{} in {}", key, safe_filename),
+    );
     Ok(WorkspaceFileWrite {
         relative_path: safe_filename,
         absolute_path: target.to_string_lossy().to_string(),
@@ -857,7 +1627,7 @@ pub async fn start_workspace_watch(
             sleep(Duration::from_secs(2)).await;
             if let Ok(meta) = tokio::fs::metadata(&workspace).await {
                 if let Ok(mtime) = meta.modified() {
-                    if last_mtime.map_or(false, |prev| prev != mtime) {
+                    if last_mtime.is_some_and(|prev| prev != mtime) {
                         let _ = app_handle
                             .emit("workspace:changed", workspace.to_string_lossy().to_string());
                     }
@@ -1027,6 +1797,66 @@ fn normalize_secret_filename(value: &str) -> Result<String, String> {
         return Ok(cleaned);
     }
     Err("Secrets must be saved to .env, .env.local, or another .env.* file.".into())
+}
+
+// ─── Wave 1 / G0-5: redaction for JS-built reports ────────────────────────────
+//
+// Mirrors the regex set in python/signalos_secret_guard.py. The JS layer
+// builds issue-report and team-handoff Markdown directly from session state
+// (which can include user-typed chat messages). All writes through
+// write_workspace_export pass through this filter, so secrets that crossed
+// only the Rust side and never the Python sidecar still get redacted.
+
+const REDACTED: &str = "<redacted>";
+
+fn redact_for_export(text: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    // High-confidence secret value patterns. Compiled once per process.
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        [
+            // PEM blocks
+            r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+            // OpenAI / Anthropic / generic sk- keys
+            r"\bsk-[A-Za-z0-9][A-Za-z0-9_\-]{18,}\b",
+            r"\bsk-ant-[A-Za-z0-9_\-]{20,}\b",
+            // AWS access key IDs
+            r"\bAKIA[0-9A-Z]{16}\b",
+            // Bearer tokens
+            r"(?i)\bBearer\s+[A-Za-z0-9_\-\.]{20,}\b",
+            // DB URLs with creds
+            r"(?i)(postgres|postgresql|mysql|mongodb|redis)://[^:\s/@]+:[^@\s]+@",
+            // KEY=value lines with a secret-shaped key name
+            r"(?im)^[﻿]?([A-Z_][A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|DATABASE[_-]?URL|DB[_-]?URL|REDIS[_-]?URL|AUTHORIZATION)[A-Z0-9_]*)\s*=\s*[^\r\n]+",
+            // JSON-style "secret": "value"
+            r#"(?i)(["'][A-Z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PWD|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CLIENT[_-]?SECRET|DATABASE[_-]?URL|DB[_-]?URL|REDIS[_-]?URL|AUTHORIZATION)[A-Z0-9_.-]*["']\s*:\s*["'])[^"'\r\n]*(["'])"#,
+        ]
+        .iter()
+        .filter_map(|p| Regex::new(p).ok())
+        .collect()
+    });
+
+    let mut out = text.to_string();
+    for re in patterns.iter() {
+        // For KEY=value and JSON "key": "value" patterns we keep the key;
+        // for plain values we drop the whole match.
+        out = re
+            .replace_all(&out, |caps: &regex::Captures| {
+                if let Some(key) = caps.get(1) {
+                    if let Some(closer) = caps.get(2) {
+                        format!("{}{}{}", key.as_str(), REDACTED, closer.as_str())
+                    } else {
+                        format!("{}={}", key.as_str(), REDACTED)
+                    }
+                } else {
+                    REDACTED.to_string()
+                }
+            })
+            .into_owned();
+    }
+    out
 }
 
 fn quote_env_value(value: &str) -> String {

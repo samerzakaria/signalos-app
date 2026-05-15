@@ -28,6 +28,20 @@ pub struct SidecarResponse {
     pub data: Option<serde_json::Value>,
 }
 
+/// Wave 2 / G1-7: progress event from a long-running command.
+/// Multiplexed on the same stdout stream as SidecarResponse, distinguished
+/// by the presence of the `kind: "progress"` field.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SidecarProgress {
+    pub id: String,
+    pub kind: String, // always "progress"
+    pub phase: String,
+    pub substep: String,
+    pub state: String, // pending | running | done | error
+    pub detail: Option<String>,
+    pub ts: u128,
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct SidecarRuntimeStatus {
     pub running: bool,
@@ -144,11 +158,24 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                             status.last_event = "Engine response received".into();
                             status.last_error = None;
                         });
-                        if let Ok(resp) = serde_json::from_str::<SidecarResponse>(&line) {
-                            let _ = app_emit.emit("sidecar:response", &resp);
-                        } else {
-                            let _ = app_emit.emit("sidecar:log", &line);
+                        // Wave 2 / G1-7: distinguish progress events from
+                        // final responses. Progress carries kind="progress";
+                        // a final response is everything else.
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if value.get("kind").and_then(|v| v.as_str()) == Some("progress") {
+                                if let Ok(prog) =
+                                    serde_json::from_value::<SidecarProgress>(value.clone())
+                                {
+                                    let _ = app_emit.emit("sidecar:progress", &prog);
+                                    continue;
+                                }
+                            }
+                            if let Ok(resp) = serde_json::from_value::<SidecarResponse>(value) {
+                                let _ = app_emit.emit("sidecar:response", &resp);
+                                continue;
+                            }
                         }
+                        let _ = app_emit.emit("sidecar:log", &line);
                     }
                 }
                 CommandEvent::Stderr(line) => {
@@ -204,7 +231,13 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                     }
                 }
                 SidecarControl::Stop => {
+                    // Tree-kill: the PyInstaller launcher exe spawns a real
+                    // Python interpreter as a child. `child.kill()` only
+                    // hits the launcher; the interpreter survives and
+                    // keeps owning stdout. taskkill /T walks the tree.
+                    let pid_to_kill = child.pid();
                     let _ = child.kill();
+                    tree_kill(pid_to_kill);
                     break;
                 }
             }
@@ -254,4 +287,30 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+/// Cross-platform tree-kill (sidecar.rs + runtime.rs share this).
+///
+/// PyInstaller-bundled sidecars and npm dev servers spawn child processes
+/// (the launcher exe → real Python; `npm` → `node` → `vite`). Killing only
+/// the immediate process leaves the children alive and chewing CPU/ports.
+///
+/// Windows: `taskkill /T /F /PID <pid>` walks the process tree.
+/// Unix: send SIGKILL to the process group (negative pid) via the `kill`
+/// command. Falls back to a plain SIGKILL if the group send fails.
+pub fn tree_kill(pid: u32) {
+    use std::process::Command;
+    if cfg!(windows) {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .output();
+    } else {
+        // Negative pid means "process group" for /bin/kill.
+        let _ = Command::new("kill")
+            .args(["-9", &format!("-{pid}")])
+            .output();
+        // Fallback: kill the leader directly in case the child wasn't in
+        // its own process group.
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+    }
 }

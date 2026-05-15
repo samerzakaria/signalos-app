@@ -332,6 +332,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Don't prompt — create the path if missing")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite an existing non-empty target")
+    parser.add_argument("--keep-existing", action="store_true",
+                        help="Allow non-empty target but never overwrite "
+                             "files that already exist. The bundle fills in "
+                             "missing files only; user-authored content is "
+                             "preserved untouched. Mutually exclusive with --force.")
     parser.add_argument("--minimal", action="store_true",
                         help="Skip the IDE-config bundle; ship only "
                              "the .signalos/ runtime + governance "
@@ -362,10 +367,16 @@ def main(argv: list[str]) -> int:
                 f"signalos init: '{target}' exists but is not a directory.\n"
             )
             return 1
-        if not _is_target_empty(target) and not args.force:
+        if args.force and args.keep_existing:
+            sys.stderr.write(
+                "signalos init: --force and --keep-existing are mutually exclusive.\n"
+            )
+            return 1
+        if not _is_target_empty(target) and not (args.force or args.keep_existing):
             sys.stderr.write(
                 f"signalos init: target '{target}' is not empty "
-                f"(use --force to overwrite, or pick a different path).\n"
+                f"(use --keep-existing to merge without overwriting, "
+                f"--force to overwrite, or pick a different path).\n"
             )
             return 1
 
@@ -373,6 +384,9 @@ def main(argv: list[str]) -> int:
     file_count = 0
     if not args.minimal:
         try:
+            # --keep-existing means "allow non-empty target but never
+            # overwrite". _copy_bundle already preserves existing files
+            # when force=False; we just pass force=False here.
             file_count = _copy_bundle(target, force=args.force)
         except RuntimeError as exc:
             sys.stderr.write(f"signalos init: {exc}\n")

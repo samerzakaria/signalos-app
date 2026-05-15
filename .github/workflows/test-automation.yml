@@ -1,0 +1,207 @@
+# Wave 5 / G4 — Test Automation CI workflow
+#
+# Runs the on-PR and on-push gates defined in docs/test-automation/.
+# Mirrors scripts/test-gates.* and adds the matrix runs that only make
+# sense in CI (release builds across OS targets).
+#
+# Failure of any job blocks merge (configure via branch-protection rules).
+
+name: test-automation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Nightly L6 deep-validation run (4 hours window for soak / chaos).
+    - cron: "0 3 * * *"
+
+# Reusable system-deps install. Tauri on Linux needs WebKit + GTK + glib
+# headers + librsvg before any cargo check / clippy / build will succeed.
+# We DRY this via a composite step inlined at the top of each job that
+# touches cargo on Linux. Windows + macOS need no system deps.
+
+jobs:
+  # ── L0 Pre-commit gates (lint, format, type, secrets) ─────────────────────
+  l0-precommit:
+    name: L0 · pre-commit gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Ensure sidecar binary exists for target
+        run: bash scripts/ensure-sidecar.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: cargo fmt check
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy (-D warnings)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true   # do not block on missing license; the regex pass below is mandatory.
+      - name: secret scan (regex fallback)
+        run: bash scripts/test-gates.sh L0
+
+  # ── L1 CI Build + Verify (compile, full tests, SCA, image scan) ───────────
+  l1-build:
+    name: L1 · build + verify
+    needs: l0-precommit
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: cargo check (all targets)
+        working-directory: src-tauri
+        run: cargo check --all-targets
+      - name: cargo test --lib
+        working-directory: src-tauri
+        run: cargo test --lib
+      - name: python tests
+        working-directory: python
+        run: |
+          python -m unittest discover -p "test_*.py" -t .
+      - name: cargo audit (SCA)
+        working-directory: src-tauri
+        run: |
+          cargo install --quiet cargo-audit || true
+          cargo audit || true   # advisory: report but do not block on transient CVEs
+        continue-on-error: true
+
+  # ── L2 CD Test Env — installer build smoke ────────────────────────────────
+  l2-installer-smoke:
+    name: L2 · installer smoke
+    needs: l1-build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
+      - name: cargo build --release (workspace)
+        working-directory: src-tauri
+        run: cargo build --release
+      # Full bundling (tauri-cli) is gated on signing materials; that is the
+      # signed-release path, not the per-PR smoke. Per-PR we only verify
+      # the binary builds cleanly across all three platforms.
+
+  # ── L3 CD Pre-prod — DAST / chaos ────────────────────────────────────────
+  l3-preprod:
+    name: L3 · pre-prod gates
+    needs: l2-installer-smoke
+    if: github.event_name == 'push'   # only on merge to main, not every PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Run extended test-gates
+        run: bash scripts/test-gates.sh L1
+
+  # ── L6 Nightly deep validation (cron only) ───────────────────────────────
+  l6-nightly:
+    name: L6 · nightly deep validation
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
+      - name: cargo test --release (full)
+        working-directory: src-tauri
+        run: cargo test --release
+      - name: cargo audit (strict)
+        working-directory: src-tauri
+        run: |
+          cargo install --quiet cargo-audit
+          cargo audit --deny warnings

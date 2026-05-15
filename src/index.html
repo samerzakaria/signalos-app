@@ -26,6 +26,8 @@
   --shadow: 0 12px 30px rgba(44, 39, 30, .08);
   --radius: 8px;
   --sidebar: 280px;
+  --sidebar-collapsed: 56px;
+  --preview: 460px;
 }
 
 * { box-sizing: border-box; }
@@ -55,9 +57,34 @@ button:disabled {
 
 #app {
   display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  /* Wave 2 / G1-9: three-pane layout. Left collapsible, center always
+     visible, right preview pane togglable. */
+  grid-template-columns: var(--sidebar) minmax(420px, 1fr) var(--preview);
   min-height: 100vh;
   min-height: 100dvh;
+}
+#app.sidebar-collapsed { grid-template-columns: var(--sidebar-collapsed) minmax(420px, 1fr) var(--preview); }
+#app.preview-collapsed  { grid-template-columns: var(--sidebar) minmax(420px, 1fr) 0; }
+#app.sidebar-collapsed.preview-collapsed { grid-template-columns: var(--sidebar-collapsed) minmax(420px, 1fr) 0; }
+#app.sidebar-collapsed .brand-name,
+#app.sidebar-collapsed .brand-sub,
+#app.sidebar-collapsed .side-card,
+#app.sidebar-collapsed .steps,
+#app.sidebar-collapsed .nav button { display: none; }
+#app.preview-collapsed .preview-host { display: none; }
+.preview-host { overflow: hidden; }
+.collapse-btn {
+  position: absolute; top: 14px; right: -14px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--panel); border: 1px solid var(--line-strong);
+  cursor: pointer; z-index: 5; padding: 0;
+  font-weight: 800; color: var(--muted);
+}
+.sidebar { position: relative; }
+.preview-toggle {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 4px 10px; min-height: 32px;
+  font-weight: 650; cursor: pointer; color: var(--muted);
 }
 
 .sidebar {
@@ -1065,13 +1092,216 @@ input:focus, select:focus, textarea:focus {
   transform: translateY(0);
 }
 
+/* ─── Wave 5 closeout — File tree with diff badges ─────────────────── */
+.file-tree { display: grid; gap: 6px; }
+.file-tree-toolbar { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
+.file-tree-toolbar input { min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.file-tree-body { max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); background: white; padding: 4px 0; }
+.ftree-row { display: block; padding: 1px 0; }
+.ftree-toggle, .ftree-file {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: transparent; border: none; cursor: pointer;
+  padding: 3px 4px; text-align: left; color: var(--text); font-size: 12px;
+  border-radius: 4px;
+}
+.ftree-toggle:hover, .ftree-file:hover { background: var(--panel-soft); }
+.ftree-chevron { color: var(--muted); width: 12px; text-align: center; }
+.ftree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ftree-size { color: var(--faint); font-size: 11px; }
+.ftree-badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; }
+.ftree-badge.new { background: var(--green-soft); color: var(--green); border: 1px solid #c8e3d3; }
+.ftree-badge.mod { background: var(--amber-soft); color: var(--amber); border: 1px solid #ead2ad; }
+
+/* ─── Wave 5 closeout — Files/Gov/Mem left-pane tabs ─────────────────── */
+.left-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; background: var(--panel-soft); border-radius: var(--radius); }
+.left-tab {
+  background: transparent; border: none; border-radius: 4px;
+  padding: 6px 4px; font-weight: 700; font-size: 12px;
+  color: var(--muted); cursor: pointer;
+}
+.left-tab.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.left-tab:hover { color: var(--text); }
+.left-tab-panel { padding-top: 8px; }
+.left-tab-panel[hidden] { display: none; }
+.left-gov-section { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.left-gov-section:last-child { border-bottom: none; }
+.left-gov-section h4 { margin: 0 0 4px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); }
+.left-gov-gates { display: grid; gap: 2px; }
+.left-gov-gate { display: flex; gap: 6px; align-items: center; padding: 3px 6px; font-size: 12px; border-radius: 4px; }
+.left-gov-gate.signed { color: var(--green); }
+.left-gov-gate.current { color: var(--blue); font-weight: 700; background: var(--blue-soft); }
+.left-gov-gate.locked { color: var(--faint); }
+.left-mem-list { display: grid; gap: 4px; padding-top: 4px; }
+.left-mem-entry { padding: 4px 6px; font-size: 12px; border-radius: 4px; background: var(--panel-soft); }
+.left-mem-entry .meta { color: var(--faint); font-size: 10px; margin-top: 2px; }
+
+/* ─── Wave 3 / G2-21..25 — Enforcement pill + override modal ─────────── */
+.enforcement-pill { cursor: pointer; }
+.enforcement-pill.green .pill-dot { background: var(--green); }
+.enforcement-pill.amber .pill-dot { background: var(--amber); }
+.enforcement-pill.red   .pill-dot { background: var(--red); }
+.enforcement-popover {
+  position: absolute; top: 64px; right: 24px; z-index: 30;
+  width: 360px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px;
+}
+.enforcement-popover[hidden] { display: none; }
+.enforcement-popover-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.enforcement-rules { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.enforcement-rule { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; }
+.enforcement-rule .mode-strict { color: var(--green); font-weight: 760; }
+.enforcement-rule .mode-warn   { color: var(--amber); font-weight: 760; }
+.enforcement-rule .mode-off    { color: var(--red); font-weight: 760; }
+.enforcement-footer { display: flex; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.override-modal { position: fixed; inset: 0; z-index: 90; background: rgba(20,18,14,.62); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 24px; }
+.override-modal[hidden] { display: none; }
+
+/* ─── Wave 2 / G1-11 — Iframe preview pane + Run controller ─────────── */
+.preview-pane {
+  display: grid; grid-template-rows: auto 1fr auto auto;
+  gap: 8px; height: 100%; min-height: 0;
+  padding: 12px; border-left: 1px solid var(--line); background: var(--panel);
+}
+.preview-toolbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.preview-title { font-weight: 760; font-size: 14px; }
+.preview-status { font-size: 12px; color: var(--muted); }
+.preview-status.running { color: var(--green); }
+.preview-status.error { color: var(--red); }
+.preview-frame-wrap {
+  border: 1px solid var(--line); border-radius: var(--radius); background: white;
+  min-height: 320px; overflow: hidden; position: relative;
+}
+.preview-frame { width: 100%; height: 100%; min-height: 320px; border: 0; }
+.preview-empty {
+  display: grid; place-items: center; height: 100%;
+  color: var(--muted); padding: 24px; text-align: center;
+}
+.preview-controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.preview-controls button { min-height: 32px; padding: 0 12px; font-size: 12px; }
+.preview-log {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: #f6f4ef; max-height: 140px; overflow-y: auto; font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 8px;
+}
+.preview-log .stderr { color: var(--red); }
+.preview-log .stdout { color: var(--text); }
+.preview-log .status { color: var(--blue); font-weight: 700; }
+.preview-log[hidden] { display: none; }
+
+/* ─── Wave 2 / G1-8 — Style A progress renderer ────────────────────── */
+.progress-strip { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); }
+.progress-bar { height: 6px; background: #e7e2d6; border-radius: 999px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: var(--blue); transition: width .25s ease; }
+.progress-meta { color: var(--muted); font-size: 12px; font-weight: 650; }
+.progress-phase { border-left: 3px solid var(--line-strong); padding-left: 10px; }
+.progress-phase.done { border-left-color: var(--green); }
+.progress-phase.running { border-left-color: var(--blue); }
+.progress-phase.error { border-left-color: var(--red); }
+.progress-phase-title { font-weight: 760; margin-bottom: 4px; }
+.progress-substeps { display: grid; gap: 2px; margin-left: 8px; }
+.progress-substep { color: var(--faint); font-size: 12px; display: flex; gap: 6px; align-items: baseline; }
+.progress-substep.done { color: var(--green); }
+.progress-substep.running { color: var(--blue); font-weight: 700; }
+.progress-substep.error { color: var(--red); font-weight: 700; }
+.progress-substep .ps-icon { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; width: 12px; }
+.progress-running { color: var(--blue); font-weight: 700; }
+.progress-detail { color: var(--muted); font-size: 12px; font-style: italic; }
+
+/* ─── Wave 1 / G0-6 — Replit-style secrets manager ─────────────────── */
+.secrets-panel { max-width: 980px; }
+.secrets-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
+.secrets-actions { display: flex; gap: 8px; }
+.secrets-meta { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+.secrets-controls { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 12px; margin-bottom: 14px; }
+.secrets-list { display: grid; gap: 10px; }
+.secret-card { border: 1px solid var(--line); border-radius: var(--radius); background: white; padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+.secret-card.public { border-color: #c8e3d3; background: #f7fcf9; }
+.secret-name { font-weight: 760; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.secret-value { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; margin-top: 4px; word-break: break-all; }
+.secret-info { color: var(--faint); font-size: 11px; margin-top: 4px; }
+.secret-info .warn { color: var(--amber); }
+.secret-buttons { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.secret-buttons button { min-height: 30px; padding: 0 10px; font-size: 12px; }
+.secrets-modal { position: fixed; inset: 0; z-index: 90; background: rgba(20,18,14,.62); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 24px; }
+.secrets-modal[hidden] { display: none; }
+.env-diff { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.env-diff .added { color: var(--green); }
+.env-diff .changed { color: var(--amber); }
+.env-diff .removed { color: var(--red); font-weight: 700; }
+.env-diff .unchanged { color: var(--faint); }
+.env-confirm { display: flex; gap: 8px; align-items: center; margin-top: 10px; padding: 10px; background: var(--red-soft); border: 1px solid var(--red); border-radius: var(--radius); }
+.env-textarea { width: 100%; min-height: 220px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+/* ─── Wave 1 / G0-2 — First-run wizard ─────────────────────────────── */
+.wizard-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(20, 18, 14, .62); backdrop-filter: blur(8px);
+  display: grid; place-items: center; padding: 24px;
+}
+.wizard-card {
+  width: min(720px, 100%); max-height: calc(100vh - 48px);
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: 0 24px 64px rgba(20,18,14,.4);
+  display: grid; grid-template-rows: auto auto 1fr auto;
+  overflow: hidden;
+}
+.wizard-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 22px; border-bottom: 1px solid var(--line);
+}
+.wizard-title { font-weight: 800; font-size: 17px; }
+.wizard-skip { background: transparent; border: none; color: var(--muted); cursor: pointer; font-weight: 650; }
+.wizard-skip:disabled { color: transparent; cursor: default; }
+.wizard-dots { display: flex; gap: 8px; padding: 14px 22px; border-bottom: 1px solid var(--line); align-items: center; }
+.wizard-dot { width: 10px; height: 10px; border-radius: 999px; background: #e7e2d6; }
+.wizard-dot.done { background: var(--green); }
+.wizard-dot.current { background: var(--blue); transform: scale(1.3); }
+.wizard-body { padding: 22px; overflow-y: auto; min-height: 280px; }
+.wizard-body h2 { margin: 0 0 12px; font-size: 22px; }
+.wizard-body p { margin: 8px 0; color: var(--muted); }
+.wizard-list { padding-left: 20px; margin: 8px 0; }
+.wizard-list li { margin: 4px 0; color: var(--muted); }
+.wizard-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; margin: 8px 0; }
+.wizard-field { margin: 16px 0; display: grid; gap: 6px; }
+.wizard-field label { font-weight: 700; color: var(--muted); font-size: 13px; }
+.wizard-check { display: flex; gap: 8px; align-items: center; font-weight: 650; color: var(--text); }
+.wizard-check input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
+.wizard-radios { display: grid; gap: 8px; border: none; padding: 0; }
+.wizard-radio { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.wizard-radio:has(input:checked) { border-color: var(--blue); background: var(--blue-soft); }
+.wizard-radio input { width: 18px; min-height: 0; margin: 2px 0 0 0; }
+.wizard-radio strong { display: block; margin-bottom: 2px; }
+.wizard-radio em { color: var(--muted); font-style: normal; font-size: 12px; }
+.wizard-folder-check { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); margin-top: 8px; }
+.wizard-check-line { font-size: 13px; font-weight: 650; }
+.wizard-check-line.ok { color: var(--green); }
+.wizard-check-line.warn { color: var(--amber); }
+.wizard-error { color: var(--red); font-weight: 700; padding: 8px; border: 1px solid var(--red); border-radius: var(--radius); background: var(--red-soft); }
+.wizard-test-result { margin-top: 10px; }
+.wizard-summary { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); margin: 12px 0; }
+.wizard-summary div { display: grid; grid-template-columns: 110px 1fr; gap: 8px; }
+.wizard-summary strong { color: var(--muted); font-weight: 700; }
+.wizard-footer { display: flex; justify-content: space-between; align-items: center; padding: 14px 22px; border-top: 1px solid var(--line); gap: 12px; }
+.wizard-step-label { color: var(--faint); font-size: 12px; font-weight: 650; }
+.wizard-open { /* host marker — no styles needed */ }
+
 @media (max-width: 1040px) {
+  /* Wave 4 / narrow-window fix. The previous CSS hid the sidebar entirely
+     at this breakpoint, leaving users with no way to navigate. Instead,
+     compact the sidebar to 220 px (preserve all nav) and hide the preview
+     pane by default — togglable via the existing topbar Preview button. */
   #app {
-    grid-template-columns: 1fr;
+    grid-template-columns: 220px minmax(320px, 1fr) 0;
   }
-  .sidebar {
-    display: none;
+  #app:not(.preview-collapsed) {
+    grid-template-columns: 220px minmax(280px, 1fr) min(360px, 60vw);
   }
+  .sidebar { padding: 14px 10px; }
+  .nav button { padding: 8px; font-size: 13px; }
+  .side-card { padding: 10px; }
   .guide-layout,
   .split,
   .dashboard-grid,
@@ -1083,39 +1313,88 @@ input:focus, select:focus, textarea:focus {
     grid-template-columns: 1fr;
   }
   .topbar {
-    padding: 0 16px;
+    padding: 0 12px;
   }
   .main {
-    padding: 16px;
+    padding: 12px;
   }
   .phase-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  /* Keep the status / provider / cost pills compact instead of removing them. */
   .topbar .pill {
-    display: none;
+    padding: 0 8px;
+    min-height: 28px;
+    font-size: 12px;
   }
+}
+@media (max-width: 720px) {
+  /* True mobile: drop preview, sidebar becomes a top-row icon strip via JS. */
+  #app, #app:not(.preview-collapsed) {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+  }
+  .sidebar {
+    flex-direction: row; gap: 4px; overflow-x: auto;
+    padding: 8px 12px; border-right: none; border-bottom: 1px solid var(--line);
+  }
+  .brand { flex-shrink: 0; }
+  .side-card, .steps { display: none; }
+  .nav { display: flex; gap: 4px; flex-direction: row; margin: 0; }
+  .nav button { white-space: nowrap; padding: 6px 10px; font-size: 12px; }
+  .preview-host { display: none !important; }
+}
+
+/* Wave 4 / a11y — focus rings + visible-only-on-keyboard helpers. */
+button:focus-visible,
+[role="tab"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
 }
 </style>
 </head>
 <body>
 <div id="app">
   <aside class="sidebar">
+    <button class="collapse-btn" id="sidebarCollapse" title="Collapse / expand sidebar" aria-label="Collapse sidebar">☰</button>
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 64 64" role="img">
-          <path d="M13 43 C22 29 28 35 33 24 C38 13 48 15 52 24" fill="none" stroke="#dce7ff" stroke-width="7" stroke-linecap="round"/>
-          <path d="M13 43 C22 29 28 35 33 24 C38 13 48 15 52 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
-          <circle cx="13" cy="43" r="8" fill="#fff"/>
-          <circle cx="33" cy="24" r="7" fill="#eaf1ff"/>
-          <circle cx="52" cy="24" r="8" fill="#fff"/>
-          <circle cx="13" cy="43" r="3" fill="#2457d6"/>
-          <circle cx="33" cy="24" r="2.6" fill="#2457d6"/>
-          <circle cx="52" cy="24" r="3" fill="#2457d6"/>
+      <div class="brand-mark" aria-hidden="true" title="SignalOS — build through governed gates, signed at the end">
+        <!--
+          The mark tells the SignalOS story in one glance:
+            • Three rising nodes  = wave phases progressing in scope
+            • A path through them = the build flowing through each gate
+            • The final node is larger and carries a checkmark = signed/shipped
+          One look reads "build → through stages → signed."
+        -->
+        <svg viewBox="0 0 64 64" role="img" aria-label="SignalOS: gated build path">
+          <!-- Soft glow line under the build path -->
+          <path d="M11 47 L26 33 L42 38 L54 18"
+                fill="none" stroke="#dce7ff" stroke-width="6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Main build path -->
+          <path d="M11 47 L26 33 L42 38 L54 18"
+                fill="none" stroke="#ffffff" stroke-width="3"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Three phase nodes -->
+          <circle cx="11" cy="47" r="5" fill="#ffffff"/>
+          <circle cx="11" cy="47" r="2"  fill="#2457d6"/>
+          <circle cx="26" cy="33" r="5" fill="#ffffff"/>
+          <circle cx="26" cy="33" r="2"  fill="#2457d6"/>
+          <circle cx="42" cy="38" r="5" fill="#ffffff"/>
+          <circle cx="42" cy="38" r="2"  fill="#2457d6"/>
+          <!-- Signed gate: bigger filled circle with a check -->
+          <circle cx="54" cy="18" r="9"  fill="#ffffff"/>
+          <path d="M49.5 18.5 L52.5 21.5 L58.5 14.5"
+                fill="none" stroke="#2457d6" stroke-width="2.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
       <div>
         <div class="brand-name">SignalOS</div>
-        <div class="brand-sub">Guided workspace</div>
+        <div class="brand-sub">Build under gates · signed by you</div>
       </div>
     </div>
 
@@ -1153,6 +1432,41 @@ input:focus, select:focus, textarea:focus {
       <button type="button" data-view="settings">Settings</button>
       <button type="button" data-view="history">History</button>
     </nav>
+
+    <!-- Wave 5 closeout — Files / Gov / Mem left-pane tabs (§11.1 deeper UX). -->
+    <div class="left-tabs" role="tablist" aria-label="Sidebar tabs">
+      <button type="button" class="left-tab active" data-left-tab="files" role="tab" aria-selected="true">📁 Files</button>
+      <button type="button" class="left-tab" data-left-tab="gov" role="tab" aria-selected="false">⚖ Gov</button>
+      <button type="button" class="left-tab" data-left-tab="mem" role="tab" aria-selected="false">🧠 Mem</button>
+    </div>
+
+    <div class="left-tab-panel" id="leftPanelFiles" role="tabpanel" aria-labelledby="left-tab-files">
+      <div id="leftFileTree"></div>
+    </div>
+    <div class="left-tab-panel" id="leftPanelGov" role="tabpanel" hidden>
+      <div class="left-gov-section">
+        <h4>Wave</h4>
+        <div class="left-gov-wave" id="leftGovWave">No active wave</div>
+      </div>
+      <div class="left-gov-section">
+        <h4>Gates</h4>
+        <div class="left-gov-gates" id="leftGovGates"></div>
+      </div>
+      <div class="left-gov-section">
+        <h4>Plan</h4>
+        <div id="leftGovPlan" class="fine-print">No plan loaded.</div>
+      </div>
+    </div>
+    <div class="left-tab-panel" id="leftPanelMem" role="tabpanel" hidden>
+      <div class="left-gov-section">
+        <h4>Recent notes</h4>
+        <div class="left-mem-list" id="leftMemNotes"></div>
+      </div>
+      <div class="left-gov-section">
+        <h4>Recent audit</h4>
+        <div class="left-mem-list" id="leftMemAudit"></div>
+      </div>
+    </div>
   </aside>
 
   <section class="workspace">
@@ -1165,7 +1479,42 @@ input:focus, select:focus, textarea:focus {
       <div class="pill" id="statusPill"><span class="pill-dot"></span><span>Setting up</span></div>
       <div class="pill" id="providerLabel">AI not connected</div>
       <div class="pill" id="costLabel">$0.00</div>
+      <button class="pill enforcement-pill" id="enforcementPill" type="button" title="SignalOS enforcement state">🛡 Enforced</button>
+      <button class="preview-toggle" id="previewToggle" type="button" title="Show/hide preview pane">⬜ Preview</button>
     </header>
+
+    <div class="enforcement-popover" id="enforcementPopover" hidden>
+      <div class="enforcement-popover-header">
+        <strong>Enforcement</strong>
+        <button class="ghost small" type="button" id="enforcementClose">Close</button>
+      </div>
+      <div class="enforcement-rules" id="enforcementRules"></div>
+      <div class="enforcement-footer">
+        <span id="enforcementOverridesCount">0 overrides this wave</span>
+        <button class="ghost small" type="button" id="freezeWaveBtn">Freeze wave</button>
+      </div>
+    </div>
+
+    <div class="override-modal" id="overrideModal" hidden>
+      <div class="wizard-card" style="width:min(520px,100%)">
+        <header class="wizard-header">
+          <div class="wizard-title">Override <span id="overrideRuleName"></span></div>
+          <button class="wizard-skip" type="button" id="overrideClose">Close</button>
+        </header>
+        <div class="wizard-body">
+          <p>This action is blocked by the <strong id="overrideRuleNameBody"></strong> rule.</p>
+          <p class="fine-print" id="overrideReasonText"></p>
+          <div class="wizard-field">
+            <label for="overrideReason">Reason (logged to AUDIT_TRAIL.jsonl)</label>
+            <textarea id="overrideReason" placeholder="Why is this override safe? Be specific."></textarea>
+          </div>
+        </div>
+        <footer class="wizard-footer">
+          <button class="ghost" type="button" id="overrideCancel">Cancel</button>
+          <button class="primary" type="button" id="overrideConfirm">Override and log</button>
+        </footer>
+      </div>
+    </div>
 
     <main class="main">
       <div class="banner" id="sidecarWarning"></div>
@@ -1451,45 +1800,48 @@ input:focus, select:focus, textarea:focus {
       </section>
 
       <section class="view" id="view-secrets">
-        <div class="split">
-          <section class="panel">
+        <section class="panel secrets-panel">
+          <div class="secrets-toolbar">
             <h2>Secrets</h2>
-            <div class="item">
-              <div class="item-title">Add or update project secret</div>
-              <div class="item-meta">Saved to a local `.env.local` file. Values are never shown back in the app or sent to AI.</div>
-              <div class="field">
-                <label for="secretName">Name</label>
-                <input id="secretName" autocomplete="off" placeholder="OPENAI_API_KEY">
-              </div>
-              <div class="field">
-                <label for="secretValue">Value</label>
-                <input id="secretValue" type="password" autocomplete="off" placeholder="Paste secret value">
-              </div>
-              <div class="field">
-                <label for="secretFile">File</label>
-                <select id="secretFile">
-                  <option value=".env.local">.env.local</option>
-                  <option value=".env">.env</option>
-                  <option value=".env.development">.env.development</option>
-                </select>
-              </div>
-              <div class="inline-actions">
-                <button class="secondary small" type="button" id="saveSecret">Save secret</button>
-                <button class="ghost small" type="button" id="clearSecretForm">Clear</button>
-              </div>
+            <div class="secrets-actions">
+              <button class="primary small" type="button" id="secNew">+ New secret</button>
+              <button class="secondary small" type="button" id="secBulk">Edit as .env</button>
             </div>
-          </section>
-          <section class="panel">
-            <h2>Secret files</h2>
-            <div class="item">
-              <div class="item-title">Project secret files</div>
-              <div class="item-meta" id="settingsSecrets">Choose a project to check secrets.</div>
-              <div class="inline-actions">
-                <button class="secondary small" type="button" id="settingsRefreshSecrets">Refresh</button>
-              </div>
+          </div>
+          <div class="secrets-meta">
+            <span id="secrets-summary">Choose a project to manage secrets.</span>
+          </div>
+          <div class="secrets-controls">
+            <div class="field">
+              <label for="secretFile">File</label>
+              <select id="secretFile">
+                <option value=".env.local">.env.local</option>
+                <option value=".env">.env</option>
+                <option value=".env.development">.env.development</option>
+                <option value=".env.production">.env.production</option>
+                <option value=".env.test">.env.test</option>
+              </select>
             </div>
-            <div class="list settings-secret-list" id="settingsSecretList"></div>
-          </section>
+            <div class="field">
+              <label for="secretsSearch">Search</label>
+              <input id="secretsSearch" autocomplete="off" placeholder="filter by name…">
+            </div>
+          </div>
+          <div class="secrets-list" id="secretsList"></div>
+        </section>
+
+        <div class="secrets-modal" id="secretsModal" hidden>
+          <div class="wizard-card" style="width:min(560px,100%)">
+            <header class="wizard-header">
+              <div class="wizard-title" id="secretsModalTitle">New secret</div>
+              <button class="wizard-skip" type="button" id="secModalClose">Close</button>
+            </header>
+            <div class="wizard-body" id="secretsModalBody"></div>
+            <footer class="wizard-footer">
+              <button class="ghost" type="button" id="secModalCancel">Cancel</button>
+              <button class="primary" type="button" id="secModalSave">Save</button>
+            </footer>
+          </div>
         </div>
       </section>
 
@@ -1510,6 +1862,21 @@ input:focus, select:focus, textarea:focus {
             </div>
           </section>
         </div>
+
+        <!-- Wave 5 / G4 rule 11 — Test Debt drawer (zero manual regression). -->
+        <section class="panel" style="margin-top:18px">
+          <div class="secrets-toolbar">
+            <h2>Test debt</h2>
+            <div class="secrets-actions">
+              <button class="secondary small" type="button" id="testDebtAdd">+ Report a defect</button>
+              <button class="ghost small" type="button" id="testDebtRefresh">Refresh</button>
+            </div>
+          </div>
+          <div class="secrets-meta">
+            <span id="testDebtSummary">Test debt: 0 open · 0 resolved</span>
+          </div>
+          <div class="secrets-list" id="testDebtList"></div>
+        </section>
       </section>
 
       <section class="view" id="view-settings">
@@ -1672,8 +2039,11 @@ input:focus, select:focus, textarea:focus {
       </section>
     </main>
   </section>
+
+  <aside class="preview-host" id="preview-host"></aside>
 </div>
 <div id="toast"></div>
+<div id="wizard-host"></div>
 <script type="module" src="./js/app.js"></script>
 </body>
 </html>

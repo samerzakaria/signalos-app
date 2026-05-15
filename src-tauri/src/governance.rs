@@ -55,12 +55,18 @@ pub struct GovernanceState {
     pub audit: Mutex<Vec<AuditEntry>>,
 }
 
-impl GovernanceState {
-    pub fn new() -> Self {
+impl Default for GovernanceState {
+    fn default() -> Self {
         Self {
             wave: Mutex::new(Some(Self::default_wave())),
             audit: Mutex::new(vec![]),
         }
+    }
+}
+
+impl GovernanceState {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn default_wave() -> WaveSnapshot {
@@ -132,26 +138,35 @@ impl GovernanceState {
 
 // ─── AUDIT TRAIL PERSISTENCE ─────────────────────────────────────────────────
 
-/// Append an audit entry to .signalos/audit.jsonl in the workspace.
+/// Append an audit entry to .signalos/AUDIT_TRAIL.jsonl in the workspace.
+///
+/// Wave 3 / G2-20: this is now a true O(1) append on a file handle opened
+/// in append+create mode. The previous implementation was racy and O(n²)
+/// because it read the entire file into memory and rewrote it on every
+/// call. That implementation also did not guarantee that two concurrent
+/// appenders would both land their lines.
 pub fn append_audit(workspace: &Path, entry: &AuditEntry) -> anyhow::Result<()> {
+    use std::io::Write;
     let dir = workspace.join(".signalos");
     fs::create_dir_all(&dir)?;
-    let path = dir.join("audit.jsonl");
+    let path = dir.join("AUDIT_TRAIL.jsonl");
     let line = serde_json::to_string(entry)? + "\n";
-    fs::OpenOptions::new()
+    let mut handle = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)?;
-    fs::write(&path, {
-        let existing = fs::read_to_string(&path).unwrap_or_default();
-        existing + &line
-    })?;
+    handle.write_all(line.as_bytes())?;
+    handle.sync_data()?;
     Ok(())
 }
 
-/// Read audit entries from .signalos/audit.jsonl (most recent first).
+/// Read audit entries from .signalos/AUDIT_TRAIL.jsonl (most recent first).
+///
+/// Wave 3 / G2-20: read from the same filename `append_audit` writes
+/// (previously read from `audit.jsonl` while writing to a different file —
+/// a latent bug).
 pub fn read_audit(workspace: &Path, limit: usize) -> Vec<AuditEntry> {
-    let path = workspace.join(".signalos").join("audit.jsonl");
+    let path = workspace.join(".signalos").join("AUDIT_TRAIL.jsonl");
     let Ok(content) = fs::read_to_string(&path) else {
         return vec![];
     };
