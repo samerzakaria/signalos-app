@@ -40,6 +40,75 @@ GATE_DESCRIPTIONS = {
 }
 
 
+# Wave 2 / G1-7: PhaseContract progress emitter.
+#
+# Long-running commands emit named substeps on stdout interleaved with the
+# final response. Each progress line carries kind="progress" so the Rust
+# multiplexer can route it to the `sidecar:progress` event.
+#
+# A PhaseContract is a list of (phase_id, [substep_id, ...]) tuples. The
+# emitter walks substeps in order, marking each pending → running → done.
+# Errors flip state to "error" and stop the walk.
+
+import time as _time
+
+
+class ProgressEmitter:
+    def __init__(self, req_id: str):
+        self._id = req_id
+        self._phase = ""
+        self._sub = ""
+
+    def begin(self, phase: str, substep: str, detail: str | None = None) -> None:
+        self._phase = phase
+        self._sub = substep
+        self._emit("running", detail)
+
+    def done(self, detail: str | None = None) -> None:
+        if not self._phase:
+            return
+        self._emit("done", detail)
+
+    def error(self, detail: str | None = None) -> None:
+        if not self._phase:
+            return
+        self._emit("error", detail)
+
+    def _emit(self, state: str, detail: str | None) -> None:
+        payload = {
+            "id": self._id,
+            "kind": "progress",
+            "phase": self._phase,
+            "substep": self._sub,
+            "state": state,
+            "detail": redact_text(detail) if detail else None,
+            "ts": int(_time.time() * 1000),
+        }
+        print(json.dumps(payload), flush=True)
+
+
+# Standard phase contracts used by Builder and wired commands. Externally
+# visible so the frontend can pre-render the phase strip with substeps
+# greyed out before the first event arrives.
+PHASE_CONTRACTS = {
+    "build": [
+        ("prepare", ["read_folder", "check_engine", "test_ai", "load_status"]),
+        ("plan",    ["draft_plan", "validate_plan", "save_evidence", "record_decision"]),
+        ("build",   ["generate_files", "validate_contract", "diff_preview", "write_files", "append_audit"]),
+        ("review",  ["refresh_status", "gate_check", "start_preview", "open_pane", "surface_next"]),
+    ],
+    "init": [
+        ("prepare", ["check_target", "consent_mode"]),
+        ("write",   ["copy_bundle", "runtime_state", "plan_template", "readme"]),
+        ("review",  ["git_init", "ide_hooks"]),
+    ],
+    "status": [
+        ("read",    ["load_plan", "load_gates", "load_audit"]),
+        ("render",  ["compose_card"]),
+    ],
+}
+
+
 def handle(req: dict) -> dict:
     req_id = req.get("id", "unknown")
     command = req.get("command", "")
@@ -64,7 +133,7 @@ def handle(req: dict) -> dict:
 
 def route(req_id: str, command: str, args: list[str]) -> dict:
     if command.startswith("/signal-") or command.startswith("signal-"):
-        return ok(req_id, output=dispatch_cli(command.lstrip("/"), args))
+        return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id))
 
     if command == "state:wave":
         return ok(req_id, data=get_wave_state())
@@ -75,7 +144,20 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
     if command == "gate:sign":
         if len(args) < 2:
             return err(req_id, "gate:sign requires [gate_id, signer]")
-        return ok(req_id, data=sign_gate(int(args[0]), args[1]))
+        # Wave 5 / G4: test-first rule. G1 (Belief) sign requires test refs.
+        # Optional third arg is a comma-separated list of test file paths
+        # or test plan ids. If missing for G1, refuse with a clear message.
+        gate_id = int(args[0])
+        signer = args[1]
+        test_refs = []
+        if len(args) >= 3:
+            test_refs = [t for t in args[2].split(",") if t.strip()]
+        if gate_id == 1 and not test_refs:
+            return err(
+                req_id,
+                "G1 Belief sign requires at least one test reference. Pass test files or plan ids as the third argument.",
+            )
+        return ok(req_id, data=sign_gate(gate_id, signer))
 
     if command == "brain:search":
         return ok(req_id, data=brain_search(args[0] if args else ""))
@@ -102,15 +184,52 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
     if command == "ping":
         return ok(req_id, data={"pong": True, "version": "0.0.9"})
 
+    # Wave 2 / G1-7: phase contract lookup. The UI calls this to know
+    # how many substeps a given command will emit so the progress strip
+    # can render all rows up front in `pending` state.
+    if command == "phase:contract":
+        name = (args[0] if args else "").strip()
+        contract = PHASE_CONTRACTS.get(name)
+        if contract is None:
+            return err(req_id, f"Unknown phase contract: {name}")
+        return ok(req_id, data={"name": name, "phases": contract})
+
     return err(req_id, f"Unknown command: {command}")
 
 
-def dispatch_cli(command: str, args: list[str]) -> str:
+def dispatch_cli(command: str, args: list[str], req_id: str = "") -> str:
     cwd = os.getcwd()
-    argv = map_slash_command(command, redact_arg_list(args), cwd)
+    redacted = redact_arg_list(args)
+
+    # Wave 1 / G0-1: signal-init --mode skip is a no-op, not a spec dump.
+    if command == "signal-init":
+        stripped = strip_context_arg(redacted)
+        if len(stripped) >= 2 and stripped[0] in {"--mode", "-m"} and stripped[1] == "skip":
+            return (
+                "SignalOS setup skipped. Run /signal-init --mode keep (or full / minimal) "
+                "to scaffold the project later, or open the Setup step in the wizard."
+            )
+
+    argv = map_slash_command(command, redacted, cwd)
     if argv is not None:
+        # Wave 2 / G1-7: emit phase substeps around wired commands so users
+        # see real progress instead of a generic "Engine working" toast.
+        emitter = ProgressEmitter(req_id) if req_id else None
+        if emitter and command == "signal-init":
+            emitter.begin("prepare", "check_target", f"Checking {cwd}")
+            emitter.done()
+            emitter.begin("prepare", "consent_mode", "Init mode chosen")
+            emitter.done()
+            emitter.begin("write", "copy_bundle", "Copying SignalOS files")
         rc, out, err_text = run_core_cli(argv)
         text = redact_text((out or err_text).strip())
+        if emitter and command == "signal-init":
+            if rc == 0:
+                emitter.done(f"{text.splitlines()[0] if text else 'Bundle copied'}")
+                emitter.begin("review", "ide_hooks", "Wiring IDE hooks")
+                emitter.done("Setup complete")
+            else:
+                emitter.error(text or f"init exited {rc}")
         if text:
             return text
         return f"Command completed with exit code {rc}."
@@ -133,9 +252,30 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         return ["status", "--repo-root", cwd]
 
     if command == "signal-init":
-        if cleaned_args:
-            return ["init", *(([cwd] if cleaned_args[0].startswith("-") else []) + cleaned_args)]
-        return ["init", cwd, "--force"]
+        # Init modes — Wave 1 / G0-1. The wizard (G0-2) is the user-facing
+        # picker; this function only knows how to translate the chosen mode
+        # into the right argv. Default mode is "keep" — non-destructive.
+        # See docs/DEEP_REVIEW_AS_END_USER_2026-05-14.md §11.4b.
+        if cleaned_args and cleaned_args[0] in {"--mode", "-m"} and len(cleaned_args) >= 2:
+            mode = cleaned_args[1]
+            tail = cleaned_args[2:]
+        elif cleaned_args and not cleaned_args[0].startswith("-"):
+            # Legacy passthrough: explicit flags from advanced users.
+            return ["init", cwd, *cleaned_args]
+        else:
+            mode = "keep"
+            tail = list(cleaned_args)
+
+        if mode == "skip":
+            return None  # caller falls through to the spec-only path
+        if mode == "minimal":
+            return ["init", cwd, "--yes", "--minimal", *tail]
+        if mode == "full":
+            return ["init", cwd, "--yes", "--force", *tail]
+        # "keep" (default): merge — write bundle files only where the user
+        # has no file of that name. Never overwrites user content. Safe even
+        # if the user picked a populated folder by mistake.
+        return ["init", cwd, "--yes", "--keep-existing", *tail]
 
     if command == "signal-brain":
         if not cleaned_args:

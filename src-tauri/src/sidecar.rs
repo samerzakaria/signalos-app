@@ -28,6 +28,20 @@ pub struct SidecarResponse {
     pub data: Option<serde_json::Value>,
 }
 
+/// Wave 2 / G1-7: progress event from a long-running command.
+/// Multiplexed on the same stdout stream as SidecarResponse, distinguished
+/// by the presence of the `kind: "progress"` field.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SidecarProgress {
+    pub id: String,
+    pub kind: String, // always "progress"
+    pub phase: String,
+    pub substep: String,
+    pub state: String, // pending | running | done | error
+    pub detail: Option<String>,
+    pub ts: u128,
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct SidecarRuntimeStatus {
     pub running: bool,
@@ -144,11 +158,24 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                             status.last_event = "Engine response received".into();
                             status.last_error = None;
                         });
-                        if let Ok(resp) = serde_json::from_str::<SidecarResponse>(&line) {
-                            let _ = app_emit.emit("sidecar:response", &resp);
-                        } else {
-                            let _ = app_emit.emit("sidecar:log", &line);
+                        // Wave 2 / G1-7: distinguish progress events from
+                        // final responses. Progress carries kind="progress";
+                        // a final response is everything else.
+                        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if value.get("kind").and_then(|v| v.as_str()) == Some("progress") {
+                                if let Ok(prog) =
+                                    serde_json::from_value::<SidecarProgress>(value.clone())
+                                {
+                                    let _ = app_emit.emit("sidecar:progress", &prog);
+                                    continue;
+                                }
+                            }
+                            if let Ok(resp) = serde_json::from_value::<SidecarResponse>(value) {
+                                let _ = app_emit.emit("sidecar:response", &resp);
+                                continue;
+                            }
                         }
+                        let _ = app_emit.emit("sidecar:log", &line);
                     }
                 }
                 CommandEvent::Stderr(line) => {

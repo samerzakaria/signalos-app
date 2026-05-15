@@ -2,11 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // All modules live in lib.rs - import them from the library crate
+use signalos_desktop_lib::enforcement;
 use signalos_desktop_lib::governance;
 use signalos_desktop_lib::ipc;
 use signalos_desktop_lib::keychain;
 use signalos_desktop_lib::provider;
+use signalos_desktop_lib::runtime;
 use signalos_desktop_lib::sidecar;
+use signalos_desktop_lib::test_automation;
 
 use tauri::{Emitter, Manager};
 
@@ -34,6 +37,8 @@ fn main() {
             app.manage(provider::ProviderState::new(config_dir.clone()));
             app.manage(ipc::WorkspaceState::default());
             app.manage(governance::GovernanceState::new());
+            // Wave 3 / G2-21: enforcement state for runtime rule checks.
+            app.manage(enforcement::EnforcementStore::new());
 
             // â”€â”€ Spawn the Python SignalOS Core sidecar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             let app_handle = app.handle().clone();
@@ -67,7 +72,19 @@ fn main() {
             ipc::open_workspace_path,
             ipc::write_workspace_export,
             ipc::write_workspace_files,
+            ipc::preview_workspace_files,
+            ipc::read_workspace_file,
+            ipc::list_workspace_dir,
             ipc::upsert_workspace_secret,
+            // Wave 1 / G0-6 — Replit-style secrets manager
+            ipc::list_workspace_secrets,
+            ipc::reveal_workspace_secret,
+            ipc::delete_workspace_secret,
+            ipc::apply_workspace_env_diff,
+            // Wave 3 — Identity + role assignment
+            ipc::set_identity,
+            ipc::get_identity,
+            ipc::check_role_for_gate,
             ipc::get_git_status,        // live branch / worktree info
             ipc::start_workspace_watch, // file watcher -> workspace:changed events (T1-4)
             // â”€â”€ Auto-updater (T1-5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -103,6 +120,27 @@ fn main() {
             provider::fetch_provider_models, // live model list from provider API
             provider::test_provider_connection,
             provider::send_provider_message,
+            provider::send_provider_message_stream,
+            // ── Wave 2 / G1-10+11 — LocalProcessSupervisor (preview pane) ──
+            runtime::probe_node,
+            runtime::start_preview,
+            runtime::stop_preview,
+            runtime::list_previews,
+            runtime::get_preview,
+            // ── Wave 3 / G2-21..26 — Runtime enforcement ──
+            enforcement::get_enforcement_state,
+            enforcement::build_precheck,
+            enforcement::override_rule,
+            enforcement::set_rule_mode,
+            enforcement::freeze_wave,
+            enforcement::unfreeze_wave,
+            // ── Wave 5 / G4 — Test Automation enforcement ──
+            test_automation::list_test_debt,
+            test_automation::add_test_debt,
+            test_automation::resolve_test_debt,
+            test_automation::check_mutation_threshold,
+            test_automation::check_test_first,
+            test_automation::read_mutation_score,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SignalOS");

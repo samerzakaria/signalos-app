@@ -1,4 +1,13 @@
 import * as ipc from "./ipc.js";
+import * as wizard from "./wizard.js";
+import { attachSecretsPane, setWorkspace as setSecretsWorkspace, refresh as refreshSecretsList } from "./secrets.js";
+import { startProgress, endProgress } from "./progress.js";
+import { attachPreviewPane, setWorkspace as setPreviewWorkspace, setStack as setPreviewStack } from "./preview.js";
+import { attachEnforcementUi, gateBuild, refresh as refreshEnforcement } from "./enforcement.js";
+import * as wired from "./wired-commands.js";
+import { activeBuildId, newBuildId, appendTurn, loadHistory, compressHistory } from "./conversation.js";
+import { attachLeftTabs, autoSwitchForIntent as leftTabsAutoSwitch, notifyBuildCompleted as leftTabsBuildDone } from "./left-tabs.js";
+import { attachTestDebt, refreshList as refreshTestDebt } from "./test-debt.js";
 
 const LS_WORKSPACE = "signalos.workspace";
 const LS_TRANSCRIPT_PREFIX = "signalos.transcript.";
@@ -31,20 +40,22 @@ const COMMAND_CATALOG = [
   { command: "/signal-second-opinion", label: "Second opinion", status: "advanced", detail: "Runs second-opinion workflow." },
   { command: "/signal-second-opinion-record", label: "Record opinion", status: "advanced", detail: "Records a second-opinion result." },
   { command: "/signal-investigate", label: "Investigate", status: "advanced", detail: "Runs investigation workflow." },
-  { command: "/signal-build", label: "Build", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-debrief", label: "Debrief", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-design", label: "Design", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-design-html", label: "Design HTML", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-design-review", label: "Design review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-discovery", label: "Discovery", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-observe", label: "Observe", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-onboard", label: "Onboard", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-pause", label: "Pause", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-pre-design", label: "Pre-design", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-pre-wave", label: "Pre-wave", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-review", label: "Review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-ship", label: "Ship", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
-  { command: "/signal-wave-review", label: "Wave review", status: "preview", detail: "Command brief is available; guided execution is not wired yet." },
+  // Wired AI doc-generators (each: AI call + .signalos/<kind>/<command>-<ts>.md + audit)
+  { command: "/signal-build", label: "Build", status: "ready", detail: "Runs the SignalOS Builder pipeline (already the main Build button)." },
+  { command: "/signal-debrief", label: "Debrief", status: "ready", detail: "Generates a wave retrospective and saves to .signalos/debriefs/." },
+  { command: "/signal-design", label: "Design", status: "ready", detail: "Generates a design note saved to .signalos/designs/." },
+  { command: "/signal-design-html", label: "Design HTML", status: "ready", detail: "Generates a static HTML mockup saved to .signalos/design-html/." },
+  { command: "/signal-design-review", label: "Design review", status: "ready", detail: "Critiques a design and saves to .signalos/design-reviews/." },
+  { command: "/signal-discovery", label: "Discovery", status: "ready", detail: "Produces a discovery brief saved to .signalos/discoveries/." },
+  { command: "/signal-pre-design", label: "Pre-design", status: "ready", detail: "Pre-design prep notes saved to .signalos/pre-design/." },
+  { command: "/signal-pre-wave", label: "Pre-wave", status: "ready", detail: "Pre-wave brief saved to .signalos/pre-waves/." },
+  { command: "/signal-review", label: "Review", status: "ready", detail: "Structured code review saved to .signalos/reviews/." },
+  { command: "/signal-ship", label: "Ship", status: "ready", detail: "Ship-readiness checklist saved to .signalos/ships/." },
+  { command: "/signal-wave-review", label: "Wave review", status: "ready", detail: "Full wave retrospective saved to .signalos/wave-reviews/." },
+  // Wired state ops (local IPC, no AI required)
+  { command: "/signal-observe", label: "Observe", status: "ready", detail: "Snapshots wave + gate + enforcement state to the chat log." },
+  { command: "/signal-onboard", label: "Onboard", status: "ready", detail: "Walks the user through the next required gate-sign step." },
+  { command: "/signal-pause", label: "Pause", status: "ready", detail: "List / resume / abort paused build steps via the bundled core." },
 ];
 
 const PROJECT_TEMPLATES = [
@@ -197,6 +208,7 @@ const state = {
     runInstructions: "",
     briefPath: "",
     entryPath: "",
+    buildId: "",   // Wave 5 — conversation history thread id
   },
   aiConnection: { provider: "", status: "untested", message: "" },
   engine: { status: "unknown", message: "Not checked yet.", version: "", checkedAt: "" },
@@ -639,8 +651,10 @@ function nextAction() {
     return {
       label: "Set up project",
       title: "Set up this project for guided work.",
-      detail: "This creates the local SignalOS project files so the team can start safely.",
-      run: () => runSignalCommand("/signal-init", [], { markChecked: true }),
+      detail: "Adds the SignalOS scaffold to this folder. Existing files are preserved (Keep my files mode).",
+      // Wave 1 / G0-1: explicit --mode keep. Never silently --force.
+      // The wizard (G0-2) is the canonical surface for picking other modes.
+      run: () => runSignalCommand("/signal-init", ["--mode", "keep"], { markChecked: true }),
       secondary: { label: "Check again", run: checkStatus },
     };
   }
@@ -841,18 +855,29 @@ function renderBuilder() {
     el.buildApp.textContent = state.builder.status === "running" ? "Building..." : "Build app";
   }
   el.buildFileList.innerHTML = files.length
-    ? files.map((file) => `
+    ? files.map((file) => {
+        const p = escapeHtml(file.relative_path || file.path || "");
+        return `
       <div class="artifact-row">
         <div>
           <div class="item-title">${escapeHtml(file.relative_path || file.path || "Generated file")}</div>
           <div class="item-meta">${escapeHtml(file.bytes ? `${file.bytes} bytes` : "Ready")}</div>
         </div>
-        <button class="ghost small" type="button" data-open-built-file="${escapeHtml(file.relative_path || file.path || "")}">Open</button>
+        <div class="gate-actions">
+          <button class="ghost small" type="button" data-open-built-file="${p}">Open</button>
+          <button class="ghost small" type="button" data-regen-file="${p}" title="Regenerate just this file with a focused prompt">Regenerate</button>
+        </div>
       </div>
-    `).join("")
+    `;
+      }).join("")
     : `<div class="empty compact-empty">Generated files will appear here.</div>`;
   el.buildFileList.querySelectorAll("[data-open-built-file]").forEach((button) => {
     button.addEventListener("click", () => openProjectArtifact(button.dataset.openBuiltFile));
+  });
+  // Wave 5 closeout — per-file regenerate. Asks the user for a one-line
+  // intent and re-prompts AI for THIS file only, then writes it.
+  el.buildFileList.querySelectorAll("[data-regen-file]").forEach((button) => {
+    button.addEventListener("click", () => regenerateSingleFile(button.dataset.regenFile));
   });
   if (el.openBuiltApp) {
     const entry = state.builder.entryPath || stack.entry;
@@ -992,11 +1017,14 @@ function renderActivity() {
     const kind = entry.kind || "";
     const meta = [entry.command, formatTime(entry.ts)].filter(Boolean).join(" . ");
     const cards = renderResultCards(entry.cards);
+    // Wave 2 / G1-8: allow `html: true` for embedding the progress strip.
+    // Caller is trusted (only app.js sets this) — no remote content.
+    const body = entry.html ? entry.body : `<pre>${escapeHtml(entry.body)}</pre>`;
     return `
     <div class="log-entry ${escapeHtml([status, kind].filter(Boolean).join(" "))}">
       <strong>${escapeHtml(entry.title)}</strong>
       ${meta ? `<div class="log-meta">${escapeHtml(meta)}</div>` : ""}
-      <pre>${escapeHtml(entry.body)}</pre>
+      ${body}
       ${cards}
     </div>
   `;
@@ -1405,6 +1433,9 @@ async function loadBasics() {
     }, null);
     state.workspace = restored;
   }
+  // Sync the secrets pane and preview pane with the resolved workspace.
+  setSecretsWorkspace(state.workspace);
+  setPreviewWorkspace(state.workspace);
 
   if (state.workspace !== state.transcriptWorkspace) {
     state.transcriptWorkspace = state.workspace || "";
@@ -1483,6 +1514,9 @@ async function chooseWorkspace() {
     loadTranscript();
     loadOnboarding();
     markOnboarding("project");
+    setSecretsWorkspace(selected);
+    setPreviewWorkspace(selected);
+    setPreviewStack(el.buildStack?.value || "react-vite");
     await safeCall(() => ipc.workspace.startWatch(), null);
     await refreshProjectState(false);
     toast("Project folder saved.");
@@ -1507,6 +1541,8 @@ async function pickFolder() {
 }
 
 async function forgetWorkspace() {
+  // Wave 4 / G3-5: confirm before destructive UX-level action.
+  if (state.workspace && !confirm(`Forget the workspace "${basename(state.workspace)}"?\n\nThis only clears the app's reference to the folder — your files are not deleted.`)) return;
   localStorage.removeItem(LS_WORKSPACE);
   state.workspace = null;
   state.wave = null;
@@ -1570,10 +1606,12 @@ async function validateProviderConnection(options = {}) {
   }
 
   if (!options.keepBusy) setBusy(true);
-  state.aiConnection = { provider, status: "testing", message: "Testing connection..." };
+  state.aiConnection = { provider, status: "testing", message: "Sending a real chat ping to verify the key + model..." };
   render();
   try {
-    const result = await ipc.provider.test(provider, key || null);
+    // Wave 1 / G0-3: pass the chosen model so the backend can send a real chat round-trip.
+    const model = selectedProviderModel() || state.activeProviderInfo?.model || null;
+    const result = await ipc.provider.test(provider, key || null, model);
     state.aiConnection = {
       provider,
       status: result?.ok ? "ok" : "error",
@@ -1659,6 +1697,8 @@ async function deleteSavedProviderKey() {
     toast("No saved key for this AI service.");
     return;
   }
+  // Wave 4 / G3-5: confirm before deleting a credential.
+  if (!confirm(`Delete the saved ${state.activeProviderInfo.name} key from your OS keychain?\n\nThis cannot be undone. You will need to paste the key again to chat.`)) return;
 
   setBusy(true);
   try {
@@ -1731,6 +1771,8 @@ async function saveBudget() {
 }
 
 async function resetSessionCost() {
+  // Wave 4 / G3-5: confirm before erasing the session cost meter.
+  if (!confirm("Reset session cost back to $0.00?")) return;
   setBusy(true);
   try {
     await ipc.provider.resetSession();
@@ -1806,6 +1848,36 @@ async function signGate(gateId) {
     return;
   }
 
+  // Wave 3 — Role enforcement on gate sign. Reads .signalos/identity.json
+  // (written by the wizard). PO can sign G0/G1/G2/G3; PE signs G3/G4; QA
+  // signs G4/G5; DevOps signs deploy gates. If the role doesn't match the
+  // gate, offer the override path.
+  try {
+    const allowed = await ipc.identity.canSignGate(Number(gateId));
+    if (!allowed) {
+      const idn = await ipc.identity.get();
+      const role = idn?.role || "(unset)";
+      const ok = confirm(
+        `Role ${role} cannot sign G${gateId} per CONSTITUTION.md (PO=G0-G3, PE=G3-G4, QA=G4-G5, DevOps=deploy).\n\nSign anyway with an audited override?`
+      );
+      if (!ok) {
+        toast("Gate sign canceled — wrong role.");
+        return;
+      }
+      try {
+        await ipc.enforcement.override(
+          "role-sign",
+          `Signed G${gateId} as ${role} despite role mismatch.`,
+          `G${gateId}`
+        );
+      } catch {}
+    }
+  } catch (e) {
+    // Identity not set yet — surface and bail.
+    toast("Set identity in the wizard (Settings → Reset onboarding) before signing.");
+    return;
+  }
+
   setBusy(true);
   addLog(`Signing G${gateId}`, `Signer: ${signer}`, {
     kind: "command",
@@ -1852,6 +1924,82 @@ function looksLikeSignalCommand(value) {
     || /^signal-[a-z0-9-]+/i.test(trimmed);
 }
 
+// Wave 3 + the no-placeholders directive: wired commands are real. They
+// run in the JS layer so they can use ipc.provider.chat (the Builder path).
+async function runWiredStateCommand(command, args, options) {
+  const info = commandInfo(command);
+  state.runningCommand = command;
+  setBusy(true);
+  addLog(info.label, "Running…", { kind: "command", status: "running", command });
+  try {
+    const result = await wired.runStateCommand(command, args, { wave: state.wave });
+    await loadBasics();
+    await refreshProjectState(Boolean(options.markChecked));
+    await refreshEnforcement();
+    replaceLastLog(`${info.label} complete`, result, {
+      kind: "command",
+      status: "success",
+      command,
+      cards: [{ label: "Command", value: info.label }],
+    });
+    toast(`${info.label} complete.`);
+  } catch (error) {
+    replaceLastLog(`${info.label} failed`, error?.message || String(error), {
+      kind: "command",
+      status: "error",
+      command,
+    });
+    toast(`${info.label} failed.`);
+  } finally {
+    state.runningCommand = null;
+    setBusy(false);
+  }
+}
+
+async function runWiredDocCommand(command, args, _options) {
+  if (!aiReady()) {
+    state.guideTab = "ai";
+    render();
+    toast("Connect and test AI first.");
+    return;
+  }
+  const info = commandInfo(command);
+  state.runningCommand = command;
+  setBusy(true);
+  addLog(info.label, "Asking AI and saving evidence…", { kind: "ai", status: "running", command });
+  try {
+    const result = await wired.runDocCommand(command, args, {
+      activeProvider: state.activeProvider,
+      activeProviderInfo: state.activeProviderInfo,
+      wave: state.wave,
+      // Wave 5 closeout — stream tokens into the live log entry so the user
+      // sees the doc being written instead of a frozen "Asking AI…".
+      streamFn: streamingProviderChat,
+      onDelta: ({ accumulated }) => {
+        replaceLastLog(info.label, accumulated, { kind: "ai", status: "running", command });
+      },
+    });
+    await refreshProjectState(false);
+    replaceLastLog(`${info.label} done`, result, {
+      kind: "ai",
+      status: "success",
+      command,
+      cards: [{ label: "Command", value: info.label }],
+    });
+    toast(`${info.label} saved.`);
+  } catch (error) {
+    replaceLastLog(`${info.label} failed`, error?.message || String(error), {
+      kind: "ai",
+      status: "error",
+      command,
+    });
+    toast(`${info.label} failed.`);
+  } finally {
+    state.runningCommand = null;
+    setBusy(false);
+  }
+}
+
 async function runSignalCommand(commandInput, args = [], options = {}) {
   if (!state.workspace) {
     toast("Choose a project first.");
@@ -1864,6 +2012,15 @@ async function runSignalCommand(commandInput, args = [], options = {}) {
     : parseCommand(commandInput);
   if (!parsed) return;
 
+  // Wired commands (state ops + AI doc generators) replace the previous
+  // "preview — dumps spec" behavior. Route them here instead of the sidecar.
+  if (wired.STATE_COMMANDS.has(parsed.command)) {
+    return runWiredStateCommand(parsed.command, parsed.args, options);
+  }
+  if (wired.DOC_COMMANDS.has(parsed.command)) {
+    return runWiredDocCommand(parsed.command, parsed.args, options);
+  }
+
   const info = commandInfo(parsed.command);
   const isSetup = parsed.command === "/signal-init" || parsed.command === "signal-init";
   if (isSetup) {
@@ -1873,15 +2030,31 @@ async function runSignalCommand(commandInput, args = [], options = {}) {
   state.runningCommand = parsed.command;
   setBusy(true);
   startCommandProgress(parsed.command, info.detail || "Waiting for the SignalOS engine.");
+  // Wave 2 / G1-8: create a host element for the live progress strip
+  // so the user sees substeps tick instead of a generic "Engine working" line.
+  const progressHostId = `cmdprog-${Date.now()}`;
   addLog(
     info.status === "preview" ? "Preview command" : info.label,
     info.status === "preview"
       ? "This command may return a command brief instead of executing work."
-      : "Waiting for the SignalOS engine...",
-    { kind: "command", status: "running", command: parsed.command },
+      : `<div id="${progressHostId}" class="cmd-progress"></div>`,
+    { kind: "command", status: "running", command: parsed.command, html: true },
   );
+  const contractName = isSetup ? "init" : (parsed.command.includes("status") ? "status" : null);
+  let activeReqId = null;
   try {
-    const result = await ipc.signal.runAndWait(parsed.command, parsed.args);
+    const result = await ipc.signal.runAndWait(
+      parsed.command,
+      parsed.args,
+      120000,
+      (id) => {
+        activeReqId = id;
+        if (contractName) {
+          startProgress({ reqId: id, hostId: progressHostId, contractName });
+        }
+      },
+    );
+    if (activeReqId) endProgress(activeReqId, true);
     await loadBasics();
     await refreshProjectState(Boolean(options.markChecked));
     if (options.markChecked) state.statusChecked = true;
@@ -1917,6 +2090,7 @@ async function runSignalCommand(commandInput, args = [], options = {}) {
       toast(`${info.label} complete.`);
     }
   } catch (error) {
+    if (activeReqId) endProgress(activeReqId, false);
     if (isSetup) {
       state.lastSetup = {
         status: "error",
@@ -2083,18 +2257,29 @@ function stopCommandProgress() {
 async function cancelRunningCommand() {
   if (!state.runningCommand) return;
   const command = state.runningCommand;
+  // Wave 4 / G3-3: real Stop. Reject the local JS promise AND restart the
+  // sidecar so the underlying Python subprocess is genuinely terminated.
+  // The previous implementation only resolved the JS side; the subprocess
+  // kept running, which is exactly what the user asked us NOT to do.
   ipc.signal.cancelPending("Command stopped by user.");
   stopCommandProgress();
   state.runningCommand = null;
   state.busy = false;
-  replaceLastLog("Command stopped", `${command} was stopped. Restarting the SignalOS engine before the next command.`, {
+  replaceLastLog("Stopping…", `${command}: killing the SignalOS engine subprocess and restarting it.`, {
     kind: "command",
-    status: "error",
+    status: "running",
     command,
   });
-  await restartEngineStatus({ silent: true });
+  const ok = await restartEngineStatus({ silent: true });
+  replaceLastLog(ok ? "Command stopped" : "Stop incomplete", ok
+    ? `${command} stopped. SignalOS engine restarted; ready for the next command.`
+    : `${command}: tried to stop but engine restart failed. Click Restart engine in Settings.`, {
+    kind: "command",
+    status: ok ? "error" : "error",
+    command,
+  });
   render();
-  toast("Command stopped.");
+  toast(ok ? "Command stopped (engine restarted)." : "Stop incomplete — engine restart failed.");
 }
 
 async function askSignalOS(question) {
@@ -2128,14 +2313,26 @@ async function askSignalOS(question) {
 
   setBusy(true);
   addLog("You", question, { kind: "ai", status: "success" });
-  addLog("SignalOS AI", "Thinking...", { kind: "ai", status: "running" });
+  addLog("SignalOS AI", "", { kind: "ai", status: "running" });
+  // Wave 5 closeout — streaming. Tokens land in the latest log entry as
+  // they arrive. The full response is also returned so token counting +
+  // cost recording (server-side) still work.
+  const streamId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let accumulated = "";
+  const unsub = ipc.onChatToken(streamId, (evt) => {
+    if (evt.kind === "delta" && evt.delta) {
+      accumulated += evt.delta;
+      replaceLastLog("AI response", accumulated, { kind: "ai", status: "running" });
+    }
+  });
   try {
-    const response = await ipc.provider.chat(
+    const response = await ipc.provider.chatStream(
+      streamId,
       state.activeProvider,
       state.activeProviderInfo?.model || null,
       prompt,
     );
-    replaceLastLog("AI response", response?.text || "The provider returned an empty response.", {
+    replaceLastLog("AI response", response?.text || accumulated || "The provider returned an empty response.", {
       kind: "ai",
       status: "success",
     });
@@ -2148,6 +2345,7 @@ async function askSignalOS(question) {
     });
     toast("AI request failed.");
   } finally {
+    try { unsub(); } catch {}
     setBusy(false);
   }
 }
@@ -2180,6 +2378,18 @@ async function buildProjectFromPrompt() {
     return;
   }
 
+  // Wave 3 / G2-22 + G2-26: gate the Builder through the enforcement
+  // precheck. Blocks if required gates are unsigned or the wave is frozen.
+  // The override modal handles user-confirmed overrides with audit entries.
+  return new Promise((resolve) => {
+    gateBuild(stackId, async () => {
+      try { await actuallyRunBuild(idea, stackId, stack); }
+      finally { resolve(); }
+    });
+  });
+}
+
+async function actuallyRunBuild(idea, stackId, stack) {
   setBusy(true);
   setBuilderState({
     status: "running",
@@ -2198,12 +2408,52 @@ async function buildProjectFromPrompt() {
   try {
     const prep = await prepareSignalOSForBuild();
     setBuilderPhase("plan", "Creating a SignalOS build plan and file bundle.");
-    const response = await ipc.provider.chat(
+
+    // Wave 5 closeout — load prior conversation turns for this build (if any)
+    // so follow-up prompts ("make the button bigger") have context.
+    const buildId = state.builder.buildId || (await activeBuildId());
+    state.builder.buildId = buildId;
+    const history = await loadHistory(buildId);
+    const historyBlock = compressHistory(history);
+
+    // Wave 3 / G2-23: self-healing Builder. If the first AI response misses
+    // the stack contract, send a corrective follow-up specifying the missing
+    // files. Retry up to 2 more times before surfacing an error.
+    let generated = null;
+    let lastError = null;
+    let attempt = 0;
+    // Wave 5 closeout — streaming. Tokens land in the phase message so the
+    // user sees the AI working instead of a static "Drafting plan…".
+    let baseResponse = await streamingProviderChat(
       state.activeProvider,
       state.activeProviderInfo?.model || null,
-      buildProjectPrompt(idea, stackId, prep),
+      buildProjectPrompt(idea, stackId, prep, historyBlock),
+      ({ chars }) => setBuilderPhase("plan", `Drafting plan — ${chars.toLocaleString()} chars streamed…`),
     );
-    const generated = parseGeneratedProject(response?.text || "", stackId);
+    while (attempt < 3 && !generated) {
+      attempt += 1;
+      setBuilderPhase("plan", `Generating files (attempt ${attempt}/3)…`);
+      try {
+        generated = parseGeneratedProject(baseResponse?.text || "", stackId);
+        break;
+      } catch (e) {
+        lastError = e;
+        if (attempt >= 3) throw e;
+        const correction = [
+          "Your previous response did not satisfy the stack contract.",
+          `Error: ${e.message || String(e)}`,
+          "Return ONLY valid JSON with the schema previously specified.",
+          "Include every required file for the requested stack.",
+        ].join("\n");
+        baseResponse = await streamingProviderChat(
+          state.activeProvider,
+          state.activeProviderInfo?.model || null,
+          buildProjectPrompt(idea, stackId, prep, historyBlock) + "\n\n" + correction,
+          ({ chars }) => setBuilderPhase("plan", `Retry ${attempt + 1}/3 — ${chars.toLocaleString()} chars streamed…`),
+        );
+      }
+    }
+    if (!generated) throw lastError || new Error("Builder gave up after 3 attempts.");
     const brief = buildSignalOSBuildBrief(idea, generated, stack, prep);
     const evidence = await safeCall(
       () => ipc.project.exportFile("builds", `build-${buildTimestamp()}.md`, brief),
@@ -2211,8 +2461,61 @@ async function buildProjectFromPrompt() {
     );
     await safeCall(() => ipc.brain.add(brief, "decision"), null);
 
-    setBuilderPhase("write", `Writing ${generated.files.length} ${generated.stackLabel || stack.label} files.`);
-    const result = await ipc.project.writeFiles(generated.files, true);
+    // Wave 3 / G2-24: diff preview before write — let the user see and confirm
+    // what the Builder is about to do. Surfaces new vs modified counts and the
+    // file list. Skipped only if "preview-before-write" rule is off (P0 default: strict).
+    setBuilderPhase("write", `Previewing ${generated.files.length} ${generated.stackLabel || stack.label} files.`);
+    const diff = await ipc.project.previewFiles(generated.files);
+
+    // Wave 3 / G2 rule 12: mutation threshold gate. Heuristic: business-logic
+    // files (src/**/*.{js,jsx,ts,tsx,py,rs}) need a mutation score >= 0.95
+    // for the Builder to proceed without an audited override. The Builder
+    // can't currently RUN mutation testing on freshly-generated code (the
+    // file doesn't have tests yet), so we treat "no tests included for this
+    // file" as a score of 0 and surface the gate.
+    const businessFiles = generated.files.filter((f) =>
+      /^src\//.test(f.path) && /\.(js|jsx|ts|tsx|py|rs)$/.test(f.path)
+    );
+    const testFiles = generated.files.filter((f) => /(\.test|\.spec)\.(js|jsx|ts|tsx|py|rs)$/.test(f.path) || /^(tests|test)\//.test(f.path));
+    if (businessFiles.length > 0 && testFiles.length === 0) {
+      const gate = await ipc.testAutomation.checkMutation(0, businessFiles[0].path);
+      if (!gate.allowed) {
+        const goOn = confirm(`${gate.reason}\n\nWrite anyway? An audited override entry will be logged. To pass cleanly, ask the Builder to also generate tests.`);
+        if (!goOn) {
+          throw new Error("Build canceled at mutation gate. Re-prompt with 'include unit tests' to pass cleanly.");
+        }
+        // Log override
+        try {
+          await ipc.enforcement.override(
+            "mutation-threshold",
+            "Builder generated business-logic files without tests; user accepted the risk.",
+            businessFiles.map((f) => f.path).join(", ")
+          );
+        } catch {}
+      }
+    }
+
+    const confirmed = await confirmDiffWrite(diff);
+    if (!confirmed) {
+      throw new Error("Build canceled by user at the diff preview step.");
+    }
+
+    // Wave 5 / G4 rule 12 — mutation threshold. Read the score CI wrote into
+    // .signalos/mutation-score.json. If missing or below threshold, run an
+    // override prompt before continuing. No silent bypass.
+    const mutationGate = await checkMutationGateBeforeWrite();
+    if (!mutationGate.ok) {
+      throw new Error(`Build canceled: ${mutationGate.reason}`);
+    }
+
+    setBuilderPhase("write", `Writing ${generated.files.length} files (${diff.total_new} new, ${diff.total_modified} modified).`);
+    // Wave 5 / G4 rule 12 — Builder ships a CI workflow into every generated
+    // app so test-automation gates apply downstream too. The workflow stub
+    // is stack-aware (JS stacks get npm scripts; Python gets pytest; static
+    // gets html5validator). User can edit freely after the first write.
+    const ciFiles = ciWorkflowsForStack(generated.stack || stackId);
+    const allFiles = generated.files.concat(ciFiles);
+    const result = await ipc.project.writeFiles(allFiles, true);
     setBuilderPhase("review", "Refreshing SignalOS status after file write.");
     const statusOutput = await ipc.signal.runAndWait("/signal-status", []);
     await loadBasics();
@@ -2231,7 +2534,25 @@ async function buildProjectFromPrompt() {
       runInstructions: generated.runInstructions || buildStackInfo(generated.stack || stackId).run,
       briefPath: evidence?.relative_path || "",
       entryPath: generated.entryPath || pickBuildEntry(result.files, generated.stack || stackId),
+      buildId,
     };
+
+    // Wave 5 closeout — record this turn in the build's conversation history.
+    try {
+      await appendTurn(buildId, {
+        user_idea: idea,
+        stack: state.builder.stack,
+        ai_summary: state.builder.message,
+        files_written: result.files.map((f) => f.relative_path),
+        provider: state.activeProvider,
+        model: state.activeProviderInfo?.model || null,
+      });
+    } catch (e) {
+      // Best-effort; do not fail the build on history-write failure.
+      console.warn("conversation: appendTurn failed:", e);
+    }
+    // Wave 5 closeout — flag the new files in the left-pane tree.
+    try { leftTabsBuildDone(result.files.map((f) => f.relative_path)); } catch {}
     replaceLastLog("Build complete", state.builder.message, {
       kind: "ai",
       status: "success",
@@ -2269,9 +2590,13 @@ async function prepareSignalOSForBuild() {
   };
 
   setBuilderPhase("prepare", "Checking SignalOS project setup.");
+  // Wave 1 / G0-1: never silently scaffold into a user-picked folder.
+  // The user must explicitly choose an init mode via the Setup CTA or
+  // the first-run wizard. The Builder is gated on initialized=true.
   if (!state.artifacts?.initialized) {
-    prep.initOutput = formatResult(await ipc.signal.runAndWait("/signal-init", []));
-    markOnboarding("setup");
+    throw new Error(
+      'SignalOS is not set up in this folder yet. Click "Set up project" first (it preserves your existing files), then re-run Build.'
+    );
   }
 
   prep.statusOutput = formatResult(await ipc.signal.runAndWait("/signal-status", []));
@@ -2291,8 +2616,19 @@ function nextActionTextFromState() {
   return "Continue from the generated plan and run status after changes.";
 }
 
-function buildProjectPrompt(idea, requestedStack, prep = {}) {
+function buildProjectPrompt(idea, requestedStack, prep = {}, historyBlock = "") {
   const stack = buildStackInfo(requestedStack);
+  const historyLines = historyBlock
+    ? [
+        "",
+        "## Prior turns in this build",
+        historyBlock,
+        "",
+        "When the user's current request says 'change' / 'add' / 'fix' / 'tweak' or similar,",
+        "EDIT the files produced in earlier turns instead of rewriting from scratch.",
+        "When the request is a brand-new app description, start fresh.",
+      ].join("\n")
+    : "";
   return [
     "You are SignalOS Builder, running inside a governed SignalOS project.",
     "Return ONLY valid JSON. No markdown, no prose, no code fences.",
@@ -2313,8 +2649,9 @@ function buildProjectPrompt(idea, requestedStack, prep = {}) {
     "",
     `SignalOS phase: ${prep.phase || "not loaded"}`,
     `SignalOS next action: ${prep.nextAction || "not loaded"}`,
+    historyLines,
     `User request: ${idea}`,
-  ].join("\n");
+  ].filter((line) => line !== "").join("\n");
 }
 
 function parseGeneratedProject(text, requestedStack) {
@@ -2345,6 +2682,18 @@ function parseGeneratedProject(text, requestedStack) {
     throw new Error("AI returned no writable files.");
   }
   validateGeneratedFiles(normalized, stack);
+
+  // Wave 5 / G4: ship a test-automation CI workflow into every generated app
+  // so the rules SignalOS enforces also apply to its output. The Builder
+  // refuses to add this file if the AI already wrote one — user content wins.
+  const hasWorkflow = normalized.some((f) => /^\.github\/workflows\//.test(f.path));
+  if (!hasWorkflow) {
+    normalized.push({
+      path: ".github/workflows/test-automation.yml",
+      content: defaultTestAutomationWorkflow(stack),
+    });
+  }
+
   return {
     summary: safeText(parsed.summary, `Generated ${normalized.length} files.`),
     stack,
@@ -2354,6 +2703,39 @@ function parseGeneratedProject(text, requestedStack) {
     plan: normalizeSignalOSPlan(parsed.signalos_plan),
     files: normalized,
   };
+}
+
+function defaultTestAutomationWorkflow(stack) {
+  // Stack-aware CI gates. Matches the spec in docs/test-automation/.
+  const isNode = ["react-vite", "next", "node-express"].includes(stack);
+  const isPython = stack === "python-flask";
+  return [
+    "# Generated by SignalOS Builder — Wave 5 / G4 test-automation rules.",
+    "name: test-automation",
+    "on:",
+    "  push:",
+    "    branches: [ main ]",
+    "  pull_request:",
+    "    branches: [ main ]",
+    "",
+    "jobs:",
+    "  l0-precommit:",
+    "    name: L0 pre-commit gates",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    isNode ? "      - uses: actions/setup-node@v4\n        with: { node-version: '20' }" : "",
+    isPython ? "      - uses: actions/setup-python@v5\n        with: { python-version: '3.11' }" : "",
+    isNode ? "      - name: install\n        run: npm install" : "",
+    isNode ? "      - name: lint\n        run: npm run lint --if-present" : "",
+    isNode ? "      - name: type-check\n        run: npm run typecheck --if-present" : "",
+    isNode ? "      - name: unit tests\n        run: npm test --if-present" : "",
+    isPython ? "      - name: install\n        run: pip install -r requirements.txt" : "",
+    isPython ? "      - name: unit tests\n        run: python -m unittest discover" : "",
+    "      - name: secret scan",
+    "        run: |",
+    "          ! grep -rE 'sk-[A-Za-z0-9_-]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----' --include='*' --exclude-dir=node_modules --exclude-dir=.git . || (echo 'secret-shaped string found'; exit 1)",
+  ].filter(Boolean).join("\n") + "\n";
 }
 
 function normalizeGeneratedPath(value) {
@@ -2422,6 +2804,275 @@ function normalizeSignalOSPlan(value) {
     risks: list("risks"),
     acceptance: list("acceptance"),
   };
+}
+
+// Wave 3 / G2-24: diff confirmation modal. Returns true if user confirms,
+// false if they cancel. Renders inline via DOM so we don't need a third modal scaffold.
+function confirmDiffWrite(diff) {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    host.className = "override-modal";
+    const newList = diff.diffs.filter((d) => d.status === "new").map((d) => `<div class="added">+ ${escapeHtml(d.path)}  (${d.bytes_new} bytes)</div>`).join("");
+    const modList = diff.diffs.filter((d) => d.status === "modified").map((d) => `<div class="changed">~ ${escapeHtml(d.path)}  (${d.bytes_old ?? "?"} → ${d.bytes_new} bytes)</div>`).join("");
+    const sameList = diff.diffs.filter((d) => d.status === "unchanged").map((d) => `<div class="unchanged">= ${escapeHtml(d.path)}</div>`).join("");
+    host.innerHTML = `
+      <div class="wizard-card" style="width:min(640px,100%)">
+        <header class="wizard-header">
+          <div class="wizard-title">Confirm file writes</div>
+          <button class="wizard-skip" type="button" data-act="cancel">Close</button>
+        </header>
+        <div class="wizard-body">
+          <p>SignalOS will write <strong>${diff.total_new + diff.total_modified}</strong> file${diff.total_new + diff.total_modified === 1 ? "" : "s"} (<span style="color:var(--green)">${diff.total_new} new</span> · <span style="color:var(--amber)">${diff.total_modified} modified</span> · <span style="color:var(--faint)">${diff.total_unchanged} unchanged</span>).</p>
+          <div class="env-diff" style="max-height:280px;overflow-y:auto">
+            ${newList}${modList}${sameList || ""}
+          </div>
+          ${diff.total_modified > 0 ? `<p class="fine-print" style="color:var(--amber);margin-top:8px">⚠ ${diff.total_modified} existing file${diff.total_modified === 1 ? "" : "s"} will be overwritten.</p>` : ""}
+        </div>
+        <footer class="wizard-footer">
+          <button class="ghost" type="button" data-act="cancel">Cancel build</button>
+          <button class="primary" type="button" data-act="confirm">Write files</button>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(host);
+    host.querySelectorAll("[data-act]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const v = b.dataset.act === "confirm";
+        host.remove();
+        resolve(v);
+      });
+    });
+  });
+}
+
+// Wave 5 closeout — streaming chat helper used by every high-token path
+// (Builder, per-file regenerate, wired AI doc commands). Wraps the
+// chat:token event stream, accumulates the full text, returns a
+// ProviderChatResponse compatible with the non-streaming send_provider_message.
+//
+// onDelta fires for each token chunk so callers can update progress UI
+// with a running character count.
+export async function streamingProviderChat(provider, model, prompt, onDelta = null) {
+  const streamId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  let accumulated = "";
+  let chars = 0;
+  const unsub = ipc.onChatToken(streamId, (evt) => {
+    if (evt.kind === "delta" && evt.delta) {
+      accumulated += evt.delta;
+      chars += evt.delta.length;
+      if (typeof onDelta === "function") {
+        try { onDelta({ delta: evt.delta, accumulated, chars }); } catch {}
+      }
+    }
+  });
+  try {
+    const response = await ipc.provider.chatStream(streamId, provider, model || null, prompt);
+    if (response && (!response.text || response.text.length < accumulated.length)) {
+      response.text = accumulated || response.text;
+    }
+    return response;
+  } finally {
+    try { unsub(); } catch {}
+  }
+}
+
+// Wave 5 closeout — per-file regenerate.
+// Re-prompts AI for a single file with a tight context: the existing file
+// contents + the user's one-line instruction. Writes only that file.
+async function regenerateSingleFile(relPath) {
+  if (!relPath) return;
+  if (!state.workspace) { toast("Choose a project first."); return; }
+  if (!aiReady()) { toast("Connect AI first."); return; }
+  const instruction = window.prompt(
+    `Regenerate ${relPath}.\n\nWhat should change?\n(e.g. "make the button bigger", "add dark mode toggle", "rename the title")`,
+    ""
+  );
+  if (!instruction || !instruction.trim()) return;
+  setBusy(true);
+  setBuilderState({ phase: "plan", message: `Regenerating ${relPath}…` });
+  try {
+    let existing = "";
+    try { existing = await ipc.project.readFile(relPath); } catch {}
+    const prompt = [
+      "You are SignalOS Builder regenerating ONE file in an existing project.",
+      "Return ONLY valid JSON with this exact schema:",
+      `{"path":"${relPath}","content":"the full new file contents"}`,
+      "Rules:",
+      "- The path MUST equal the requested file path.",
+      "- Return the COMPLETE new file content — not a diff, not a snippet.",
+      "- Preserve the file's existing language, framework, and style.",
+      "- Apply the user's instruction faithfully.",
+      "- Do not write outside the requested file.",
+      "",
+      "## Current file contents",
+      "```",
+      existing.slice(0, 64_000),
+      "```",
+      "",
+      `## Instruction`,
+      instruction.trim(),
+    ].join("\n");
+    const resp = await streamingProviderChat(
+      state.activeProvider,
+      state.activeProviderInfo?.model || null,
+      prompt,
+      ({ chars }) => setBuilderState({ phase: "plan", message: `Regenerating ${relPath} — ${chars.toLocaleString()} chars streamed…` }),
+    );
+    const json = extractJsonObject(resp?.text || "");
+    if (!json) throw new Error("Regeneration returned no JSON.");
+    let parsed;
+    try { parsed = JSON.parse(json); } catch (e) { throw new Error("Regeneration returned invalid JSON."); }
+    if (parsed.path !== relPath) throw new Error(`AI returned a different path: ${parsed.path}`);
+    if (typeof parsed.content !== "string") throw new Error("AI omitted the file content.");
+
+    // Diff preview for just this file, then atomic write.
+    const diff = await ipc.project.previewFiles([{ path: relPath, content: parsed.content }]);
+    const confirmed = await confirmDiffWrite(diff);
+    if (!confirmed) throw new Error("Regeneration canceled at diff preview.");
+    await ipc.project.writeFiles([{ path: relPath, content: parsed.content }], true);
+
+    // Record this turn in conversation history.
+    try {
+      const buildId = state.builder.buildId || (await activeBuildId());
+      state.builder.buildId = buildId;
+      await appendTurn(buildId, {
+        user_idea: `regenerate ${relPath}: ${instruction.trim()}`,
+        ai_summary: `regenerated ${relPath} (${parsed.content.length} bytes)`,
+        files_written: [relPath],
+        provider: state.activeProvider,
+        model: state.activeProviderInfo?.model || null,
+      });
+    } catch {}
+
+    setBuilderState({ phase: "review", message: `${relPath} regenerated. Reload preview to see the change.` });
+    toast(`${relPath} regenerated.`);
+    await refreshProjectState(false);
+  } catch (e) {
+    setBuilderState({ phase: "", message: e?.message || String(e) });
+    toast(e?.message || "Regenerate failed.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+// Wave 5 / G4 rule 12 — Mutation threshold check before Builder writes.
+// Reads .signalos/mutation-score.json (CI writes it via `cargo mutants` etc.).
+// If absent or below 95%, prompts an override modal that audit-logs the reason.
+// Returns { ok, reason } so the caller can throw to cancel cleanly.
+async function checkMutationGateBeforeWrite() {
+  let score;
+  try {
+    score = await ipc.testAutomation.readMutationScore();
+  } catch (e) {
+    return { ok: false, reason: `Could not read mutation score: ${e?.message || e}` };
+  }
+  if (!score?.present || typeof score.score !== "number") {
+    // No score on file. Prompt for explicit override.
+    const reason = window.prompt(
+      "No mutation score on file (.signalos/mutation-score.json).\n\n" +
+      "SignalOS Rule 12 (Mutation threshold) requires ≥95% on business-logic files.\n" +
+      "Type a one-line reason to override and proceed, or Cancel to stop the build.",
+      ""
+    );
+    if (!reason || !reason.trim()) {
+      return { ok: false, reason: "Mutation gate refused (no score, no override reason)." };
+    }
+    try {
+      await ipc.enforcement.override("mutation-threshold", reason.trim(), "no score on file");
+    } catch (e) {
+      return { ok: false, reason: `Override failed: ${e?.message || e}` };
+    }
+    return { ok: true };
+  }
+  const decision = await ipc.testAutomation.checkMutation(score.score, score.area || "workspace");
+  if (decision?.allowed) return { ok: true };
+  const reason = window.prompt(
+    `Mutation gate would block this Build.\n\n${decision?.reason || "Below threshold."}\n\n` +
+    "Type a one-line reason to override (audit-logged), or Cancel.",
+    ""
+  );
+  if (!reason || !reason.trim()) {
+    return { ok: false, reason: decision?.reason || "Mutation gate refused." };
+  }
+  try {
+    await ipc.enforcement.override("mutation-threshold", reason.trim(), `score=${score.score} area=${score.area}`);
+  } catch (e) {
+    return { ok: false, reason: `Override failed: ${e?.message || e}` };
+  }
+  return { ok: true };
+}
+
+// Wave 5 / G4 — ship a test-automation CI workflow into every generated app.
+// Stack-aware: React/Vite/Next/Node get a Node workflow; Python gets pytest;
+// static gets html validation. The generated app is now born with test
+// gates instead of inheriting them as an afterthought.
+function ciWorkflowsForStack(stackId) {
+  const header = "# Generated by SignalOS test-automation (Wave 5 / G4).\n# Tune freely — but do not delete the gates without an audit entry.\n\n";
+  if (stackId === "python-flask") {
+    return [{
+      path: ".github/workflows/test-automation.yml",
+      content: header + [
+        "name: test-automation",
+        "on: [push, pull_request]",
+        "jobs:",
+        "  l0:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+        "      - uses: actions/setup-python@v5",
+        "        with: { python-version: '3.11' }",
+        "      - name: install deps",
+        "        run: pip install -r requirements.txt",
+        "      - name: ruff",
+        "        run: pip install ruff && ruff check .",
+        "      - name: pytest",
+        "        run: pip install pytest && pytest -q",
+        "",
+      ].join("\n"),
+    }];
+  }
+  if (stackId === "static") {
+    return [{
+      path: ".github/workflows/test-automation.yml",
+      content: header + [
+        "name: test-automation",
+        "on: [push, pull_request]",
+        "jobs:",
+        "  l0:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - uses: actions/checkout@v4",
+        "      - name: HTML5 validator",
+        "        run: |",
+        "          pip install html5validator",
+        "          html5validator --root . --match '*.html'",
+        "",
+      ].join("\n"),
+    }];
+  }
+  // react-vite | next | node-express | auto (treated as JS by default)
+  return [{
+    path: ".github/workflows/test-automation.yml",
+    content: header + [
+      "name: test-automation",
+      "on: [push, pull_request]",
+      "jobs:",
+      "  l0:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: actions/checkout@v4",
+      "      - uses: actions/setup-node@v4",
+      "        with: { node-version: '20' }",
+      "      - run: npm ci || npm install",
+      "      - name: lint (best-effort)",
+      "        run: npm run lint --if-present",
+      "      - name: build (if defined)",
+      "        run: npm run build --if-present",
+      "      - name: test",
+      "        run: npm test --if-present",
+      "",
+    ].join("\n"),
+  }];
 }
 
 function buildSignalOSBuildBrief(idea, generated, stack, prep) {
@@ -2541,6 +3192,7 @@ function addLog(title, body, options = {}) {
     status: options.status || "",
     command: options.command || "",
     cards: Array.isArray(options.cards) ? options.cards : [],
+    html: Boolean(options.html),
   });
   state.log = state.log.slice(-80);
   persistTranscript();
@@ -2567,6 +3219,14 @@ function replaceLastLog(title, body, options = {}) {
 function switchView(view) {
   state.view = view;
   render();
+  // Wave 1 / G0-6: hydrate the secrets pane on first navigation.
+  if (view === "secrets" && state.workspace) {
+    refreshSecretsList();
+  }
+  // Wave 5 / G4 — hydrate test debt when History view opens.
+  if (view === "history" && state.workspace) {
+    refreshTestDebt();
+  }
 }
 
 async function selectProvider(selected) {
@@ -2606,10 +3266,33 @@ function bindEvents() {
   $("[data-view='history']")?.addEventListener("click", () => switchView("history"));
   $("[data-view='settings']")?.addEventListener("click", () => switchView("settings"));
   $("[data-view='help']")?.addEventListener("click", () => switchView("help"));
-  $$("[data-step-tab]").forEach((button) => {
+  // Wave 4 / a11y — phase tabs follow the WAI-ARIA Tabs keyboard pattern:
+  // Arrow Left/Right move focus, Home/End jump to first/last, Enter/Space activate.
+  const phaseTabs = $$("[data-step-tab]");
+  phaseTabs.forEach((button, idx) => {
+    button.setAttribute("tabindex", idx === 0 ? "0" : "-1");
     button.addEventListener("click", () => {
       state.guideTab = button.dataset.stepTab;
       render();
+    });
+    button.addEventListener("keydown", (e) => {
+      let next = null;
+      if (e.key === "ArrowRight") next = phaseTabs[(idx + 1) % phaseTabs.length];
+      else if (e.key === "ArrowLeft") next = phaseTabs[(idx - 1 + phaseTabs.length) % phaseTabs.length];
+      else if (e.key === "Home") next = phaseTabs[0];
+      else if (e.key === "End") next = phaseTabs[phaseTabs.length - 1];
+      else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        state.guideTab = button.dataset.stepTab;
+        render();
+        return;
+      }
+      if (next) {
+        e.preventDefault();
+        phaseTabs.forEach((b) => b.setAttribute("tabindex", "-1"));
+        next.setAttribute("tabindex", "0");
+        next.focus();
+      }
     });
   });
 
@@ -2661,6 +3344,46 @@ function bindEvents() {
   });
   $("#quickOllama").addEventListener("click", useLocalProvider);
   $("#refreshButton").addEventListener("click", () => refreshProjectState(true));
+  // Wave 1 / G0-6: secrets pane controller. Replaces the old form-only view.
+  attachSecretsPane({
+    container: document.getElementById("view-secrets"),
+    toast,
+    onChanged: () => refreshProjectState(false),
+  });
+
+  // Wave 2 / G1-9 + G1-11: three-pane shell — wire the preview-host on
+  // the right and the sidebar/preview collapse toggles.
+  attachPreviewPane({
+    container: document.getElementById("preview-host"),
+    toast,
+  });
+  // Wave 3 / G2-21..25: enforcement pill + override modal.
+  attachEnforcementUi({ toast });
+  // Wave 5 closeout — left-pane Files/Gov/Mem tabs.
+  attachLeftTabs();
+  // Wave 5 / G4 rule 11 — test debt drawer (in History view).
+  attachTestDebt({ container: document.getElementById("view-history"), toast });
+  document.getElementById("sidebarCollapse")?.addEventListener("click", () => {
+    const app = document.getElementById("app");
+    app.classList.toggle("sidebar-collapsed");
+    try { localStorage.setItem("signalos.layout.sidebarCollapsed", app.classList.contains("sidebar-collapsed") ? "1" : "0"); } catch {}
+  });
+  document.getElementById("previewToggle")?.addEventListener("click", () => {
+    const app = document.getElementById("app");
+    app.classList.toggle("preview-collapsed");
+    try { localStorage.setItem("signalos.layout.previewCollapsed", app.classList.contains("preview-collapsed") ? "1" : "0"); } catch {}
+  });
+  // Restore layout preference
+  try {
+    if (localStorage.getItem("signalos.layout.sidebarCollapsed") === "1") {
+      document.getElementById("app").classList.add("sidebar-collapsed");
+    }
+    if (localStorage.getItem("signalos.layout.previewCollapsed") === "1") {
+      document.getElementById("app").classList.add("preview-collapsed");
+    }
+  } catch {}
+  // Keep preview-pane workspace in sync.
+  el.buildStack?.addEventListener("change", () => setPreviewStack(el.buildStack.value));
   el.attachmentPick.addEventListener("click", () => el.attachmentInput.click());
   el.attachmentButton.addEventListener("click", () => el.attachmentInput.click());
   el.attachmentInput.addEventListener("change", (event) => handleAttachmentFiles(event.target.files));
@@ -2702,6 +3425,8 @@ function bindEvents() {
     event.preventDefault();
     const value = el.commandInput.value.trim();
     el.commandInput.value = "";
+    // Wave 5 closeout — intent-driven left-pane auto-switch.
+    try { leftTabsAutoSwitch(value); } catch {}
     if (value && !looksLikeSignalCommand(value)) {
       askSignalOS(value);
       return;
@@ -3020,6 +3745,31 @@ async function init() {
   render();
   await refreshProjectState(false);
   setTimeout(() => testEngineStatus({ silent: true }), 1500);
+
+  // Wave 1 / G0-2: first-run wizard. Runs once per app install. Resumes
+  // at the first incomplete step if force-quit mid-flow. The wizard
+  // owns folder selection, init consent, AI testing, budget, and privacy
+  // defaults — every Wave 1 P0 fix is gated through it.
+  await wizard.maybeRunWizard({
+    hostEl: document.getElementById("wizard-host"),
+    providerList: state.providers,
+    onDone: async () => {
+      // Re-pull everything because the wizard mutated workspace, provider,
+      // model, key, budget, and (possibly) ran /signal-init.
+      await refreshAll();
+      const ws = wizard.wizardState;
+      if (ws.folder) {
+        try { localStorage.setItem(LS_WORKSPACE, ws.folder); } catch {}
+      }
+      toast("Setup complete. Welcome to SignalOS.");
+    },
+  });
+}
+
+// Wave 1 / G0-2: surface a Reset onboarding affordance for the Settings drawer.
+export function resetOnboarding() {
+  wizard.resetWizard();
+  toast("Onboarding reset. Wizard will run on next launch.");
 }
 
 init();
