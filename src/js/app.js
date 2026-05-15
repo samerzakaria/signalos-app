@@ -3739,31 +3739,42 @@ async function checkForUpdates() {
 }
 
 async function init() {
-  bindEvents();
-  render();
-  await loadBasics();
-  render();
-  await refreshProjectState(false);
-  setTimeout(() => testEngineStatus({ silent: true }), 1500);
+  // Gate the entire app behind first-time setup. body.setup-pending hides
+  // #app via CSS until the wizard either completes OR confirms it already
+  // ran (then maybeRunWizard returns false and we lift the gate ourselves).
+  document.body.classList.add("setup-pending");
 
-  // Wave 1 / G0-2: first-run wizard. Runs once per app install. Resumes
-  // at the first incomplete step if force-quit mid-flow. The wizard
-  // owns folder selection, init consent, AI testing, budget, and privacy
-  // defaults — every Wave 1 P0 fix is gated through it.
-  await wizard.maybeRunWizard({
+  bindEvents();
+  await loadBasics();
+
+  // Wave 1 / G0-2: first-run wizard. Mandatory. Runs once per app install
+  // (WIZARD_VERSION bumps invalidate stale saves from prior installs that
+  // share com.signalos.desktop's WebView2 localStorage). Resumes at the
+  // first incomplete step if force-quit mid-flow.
+  const ranWizard = await wizard.maybeRunWizard({
     hostEl: document.getElementById("wizard-host"),
     providerList: state.providers,
     onDone: async () => {
-      // Re-pull everything because the wizard mutated workspace, provider,
-      // model, key, budget, and (possibly) ran /signal-init.
+      // Wizard already removed body.setup-pending in closeWizard().
       await refreshAll();
       const ws = wizard.wizardState;
       if (ws.folder) {
         try { localStorage.setItem(LS_WORKSPACE, ws.folder); } catch {}
       }
+      render();
+      await refreshProjectState(false);
+      setTimeout(() => testEngineStatus({ silent: true }), 1500);
       toast("Setup complete. Welcome to SignalOS.");
     },
   });
+
+  if (!ranWizard) {
+    // Returning user — setup already complete. Drop the gate, paint normally.
+    document.body.classList.remove("setup-pending");
+    render();
+    await refreshProjectState(false);
+    setTimeout(() => testEngineStatus({ silent: true }), 1500);
+  }
 }
 
 // Wave 1 / G0-2: surface a Reset onboarding affordance for the Settings drawer.

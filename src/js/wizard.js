@@ -13,7 +13,10 @@
 import * as ipc from "./ipc.js";
 
 const LS_WIZARD = "signalos.onboarding.wizard.v1";
-const WIZARD_VERSION = 1;
+// v2: bumped because WebView2 persists localStorage per app identifier
+// (com.signalos.desktop), so saves from prior beta installs were skipping
+// onboarding on v1.0.0-internal1. Bumping the version invalidates them.
+const WIZARD_VERSION = 2;
 const STEPS = ["welcome", "folder", "init", "identity", "ai", "budget", "done"];
 const STEP_LABELS = ["Welcome", "Folder", "Init", "Identity", "AI", "Budget", "Done"];
 
@@ -113,6 +116,7 @@ export function closeWizard() {
   wizardState.active = false;
   if (host) host.innerHTML = "";
   if (host) host.classList.remove("wizard-open");
+  document.body.classList.remove("setup-pending");
 }
 
 // ─── Render ───────────────────────────────────────────────────────────────────
@@ -120,13 +124,13 @@ export function closeWizard() {
 function render() {
   if (!host) return;
   host.classList.add("wizard-open");
+  document.body.classList.add("setup-pending");
   const step = STEPS[wizardState.current];
   host.innerHTML = `
     <div class="wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <div class="wizard-card">
         <header class="wizard-header">
-          <div class="wizard-title" id="wizard-title">SignalOS</div>
-          <button class="wizard-skip" type="button" id="wiz-skip" ${step === "folder" ? "disabled" : ""}>Skip for now</button>
+          <div class="wizard-title" id="wizard-title">SignalOS &mdash; first-time setup</div>
         </header>
         <div class="wizard-dots" role="progressbar" aria-valuenow="${wizardState.current + 1}" aria-valuemin="1" aria-valuemax="${STEPS.length}">
           ${STEPS.map((id, i) => {
@@ -146,7 +150,6 @@ function render() {
   `;
 
   // Wire events
-  host.querySelector("#wiz-skip")?.addEventListener("click", onSkip);
   host.querySelector("#wiz-back")?.addEventListener("click", onBack);
   host.querySelector("#wiz-next")?.addEventListener("click", onNext);
   wireStepEvents(step);
@@ -603,15 +606,6 @@ function onBack() {
     save();
     render();
   }
-}
-
-function onSkip() {
-  const step = STEPS[wizardState.current];
-  if (step === "folder") return; // not skippable
-  wizardState.completedSteps.push("skipped:" + step);
-  save();
-  closeWizard();
-  onComplete?.({ skipped: true });
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

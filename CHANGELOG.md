@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased] - 2026-05-15
+## [Unreleased] - 2026-05-16
+
+## [1.0.0-internal2] - 2026-05-16
+
+### Forced onboarding (real bug fix — internal1 shipped broken for upgraders)
+
+- Bumped `WIZARD_VERSION` to invalidate stale `signalos.onboarding.wizard.v1` localStorage from prior beta installs. WebView2 stores localStorage per app identifier (`com.signalos.desktop`), so saves from v0.0.7..v1.0.0-betaN were carrying over to internal1 and convincing the wizard it had already finished. Result on first launch: no wizard, main UI rendered fully but unconfigured. Fixed.
+- Hard-gated the main app shell behind first-time setup: `body.setup-pending` hides `#app` via CSS until the wizard completes (or until `maybeRunWizard` returns false, meaning setup is already done). No more "crowded UI with no setup state behind a wizard that didn't run."
+- Removed the "Skip for now" button from the wizard entirely. Onboarding is mandatory, not advisory — title now reads "SignalOS — first-time setup."
+- Run order in `init()` rewritten: `loadBasics` → wizard → (only then) `render()` + `refreshProjectState`. The user never sees the main UI before setup is complete.
 
 ## [1.0.0-internal1] - 2026-05-15
 

@@ -1288,6 +1288,12 @@ input:focus, select:focus, textarea:focus {
 .wizard-step-label { color: var(--faint); font-size: 12px; font-weight: 650; }
 .wizard-open { /* host marker — no styles needed */ }
 
+/* Hard gate: until first-time setup completes, the main app shell is hidden
+   entirely. No clicking around behind the wizard, no half-set-up state. */
+body.setup-pending #app,
+body.setup-pending #toast { display: none !important; }
+body.setup-pending { background: var(--bg); }
+
 @media (max-width: 1040px) {
   /* Wave 4 / narrow-window fix. The previous CSS hid the sidebar entirely
      at this breakpoint, leaving users with no way to navigate. Instead,
