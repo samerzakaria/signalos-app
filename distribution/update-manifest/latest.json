@@ -1,22 +1,22 @@
 {
-  "version": "1.0.0",
-  "notes": "SignalOS v1.0.0 — initial release",
-  "pub_date": "2026-05-02T00:00:00Z",
+  "version": "1.1.0",
+  "notes":   " ### Revamped UI  ",
+  "pub_date": "2026-05-16T16:05:19Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0/SignalOS_1.0.0_aarch64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.0/SignalOS_1.1.0_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0/SignalOS_1.0.0_x64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.0/SignalOS_1.1.0_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0/SignalOS_1.0.0_x64-setup.exe",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.0/SignalOS_1.1.0_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v1.0.0/signalos-app_1.0.0_amd64.AppImage",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.0/SignalOS_1.1.0_amd64.AppImage",
       "signature": ""
     }
   }
