@@ -1,11 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#2457D6"/>
-  <path d="M138 330 C184 258 228 278 254 222 C288 150 360 148 398 208" fill="none" stroke="#DCE7FF" stroke-width="40" stroke-linecap="round"/>
-  <path d="M138 330 C184 258 228 278 254 222 C288 150 360 148 398 208" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round"/>
-  <circle cx="138" cy="330" r="52" fill="#FFFFFF"/>
-  <circle cx="254" cy="222" r="44" fill="#EAF1FF"/>
-  <circle cx="398" cy="208" r="52" fill="#FFFFFF"/>
-  <circle cx="138" cy="330" r="18" fill="#2457D6"/>
-  <circle cx="254" cy="222" r="16" fill="#2457D6"/>
-  <circle cx="398" cy="208" r="18" fill="#2457D6"/>
+  <!-- Background: rounded square, panel dark -->
+  <rect width="512" height="512" rx="110" fill="#1C1B22"/>
+  
+  <!-- Outer arcs (4 paths) — accent purple, thicker for icon legibility -->
+  <!-- Outer left arc -->
+  <path d="M145.76 79.68 A208 208 0 0 0 145.76 432.32"
+        fill="none" stroke="#4F46C7" stroke-width="44" stroke-linecap="round" opacity="0.7"/>
+  <!-- Outer right arc -->
+  <path d="M366.24 79.68 A208 208 0 0 1 366.24 432.32"
+        fill="none" stroke="#4F46C7" stroke-width="44" stroke-linecap="round" opacity="0.7"/>
+  <!-- Inner left arc -->
+  <path d="M188.16 147.52 A128 128 0 0 0 188.16 364.48"
+        fill="none" stroke="#6C63E8" stroke-width="44" stroke-linecap="round" opacity="0.9"/>
+  <!-- Inner right arc -->
+  <path d="M323.84 147.52 A128 128 0 0 1 323.84 364.48"
+        fill="none" stroke="#6C63E8" stroke-width="44" stroke-linecap="round" opacity="0.9"/>
+  <!-- Center dot -->
+  <circle cx="256" cy="256" r="59.2" fill="#F3F1EC"/>
+  <circle cx="256" cy="256" r="36" fill="#1C1B22"/>
 </svg>

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SignalOS",
-  "version": "1.0.0-internal2",
+  "version": "1.1.0",
   "identifier": "com.signalos.desktop",
   "build": {
     "frontendDist": "../src",
@@ -20,15 +20,15 @@
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "decorations": true,
+        "decorations": false,
         "center": true,
         "transparent": false,
-        "titleBarStyle": "Visible",
-        "hiddenTitle": false
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; script-src 'self'; frame-src http://localhost:* http://127.0.0.1:*; connect-src 'self' ipc: https://ipc.localhost ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; script-src 'self'; frame-src http://localhost:* http://127.0.0.1:*; connect-src 'self' ipc: https://ipc.localhost ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:* https://samerzakaria.github.io"
     }
   },
   "bundle": {

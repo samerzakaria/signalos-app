@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-05-16
 
+## [1.1.0] - 2026-05-16
+
+### Revamped UI
+
+- Replaced the desktop shell with the SignalOS v2 interface and local font/icon assets.
+- Added the v2 Tauri wiring layer for onboarding, streaming chat, dashboard, gates, enforcement, Brain, Vault, History, Settings, terminal, file tree, and preview.
+- Switched the desktop window to custom chrome with hidden native titlebar controls.
+- Updated the app icon set for the revamped brand treatment.
+- Added a porting map documenting mockup-to-runtime bindings and remaining follow-up work.
+
 ## [1.0.0-internal2] - 2026-05-16
 
 ### Forced onboarding (real bug fix — internal1 shipped broken for upgraders)

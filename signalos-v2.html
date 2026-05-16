@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SignalOS</title>
-<link rel="stylesheet" href="./assets/fonts/fonts.css">
-<link rel="stylesheet" href="./assets/icons/tabler-icons.local.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.24.0/dist/tabler-icons.min.css">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -80,6 +82,34 @@ a{color:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
+
+/* ── Exit ── */
+function openExit() { openModal('exitModal'); }
+function exitApp(save) {
+  const status = document.getElementById('exitStatus');
+  const statusTx = document.getElementById('exitStatusTx');
+  const saveBtn = document.getElementById('exitSaveBtn');
+  const rawBtn = document.getElementById('exitRawBtn');
+  const cancelBtn = document.getElementById('exitCancelBtn');
+  if (save) {
+    saveBtn.disabled = true; rawBtn.disabled = true; cancelBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Saving…';
+    status.style.display = 'flex';
+    setTimeout(() => { statusTx.textContent = 'Audit trail sealed.'; }, 600);
+    setTimeout(() => { statusTx.textContent = 'Brain notes flushed.'; }, 1100);
+    setTimeout(() => { statusTx.textContent = 'All saved. Closing…'; }, 1600);
+    setTimeout(() => { _doExit(); }, 2100);
+  } else {
+    _doExit();
+  }
+}
+function _doExit() {
+  const win = document.querySelector('.window');
+  win.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+  win.style.opacity = '0';
+  win.style.transform = 'scale(0.97)';
+  setTimeout(() => { win.style.display = 'none'; }, 380);
+}
 
 /* ── Onboarding ── */
 #onboarding{display:grid;grid-template-columns:0.92fr 1fr}
@@ -653,7 +683,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 <div class="window">
 
 <!-- ===== Titlebar ===== -->
-<div class="titlebar" data-tauri-drag-region>
+<div class="titlebar">
   <div class="traffic">
     <span class="tl tl-red"><i class="ti ti-x"></i></span>
     <span class="tl tl-yellow"><i class="ti ti-minus"></i></span>
@@ -860,7 +890,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
       <div class="nav" onclick="switchTab('settings')"><i class="ti ti-settings"></i> Settings</div>
       <div class="nav" onclick="switchTab('help')"><i class="ti ti-help-circle"></i> Help</div>
       <div class="sb-user" style="margin-top:8px">
-        <div class="sb-av" id="sbAvatar">S</div>
+        <div class="sb-av">S</div>
         <div class="sb-ui">
           <div class="sb-un" id="sbUserName">Samer</div>
           <div class="sb-us" id="sbUserRole">PO — Product Owner</div>
@@ -963,7 +993,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="enf-pop-title">Enforcement · Wave 1</div>
               <div class="enf-pop-sub">5 rules active · 1 warning</div>
             </div>
-            <div id="enfRules"><div class="rule-row">
+            <div class="rule-row">
               <div class="rule-ic ok"><i class="ti ti-check"></i></div>
               <div class="rule-tx"><div class="rule-name">Gate-gating</div><div class="rule-desc">Build blocked until gates are signed</div></div>
             </div>
@@ -983,7 +1013,6 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="rule-ic ok"><i class="ti ti-check"></i></div>
               <div class="rule-tx"><div class="rule-name">Zero manual regression</div><div class="rule-desc">All defects have automated tests</div></div>
             </div>
-            </div><!-- /enfRules -->
             <div class="frozen-banner" id="frozenBanner">
               <i class="ti ti-snowflake"></i>
               <span>Wave is frozen — no AI writes allowed</span>
@@ -1397,32 +1426,14 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
         <div class="stack" style="max-width:680px">
           <div class="card">
             <div class="settings-section" style="padding:0">
-              <div class="secrets-head"><h3>Identity</h3></div>
-              <div class="settings-row">
-                <div class="settings-row-tx"><strong>Your name</strong><span>Recorded on every gate you sign</span></div>
-                <input type="text" class="plain-input" id="settingsName" placeholder="Your name" style="width:180px;border:1px solid var(--line-2);border-radius:var(--r-sm);padding:8px 11px;font-size:13px;background:var(--surface)" onchange="saveIdentity()"/>
-              </div>
-              <div class="settings-row">
-                <div class="settings-row-tx"><strong>Your role</strong><span>Used when signing gates</span></div>
-                <select class="select-input" id="settingsRole" style="width:auto;padding:8px 28px 8px 12px" onchange="saveIdentity()">
-                  <option value="PO">PO — Product Owner</option>
-                  <option value="PE">PE — Principal Engineer</option>
-                  <option value="QA">QA — Quality</option>
-                  <option value="DevOps">DevOps</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="settings-section" style="padding:0">
               <div class="secrets-head"><h3>Workspace</h3></div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Active folder</strong><span>The project SignalOS is working in</span></div>
-                <span class="settings-path" id="settingsWorkspacePath">~/projects/my-pizza-game</span>
+                <span class="settings-path">~/projects/my-pizza-game</span>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Forget this folder</strong><span>Removes it from SignalOS — files stay on your computer</span></div>
-                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px" onclick="forgetWorkspace()"><i class="ti ti-trash"></i> Forget</button>
+                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px"><i class="ti ti-trash"></i> Forget</button>
               </div>
             </div>
           </div>
@@ -1431,24 +1442,24 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="secrets-head"><h3>AI connection</h3></div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Provider</strong><span>Current AI brain</span></div>
-                <select class="select-input" id="settingsProvider" style="width:auto;padding:8px 28px 8px 12px" onchange="changeProvider()">
-                  <option value="anthropic" selected>Claude (Anthropic)</option>
-                  <option value="openai">GPT-4o (OpenAI)</option>
-                  <option value="gemini">Gemini (Google)</option>
-                  <option value="ollama">Ollama (local)</option>
+                <select class="select-input" style="width:auto;padding:8px 28px 8px 12px">
+                  <option selected>Claude (Anthropic)</option>
+                  <option>GPT-4o (OpenAI)</option>
+                  <option>Gemini (Google)</option>
+                  <option>Ollama (local)</option>
                 </select>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Model</strong><span>Specific version to use</span></div>
-                <select class="select-input" id="settingsModel" style="width:auto;padding:8px 28px 8px 12px" onchange="changeModel()">
-                  <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6</option>
-                  <option value="claude-opus-4-6">claude-opus-4-6</option>
-                  <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                <select class="select-input" style="width:auto;padding:8px 28px 8px 12px">
+                  <option selected>claude-sonnet-4-6</option>
+                  <option>claude-opus-4-6</option>
+                  <option>claude-haiku-4-5</option>
                 </select>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>API key</strong><span>Stored in OS keychain</span></div>
-                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px" onclick="replaceApiKey()"><i class="ti ti-key"></i> Replace key</button>
+                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px"><i class="ti ti-key"></i> Replace key</button>
               </div>
             </div>
           </div>
@@ -1459,16 +1470,16 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
                 <div class="settings-row-tx"><strong>Monthly cap</strong><span>SignalOS stops calling the AI when you hit this</span></div>
                 <div class="budget-wrap" style="width:auto;margin:0">
                   <span class="budget-prefix">$</span>
-                  <input type="number" class="budget-input" id="settingsBudget" value="50" style="width:80px;border-radius:0 var(--r-sm) var(--r-sm) 0" onchange="saveBudget()"/>
+                  <input type="number" class="budget-input" value="50" style="width:80px;border-radius:0 var(--r-sm) var(--r-sm) 0"/>
                 </div>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Session spend</strong><span>This session only</span></div>
-                <span class="settings-path" id="settingsSessionSpend" style="font-size:13px;font-weight:600;color:var(--ink)">$0.04</span>
+                <span class="settings-path" style="font-size:13px;font-weight:600;color:var(--ink)">$0.04</span>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Reset session</strong><span>Clear this session's cost counter</span></div>
-                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px" onclick="resetSessionCost()"><i class="ti ti-refresh"></i> Reset</button>
+                <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px"><i class="ti ti-refresh"></i> Reset</button>
               </div>
             </div>
           </div>
@@ -1477,7 +1488,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="secrets-head"><h3>Engine diagnostics</h3></div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>SignalOS Core</strong><span>Python sidecar · 40 commands</span></div>
-                <div class="live-badge" id="engineStatusBadge" style="font-size:11px"><span class="dot"></span> Running</div>
+                <div class="live-badge" style="font-size:11px"><span class="dot"></span> Running</div>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Node.js</strong><span>v20.11.0 detected on PATH</span></div>
@@ -1486,8 +1497,8 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Restart engine</strong><span>If commands feel slow or unresponsive</span></div>
                 <div style="display:flex;gap:8px">
-                  <button class="btn btn-soft" id="testEngineBtn" style="font-size:12.5px;padding:8px 14px" onclick="testEngine()"><i class="ti ti-activity"></i> Test</button>
-                  <button class="btn btn-soft" id="restartEngineBtn" style="font-size:12.5px;padding:8px 14px" onclick="restartEngine()"><i class="ti ti-refresh"></i> Restart</button>
+                  <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px"><i class="ti ti-activity"></i> Test</button>
+                  <button class="btn btn-soft" style="font-size:12.5px;padding:8px 14px"><i class="ti ti-refresh"></i> Restart</button>
                 </div>
               </div>
             </div>
@@ -1497,9 +1508,9 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               <div class="secrets-head"><h3>Updates</h3></div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Channel</strong><span>Which release track to follow</span></div>
-                <select class="select-input" id="updateChannel" style="width:auto;padding:8px 28px 8px 12px">
-                  <option value="stable">Stable</option>
-                  <option value="beta" selected>Beta</option>
+                <select class="select-input" style="width:auto;padding:8px 28px 8px 12px">
+                  <option>Stable</option>
+                  <option selected>Beta</option>
                 </select>
               </div>
               <div class="settings-row">
@@ -1792,18 +1803,18 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
     </div>
     <div class="modal-body">
       <label class="field-label">Secret name</label>
-      <input type="text" class="plain-input" id="newSecretName" placeholder="MY_SECRET_KEY" style="margin-bottom:14px;font-family:var(--f-mono)"/>
+      <input type="text" class="plain-input" placeholder="MY_SECRET_KEY" style="margin-bottom:14px;font-family:var(--f-mono)"/>
       <label class="field-label">Value</label>
       <div class="key-wrap" style="margin-bottom:14px">
-        <input type="password" class="key-input" id="newSecretValue" placeholder="paste value here…"/>
+        <input type="password" class="key-input" placeholder="paste value here…"/>
         <button class="key-tog"><i class="ti ti-eye"></i></button>
       </div>
       <label class="field-label">Store in</label>
-      <select class="select-input" id="newSecretFile" style="margin-bottom:0">
-        <option value=".env.local">.env.local (recommended)</option>
-        <option value=".env">.env</option>
-        <option value=".env.development">.env.development</option>
-        <option value=".env.production">.env.production</option>
+      <select class="select-input" style="margin-bottom:0">
+        <option>.env.local (recommended)</option>
+        <option>.env</option>
+        <option>.env.development</option>
+        <option>.env.production</option>
       </select>
     </div>
     <div class="modal-foot">
@@ -1848,12 +1859,12 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
       <div class="override-rule">
         <i class="ti ti-alert-triangle"></i>
         <div class="override-rule-tx">
-          <strong id="overrideRuleName">test-first</strong>
-          <p id="overrideRuleDesc">A belief was added without a test. Overriding means you accept this risk.</p>
+          <strong>test-first</strong>
+          <p>A belief was added without a test. Overriding means you accept this risk.</p>
         </div>
       </div>
       <label class="field-label">Reason for override</label>
-      <textarea class="plain-input" id="overrideReason" placeholder="Explain why this override is acceptable…" rows="3" style="resize:vertical;line-height:1.5;margin-bottom:0"></textarea>
+      <textarea class="plain-input" placeholder="Explain why this override is acceptable…" rows="3" style="resize:vertical;line-height:1.5;margin-bottom:0"></textarea>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeModal('overrideModal')">Cancel</button>
@@ -1885,7 +1896,669 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
   </div>
 </div>
 
+<script>
+const state = {
+  obStep: 1, ai: 'claude', keyVisible: false,
+  tab: 'dashboard', sbTab: 'projects',
+  enfOpen: false, gateOpen: false,
+  userName: 'Samer', userRole: 'Founder'
+};
 
-<script type="module" src="./js/app-v2.js"></script>
+const OB_TAGS = [
+  'Every great thing starts with a spark.',
+  'The right brain,<br/>the right budget.',
+  'Your name on every gate.<br/>That\'s accountability.'
+];
+
+// Key labels are now in data-key-label attrs on each prov-card
+
+
+/* ── Exit ── */
+function openExit() { openModal('exitModal'); }
+function exitApp(save) {
+  const status = document.getElementById('exitStatus');
+  const statusTx = document.getElementById('exitStatusTx');
+  const saveBtn = document.getElementById('exitSaveBtn');
+  const rawBtn = document.getElementById('exitRawBtn');
+  const cancelBtn = document.getElementById('exitCancelBtn');
+  if (save) {
+    saveBtn.disabled = true; rawBtn.disabled = true; cancelBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Saving…';
+    status.style.display = 'flex';
+    setTimeout(() => { statusTx.textContent = 'Audit trail sealed.'; }, 600);
+    setTimeout(() => { statusTx.textContent = 'Brain notes flushed.'; }, 1100);
+    setTimeout(() => { statusTx.textContent = 'All saved. Closing…'; }, 1600);
+    setTimeout(() => { _doExit(); }, 2100);
+  } else {
+    _doExit();
+  }
+}
+function _doExit() {
+  const win = document.querySelector('.window');
+  win.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+  win.style.opacity = '0';
+  win.style.transform = 'scale(0.97)';
+  setTimeout(() => { win.style.display = 'none'; }, 380);
+}
+
+/* ── Onboarding ── */
+function nextStep() {
+  if (state.obStep >= 3) return;
+  document.querySelector(`.ob-step[data-step="${state.obStep}"]`).classList.remove('active');
+  state.obStep++;
+  document.querySelector(`.ob-step[data-step="${state.obStep}"]`).classList.add('active');
+  document.getElementById(`pd-${state.obStep}`).classList.add('active');
+  document.getElementById('obTag').innerHTML = OB_TAGS[state.obStep - 1];
+}
+function prevStep() {
+  if (state.obStep <= 1) return;
+  document.querySelector(`.ob-step[data-step="${state.obStep}"]`).classList.remove('active');
+  document.getElementById(`pd-${state.obStep}`).classList.remove('active');
+  state.obStep--;
+  document.querySelector(`.ob-step[data-step="${state.obStep}"]`).classList.add('active');
+  document.getElementById('obTag').innerHTML = OB_TAGS[state.obStep - 1];
+}
+
+function selectAI(el) { selectProv(el); }
+function selectProv(el) {
+  document.querySelectorAll('.prov-card').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+  state.ai = el.dataset.ai;
+  state.aiModel = el.dataset.model || '';
+  const lbl = el.dataset.keyLabel || 'API key';
+  const keyLabelEl = document.getElementById('keyLabel');
+  if (keyLabelEl) keyLabelEl.textContent = lbl;
+  const nm = el.querySelector('.prov-nm').textContent;
+  const disp = document.getElementById('provDisplay');
+  if (disp) disp.textContent = nm + ' · live';
+}
+function toggleMoreProvs() {
+  const more = document.getElementById('provMore');
+  const btn = document.getElementById('provMoreBtn');
+  const open = more.style.display !== 'none';
+  more.style.display = open ? 'none' : 'grid';
+  btn.classList.toggle('open', !open);
+  btn.innerHTML = open
+    ? '<i class="ti ti-chevron-down"></i> 7 more providers'
+    : '<i class="ti ti-chevron-up"></i> Show fewer';
+}
+function toggleKey() {
+  const i = document.getElementById('apiKey'), b = document.getElementById('keyTog');
+  state.keyVisible = !state.keyVisible;
+  i.type = state.keyVisible ? 'text' : 'password';
+  b.innerHTML = state.keyVisible ? '<i class="ti ti-eye-off"></i>' : '<i class="ti ti-eye"></i>';
+}
+function finishOnboarding() {
+  const name = document.getElementById('identName').value.trim() || 'Samer';
+  const roleVal = document.getElementById('identRole').value;
+  const roleMap = {'PO':'Product Owner','PE':'Product Engineer','QA':'Quality','DevOps':'DevOps'};
+  const role = roleVal + ' — ' + (roleMap[roleVal] || roleVal);
+  state.userName = name;
+  state.userRole = role;
+  document.getElementById('sbUserName').textContent = name;
+  document.getElementById('sbUserRole').textContent = role;
+  document.getElementById('signName').value = name;
+  document.getElementById('onboarding').classList.remove('active');
+  document.getElementById('app').classList.add('active');
+}
+
+/* ── Sidebar tabs ── */
+function switchSbTab(tab) {
+  state.sbTab = tab;
+  document.querySelectorAll('.sb-tab').forEach((t, i) => {
+    const tabs = ['projects', 'files', 'gov'];
+    t.classList.toggle('active', tabs[i] === tab);
+  });
+  document.querySelectorAll('.sb-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`sb-${tab}`).classList.add('active');
+}
+
+/* ── Main tabs ── */
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('.seg-i').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
+  const names = {
+    build: 'Build', preview: 'Preview', terminal: 'Terminal',
+    dashboard: 'Dashboard', vault: 'Vault', settings: 'Settings', help: 'Help',
+    history: 'History', brain: 'Brain'
+  };
+  document.getElementById('viewName').textContent = names[tab] || tab;
+}
+
+/* ── Enforcement popover ── */
+function toggleEnfPopover(e) {
+  state.enfOpen = !state.enfOpen;
+  document.getElementById('enfPopover').classList.toggle('open', state.enfOpen);
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.enf-pill')) {
+    state.enfOpen = false;
+    document.getElementById('enfPopover').classList.remove('open');
+  }
+});
+function freezeWave() {
+  closeModal('enfPopover');
+  addUser('[Wave frozen via enforcement panel]');
+  setTimeout(() => addSignalOS('Wave frozen. No mutations allowed until you unfreeze. Run /signal-unfreeze when ready.'), 600);
+}
+function openOverride() {
+  document.getElementById('enfPopover').classList.remove('open');
+  openModal('overrideModal');
+}
+function confirmOverride() {
+  closeModal('overrideModal');
+  addUser('[Rule override confirmed]');
+  setTimeout(() => addSignalOS('Override logged to audit trail. You can continue — this is recorded permanently.'), 600);
+  switchTab('build');
+}
+
+
+/* ── Modals ── */
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+function openAddSecret() { openModal('addSecretModal'); }
+function closeAddSecret(e) { if (e.target === e.currentTarget) closeModal('addSecretModal'); }
+function saveSecret() {
+  closeModal('addSecretModal');
+}
+function openNewProject() { openModal('newProjectModal'); }
+function closeNewProject(e) { if (e.target === e.currentTarget) closeModal('newProjectModal'); }
+function createProject() {
+  const name = document.getElementById('newProjName').value.trim();
+  if (!name) return;
+  closeModal('newProjectModal');
+}
+
+/* ── Gate: activities ── */
+function cycleActivity(el) {
+  if (state.gateOpen) return;
+  const order = ['pending', 'ongoing', 'done'];
+  const cur = order.find(s => el.classList.contains(s)) || 'pending';
+  const next = order[(order.indexOf(cur) + 1) % 3];
+  el.classList.remove('pending', 'ongoing', 'done');
+  el.classList.add(next);
+  paintActivity(el, next);
+  updateGate();
+}
+function paintActivity(el, status) {
+  const ic = el.querySelector('.act-ic'), pill = el.querySelector('.act-pill');
+  if (status === 'done') { ic.innerHTML = '<i class="ti ti-check"></i>'; pill.innerHTML = 'Done'; }
+  else if (status === 'ongoing') { ic.innerHTML = '<i class="ti ti-loader-2"></i>'; pill.innerHTML = '<span class="pdot"></span>Ongoing'; }
+  else { ic.innerHTML = ''; pill.innerHTML = 'Pending'; }
+}
+
+/* ── Gate: checks ── */
+function runCheck(el) {
+  if (state.gateOpen) return;
+  if (el._timer) clearTimeout(el._timer);
+  el.classList.remove('passed', 'failed', 'waiting');
+  el.classList.add('checking');
+  paintCrit(el, 'checking');
+  updateGate();
+  el._timer = setTimeout(() => {
+    el._timer = null;
+    if (state.gateOpen) return;
+    el.classList.remove('checking');
+    el.classList.add('passed');
+    paintCrit(el, 'passed');
+    updateGate();
+  }, 900);
+}
+function paintCrit(el, status) {
+  const ic = el.querySelector('.crit-ic'), pill = el.querySelector('.crit-pill');
+  if (status === 'passed') { ic.innerHTML = '<i class="ti ti-shield-check"></i>'; pill.innerHTML = 'Passed'; }
+  else if (status === 'checking') { ic.innerHTML = '<i class="ti ti-loader-2"></i>'; pill.innerHTML = '<span class="pdot"></span>Checking'; }
+  else if (status === 'failed') { ic.innerHTML = '<i class="ti ti-shield-x"></i>'; pill.innerHTML = 'Needs a fix'; }
+  else { ic.innerHTML = '<i class="ti ti-shield"></i>'; pill.innerHTML = 'Waiting'; }
+}
+
+/* ── Gate: state + sign form ── */
+function updateGate() {
+  const acts = [...document.querySelectorAll('.act')];
+  const aDone = acts.filter(a => a.classList.contains('done')).length;
+  const aOngoing = acts.filter(a => a.classList.contains('ongoing')).length;
+  const aPending = acts.filter(a => a.classList.contains('pending')).length;
+  document.getElementById('cDone').textContent = aDone;
+  document.getElementById('cOngoing').textContent = aOngoing;
+  document.getElementById('cPending').textContent = aPending;
+
+  const crits = [...document.querySelectorAll('.crit')];
+  const cPassed = crits.filter(c => c.classList.contains('passed')).length;
+  document.getElementById('cCrit').textContent = cPassed;
+
+  const gateProg = (aDone + cPassed) / (acts.length + crits.length);
+  const overall = (3 + gateProg) / 7 * 100;
+  document.getElementById('ringPct').textContent = Math.round(overall) + '%';
+  document.getElementById('ring').style.strokeDashoffset = 276.46 * (1 - overall / 100);
+
+  if (state.gateOpen) return;
+
+  document.getElementById('heroSub').textContent =
+    `${aDone} of ${acts.length} activities done · ${cPassed} of ${crits.length} checks passed.`;
+
+  const allActs = aDone === acts.length, allCrits = cPassed === crits.length;
+  const ready = allActs && allCrits;
+  const verdict = document.getElementById('verdict');
+  const btn = document.getElementById('openBtn');
+  verdict.classList.toggle('ready', ready);
+  verdict.classList.toggle('held', !ready);
+  if (ready) {
+    verdict.querySelector('.verdict-ic').innerHTML = '<i class="ti ti-circle-check"></i>';
+    document.getElementById('verdictTx').textContent = 'All clear — sign the gate to advance to Gate 5.';
+    btn.disabled = false;
+  } else {
+    verdict.querySelector('.verdict-ic').innerHTML = '<i class="ti ti-lock"></i>';
+    const parts = [], aLeft = acts.length - aDone, cLeft = crits.length - cPassed;
+    if (aLeft) parts.push(`${aLeft} activit${aLeft > 1 ? 'ies' : 'y'} to finish`);
+    if (cLeft) parts.push(`${cLeft} check${cLeft > 1 ? 's' : ''} to pass`);
+    document.getElementById('verdictTx').textContent = 'Gate held — ' + parts.join(' and ') + '.';
+    btn.disabled = true;
+  }
+}
+function showSignForm() {
+  const form = document.getElementById('signForm');
+  form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+}
+function openGate() {
+  const name = document.getElementById('signName').value.trim() || state.userName;
+  const role = document.getElementById('signRole').options[document.getElementById('signRole').selectedIndex].text;
+  if (!name) { document.getElementById('signName').focus(); return; }
+  state.gateOpen = true;
+  document.getElementById('signForm').style.display = 'none';
+
+  const cells = document.querySelectorAll('.scell');
+  cells[3].classList.remove('active'); cells[3].classList.add('done');
+  cells[3].querySelector('.scirc').innerHTML = '<i class="ti ti-check"></i>';
+  cells[3].querySelector('.sstatus').textContent = 'Signed';
+  cells[4].classList.add('active');
+  cells[4].querySelector('.scirc').textContent = '5';
+  cells[4].querySelector('.sstatus').textContent = 'Current';
+
+  const gb = document.getElementById('gateBadge');
+  gb.classList.add('passed');
+  gb.innerHTML = '<i class="ti ti-check"></i> Signed';
+
+  const v = document.getElementById('verdict');
+  v.className = 'verdict opened';
+  v.querySelector('.verdict-ic').innerHTML = '<i class="ti ti-circle-check"></i>';
+  document.getElementById('verdictTx').textContent = `Gate 4 signed by ${name} · ${role}. Gate 5 — Drag and drop — is now active.`;
+  document.getElementById('openBtn').style.display = 'none';
+  document.getElementById('gateCard').classList.add('gate-locked');
+  document.getElementById('heroSub').textContent = 'Gate 4 signed. Gate 5 is next.';
+
+  // Update gov sidebar
+  document.querySelectorAll('.gate-node')[3].classList.remove('active');
+  document.querySelectorAll('.gate-node')[3].classList.add('done');
+  document.querySelectorAll('.gate-node')[4].classList.remove('locked');
+  document.querySelectorAll('.gate-node')[4].classList.add('active');
+}
+
+/* ── Build: chat ── */
+function composerInput(e) {
+  const val = e.target.value;
+  const palette = document.getElementById('cmdPalette');
+  if (val.startsWith('/')) {
+    filterCommands(val.slice(1));
+    palette.classList.add('open');
+  } else {
+    palette.classList.remove('open');
+  }
+}
+function composerKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  if (e.key === 'Escape') document.getElementById('cmdPalette').classList.remove('open');
+}
+function filterCommands(query) {
+  const items = document.querySelectorAll('.cmd-item');
+  items.forEach(item => {
+    const name = item.querySelector('.cmd-item-name').textContent;
+    item.style.display = name.includes(query) ? 'flex' : 'none';
+  });
+}
+function runCmd(cmd) {
+  document.getElementById('chatInput').value = cmd;
+  document.getElementById('cmdPalette').classList.remove('open');
+  sendMsg();
+}
+function sendMsg() {
+  const i = document.getElementById('chatInput');
+  const t = i.value.trim(); if (!t) return;
+  document.getElementById('cmdPalette').classList.remove('open');
+  addUser(t); i.value = '';
+  setTimeout(() => addSignalOS(), 700);
+}
+function sendChip(el) { addUser(el.textContent); setTimeout(() => addSignalOS(), 700); }
+function addUser(t) {
+  const m = document.createElement('div');
+  m.className = 'msg user';
+  m.innerHTML = `<div class="msg-av">${state.userName[0]}</div><div><div class="bubble">${esc(t)}</div><div class="msg-meta">just now</div></div>`;
+  document.getElementById('chatInner').appendChild(m);
+  scrollChat();
+}
+function addSignalOS(text) {
+  const replies = [
+    'Got it — working on that now. Check the Dashboard to watch the progress.',
+    'Done. You\'ll see it appear in the Preview shortly.',
+    'All set — tap Preview to try it out.',
+    'Lovely. Anything else you\'d like while I\'m here?',
+    'Running now — the terminal will show you what I\'m doing.'
+  ];
+  const m = document.createElement('div');
+  m.className = 'msg spark';
+  const content = text || replies[Math.floor(Math.random() * replies.length)];
+  m.innerHTML = `<div class="msg-av"><i class="ti ti-sparkles" style="font-size:17px"></i></div><div><div class="bubble">${esc(content)}</div><div class="msg-meta">SignalOS · just now</div></div>`;
+  document.getElementById('chatInner').appendChild(m);
+  scrollChat();
+}
+function scrollChat() {
+  const s = document.getElementById('chatScroll');
+  s.scrollTop = s.scrollHeight;
+}
+function attachFile() {
+  addUser('[File attached: pizza-sketch.png]');
+  setTimeout(() => addSignalOS('Got the sketch — I\'ll use it as a reference for the pizza art.'), 700);
+}
+function voiceInput() {
+  addUser('[Voice input: "make the background orange"]');
+  setTimeout(() => addSignalOS('Background updated to orange. Check the Preview.'), 700);
+}
+function changeStack() {
+  addUser('[Change stack from React/Vite]');
+  setTimeout(() => addSignalOS('Stack changes require a new project. Your current build is React/Vite — this is locked until the wave ends.'), 700);
+}
+
+/* ── Preview ── */
+function switchDevice(m) {
+  document.querySelectorAll('.dev-b').forEach(b => b.classList.toggle('active', b.dataset.device === m));
+  document.getElementById('pvDevice').className = 'pv-device ' + m;
+}
+function refreshPreview() { }
+function openExternal() { }
+
+/* ── Vault ── */
+function toggleSecret(btn) {
+  const v = btn.closest('.srow').querySelector('.s-val');
+  const hidden = v.textContent.includes('•');
+  v.textContent = hidden ? v.dataset.real : '••••••••••••••••';
+  btn.innerHTML = hidden ? '<i class="ti ti-eye-off"></i>' : '<i class="ti ti-eye"></i>';
+  if (hidden) {
+    setTimeout(() => {
+      v.textContent = '••••••••••••••••';
+      btn.innerHTML = '<i class="ti ti-eye"></i>';
+    }, 10000);
+  }
+}
+function copySecret(btn) {
+  const v = btn.closest('.srow').querySelector('.s-val');
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<i class="ti ti-check"></i>';
+  setTimeout(() => btn.innerHTML = orig, 1500);
+}
+
+/* ── Toolbar: share + notifications ── */
+function showNotifications() {
+  addSignalOS('You have 1 unread: Gate 4 check "Works on phone, tablet and computer" is still running.');
+}
+function shareProject() {
+  addSignalOS('Sharing exports a read-only build report. Run /signal-ship to generate the full handoff package.');
+}
+
+/* ── Search (⌘K) ── */
+function openSearch() {
+  const t = document.getElementById('chatInput');
+  if (t) { switchTab('build'); t.focus(); }
+}
+
+/* ── Brain ── */
+function filterBrain(el, type) {
+  document.querySelectorAll('.brain-type').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+function addBrainEntry() {
+  addSignalOS('Use /signal-brain to add a note from the Build tab, or I can add one for you — what do you want to remember?');
+  switchTab('build');
+}
+
+/* ── Terminal ── */
+const TERM_HIST = []; let termHistIdx = -1;
+function termKey(e) {
+  if (e.key === 'Enter') { termSubmit(e.target.value); e.target.value = ''; termHistIdx = -1; }
+  else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (TERM_HIST.length) { termHistIdx = Math.min(termHistIdx + 1, TERM_HIST.length - 1); e.target.value = TERM_HIST[TERM_HIST.length - 1 - termHistIdx]; }
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (termHistIdx > 0) { termHistIdx--; e.target.value = TERM_HIST[TERM_HIST.length - 1 - termHistIdx]; }
+    else { termHistIdx = -1; e.target.value = ''; }
+  }
+}
+function termChip(el) { termSubmit(el.textContent); }
+function termSubmit(raw) {
+  const cmd = (raw || '').trim();
+  const body = document.getElementById('termBody');
+  const echo = document.createElement('div');
+  echo.className = 'term-line';
+  echo.innerHTML = '<span class="t-path">my-pizza-game</span> <span class="t-sym">$</span> <span class="t-cmd">' + esc(raw || '') + '</span>';
+  body.appendChild(echo);
+  if (cmd) TERM_HIST.push(cmd);
+  if (cmd === 'clear' || cmd === 'cls') { body.innerHTML = ''; return; }
+  termExec(cmd).forEach(ln => {
+    const d = document.createElement('div');
+    d.className = 'term-line ' + (ln.c || '');
+    d.textContent = ln.t;
+    body.appendChild(d);
+  });
+  body.scrollTop = body.scrollHeight;
+}
+function termExec(cmd) {
+  const c = cmd.toLowerCase();
+  const acts = [...document.querySelectorAll('.act')];
+  const aDone = acts.filter(a => a.classList.contains('done')).length;
+  const crits = [...document.querySelectorAll('.crit')];
+  const cPass = crits.filter(x => x.classList.contains('passed')).length;
+  if (c === '') return [];
+  if (c === 'help') return [
+    { t: 'Commands:', c: 't-bright' },
+    { t: '  help                  show this list' },
+    { t: '  ls                    list project files' },
+    { t: '  signalos status        show gate state' },
+    { t: '  signalos check         run gate checks' },
+    { t: '  signalos gates         list all gates' },
+    { t: '  npm run dev            start dev server' },
+    { t: '  npm install            install packages' },
+    { t: '  git status             changed files' },
+    { t: '  clear                  clear the screen' },
+  ];
+  if (c === 'ls') return [{ t: 'src/  pizzas/  .signalos/  signalos.json  package.json' }];
+  if (c === 'pwd') return [{ t: '/home/samer/projects/my-pizza-game' }];
+  if (c === 'whoami') return [{ t: state.userName.toLowerCase() }];
+  if (c === 'signalos status' || c === 'sos status') {
+    const held = !(aDone === acts.length && cPass === crits.length);
+    return [
+      { t: 'SignalOS · my-pizza-game', c: 't-bright' },
+      { t: '  wave            Wave 1 · Foundation' },
+      { t: '  current gate    Gate 4 — Making the pizzas' },
+      { t: '  activities      ' + aDone + ' of ' + acts.length + ' done' },
+      { t: '  gate checks     ' + cPass + ' of ' + crits.length + ' passed' },
+      { t: '  gate state      ' + (held ? 'HELD — work or checks remaining' : 'READY — sign to advance'), c: held ? 't-warn' : 't-ok' },
+      { t: '  signer          ' + state.userName + ' · ' + state.userRole },
+    ];
+  }
+  if (c === 'signalos check' || c === 'sos check') {
+    const out = [{ t: 'Running gate 4 checks…', c: 't-dim' }];
+    crits.forEach(x => {
+      const name = x.querySelector('.crit-name').textContent;
+      let mark = '◦', cls = 't-dim', st = 'waiting';
+      if (x.classList.contains('passed')) { mark = '✓'; cls = 't-ok'; st = 'passed'; }
+      else if (x.classList.contains('checking')) { mark = '•'; cls = 't-warn'; st = 'checking'; }
+      else if (x.classList.contains('failed')) { mark = '✗'; cls = 't-err'; st = 'needs a fix'; }
+      out.push({ t: '  ' + mark + '  ' + name + '  (' + st + ')', c: cls });
+    });
+    out.push({ t: cPass + ' of ' + crits.length + ' checks passed.', c: cPass === crits.length ? 't-ok' : 't-warn' });
+    return out;
+  }
+  if (c === 'signalos gates' || c === 'sos gates') {
+    return [...document.querySelectorAll('.scell')].map((x, i) => {
+      let st = 'locked', cls = 't-dim';
+      if (x.classList.contains('done')) { st = 'signed'; cls = 't-ok'; }
+      else if (x.classList.contains('active')) { st = 'current'; cls = 't-bright'; }
+      const name = x.querySelector('.slbl').textContent;
+      return { t: '  ' + (i + 1) + '  ' + name.padEnd(18) + st, c: cls };
+    });
+  }
+  if (c === 'npm run dev') return [
+    { t: '> my-pizza-game@1.0.0 dev', c: 't-dim' },
+    { t: '> vite', c: 't-dim' },
+    { t: '  VITE ready in 412 ms', c: 't-ok' },
+    { t: '  ➜  Local:   http://localhost:3000/', c: 't-bright' },
+    { t: '  ➜  open the Preview tab to see it', c: 't-dim' },
+  ];
+  if (c === 'npm install' || c === 'npm i') return [{ t: 'added 248 packages in 6s', c: 't-ok' }];
+  if (c === 'git status') return [
+    { t: 'On branch main', c: 't-bright' },
+    { t: 'Changes not staged for commit:' },
+    { t: '  modified:  src/game.js', c: 't-warn' },
+    { t: '  modified:  src/styles.css', c: 't-warn' },
+    { t: 'Untracked files:' },
+    { t: '  src/pizzas/recipes.js', c: 't-warn' },
+    { t: '  src/pizzas/toppings.js', c: 't-warn' },
+  ];
+  return [{ t: "signalos: command not found: " + cmd + "  —  type 'help'", c: 't-err' }];
+}
+
+/* ── Utility ── */
+function esc(s) {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ── Streaming chat bubble ── */
+let _streamBubbles = {};
+
+function addSignalOSStream(fullText) {
+  // In production: listen to chat:token events instead.
+  // In mockup: simulate token-by-token streaming.
+  const id = 'stream-' + Date.now();
+  const inner = document.getElementById('chatInner');
+  const div = document.createElement('div');
+  div.className = 'msg spark';
+  div.innerHTML = `<div class="msg-av"><i class="ti ti-sparkles" style="font-size:17px"></i></div>
+    <div><div class="bubble streaming" id="${id}"><span class="stream-text"></span><span class="stream-cursor"></span></div>
+    <div class="msg-meta">SignalOS · now</div></div>`;
+  inner.appendChild(div);
+  scrollChat();
+  _streamBubbles[id] = { el: div, textEl: div.querySelector('.stream-text'), cursor: div.querySelector('.stream-cursor') };
+  // Simulate streaming: split into ~4-char chunks with 28ms delay
+  const chunks = fullText.match(/.{1,4}/g) || [fullText];
+  let i = 0;
+  const tick = () => {
+    if (i >= chunks.length) { _finaliseStream(id); return; }
+    _streamBubbles[id].textEl.textContent += chunks[i++];
+    scrollChat();
+    setTimeout(tick, 28);
+  };
+  setTimeout(tick, 60);
+}
+
+function _finaliseStream(id) {
+  const b = _streamBubbles[id];
+  if (!b) return;
+  b.cursor.remove();
+  b.el.querySelector('.bubble').classList.remove('streaming');
+  delete _streamBubbles[id];
+  scrollChat();
+}
+
+/* ── Boot listeners (real Tauri: swap setTimeout simulations for these) ──
+function bootListeners() {
+  window.__TAURI__.event.listen('chat:token', ({ payload }) => {
+    const { stream_id, kind, delta } = payload;
+    if (kind === 'delta') _appendToken(stream_id, delta);
+    if (kind === 'done')  _finaliseStream(stream_id);
+    if (kind === 'error') _streamError(stream_id, delta);
+  });
+  window.__TAURI__.event.listen('workspace:changed', () => refreshFileTree());
+  window.__TAURI__.event.listen('sidecar:error', ({ payload }) => showSidecarError(payload));
+  window.__TAURI__.event.listen('menu:nav', ({ payload }) => switchTab(payload));
+  window.__TAURI__.event.listen('menu:open-workspace', () => openNewProject());
+  window.__TAURI__.event.listen('menu:export-audit', () => exportHandoff());
+  window.__TAURI__.event.listen('menu:check-update', () => checkForUpdates());
+}
+── end boot listeners ── */
+
+
+/* ── Unfreeze wave ── */
+function unfreezeWave() {
+  document.getElementById('frozenBanner').classList.remove('visible');
+  document.getElementById('freezeBtn').innerHTML = '<i class="ti ti-snowflake"></i> Freeze wave';
+  document.getElementById('freezeBtn').onclick = freezeWave;
+  addUser('[Wave unfrozen]');
+  setTimeout(() => addSignalOS('Wave unfrozen. Enforcement rules still active — proceed carefully.'), 400);
+}
+
+
+/* ── History exports ── */
+function exportHandoff(btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Exporting…';
+  setTimeout(() => {
+    btn.innerHTML = '<i class="ti ti-circle-check" style="color:var(--success)"></i> Exported';
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 2000);
+  }, 1200);
+}
+function exportReport(btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Generating…';
+  setTimeout(() => {
+    btn.innerHTML = '<i class="ti ti-circle-check" style="color:var(--success)"></i> Saved';
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 2000);
+  }, 1400);
+}
+
+
+/* ── Check for updates ── */
+function checkForUpdates() {
+  const btn = document.getElementById('updateBtn');
+  const result = document.getElementById('updateResult');
+  const tx = document.getElementById('updateResultTx');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Checking…';
+  result.classList.remove('visible');
+  setTimeout(() => {
+    btn.innerHTML = '<i class="ti ti-cloud-download"></i> Check for updates';
+    btn.disabled = false;
+    tx.textContent = 'Up to date — v1.4.2-beta is current';
+    result.querySelector('i').className = 'ti ti-circle-check';
+    result.querySelector('i').style.color = 'var(--success)';
+    result.classList.add('visible');
+  }, 1600);
+}
+
+
+/* ── File write toast ── */
+function showFileWriteToast(files) {
+  const existing = document.getElementById('fileToast');
+  if (existing) existing.remove();
+  const names = files.slice(0, 3).join(', ') + (files.length > 3 ? ` +${files.length - 3} more` : '');
+  const toast = document.createElement('div');
+  toast.className = 'file-toast';
+  toast.id = 'fileToast';
+  toast.innerHTML = `<i class="ti ti-files file-toast-ic"></i>
+    <div class="file-toast-tx">
+      <strong>${files.length} file${files.length > 1 ? 's' : ''} written</strong>
+      <span>${names}</span>
+    </div>
+    <div class="file-toast-close" onclick="this.parentElement.remove()"><i class="ti ti-x"></i></div>`;
+  document.body.appendChild(toast);
+  setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
+}
+
+</script>
 </body>
 </html>
