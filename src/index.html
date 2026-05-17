@@ -667,9 +667,9 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
     </div>
   </div>
   <div class="titlebar-right">
-    <div class="cost-pill" title="Session spend · $50/mo cap" style="border-radius:7px;padding:6px 10px"><i class="ti ti-coin"></i> <span id="costDisplay">$0.04</span></div>
+    <div class="cost-pill" title="Session spend · $50/mo cap" style="border-radius:7px;padding:6px 10px"><i class="ti ti-coin"></i> <span id="costDisplay">—</span></div>
     <div class="tb-divider"></div>
-    <div class="live-badge" id="liveBadge" style="border-radius:7px"><span class="dot"></span> <span id="provDisplay">Claude · live</span></div>
+    <div class="live-badge" id="liveBadge" style="border-radius:7px"><span class="dot"></span> <span id="provDisplay">Loading…</span></div>
     <div class="tb-divider" style="margin:0 6px 0 10px"></div>
     <button class="tb-btn tb-close" aria-label="Close SignalOS" onclick="openExit()" title="Close SignalOS"><i class="ti ti-x"></i></button>
   </div>
@@ -1464,7 +1464,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Session spend</strong><span>This session only</span></div>
-                <span class="settings-path" id="settingsSessionSpend" style="font-size:13px;font-weight:600;color:var(--ink)">$0.04</span>
+                <span class="settings-path" id="settingsSessionSpend" style="font-size:13px;font-weight:600;color:var(--ink)">—</span>
               </div>
               <div class="settings-row">
                 <div class="settings-row-tx"><strong>Reset session</strong><span>Clear this session's cost counter</span></div>
@@ -1886,6 +1886,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 </div>
 
 
+<script src="./js/csp-bootstrap.js"></script>
 <script type="module" src="./js/app-v2.js"></script>
 </body>
 </html>

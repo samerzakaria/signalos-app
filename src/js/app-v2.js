@@ -1941,9 +1941,21 @@ function _doExit() {
     win.style.opacity = "0";
     win.style.transform = "scale(0.97)";
   }
+  // Tauri 2 renamed getCurrent() to getCurrentWindow(); the old name was
+  // removed in 2.0 and silently returned undefined here, so the OS window
+  // never actually closed — the JS hid .window via display:none and left
+  // the user staring at the body's cream gradient with no controls.
   setTimeout(() => {
-    window.__TAURI__?.window?.getCurrent()?.close?.();
-    if (win) win.style.display = "none";
+    const tauri = window.__TAURI__?.window;
+    const handle = tauri?.getCurrentWindow?.() ?? tauri?.getCurrent?.();
+    if (handle?.close) {
+      handle.close();
+    } else if (win) {
+      // Last resort — at least restore visibility so the user can Alt+F4.
+      win.style.opacity = "";
+      win.style.transform = "";
+      showError("Could not close the window. Press Alt+F4 to exit.");
+    }
   }, 380);
 }
 

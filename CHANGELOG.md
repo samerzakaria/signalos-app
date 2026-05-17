@@ -1,6 +1,20 @@
 # Changelog
 
-## [Unreleased] - 2026-05-16
+## [Unreleased] - 2026-05-17
+
+## [1.1.1] - 2026-05-17
+
+### Hotfix — v1.1.0 shipped non-interactive on Windows
+
+- Root cause: Tauri 2 auto-injects a `nonce-<random>` into both `script-src` and `style-src` of the configured CSP. Per the CSP spec, the presence of a nonce makes the browser ignore any sibling `'unsafe-inline'`. Result: every `style="…"` (126 occurrences) and every `onclick="…"` (45 occurrences) introduced by the v2 UI revamp was silently dropped at parse time — the window rendered, but nothing could be clicked, searched, or closed, and the hardcoded "$0.04 / Claude · live" placeholders never updated because IPC was also blocked.
+- Added `src/js/csp-bootstrap.js` — a small synchronous bootstrap that runs before `app-v2.js`, reads every inline `style=` into a single dynamic `<style nonce>` block (mirroring Tauri's runtime nonce), and rewrites every inline `onclick=` into a proper `addEventListener` binding. No HTML refactor required; the v2 UI is byte-identical.
+- Fixed `connect-src` to allow `http://ipc.localhost` (the actual Windows Tauri 2 IPC origin) — previously only the `https://` variant was listed, so `Event.listen` and most invoke calls were blocked.
+- Replaced the hardcoded `$0.04` / `Claude · live` placeholders in the titlebar and settings pane with neutral `—` / `Loading…` so the shell no longer lies about state while IPC is initialising.
+- No CSP relaxation: nonces remain in effect, and `'unsafe-inline'` is still subordinated. Inline content is rewritten at boot, not whitelisted.
+- Fixed the **Close (X) button leaving a static brown screen** — two-layer bug:
+  - `_doExit()` called `window.__TAURI__.window.getCurrent().close()` — Tauri 2 renamed `getCurrent()` to `getCurrentWindow()` and dropped the old name, so the call resolved to `undefined?.close?.()` and silently no-op'd.
+  - Even after fixing the API name, `close()` returned `Command plugin:window|close not allowed by ACL` because the capability file (`src-tauri/capabilities/default.json`) only granted `core:default`, which does **not** include window-control permissions in Tauri 2. Added explicit `core:window:allow-close` / `allow-minimize` / `allow-maximize` / `allow-toggle-maximize` / `allow-start-dragging`. The traffic-light buttons (red/yellow/green dots) were silently broken for the same reason.
+  - On the off-chance both APIs are missing in some future Tauri release, `_doExit()` now restores window visibility and surfaces a toast pointing at Alt+F4 instead of leaving a dead window.
 
 ## [1.1.0] - 2026-05-16
 
