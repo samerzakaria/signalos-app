@@ -109,7 +109,7 @@ function Test-AppLaunch {
 }
 
 # Drives the running webview through the DevTools protocol to verify that
-# inline onclick handlers actually fire — the v1.1.1 regression class that
+# inline onclick handlers actually fire -- the v1.1.1 regression class that
 # the bare launch test cannot catch (window appears, nothing clicks).
 function Test-FrontendInteractivity {
   param([string]$Name)
@@ -133,7 +133,7 @@ function Test-FrontendInteractivity {
   }
 
   # System.Net.WebSockets.ClientWebSocket lives in the GAC on any
-  # PowerShell 5.1+ runner — no explicit Add-Type needed.
+  # PowerShell 5.1+ runner -- no explicit Add-Type needed.
   $ws = New-Object System.Net.WebSockets.ClientWebSocket
   $cts = New-Object System.Threading.CancellationTokenSource
   $cts.CancelAfter(15000)
@@ -168,18 +168,18 @@ function Test-FrontendInteractivity {
   }
 
   try {
-    # The bootstrap removes inline onclick attrs — if it ran, the Begin
+    # The bootstrap removes inline onclick attrs -- if it ran, the Begin
     # button has no onclick attribute but window.nextStep is still bound.
     $hasNext = Invoke-Eval "typeof window.nextStep === 'function'"
     if (-not $hasNext) {
-      throw "${Name}: window.nextStep is not defined — app-v2.js failed to load"
+      throw "${Name}: window.nextStep is not defined -- app-v2.js failed to load"
     }
 
     # Verify the bootstrap actually neutralised inline attributes (regression
     # canary: if Tauri changes CSP behaviour, this check trips).
     $stillInline = Invoke-Eval "document.querySelector('button.btn.btn-primary[onclick]') !== null"
     if ($stillInline) {
-      throw "${Name}: inline onclick attributes are still present — csp-bootstrap did not run"
+      throw "${Name}: inline onclick attributes are still present -- csp-bootstrap did not run"
     }
 
     # Simulate the user click on Step 1's Begin button and confirm Step 2 activates.
@@ -190,7 +190,7 @@ function Test-FrontendInteractivity {
       throw "${Name}: Begin button click did not advance onboarding (got '$clicked')"
     }
 
-    # Confirm IPC is reachable — connect-src must allow http://ipc.localhost.
+    # Confirm IPC is reachable -- connect-src must allow http://ipc.localhost.
     $ipcOk = Invoke-Eval "Object.keys(window.__TAURI__ || {}).length > 0"
     if (-not $ipcOk) {
       throw "${Name}: window.__TAURI__ bridge is missing"
@@ -198,11 +198,11 @@ function Test-FrontendInteractivity {
 
     # Tauri 2 renamed getCurrent() to getCurrentWindow(); _doExit() depends
     # on the new name. Also verifies the capability ACL grants the close
-    # permission — without core:window:allow-close, calling close()
+    # permission -- without core:window:allow-close, calling close()
     # returns "Command plugin:window|close not allowed by ACL" at runtime.
     $hasClose = Invoke-Eval "typeof window.__TAURI__.window?.getCurrentWindow?.()?.close === 'function'"
     if (-not $hasClose) {
-      throw "${Name}: Tauri 2 window.getCurrentWindow().close API is missing — Close button will leave a dead window"
+      throw "${Name}: Tauri 2 window.getCurrentWindow().close API is missing -- Close button will leave a dead window"
     }
     # Probe the capability ACL. Tauri 2 returns
     # "Command plugin:window|<name> not allowed by ACL" if the permission
@@ -219,7 +219,7 @@ function Test-FrontendInteractivity {
 })()
 "@
     if ($aclProbe -ne "ok") {
-      throw "${Name}: window plugin ACL probe failed — close/minimize/maximize will silently fail (got: $aclProbe)"
+      throw "${Name}: window plugin ACL probe failed -- close/minimize/maximize will silently fail (got: $aclProbe)"
     }
 
     Write-Host "[PASS] Frontend interactivity: $Name"
