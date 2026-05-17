@@ -211,7 +211,7 @@ jobs:
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
 
       - name: Build Tauri app (Windows/Linux)
-        if: ${{ !startsWith(matrix.platform, 'macos') }}
+        if: matrix.platform == 'windows' || matrix.platform == 'linux'
         run: cargo tauri build ${{ matrix.args }}
         env:
           TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
