@@ -176,7 +176,42 @@ jobs:
           fi
 
       # ── Build ─────────────────────────────────────────────────────────────
-      - name: Build Tauri app
+      # macOS-15 runners flake on Tauri's bundle_dmg.sh (hdiutil/diskimages-
+      # help race + osascript window-styling timeout). The Rust compile
+      # itself never flakes — only the post-build DMG packaging — so a small
+      # outer retry is the lowest-cost mitigation. v1.1.1 hit this on the
+      # macos-intel runner and lost the DMG asset for that platform.
+      - name: Build Tauri app (macOS, retry on DMG flake)
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          set +e
+          attempts=3
+          for i in $(seq 1 $attempts); do
+            echo "::group::Tauri build attempt $i/$attempts"
+            cargo tauri build ${{ matrix.args }}
+            code=$?
+            echo "::endgroup::"
+            if [ $code -eq 0 ]; then break; fi
+            if [ $i -eq $attempts ]; then
+              echo "::error::Tauri build failed after $attempts attempts"
+              exit $code
+            fi
+            # diskimages-help can stay wedged across attempts — kill it before retry.
+            pkill -f diskimages-help 2>/dev/null || true
+            pkill -f hdiutil 2>/dev/null || true
+            # Clear stale DMG scratch so bundle_dmg.sh starts from clean state.
+            rm -rf src-tauri/target/${{ matrix.target }}/release/bundle/dmg 2>/dev/null || true
+            echo "Attempt $i failed (exit $code). Sleeping 20s and retrying."
+            sleep 20
+          done
+        env:
+          TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD:             ${{ secrets.TAURI_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+
+      - name: Build Tauri app (Windows/Linux)
+        if: ${{ !startsWith(matrix.platform, 'macos') }}
         run: cargo tauri build ${{ matrix.args }}
         env:
           TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
