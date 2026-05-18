@@ -134,8 +134,8 @@ Invoke-Check "Release workflows expose non-signing proof gates" {
   }
 }
 
-Invoke-Step "Frontend syntax check: app.js" $Root "node" @("--check", "src\js\app.js")
-Invoke-Step "Frontend syntax check: ipc.js" $Root "node" @("--check", "src\js\ipc.js")
+Invoke-Step "Frontend build" $Root "npm" @("run", "build")
+Invoke-Step "Frontend tests" $Root "npm" @("run", "test", "--", "--run")
 Invoke-Step "Python safety tests" $Root "python" @("-m", "pytest", "python")
 Invoke-Step "Rust compile check" (Join-Path $Root "src-tauri") "cargo" @("check")
 Invoke-Step "Rust tests" (Join-Path $Root "src-tauri") "cargo" @("test")
