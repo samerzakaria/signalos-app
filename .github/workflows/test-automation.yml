@@ -103,6 +103,15 @@ jobs:
         working-directory: python
         run: |
           python -m unittest discover -p "test_*.py" -t .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: npm install & test
+        run: |
+          npm install
+          npm run test
+      - name: npm build
+        run: npm run build
       - name: cargo audit (SCA)
         working-directory: src-tauri
         run: |

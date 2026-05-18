@@ -1,6 +1,10 @@
-import { h } from 'preact';
+import { secretsList } from '../../state';
 
 export function VaultView() {
+  const list = secretsList.value;
+  const n = list.length;
+  const heroTx = n === 0 ? "No secrets stored yet" : n === 1 ? "One secret safely sealed" : n + " secrets safely sealed";
+
   return (
     <>
 <div className="view" data-view="vault">
@@ -12,47 +16,43 @@ export function VaultView() {
           <div className="vault-hero">
             <div className="vh-ic"><i className="ti ti-shield-lock"></i></div>
             <div className="vh-tx">
-              <h2>Three secrets safely sealed</h2>
+              <h2>{heroTx}</h2>
               <p>Stored in your OS keychain. Never sent to the AI. Never written into project files.</p>
             </div>
           </div>
           <div className="vstats">
-            <div className="vstat"><div className="vstat-l">Secrets</div><div className="vstat-v">3</div></div>
+            <div className="vstat"><div className="vstat-l">Secrets</div><div className="vstat-v">{n}</div></div>
             <div className="vstat"><div className="vstat-l">Encryption</div><div className="vstat-v g">AES-256</div></div>
-            <div className="vstat"><div className="vstat-l">Last unlock</div><div className="vstat-v" style={{ 'fontSize': '16px' }}>2 min ago</div></div>
+            <div className="vstat"><div className="vstat-l">Last unlock</div><div className="vstat-v" style={{ 'fontSize': '16px' }}>Just now</div></div>
           </div>
           <div className="card">
             <div className="secrets-head">
               <h3>Project keys</h3>
               <button className="btn btn-soft" onClick={() => window.openAddSecret()}><i className="ti ti-plus"></i> Add secret</button>
             </div>
-            <div className="srow">
-              <div className="s-ic"><i className="ti ti-key"></i></div>
-              <div className="s-info"><div className="s-nm">CLAUDE_API_KEY</div><div className="s-meta">AI brain · used 2 min ago</div></div>
-              <div className="s-val" data-real="sk-ant-api03-Xa9bC2dE3fG••••">••••••••••••••••</div>
-              <div className="s-act">
-                <div className="ico" onClick={() => window.toggleSecret(this)} aria-label="Reveal"><i className="ti ti-eye"></i></div>
-                <div className="ico" onClick={() => window.copySecret(this)} aria-label="Copy"><i className="ti ti-copy"></i></div>
+            
+            {list.length === 0 ? (
+              <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ink-3)', fontSize: '13px' }}>
+                No secrets yet. Click Add secret to store your first key.
               </div>
-            </div>
-            <div className="srow">
-              <div className="s-ic"><i className="ti ti-brand-github"></i></div>
-              <div className="s-info"><div className="s-nm">GITHUB_TOKEN</div><div className="s-meta">Save work online · used 1 hour ago</div></div>
-              <div className="s-val" data-real="ghp_AbCdEf1234567890XyZ">••••••••••••••••</div>
-              <div className="s-act">
-                <div className="ico" onClick={() => window.toggleSecret(this)} aria-label="Reveal"><i className="ti ti-eye"></i></div>
-                <div className="ico" onClick={() => window.copySecret(this)} aria-label="Copy"><i className="ti ti-copy"></i></div>
-              </div>
-            </div>
-            <div className="srow">
-              <div className="s-ic"><i className="ti ti-database"></i></div>
-              <div className="s-info"><div className="s-nm">SUPABASE_URL</div><div className="s-meta">Save game scores · used yesterday</div></div>
-              <div className="s-val" data-real="https://abcd.supabase.co">••••••••••••••••</div>
-              <div className="s-act">
-                <div className="ico" onClick={() => window.toggleSecret(this)} aria-label="Reveal"><i className="ti ti-eye"></i></div>
-                <div className="ico" onClick={() => window.copySecret(this)} aria-label="Copy"><i className="ti ti-copy"></i></div>
-              </div>
-            </div>
+            ) : (
+              list.map((s, i) => {
+                const name = s.name || s.key || "";
+                return (
+                  <div className="srow" data-secret-name={name} key={i}>
+                    <div className="s-ic"><i className="ti ti-key"></i></div>
+                    <div className="s-info"><div className="s-nm">{name}</div><div className="s-meta">{s.file || ".env.local"}</div></div>
+                    <div className="s-val">••••••••••••••••</div>
+                    <div className="s-act">
+                      <div className="ico" onClick={(e) => window.toggleSecret(e.currentTarget)} aria-label="Reveal"><i className="ti ti-eye"></i></div>
+                      <div className="ico" onClick={(e) => window.copySecret(e.currentTarget)} aria-label="Copy"><i className="ti ti-copy"></i></div>
+                      <div className="ico" onClick={(e) => window.deleteSecret(e.currentTarget)} aria-label="Delete"><i className="ti ti-trash"></i></div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
           </div>
           <div className="vault-note">
             <i className="ti ti-eye-off"></i>

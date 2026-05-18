@@ -1,6 +1,23 @@
-import { h } from 'preact';
+import { currentCost, ai } from '../state';
 
 export function Titlebar() {
+  const p = ai.value;
+  const names: Record<string, string> = {
+    anthropic: "Claude",
+    openai: "GPT-4o",
+    gemini: "Gemini",
+    ollama: "Ollama",
+    openrouter: "OpenRouter",
+    deepseek: "DeepSeek",
+    mistral: "Mistral",
+    groq: "Groq",
+    cerebras: "Cerebras",
+    together: "Together AI",
+    xai: "xAI",
+    qwen: "Qwen",
+  };
+  const provName = names[p] || p;
+
   return (
     <>
 <div className="titlebar" data-tauri-drag-region>
@@ -17,9 +34,9 @@ export function Titlebar() {
     </div>
   </div>
   <div className="titlebar-right">
-    <div className="cost-pill" title="Session spend · $50/mo cap" style={{ 'borderRadius': '7px', 'padding': '6px 10px' }}><i className="ti ti-coin"></i> <span id="costDisplay">—</span></div>
+    <div className="cost-pill" title="Session spend · $50/mo cap" style={{ 'borderRadius': '7px', 'padding': '6px 10px' }}><i className="ti ti-coin"></i> <span id="costDisplay">${currentCost.value.toFixed(2)}</span></div>
     <div className="tb-divider"></div>
-    <div className="live-badge" id="liveBadge" style={{ 'borderRadius': '7px' }}><span className="dot"></span> <span id="provDisplay">Loading…</span></div>
+    <div className="live-badge" id="liveBadge" style={{ 'borderRadius': '7px' }}><span className="dot"></span> <span id="provDisplay">{provName} · live</span></div>
     <div className="tb-divider" style={{ 'margin': '0 6px 0 10px' }}></div>
     <button className="tb-btn tb-close" aria-label="Close SignalOS" onClick={() => window.openExit()} title="Close SignalOS"><i className="ti ti-x"></i></button>
   </div>

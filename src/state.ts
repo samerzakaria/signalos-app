@@ -27,3 +27,39 @@ export const updateChannel = signal<string>("beta");
 export const workspacePath = signal<string>("");
 export const termHistory = signal<string[]>([]);
 export const termHistIdx = signal<number>(-1);
+
+export interface Secret {
+  name?: string;
+  key?: string;
+  file?: string;
+  value?: string;
+}
+
+export interface BrainEntry {
+  entry_type?: string;
+  type?: string;
+  title?: string;
+  text?: string;
+  body?: string;
+  ts?: string;
+  created_at?: string;
+}
+
+export interface Gate {
+  name?: string;
+  status?: string;
+  signed?: boolean;
+  is_current?: boolean;
+}
+
+export interface AuditEntry {
+  action?: string;
+  ts?: string;
+  timestamp?: string;
+}
+
+export const secretsList = signal<Secret[]>([]);
+export const brainList = signal<BrainEntry[]>([]);
+export const govGatesList = signal<Gate[]>([]);
+export const auditList = signal<AuditEntry[]>([]);
+export const currentCost = signal<number>(0);

@@ -58,13 +58,6 @@ async function bootApp() {
     if (id) {
       state.userName = id.name || "";
       state.userRole = id.role || "";
-      const av = state.userName ? state.userName[0].toUpperCase() : "?";
-      const sbAv = document.getElementById("sbAvatar");
-      if (sbAv) sbAv.textContent = av;
-      const sbUserName = document.getElementById("sbUserName");
-      if (sbUserName) sbUserName.textContent = state.userName;
-      const sbUserRole = document.getElementById("sbUserRole");
-      if (sbUserRole) sbUserRole.textContent = state.userRole;
       const signName = document.getElementById("signName");
       if (signName) signName.value = state.userName;
     }
@@ -78,11 +71,7 @@ async function bootApp() {
     if (prov) {
       state.ai = prov.provider || state.ai;
       state.aiModel = prov.model || state.aiModel;
-      const provDisplay = document.getElementById("provDisplay");
-      if (provDisplay) {
-        const provName = providerDisplayName(state.ai);
-        provDisplay.textContent = provName + " · live";
-      }
+      // Reactive state handles Titlebar updates natively.
     }
   } catch (e) {
     console.warn("Could not load provider:", e.message);
@@ -161,10 +150,7 @@ function showSidecarError(payload) {
 
 export function updateCostDisplay(cost) {
   if (!cost) return;
-  const display = document.getElementById("costDisplay");
-  if (!display) return;
-  const usd = cost.session_usd ?? cost.total_usd ?? 0;
-  display.textContent = "$" + usd.toFixed(2);
+  state.cost = cost.session_usd ?? cost.total_usd ?? 0;
 }
 
 function providerDisplayName(p) {
@@ -546,42 +532,11 @@ async function loadGovPanel() {
     ]);
 
     // Wave label
-    const waveNameEl = document.querySelector(".gov-wave-name");
     const gateList = gatesData.status === "fulfilled" ? (Array.isArray(gatesData.value) ? gatesData.value : (gatesData.value?.gates || [])) : [];
+    state.govGates = gateList;
 
-    // Gate nodes
-    const nodesContainer = document.querySelector(".gate-nodes");
-    if (nodesContainer && gateList.length > 0) {
-      nodesContainer.innerHTML = gateList
-        .map((g, i) => {
-          const cls =
-            g.status === "signed" || g.signed
-              ? "done"
-              : g.status === "active" || g.is_current
-              ? "active"
-              : "locked";
-          return `<div class="gate-node ${cls}" title="${esc(g.name || "Gate " + (i + 1))}">G${i + 1}</div>`;
-        })
-        .join("");
-    }
-
-    // Audit rows
-    const auditContainer = document.querySelector("#sb-gov .audit-row")?.parentElement;
-    if (auditContainer && auditData.status === "fulfilled" && auditData.value) {
-      const entries = auditData.value.slice(0, 6);
-      const existing = auditContainer.querySelectorAll(".audit-row");
-      existing.forEach((r) => r.remove());
-      entries.forEach((entry) => {
-        const dot = entry.action?.includes("sign") ? "sign" : entry.action?.includes("build") ? "build" : entry.action?.includes("override") ? "override" : "build";
-        const div = document.createElement("div");
-        div.className = "audit-row";
-        div.innerHTML = `<div class="audit-dot ${dot}"></div>
-          <div class="audit-tx">
-            <div class="audit-action">${esc(entry.action || "")}</div>
-            <div class="audit-meta">${esc(formatTs(entry.ts || entry.timestamp || ""))}</div>
-          </div>`;
-        auditContainer.appendChild(div);
-      });
+    if (auditData.status === "fulfilled" && auditData.value) {
+      state.auditTrail = auditData.value.slice(0, 6);
     }
   } catch (e) {
     console.warn("Gov panel load error:", e.message);
@@ -593,43 +548,11 @@ async function loadGovPanel() {
 async function loadBrain() {
   try {
     const entries = await ipc.brain.search("");
-    renderBrainCards(entries || []);
+    state.brainEntries = entries || [];
   } catch (e) {
     console.warn("Brain load error:", e.message);
     showError("Could not load Brain: " + e.message);
   }
-}
-
-function renderBrainCards(entries) {
-  const container = document.querySelector('[data-view="brain"] .card');
-  if (!container) return;
-  if (!entries.length) {
-    container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--ink-3)">No brain entries yet. Use /signal-brain in the Build tab to add notes.</div>';
-    return;
-  }
-  container.innerHTML = entries
-    .map((e) => {
-      const type = (e.entry_type || e.type || "note").toLowerCase();
-      const typeMap = {
-        note: { cls: "note", icon: "ti-notes", label: "Note" },
-        decision: { cls: "decision", icon: "ti-scale", label: "Decision" },
-        artifact: { cls: "artifact", icon: "ti-file-code", label: "Artifact" },
-        qa: { cls: "qa", icon: "ti-help-circle", label: "Q&A" },
-      };
-      const t = typeMap[type] || typeMap.note;
-      return `<div class="brain-row">
-        <div class="brain-type-ic ${t.cls}"><i class="ti ${t.icon}"></i></div>
-        <div class="brain-tx">
-          <div class="brain-title">${esc(e.title || e.text?.slice(0, 80) || "")}</div>
-          <div class="brain-body">${esc(e.body || e.text || "")}</div>
-          <div class="brain-meta">
-            <span>${esc(formatTs(e.ts || e.created_at || ""))}</span>
-            <span class="brain-tag">${esc(t.label)}</span>
-          </div>
-        </div>
-      </div>`;
-    })
-    .join("");
 }
 
 async function addBrainEntry() {
@@ -659,11 +582,8 @@ function filterBrain(el, type) {
   ipc.brain
     .search(type === "all" ? "" : type)
     .then((entries) => {
-      const filtered =
-        type === "all"
-          ? entries
-          : entries.filter((e) => (e.entry_type || e.type || "").toLowerCase() === type);
-      renderBrainCards(filtered || []);
+      const filtered = type === "all" ? entries : entries.filter((e) => (e.entry_type || e.type || "").toLowerCase() === type);
+      state.brainEntries = filtered || [];
     })
     .catch((e) => console.warn("Brain filter error:", e.message));
 }
@@ -674,53 +594,11 @@ window.filterBrain = filterBrain;
 async function loadVault() {
   try {
     const list = await ipc.secrets.list();
-    renderSecretRows(list || []);
-    // Update vstats
-    const secretsCount = document.querySelector(".vstats .vstat:first-child .vstat-v");
-    if (secretsCount) secretsCount.textContent = String((list || []).length);
-    const heroTx = document.querySelector(".vault-hero .vh-tx h2");
-    if (heroTx) {
-      const n = (list || []).length;
-      heroTx.textContent = n === 0 ? "No secrets stored yet" : n === 1 ? "One secret safely sealed" : n + " secrets safely sealed";
-    }
+    state.secrets = list || [];
   } catch (e) {
     console.warn("Vault load error:", e.message);
     showError("Could not load Vault: " + e.message);
   }
-}
-
-function renderSecretRows(list) {
-  const container = document.querySelector('[data-view="vault"] .card');
-  if (!container) return;
-  const head = container.querySelector(".secrets-head");
-  // Clear existing rows
-  container.querySelectorAll(".srow").forEach((r) => r.remove());
-  if (!list.length) {
-    const empty = document.createElement("div");
-    empty.style.cssText = "padding:24px;text-align:center;color:var(--ink-3);font-size:13px";
-    empty.textContent = "No secrets yet. Click Add secret to store your first key.";
-    container.appendChild(empty);
-    return;
-  }
-  list.forEach((entry) => {
-    const name = entry.name || entry.key || "";
-    const row = document.createElement("div");
-    row.className = "srow";
-    row.dataset.secretName = name;
-    row.innerHTML = `
-      <div class="s-ic"><i class="ti ti-key"></i></div>
-      <div class="s-info">
-        <div class="s-nm">${esc(name)}</div>
-        <div class="s-meta">${esc(entry.file || ".env.local")}</div>
-      </div>
-      <div class="s-val">••••••••••••••••</div>
-      <div class="s-act">
-        <div class="ico" onclick="toggleSecret(this)" aria-label="Reveal"><i class="ti ti-eye"></i></div>
-        <div class="ico" onclick="copySecret(this)" aria-label="Copy"><i class="ti ti-copy"></i></div>
-        <div class="ico" onclick="deleteSecret(this)" aria-label="Delete"><i class="ti ti-trash"></i></div>
-      </div>`;
-    container.appendChild(row);
-  });
 }
 
 async function toggleSecret(btn) {

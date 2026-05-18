@@ -1,4 +1,4 @@
-import { h } from 'preact';
+import { userName, userRole, govGatesList, auditList } from '../state';
 
 export function Sidebar() {
   return (
@@ -34,10 +34,10 @@ export function Sidebar() {
       <div className="nav" onClick={() => window.switchTab('settings')}><i className="ti ti-settings"></i> Settings</div>
       <div className="nav" onClick={() => window.switchTab('help')}><i className="ti ti-help-circle"></i> Help</div>
       <div className="sb-user" style={{ 'marginTop': '8px' }}>
-        <div className="sb-av" id="sbAvatar">S</div>
+        <div className="sb-av" id="sbAvatar">{userName.value ? userName.value[0].toUpperCase() : 'D'}</div>
         <div className="sb-ui">
-          <div className="sb-un" id="sbUserName">Samer</div>
-          <div className="sb-us" id="sbUserRole">PO — Product Owner</div>
+          <div className="sb-un" id="sbUserName">{userName.value || 'Developer'}</div>
+          <div className="sb-us" id="sbUserRole">{userRole.value || 'Local account'}</div>
         </div>
       </div>
     </div>
@@ -70,45 +70,46 @@ export function Sidebar() {
         <div className="gov-wave-label">Current wave</div>
         <div className="gov-wave-name">Wave 1 · Foundation</div>
         <div className="gate-nodes">
-          <div className="gate-node done" title="Gate 1 — Pick the idea">G1</div>
-          <div className="gate-node done" title="Gate 2 — Sketch it out">G2</div>
-          <div className="gate-node done" title="Gate 3 — Make the menu">G3</div>
-          <div className="gate-node active" title="Gate 4 — Make the pizzas (current)">G4</div>
-          <div className="gate-node locked" title="Gate 5 — Drag &amp; drop">G5</div>
-          <div className="gate-node locked" title="Gate 6 — Count score">G6</div>
-          <div className="gate-node locked" title="Gate 7 — Share it">G7</div>
+          {govGatesList.value.length > 0 ? govGatesList.value.map((g, i) => {
+            const cls = g.status === "signed" || g.signed ? "done" : g.status === "active" || g.is_current ? "active" : "locked";
+            return <div key={i} className={`gate-node ${cls}`} title={g.name || "Gate " + (i + 1)}>G{i + 1}</div>;
+          }) : (
+            <>
+              <div className="gate-node done" title="Gate 1 — Pick the idea">G1</div>
+              <div className="gate-node done" title="Gate 2 — Sketch it out">G2</div>
+              <div className="gate-node done" title="Gate 3 — Make the menu">G3</div>
+              <div className="gate-node active" title="Gate 4 — Make the pizzas (current)">G4</div>
+              <div className="gate-node locked" title="Gate 5 — Drag &amp; drop">G5</div>
+              <div className="gate-node locked" title="Gate 6 — Count score">G6</div>
+              <div className="gate-node locked" title="Gate 7 — Share it">G7</div>
+            </>
+          )}
         </div>
         <div className="gate-node-tip">Gate 4 of 7 · 3 of 5 checks passed</div>
       </div>
       <div className="sb-label">Recent audit</div>
-      <div className="audit-row">
-        <div className="audit-dot sign"></div>
-        <div className="audit-tx">
-          <div className="audit-action">Gate 3 signed</div>
-          <div className="audit-meta">Samer · PO · 2h ago</div>
+      
+      {auditList.value.length > 0 ? auditList.value.map((entry, idx) => {
+        const dot = entry.action?.includes("sign") ? "sign" : entry.action?.includes("build") ? "build" : entry.action?.includes("override") ? "override" : "build";
+        return (
+          <div className="audit-row" key={idx}>
+            <div className={`audit-dot ${dot}`}></div>
+            <div className="audit-tx">
+              <div className="audit-action">{entry.action}</div>
+              <div className="audit-meta">{entry.ts || entry.timestamp}</div>
+            </div>
+          </div>
+        )
+      }) : (
+        <div className="audit-row">
+          <div className="audit-dot build"></div>
+          <div className="audit-tx">
+            <div className="audit-action">No audit entries</div>
+            <div className="audit-meta">System awaiting data</div>
+          </div>
         </div>
-      </div>
-      <div className="audit-row">
-        <div className="audit-dot build"></div>
-        <div className="audit-tx">
-          <div className="audit-action">/signal-build ran</div>
-          <div className="audit-meta">Gate 4 · recipes.js written · 2h ago</div>
-        </div>
-      </div>
-      <div className="audit-row">
-        <div className="audit-dot sign"></div>
-        <div className="audit-tx">
-          <div className="audit-action">Gate 2 signed</div>
-          <div className="audit-meta">Samer · PO · yesterday</div>
-        </div>
-      </div>
-      <div className="audit-row">
-        <div className="audit-dot override"></div>
-        <div className="audit-tx">
-          <div className="audit-action">Rule override</div>
-          <div className="audit-meta">test-first · "Design phase only" · yesterday</div>
-        </div>
-      </div>
+      )}
+
     </div>
   </aside>
     </>
