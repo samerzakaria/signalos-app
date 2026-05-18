@@ -21,10 +21,6 @@ export function ExitModal() {
     </div>
   </div>
 </div>
-
-
-<script src="./js/csp-bootstrap.js"></script>
-<script type="module" src="./js/app-v2.js"></script>
     </>
   );
 }

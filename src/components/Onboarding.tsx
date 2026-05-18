@@ -1,3 +1,5 @@
+import { userName } from '../state';
+
 export function Onboarding() {
   return (
     <>
@@ -119,7 +121,7 @@ export function Onboarding() {
         <div className="field-row">
           <div>
             <label className="field-label">Your name</label>
-            <input type="text" className="plain-input" id="identName" placeholder="Samer" value="Samer"/>
+            <input type="text" className="plain-input" id="identName" placeholder="Your name" defaultValue={userName.value}/>
           </div>
           <div>
             <label className="field-label">Your role</label>

@@ -1,3 +1,5 @@
+import { userName } from '../../state';
+
 export function BuildView() {
   return (
     <>
@@ -34,7 +36,7 @@ export function BuildView() {
             <div className="msg spark">
               <div className="msg-av"><i className="ti ti-sparkles" style={{ 'fontSize': '17px' }}></i></div>
               <div>
-                <div className="bubble">Hi Samer! What do you want to build today? You can tell me anything — a game, a story, an app for someone.</div>
+                <div className="bubble">Hi {userName.value || 'there'}! What do you want to build today? You can tell me anything — a game, a story, an app for someone.</div>
                 <div className="msg-meta">SignalOS · 10:42</div>
               </div>
             </div>

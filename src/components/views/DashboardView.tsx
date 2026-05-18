@@ -1,3 +1,5 @@
+import { userName } from '../../state';
+
 export function DashboardView() {
   return (
     <>
@@ -81,7 +83,7 @@ export function DashboardView() {
               <button className="btn btn-primary" id="openBtn" onClick={() => window.showSignForm()} disabled>Sign gate <i className="ti ti-pencil"></i></button>
               <div className="sign-form" id="signForm" style={{ 'display': 'none' }}>
                 <span className="sign-label"><i className="ti ti-user-check"></i> Sign as:</span>
-                <input className="sign-input" id="signName" placeholder="Your name" value="Samer"/>
+                <input className="sign-input" id="signName" placeholder="Your name" defaultValue={userName.value}/>
                 <select className="sign-select" id="signRole">
                   <option value="PO">PO — Product Owner</option>
                   <option value="PE">PE — Principal Engineer</option>
