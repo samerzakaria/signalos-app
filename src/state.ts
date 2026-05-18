@@ -63,3 +63,9 @@ export const brainList = signal<BrainEntry[]>([]);
 export const govGatesList = signal<Gate[]>([]);
 export const auditList = signal<AuditEntry[]>([]);
 export const currentCost = signal<number>(0);
+
+export interface ProviderModel {
+  id: string;
+  name: string;
+}
+export const providerModels = signal<ProviderModel[]>([]);

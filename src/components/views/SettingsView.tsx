@@ -1,4 +1,8 @@
+import { aiModel, providerModels } from '../../state';
+
 export function SettingsView() {
+  const models = providerModels.value;
+  const selected = aiModel.value;
   return (
     <>
 <div className="view" data-view="settings">
@@ -52,10 +56,12 @@ export function SettingsView() {
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Model</strong><span>Specific version to use</span></div>
-                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={() => window.changeModel()}>
-                  <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6</option>
-                  <option value="claude-opus-4-6">claude-opus-4-6</option>
-                  <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} value={selected} onChange={() => window.changeModel()}>
+                  {models.length === 0 ? (
+                    <option value={selected}>{selected || 'No models loaded'}</option>
+                  ) : (
+                    models.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)
+                  )}
                 </select>
               </div>
               <div className="settings-row">

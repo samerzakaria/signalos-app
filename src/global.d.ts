@@ -1,7 +1,13 @@
 export {};
 
+type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+
 declare global {
   interface Window {
+    __TAURI__?: {
+      core?: { invoke?: TauriInvoke };
+      invoke?: TauriInvoke;
+    };
     addBrainEntry: () => void;
     attachFile: () => void;
     changeModel: () => void;
