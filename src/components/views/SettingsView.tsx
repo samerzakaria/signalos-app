@@ -1,5 +1,3 @@
-import { h } from 'preact';
-
 export function SettingsView() {
   return (
     <>
@@ -14,11 +12,11 @@ export function SettingsView() {
               <div className="secrets-head"><h3>Identity</h3></div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Your name</strong><span>Recorded on every gate you sign</span></div>
-                <input type="text" className="plain-input" id="settingsName" placeholder="Your name" style={{ 'width': '180px', 'border': '1px solid var(--line-2)', 'borderRadius': 'var(--r-sm)', 'padding': '8px 11px', 'fontSize': '13px', 'background': 'var(--surface)' }} onChange={(e) => window.saveIdentity()}/>
+                <input type="text" className="plain-input" id="settingsName" placeholder="Your name" style={{ 'width': '180px', 'border': '1px solid var(--line-2)', 'borderRadius': 'var(--r-sm)', 'padding': '8px 11px', 'fontSize': '13px', 'background': 'var(--surface)' }} onChange={() => window.saveIdentity()}/>
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Your role</strong><span>Used when signing gates</span></div>
-                <select className="select-input" id="settingsRole" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={(e) => window.saveIdentity()}>
+                <select className="select-input" id="settingsRole" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={() => window.saveIdentity()}>
                   <option value="PO">PO — Product Owner</option>
                   <option value="PE">PE — Principal Engineer</option>
                   <option value="QA">QA — Quality</option>
@@ -45,7 +43,7 @@ export function SettingsView() {
               <div className="secrets-head"><h3>AI connection</h3></div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Provider</strong><span>Current AI brain</span></div>
-                <select className="select-input" id="settingsProvider" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={(e) => window.changeProvider()}>
+                <select className="select-input" id="settingsProvider" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={() => window.changeProvider()}>
                   <option value="anthropic" selected>Claude (Anthropic)</option>
                   <option value="openai">GPT-4o (OpenAI)</option>
                   <option value="gemini">Gemini (Google)</option>
@@ -54,7 +52,7 @@ export function SettingsView() {
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Model</strong><span>Specific version to use</span></div>
-                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={(e) => window.changeModel()}>
+                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} onChange={() => window.changeModel()}>
                   <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6</option>
                   <option value="claude-opus-4-6">claude-opus-4-6</option>
                   <option value="claude-haiku-4-5">claude-haiku-4-5</option>
@@ -73,7 +71,7 @@ export function SettingsView() {
                 <div className="settings-row-tx"><strong>Monthly cap</strong><span>SignalOS stops calling the AI when you hit this</span></div>
                 <div className="budget-wrap" style={{ 'width': 'auto', 'margin': '0' }}>
                   <span className="budget-prefix">$</span>
-                  <input type="number" className="budget-input" id="settingsBudget" value="50" style={{ 'width': '80px', 'borderRadius': '0 var(--r-sm) var(--r-sm) 0' }} onChange={(e) => window.saveBudget()}/>
+                  <input type="number" className="budget-input" id="settingsBudget" value="50" style={{ 'width': '80px', 'borderRadius': '0 var(--r-sm) var(--r-sm) 0' }} onChange={() => window.saveBudget()}/>
                 </div>
               </div>
               <div className="settings-row">

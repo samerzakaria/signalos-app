@@ -1,13 +1,11 @@
-import { h } from 'preact';
-
 export function NewProjectModal() {
   return (
     <>
 <div className="modal-overlay" id="newProjectModal" onClick={(e) => window.closeNewProject(e)}>
-  <div className="modal proj-modal" onClick={(e) => window.event.stopPropagation()}>
+  <div className="modal proj-modal" onClick={(e) => e.stopPropagation()}>
     <div className="modal-head">
       <h3>New project</h3>
-      <button className="ico" onClick={(e) => window.closeModal('newProjectModal')}><i className="ti ti-x"></i></button>
+      <button className="ico" onClick={() => window.closeModal('newProjectModal')}><i className="ti ti-x"></i></button>
     </div>
     <div className="modal-body">
       <label className="field-label">Project name</label>
@@ -20,8 +18,8 @@ export function NewProjectModal() {
       <div className="hint"><i className="ti ti-info-circle"></i> SignalOS will create a <code style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '11px' }}>.signalos/</code> folder inside it</div>
     </div>
     <div className="modal-foot">
-      <button className="btn btn-ghost" onClick={(e) => window.closeModal('newProjectModal')}>Cancel</button>
-      <button className="btn btn-primary" onClick={(e) => window.createProject()}>Create project <i className="ti ti-arrow-right"></i></button>
+      <button className="btn btn-ghost" onClick={() => window.closeModal('newProjectModal')}>Cancel</button>
+      <button className="btn btn-primary" onClick={() => window.createProject()}>Create project <i className="ti ti-arrow-right"></i></button>
     </div>
   </div>
 </div>

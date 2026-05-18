@@ -1,5 +1,3 @@
-import { h } from 'preact';
-
 export function DashboardView() {
   return (
     <>
@@ -59,11 +57,11 @@ export function DashboardView() {
               <span className="sum-chip sum-pending"><i className="ti ti-circle"></i><b id="cPending">1</b> pending</span>
             </div>
             <div className="acts" id="acts">
-              <div className="act done" onClick={() => window.cycleActivity(this)}><div className="act-ic"><i className="ti ti-check"></i></div><div className="act-name">Draw the pizza base</div><div className="act-pill">Done</div></div>
-              <div className="act done" onClick={() => window.cycleActivity(this)}><div className="act-ic"><i className="ti ti-check"></i></div><div className="act-name">Add six toppings — cheese, pepperoni, mushroom…</div><div className="act-pill">Done</div></div>
-              <div className="act ongoing" onClick={() => window.cycleActivity(this)}><div className="act-ic"><i className="ti ti-loader-2"></i></div><div className="act-name">Make three pizza recipes</div><div className="act-pill"><span className="pdot"></span>Ongoing</div></div>
-              <div className="act ongoing" onClick={() => window.cycleActivity(this)}><div className="act-ic"><i className="ti ti-loader-2"></i></div><div className="act-name">Make pizzas appear on a tray</div><div className="act-pill"><span className="pdot"></span>Ongoing</div></div>
-              <div className="act pending" onClick={() => window.cycleActivity(this)}><div className="act-ic"></div><div className="act-name">Test if the tray fills up correctly</div><div className="act-pill">Pending</div></div>
+              <div className="act done" onClick={(e) => window.cycleActivity(e.currentTarget)}><div className="act-ic"><i className="ti ti-check"></i></div><div className="act-name">Draw the pizza base</div><div className="act-pill">Done</div></div>
+              <div className="act done" onClick={(e) => window.cycleActivity(e.currentTarget)}><div className="act-ic"><i className="ti ti-check"></i></div><div className="act-name">Add six toppings — cheese, pepperoni, mushroom…</div><div className="act-pill">Done</div></div>
+              <div className="act ongoing" onClick={(e) => window.cycleActivity(e.currentTarget)}><div className="act-ic"><i className="ti ti-loader-2"></i></div><div className="act-name">Make three pizza recipes</div><div className="act-pill"><span className="pdot"></span>Ongoing</div></div>
+              <div className="act ongoing" onClick={(e) => window.cycleActivity(e.currentTarget)}><div className="act-ic"><i className="ti ti-loader-2"></i></div><div className="act-name">Make pizzas appear on a tray</div><div className="act-pill"><span className="pdot"></span>Ongoing</div></div>
+              <div className="act pending" onClick={(e) => window.cycleActivity(e.currentTarget)}><div className="act-ic"></div><div className="act-name">Test if the tray fills up correctly</div><div className="act-pill">Pending</div></div>
             </div>
             <div className="subsec-div"></div>
             <div className="subsec-head">
@@ -71,11 +69,11 @@ export function DashboardView() {
               <div className="meta"><b id="cCrit">3</b> of 5 passed</div>
             </div>
             <div className="crits" id="crits">
-              <div className="crit passed" onClick={() => window.runCheck(this)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">The game runs with no errors</div><div className="crit-pill">Passed</div></div>
-              <div className="crit passed" onClick={() => window.runCheck(this)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">Every pizza shows a picture</div><div className="crit-pill">Passed</div></div>
-              <div className="crit passed" onClick={() => window.runCheck(this)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">Safe for kids — content was checked</div><div className="crit-pill">Passed</div></div>
-              <div className="crit checking" onClick={() => window.runCheck(this)}><div className="crit-ic"><i className="ti ti-loader-2"></i></div><div className="crit-name">Works on phone, tablet and computer</div><div className="crit-pill"><span className="pdot"></span>Checking</div></div>
-              <div className="crit waiting" onClick={() => window.runCheck(this)}><div className="crit-ic"><i className="ti ti-shield"></i></div><div className="crit-name">Your work is backed up safely</div><div className="crit-pill">Waiting</div></div>
+              <div className="crit passed" onClick={(e) => window.runCheck(e.currentTarget)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">The game runs with no errors</div><div className="crit-pill">Passed</div></div>
+              <div className="crit passed" onClick={(e) => window.runCheck(e.currentTarget)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">Every pizza shows a picture</div><div className="crit-pill">Passed</div></div>
+              <div className="crit passed" onClick={(e) => window.runCheck(e.currentTarget)}><div className="crit-ic"><i className="ti ti-shield-check"></i></div><div className="crit-name">Safe for kids — content was checked</div><div className="crit-pill">Passed</div></div>
+              <div className="crit checking" onClick={(e) => window.runCheck(e.currentTarget)}><div className="crit-ic"><i className="ti ti-loader-2"></i></div><div className="crit-name">Works on phone, tablet and computer</div><div className="crit-pill"><span className="pdot"></span>Checking</div></div>
+              <div className="crit waiting" onClick={(e) => window.runCheck(e.currentTarget)}><div className="crit-ic"><i className="ti ti-shield"></i></div><div className="crit-name">Your work is backed up safely</div><div className="crit-pill">Waiting</div></div>
             </div>
             <div className="verdict held" id="verdict">
               <div className="verdict-ic"><i className="ti ti-lock"></i></div>

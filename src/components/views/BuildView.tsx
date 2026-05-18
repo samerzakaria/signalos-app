@@ -1,5 +1,3 @@
-import { h } from 'preact';
-
 export function BuildView() {
   return (
     <>
@@ -118,13 +116,13 @@ export function BuildView() {
               </div>
             </div>
             <div className="chips">
-              <div className="chip" onClick={() => window.sendChip(this)}>Same points please</div>
-              <div className="chip" onClick={() => window.sendChip(this)}>Make it worth 10 points</div>
-              <div className="chip" onClick={() => window.sendChip(this)}>Show me the pizza first</div>
-              <div className="chip" onClick={() => window.sendChip(this)}>Can we add olives too?</div>
+              <div className="chip" onClick={(e) => window.sendChip(e.currentTarget)}>Same points please</div>
+              <div className="chip" onClick={(e) => window.sendChip(e.currentTarget)}>Make it worth 10 points</div>
+              <div className="chip" onClick={(e) => window.sendChip(e.currentTarget)}>Show me the pizza first</div>
+              <div className="chip" onClick={(e) => window.sendChip(e.currentTarget)}>Can we add olives too?</div>
             </div>
             <div className="composer">
-              <input id="chatInput" placeholder="Tell SignalOS anything, or type / for commands…" onKeyDown={(e) => window.composerKey(event)} onInput={(e) => window.composerInput(event)}/>
+              <input id="chatInput" placeholder="Tell SignalOS anything, or type / for commands…" onKeyDown={(e) => window.composerKey(e)} onInput={(e) => window.composerInput(e)}/>
               <button className="cmp-btn" onClick={() => window.attachFile()} aria-label="Attach file"><i className="ti ti-paperclip"></i></button>
               <button className="cmp-btn" onClick={() => window.voiceInput()} aria-label="Voice input"><i className="ti ti-microphone"></i></button>
               <button className="cmp-btn cmp-send" onClick={() => window.sendMsg()} aria-label="Send"><i className="ti ti-arrow-up"></i></button>

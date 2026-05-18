@@ -1,13 +1,11 @@
-import { h } from 'preact';
-
 export function AddSecretModal() {
   return (
     <>
 <div className="modal-overlay" id="addSecretModal" onClick={(e) => window.closeAddSecret(e)}>
-  <div className="modal" onClick={(e) => window.event.stopPropagation()}>
+  <div className="modal" onClick={(e) => e.stopPropagation()}>
     <div className="modal-head">
       <h3>Add a secret</h3>
-      <button className="ico" onClick={(e) => window.closeModal('addSecretModal')}><i className="ti ti-x"></i></button>
+      <button className="ico" onClick={() => window.closeModal('addSecretModal')}><i className="ti ti-x"></i></button>
     </div>
     <div className="modal-body">
       <label className="field-label">Secret name</label>
@@ -26,8 +24,8 @@ export function AddSecretModal() {
       </select>
     </div>
     <div className="modal-foot">
-      <button className="btn btn-ghost" onClick={(e) => window.closeModal('addSecretModal')}>Cancel</button>
-      <button className="btn btn-primary" onClick={(e) => window.saveSecret()}>Seal secret <i className="ti ti-shield-check"></i></button>
+      <button className="btn btn-ghost" onClick={() => window.closeModal('addSecretModal')}>Cancel</button>
+      <button className="btn btn-primary" onClick={() => window.saveSecret()}>Seal secret <i className="ti ti-shield-check"></i></button>
     </div>
   </div>
 </div>

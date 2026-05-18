@@ -1,5 +1,3 @@
-import { h } from 'preact';
-
 export function HistoryView() {
   return (
     <>
@@ -18,8 +16,8 @@ export function HistoryView() {
             <div className="secrets-head">
               <h3>Build &amp; audit log</h3>
               <div style={{ 'display': 'flex', 'gap': '8px' }}>
-                <button className="btn btn-soft" style={{ 'fontSize': '12px', 'padding': '8px 13px' }} onClick={() => window.exportHandoff(this)}><i className="ti ti-download"></i> Export handoff</button>
-                <button className="btn btn-soft" style={{ 'fontSize': '12px', 'padding': '8px 13px' }} onClick={() => window.exportReport(this)}><i className="ti ti-file-report"></i> Issue report</button>
+                <button className="btn btn-soft" style={{ 'fontSize': '12px', 'padding': '8px 13px' }} onClick={(e) => window.exportHandoff(e.currentTarget)}><i className="ti ti-download"></i> Export handoff</button>
+                <button className="btn btn-soft" style={{ 'fontSize': '12px', 'padding': '8px 13px' }} onClick={(e) => window.exportReport(e.currentTarget)}><i className="ti ti-file-report"></i> Issue report</button>
               </div>
             </div>
             <div className="history-item">
