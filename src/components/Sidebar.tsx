@@ -20,11 +20,6 @@ export function Sidebar() {
 
     
     <div className="sb-panel active" id="sb-projects">
-      <div className="sb-label">Active</div>
-      <div className="nav active"><i className="ti ti-pizza"></i> My pizza game <span className="ct">3</span></div>
-      <div style={{ 'padding': '2px 12px 7px 36px' }}><span style={{ 'fontSize': '10px', 'fontWeight': '700', 'color': 'var(--ink-3)', 'background': 'var(--surface)', 'border': '0.5px solid var(--line-2)', 'borderRadius': '4px', 'padding': '2px 6px', 'letterSpacing': '0.03em' }}>React · Vite</span></div>
-      <div className="nav"><i className="ti ti-cat"></i> Cat sticker book</div>
-      <div className="nav"><i className="ti ti-rocket"></i> Space quiz</div>
       <div className="nav accent" onClick={() => window.openNewProject()}><i className="ti ti-plus"></i> New project</div>
       <div className="sb-label">Tools</div>
       <div className="nav" onClick={() => window.switchTab('vault')}><i className="ti ti-shield-lock"></i> Vault</div>
@@ -48,19 +43,10 @@ export function Sidebar() {
         <i className="ti ti-search"></i>
         <input placeholder="Filter files…"/>
       </div>
-      <div className="ftree">
-        <div className="ftree-item dir"><i className="ti ti-folder-open"></i> src/</div>
-        <div className="ftree-item child"><i className="ti ti-file-code"></i> index.html <span className="diff-badge mod">M</span></div>
-        <div className="ftree-item child"><i className="ti ti-file-code"></i> game.js <span className="diff-badge mod">M</span></div>
-        <div className="ftree-item child"><i className="ti ti-file-code"></i> styles.css</div>
-        <div className="ftree-item dir"><i className="ti ti-folder"></i> pizzas/</div>
-        <div className="ftree-item child"><i className="ti ti-file-code"></i> recipes.js <span className="diff-badge new">N</span></div>
-        <div className="ftree-item child"><i className="ti ti-file-code"></i> toppings.js <span className="diff-badge new">N</span></div>
-        <div className="ftree-item dir"><i className="ti ti-folder"></i> .signalos/</div>
-        <div className="ftree-item child" style={{ 'opacity': '0.5' }}><i className="ti ti-file"></i> brain.jsonl</div>
-        <div className="ftree-item child" style={{ 'opacity': '0.5' }}><i className="ti ti-file"></i> AUDIT_TRAIL.jsonl</div>
-        <div className="ftree-item"><i className="ti ti-file-code"></i> signalos.json</div>
-        <div className="ftree-item"><i className="ti ti-file"></i> package.json</div>
+      <div className="ftree" id="leftFileTree">
+        <div style={{ padding: '16px 12px', fontSize: '12px', color: 'var(--ink-3)' }}>
+          No workspace open.
+        </div>
       </div>
     </div>
 
@@ -68,24 +54,18 @@ export function Sidebar() {
     <div className="sb-panel" id="sb-gov">
       <div className="gov-wave">
         <div className="gov-wave-label">Current wave</div>
-        <div className="gov-wave-name">Wave 1 · Foundation</div>
+        <div className="gov-wave-name">{govGatesList.value.length > 0 ? 'Active' : 'No wave loaded'}</div>
         <div className="gate-nodes">
-          {govGatesList.value.length > 0 ? govGatesList.value.map((g, i) => {
+          {govGatesList.value.map((g, i) => {
             const cls = g.status === "signed" || g.signed ? "done" : g.status === "active" || g.is_current ? "active" : "locked";
             return <div key={i} className={`gate-node ${cls}`} title={g.name || "Gate " + (i + 1)}>G{i + 1}</div>;
-          }) : (
-            <>
-              <div className="gate-node done" title="Gate 1 — Pick the idea">G1</div>
-              <div className="gate-node done" title="Gate 2 — Sketch it out">G2</div>
-              <div className="gate-node done" title="Gate 3 — Make the menu">G3</div>
-              <div className="gate-node active" title="Gate 4 — Make the pizzas (current)">G4</div>
-              <div className="gate-node locked" title="Gate 5 — Drag &amp; drop">G5</div>
-              <div className="gate-node locked" title="Gate 6 — Count score">G6</div>
-              <div className="gate-node locked" title="Gate 7 — Share it">G7</div>
-            </>
-          )}
+          })}
         </div>
-        <div className="gate-node-tip">Gate 4 of 7 · 3 of 5 checks passed</div>
+        {govGatesList.value.length > 0 && (() => {
+          const signed = govGatesList.value.filter(g => g.status === "signed" || g.signed).length;
+          const total = govGatesList.value.length;
+          return <div className="gate-node-tip">{signed} of {total} gates signed</div>;
+        })()}
       </div>
       <div className="sb-label">Recent audit</div>
       

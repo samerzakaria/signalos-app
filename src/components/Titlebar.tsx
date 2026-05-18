@@ -34,7 +34,7 @@ export function Titlebar() {
     </div>
   </div>
   <div className="titlebar-right">
-    <div className="cost-pill" title="Session spend · $50/mo cap" style={{ 'borderRadius': '7px', 'padding': '6px 10px' }}><i className="ti ti-coin"></i> <span id="costDisplay">${currentCost.value.toFixed(2)}</span></div>
+    <div className="cost-pill" title="Session spend so far" style={{ 'borderRadius': '7px', 'padding': '6px 10px' }}><i className="ti ti-coin"></i> <span id="costDisplay">${currentCost.value.toFixed(2)}</span></div>
     <div className="tb-divider"></div>
     <div className="live-badge" id="liveBadge" style={{ 'borderRadius': '7px' }}><span className="dot"></span> <span id="provDisplay">{provName} · live</span></div>
     <div className="tb-divider" style={{ 'margin': '0 6px 0 10px' }}></div>

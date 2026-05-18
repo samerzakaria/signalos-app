@@ -77,7 +77,7 @@ export function SettingsView() {
                 <div className="settings-row-tx"><strong>Monthly cap</strong><span>SignalOS stops calling the AI when you hit this</span></div>
                 <div className="budget-wrap" style={{ 'width': 'auto', 'margin': '0' }}>
                   <span className="budget-prefix">$</span>
-                  <input type="number" className="budget-input" id="settingsBudget" value="50" style={{ 'width': '80px', 'borderRadius': '0 var(--r-sm) var(--r-sm) 0' }} onChange={() => window.saveBudget()}/>
+                  <input type="number" className="budget-input" id="settingsBudget" placeholder="50" min="0" step="5" style={{ 'width': '80px', 'borderRadius': '0 var(--r-sm) var(--r-sm) 0' }} onChange={() => window.saveBudget()}/>
                 </div>
               </div>
               <div className="settings-row">
