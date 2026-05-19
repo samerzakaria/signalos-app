@@ -1,7 +1,10 @@
+import { modalOpen } from '../state';
+
 export function OverrideModal() {
+  const cls = modalOpen.value === 'overrideModal' ? 'modal-overlay open' : 'modal-overlay';
   return (
     <>
-<div className="modal-overlay" id="overrideModal" onClick={() => window.closeModal('overrideModal')}>
+<div className={cls} id="overrideModal" onClick={() => window.closeModal('overrideModal')}>
   <div className="modal" onClick={(e) => e.stopPropagation()} style={{ 'width': '460px' }}>
     <div className="modal-head">
       <h3>Override a rule</h3>

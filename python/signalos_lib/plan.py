@@ -84,6 +84,12 @@ class Task:
     wave: str = ""
     branch: str = ""
     notes: str = ""
+    description: str = ""
+    files: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    # Smart-retry context: set by retryTask to feed the previous failure
+    # reason back into the new task prompt.
+    previous_failure: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict suitable for YAML round-trip."""
@@ -107,6 +113,14 @@ class Task:
             d["branch"] = self.branch
         if self.notes:
             d["notes"] = self.notes
+        if self.description:
+            d["description"] = self.description
+        if self.files:
+            d["files"] = list(self.files)
+        if self.skills:
+            d["skills"] = list(self.skills)
+        if self.previous_failure:
+            d["previous_failure"] = self.previous_failure
         return d
 
     @staticmethod
@@ -124,6 +138,10 @@ class Task:
             wave=str(raw.get("wave", "")),
             branch=str(raw.get("branch", "")),
             notes=str(raw.get("notes", "")),
+            description=str(raw.get("description", "")),
+            files=[str(x) for x in raw.get("files", [])],
+            skills=[str(x) for x in raw.get("skills", [])],
+            previous_failure=str(raw.get("previous_failure", "")),
         )
 
 

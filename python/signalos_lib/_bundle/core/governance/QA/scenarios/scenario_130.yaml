@@ -1,0 +1,8 @@
+id: scenario_130
+wave: "W11"
+title: "doc drift detects fresh markdown files"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import detect_doc_drift; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); d=t/'docs'; d.mkdir(); (d/'README.md').write_text('hello'); entries=detect_doc_drift(t, docs_dir='docs', max_age_days=30); print(entries[0].status)\""
+    expect_exit: 0
+    expect_stdout_contains: "fresh"

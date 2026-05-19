@@ -1,0 +1,8 @@
+id: scenario_121
+wave: "W10"
+title: "signal-cso threat_export writes all entries to output JSONL"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import generate_owasp_stride, threat_export; from pathlib import Path; import tempfile; t=tempfile.mkdtemp(); generate_owasp_stride('api', '10', Path(t)); out=Path(t)/'out.jsonl'; count=threat_export(Path(t), out); print(count); print(out.exists())\""
+    expect_exit: 0
+    expect_stdout_contains: "True"

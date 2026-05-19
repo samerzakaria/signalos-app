@@ -1,6 +1,24 @@
-import { userName } from '../state';
+import { userName, userRole, ai, obStep, provMoreOpen, keyLabel, keyVisible, apiKeyInput, budgetInputValue, workspacePath } from '../state';
+
+const OB_TAGS = [
+  <>Every great thing starts with a spark.</>,
+  <>The right brain,<br/>the right budget.</>,
+  <>Your name on every gate.<br/>That's accountability.</>,
+];
 
 export function Onboarding() {
+  const step = obStep.value;
+  const stepCls = (n: number) => step === n ? 'ob-step active' : 'ob-step';
+  const dotCls = (n: number) => n <= step ? 'pd active' : 'pd';
+  const provider = ai.value;
+  const provCardCls = (p: string) => provider === p ? 'prov-card sel' : 'prov-card';
+  const moreDisplay = provMoreOpen.value ? 'grid' : 'none';
+  const moreBtnCls = provMoreOpen.value ? 'prov-more-btn open' : 'prov-more-btn';
+  const moreBtnIcon = provMoreOpen.value ? 'ti-chevron-up' : 'ti-chevron-down';
+  const moreBtnLabel = provMoreOpen.value ? 'Show fewer' : '7 more providers';
+  const keyVis = keyVisible.value;
+  const keyTogIcon = keyVis ? 'ti-eye-off' : 'ti-eye';
+
   return (
     <>
 <div id="onboarding" className="stage active">
@@ -34,17 +52,17 @@ export function Onboarding() {
     </div>
     <div className="ob-foot">
       <div className="ob-dots">
-        <div className="pd active" id="pd-1"></div>
-        <div className="pd" id="pd-2"></div>
-        <div className="pd" id="pd-3"></div>
+        <div className={dotCls(1)} id="pd-1"></div>
+        <div className={dotCls(2)} id="pd-2"></div>
+        <div className={dotCls(3)} id="pd-3"></div>
       </div>
-      <p className="ob-tag" id="obTag">Every great thing starts with a spark.</p>
+      <p className="ob-tag" id="obTag">{OB_TAGS[step - 1]}</p>
     </div>
   </div>
 
   <div className="ob-form">
-    
-    <div className="ob-step active" data-step="1">
+
+    <div className={stepCls(1)} data-step="1">
       <div className="ob-kicker">Step 1 — Welcome</div>
       <h1>Hi, I'm SignalOS.<br/>Let's make<br/><em>something real.</em></h1>
       <p className="ob-sub">Tell me what you want to build. I plan it, gate it, and build it with you — step by step. Setup takes under a minute.</p>
@@ -69,40 +87,56 @@ export function Onboarding() {
       </div>
     </div>
 
-    
-    <div className="ob-step" data-step="2">
+
+    <div className={stepCls(2)} data-step="2">
       <div className="ob-kicker">Step 2 — Brain &amp; Budget</div>
       <h1>Which AI, and<br/>how <em>much?</em></h1>
       <p className="ob-sub">Pick your model, add its key, and set a monthly spend cap. You can change all of this in Settings any time.</p>
       <div className="ob-body">
         <div className="prov-label">Popular</div>
         <div className="prov-grid" id="provGrid">
-          <div className="prov-card sel" data-ai="anthropic" data-model="claude-sonnet-4-6" data-key-label="Anthropic API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-asterisk"></i></div><div className="prov-tx"><div className="prov-nm">Claude</div><div className="prov-ds">Anthropic · sonnet-4-6</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="openai" data-model="gpt-4o-mini" data-key-label="OpenAI API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-circle-dot"></i></div><div className="prov-tx"><div className="prov-nm">OpenAI</div><div className="prov-ds">OpenAI · gpt-4o-mini</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="gemini" data-model="gemini-2.5-flash" data-key-label="Gemini API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-diamond"></i></div><div className="prov-tx"><div className="prov-nm">Gemini</div><div className="prov-ds">Google · 2.5 flash</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="qwen" data-model="qwen-plus" data-key-label="Qwen API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-sparkles"></i></div><div className="prov-tx"><div className="prov-nm">Qwen</div><div className="prov-ds">Alibaba · qwen-plus</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="ollama" data-model="" data-key-label="Model name (e.g. llama3)" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink-2)' }}><i className="ti ti-cpu"></i></div><div className="prov-tx"><div className="prov-nm">Ollama</div><div className="prov-ds">Local · no key needed</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('anthropic')} data-ai="anthropic" data-model="claude-sonnet-4-6" data-key-label="Anthropic API key" onClick={() => window.selectProv('anthropic', 'claude-sonnet-4-6', 'Anthropic API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-asterisk"></i></div><div className="prov-tx"><div className="prov-nm">Claude</div><div className="prov-ds">Anthropic · sonnet-4-6</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('openai')} data-ai="openai" data-model="gpt-4o-mini" data-key-label="OpenAI API key" onClick={() => window.selectProv('openai', 'gpt-4o-mini', 'OpenAI API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-circle-dot"></i></div><div className="prov-tx"><div className="prov-nm">OpenAI</div><div className="prov-ds">OpenAI · gpt-4o-mini</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('gemini')} data-ai="gemini" data-model="gemini-2.5-flash" data-key-label="Gemini API key" onClick={() => window.selectProv('gemini', 'gemini-2.5-flash', 'Gemini API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-diamond"></i></div><div className="prov-tx"><div className="prov-nm">Gemini</div><div className="prov-ds">Google · 2.5 flash</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('qwen')} data-ai="qwen" data-model="qwen-plus" data-key-label="Qwen API key" onClick={() => window.selectProv('qwen', 'qwen-plus', 'Qwen API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-sparkles"></i></div><div className="prov-tx"><div className="prov-nm">Qwen</div><div className="prov-ds">Alibaba · qwen-plus</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('ollama')} data-ai="ollama" data-model="" data-key-label="Model name (e.g. llama3)" onClick={() => window.selectProv('ollama', '', 'Model name (e.g. llama3)')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink-2)' }}><i className="ti ti-cpu"></i></div><div className="prov-tx"><div className="prov-nm">Ollama</div><div className="prov-ds">Local · no key needed</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
         </div>
-        <button className="prov-more-btn" id="provMoreBtn" onClick={() => window.toggleMoreProvs()}><i className="ti ti-chevron-down"></i> 7 more providers</button>
-        <div className="prov-grid" id="provMore" style={{ 'display': 'none' }}>
-          <div className="prov-card" data-ai="openrouter" data-model="qwen/qwen-plus" data-key-label="OpenRouter API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent)' }}><i className="ti ti-route"></i></div><div className="prov-tx"><div className="prov-nm">OpenRouter</div><div className="prov-ds">Multi-model gateway</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="deepseek" data-model="deepseek-chat" data-key-label="DeepSeek API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-search"></i></div><div className="prov-tx"><div className="prov-nm">DeepSeek</div><div className="prov-ds">deepseek-chat</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="mistral" data-model="mistral-large-latest" data-key-label="Mistral API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-wind"></i></div><div className="prov-tx"><div className="prov-nm">Mistral</div><div className="prov-ds">mistral-large</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="groq" data-model="llama-3.3-70b-versatile" data-key-label="Groq API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-bolt"></i></div><div className="prov-tx"><div className="prov-nm">Groq</div><div className="prov-ds">llama-3.3-70b · fast</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="cerebras" data-model="llama-4-scout-17b-16e-instruct" data-key-label="Cerebras API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-brain"></i></div><div className="prov-tx"><div className="prov-nm">Cerebras</div><div className="prov-ds">llama-4 scout</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="together" data-model="meta-llama/Llama-3.3-70B-Instruct-Turbo" data-key-label="Together AI key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent-deep)' }}><i className="ti ti-topology-star"></i></div><div className="prov-tx"><div className="prov-nm">Together AI</div><div className="prov-ds">Llama-3.3-70B turbo</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className="prov-card" data-ai="xai" data-model="grok-4" data-key-label="xAI API key" onClick={(e) => window.selectProv(e.currentTarget)}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink)' }}><i className="ti ti-x"></i></div><div className="prov-tx"><div className="prov-nm">xAI</div><div className="prov-ds">Grok 4</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+        <button className={moreBtnCls} id="provMoreBtn" onClick={() => window.toggleMoreProvs()}><i className={`ti ${moreBtnIcon}`}></i> {moreBtnLabel}</button>
+        <div className="prov-grid" id="provMore" style={{ display: moreDisplay }}>
+          <div className={provCardCls('openrouter')} data-ai="openrouter" data-model="qwen/qwen-plus" data-key-label="OpenRouter API key" onClick={() => window.selectProv('openrouter', 'qwen/qwen-plus', 'OpenRouter API key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent)' }}><i className="ti ti-route"></i></div><div className="prov-tx"><div className="prov-nm">OpenRouter</div><div className="prov-ds">Multi-model gateway</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('deepseek')} data-ai="deepseek" data-model="deepseek-chat" data-key-label="DeepSeek API key" onClick={() => window.selectProv('deepseek', 'deepseek-chat', 'DeepSeek API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-search"></i></div><div className="prov-tx"><div className="prov-nm">DeepSeek</div><div className="prov-ds">deepseek-chat</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('mistral')} data-ai="mistral" data-model="mistral-large-latest" data-key-label="Mistral API key" onClick={() => window.selectProv('mistral', 'mistral-large-latest', 'Mistral API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-wind"></i></div><div className="prov-tx"><div className="prov-nm">Mistral</div><div className="prov-ds">mistral-large</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('groq')} data-ai="groq" data-model="llama-3.3-70b-versatile" data-key-label="Groq API key" onClick={() => window.selectProv('groq', 'llama-3.3-70b-versatile', 'Groq API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-bolt"></i></div><div className="prov-tx"><div className="prov-nm">Groq</div><div className="prov-ds">llama-3.3-70b · fast</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('cerebras')} data-ai="cerebras" data-model="llama-4-scout-17b-16e-instruct" data-key-label="Cerebras API key" onClick={() => window.selectProv('cerebras', 'llama-4-scout-17b-16e-instruct', 'Cerebras API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-brain"></i></div><div className="prov-tx"><div className="prov-nm">Cerebras</div><div className="prov-ds">llama-4 scout</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('together')} data-ai="together" data-model="meta-llama/Llama-3.3-70B-Instruct-Turbo" data-key-label="Together AI key" onClick={() => window.selectProv('together', 'meta-llama/Llama-3.3-70B-Instruct-Turbo', 'Together AI key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent-deep)' }}><i className="ti ti-topology-star"></i></div><div className="prov-tx"><div className="prov-nm">Together AI</div><div className="prov-ds">Llama-3.3-70B turbo</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('xai')} data-ai="xai" data-model="grok-4" data-key-label="xAI API key" onClick={() => window.selectProv('xai', 'grok-4', 'xAI API key')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink)' }}><i className="ti ti-x"></i></div><div className="prov-tx"><div className="prov-nm">xAI</div><div className="prov-ds">Grok 4</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
         </div>
         <div className="ob-divider"></div>
-        <label className="field-label" id="keyLabel">Claude API key</label>
+        <label className="field-label" id="keyLabel">{keyLabel.value}</label>
         <div className="key-wrap">
-          <input type="password" className="key-input" id="apiKey" placeholder="sk-ant-api03-…"/>
-          <button className="key-tog" onClick={() => window.toggleKey()} id="keyTog" aria-label="Show or hide key"><i className="ti ti-eye"></i></button>
+          <input
+            type={keyVis ? 'text' : 'password'}
+            className="key-input"
+            id="apiKey"
+            placeholder="sk-ant-api03-…"
+            value={apiKeyInput.value}
+            onInput={(e) => { apiKeyInput.value = (e.target as HTMLInputElement).value; }}
+          />
+          <button className="key-tog" onClick={() => window.toggleKey()} id="keyTog" aria-label="Show or hide key"><i className={`ti ${keyTogIcon}`}></i></button>
         </div>
         <label className="field-label">Monthly spend cap <span style={{ 'fontWeight': '400', 'color': 'var(--ink-3)' }}>(optional)</span></label>
         <div className="budget-wrap">
           <span className="budget-prefix">$</span>
-          <input type="number" className="budget-input" id="budgetInput" placeholder="50" min="0" step="5"/>
+          <input
+            type="number"
+            className="budget-input"
+            id="budgetInput"
+            placeholder="50"
+            min="0"
+            step="5"
+            value={budgetInputValue.value}
+            onInput={(e) => { budgetInputValue.value = (e.target as HTMLInputElement).value; }}
+          />
         </div>
         <div className="hint"><i className="ti ti-info-circle"></i> No key yet? <a href="#">Get one in under a minute</a></div>
       </div>
@@ -112,8 +146,8 @@ export function Onboarding() {
       </div>
     </div>
 
-    
-    <div className="ob-step" data-step="3">
+
+    <div className={stepCls(3)} data-step="3">
       <div className="ob-kicker">Step 3 — Identity</div>
       <h1>Last thing —<br/><em>who are you?</em></h1>
       <p className="ob-sub">Your name and role are recorded each time you sign a gate. This is what makes the audit trail honest.</p>
@@ -121,11 +155,23 @@ export function Onboarding() {
         <div className="field-row">
           <div>
             <label className="field-label">Your name</label>
-            <input type="text" className="plain-input" id="identName" placeholder="Your name" defaultValue={userName.value}/>
+            <input
+              type="text"
+              className="plain-input"
+              id="identName"
+              placeholder="Your name"
+              value={userName.value}
+              onInput={(e) => { userName.value = (e.target as HTMLInputElement).value; }}
+            />
           </div>
           <div>
             <label className="field-label">Your role</label>
-            <select className="select-input" id="identRole">
+            <select
+              className="select-input"
+              id="identRole"
+              value={userRole.value || 'PO'}
+              onInput={(e) => { userRole.value = (e.target as HTMLSelectElement).value; }}
+            >
               <option value="PO">PO — Product Owner</option>
               <option value="PE">PE — Principal Engineer</option>
               <option value="QA">QA — Quality</option>
@@ -133,7 +179,23 @@ export function Onboarding() {
             </select>
           </div>
         </div>
-        <div className="callout success">
+        <label className="field-label" style={{ marginTop: '12px' }}>Project folder</label>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+          <input
+            type="text"
+            className="plain-input"
+            id="identFolder"
+            placeholder="~/projects/my-app"
+            value={workspacePath.value}
+            onInput={(e) => { workspacePath.value = (e.target as HTMLInputElement).value; }}
+            style={{ flex: 1, fontFamily: 'var(--f-mono)', fontSize: '12px' }}
+          />
+          <button className="btn btn-soft" onClick={() => window.pickWorkspaceFolder()} style={{ flexShrink: 0 }}><i className="ti ti-folder-open"></i> Browse</button>
+        </div>
+        <div className="hint" style={{ marginTop: '6px' }}>
+          <i className="ti ti-info-circle"></i> SignalOS will scaffold a <code style={{ fontFamily: 'var(--f-mono)', fontSize: '11px' }}>.signalos/</code> folder inside it on first run.
+        </div>
+        <div className="callout success" style={{ marginTop: '14px' }}>
           <i className="ti ti-shield-check"></i>
           <p><strong>Your identity stays on this device.</strong> It's written to your local audit trail when you sign gates — never sent to the AI, never stored in the cloud.</p>
         </div>

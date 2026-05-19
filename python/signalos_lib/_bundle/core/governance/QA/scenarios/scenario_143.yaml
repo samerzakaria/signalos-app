@@ -1,0 +1,7 @@
+id: scenario_143
+title: "devex_measure records TTHW metric"
+wave: W13
+amd: AMD-CORE-034
+command: |
+  python3 -c "import sys; sys.path.insert(0,'cli'); from signalos_lib.devex import devex_measure; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); m=devex_measure(t,'TTHW',90.0,'13','first run'); print(m.metric)"
+expect_stdout_contains: "TTHW"

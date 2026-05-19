@@ -1,0 +1,8 @@
+id: scenario_134
+wave: "W12"
+title: "canary_deploy_check finds records"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.deploy import setup_deploy, canary_deploy_check; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); setup_deploy(t,'12','staging'); result=canary_deploy_check(t,'12'); print(result['count'])\""
+    expect_exit: 0
+    expect_stdout_contains: "1"

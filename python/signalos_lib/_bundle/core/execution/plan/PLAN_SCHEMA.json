@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://signalos.dev/schemas/plan-schema/v1",
+  "title": "SignalOS PLAN.tasks.yaml schema",
+  "description": "Machine-readable task list schema for SignalOS wave plans (AMD-CORE-017).",
+  "type": "object",
+  "required": ["wave", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "wave": {
+      "type": "string",
+      "description": "Wave identifier, e.g. W2.1 or WAVE-01.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO-8601 timestamp when this file was last generated.",
+      "format": "date-time"
+    },
+    "tasks": {
+      "type": "array",
+      "description": "Ordered list of task definitions.",
+      "items": { "$ref": "#/definitions/Task" },
+      "minItems": 0
+    }
+  },
+  "definitions": {
+    "Task": {
+      "type": "object",
+      "required": ["id", "title", "status", "tier"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ULID — 26-character sortable unique identifier.",
+          "pattern": "^[0-9A-Z]{26}$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short imperative title for the task.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle status of the task.",
+          "enum": ["pending", "in_progress", "done", "blocked", "skipped"]
+        },
+        "tier": {
+          "type": "string",
+          "description": "Trust Tier governing sign-off requirements.",
+          "enum": ["T1", "T2", "T3"]
+        },
+        "owner": {
+          "type": "string",
+          "description": "Role or agent name responsible for this task.",
+          "default": ""
+        },
+        "depends_on": {
+          "type": "array",
+          "description": "List of task IDs that must be done before this task can start.",
+          "items": { "type": "string", "pattern": "^[0-9A-Z]{26}$" },
+          "default": []
+        },
+        "effort_days": {
+          "type": "number",
+          "description": "Estimated effort in calendar days.",
+          "minimum": 0,
+          "default": 1
+        },
+        "prompt_file": {
+          "type": "string",
+          "description": "Relative path (from repo root) to the agent prompt file for this task.",
+          "default": ""
+        },
+        "wave": {
+          "type": "string",
+          "description": "Wave this task belongs to, if different from the document-level wave.",
+          "default": ""
+        },
+        "branch": {
+          "type": "string",
+          "description": "Git branch name for the task worktree.",
+          "default": ""
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form notes visible in the rendered PLAN.md.",
+          "default": ""
+        }
+      }
+    }
+  }
+}

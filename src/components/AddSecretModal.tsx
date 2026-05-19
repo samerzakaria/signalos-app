@@ -1,7 +1,10 @@
+import { modalOpen } from '../state';
+
 export function AddSecretModal() {
+  const cls = modalOpen.value === 'addSecretModal' ? 'modal-overlay open' : 'modal-overlay';
   return (
     <>
-<div className="modal-overlay" id="addSecretModal" onClick={(e) => window.closeAddSecret(e)}>
+<div className={cls} id="addSecretModal" onClick={(e) => window.closeAddSecret(e)}>
   <div className="modal" onClick={(e) => e.stopPropagation()}>
     <div className="modal-head">
       <h3>Add a secret</h3>

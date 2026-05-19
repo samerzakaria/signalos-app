@@ -1,0 +1,6 @@
+# Backend-specific query: file (mock/CI/demo)
+# Metric: onboarding_funnel_completion
+file_path: ".signalos/mock-metrics/onboarding_funnel_completion.json"
+format: json
+value_path: "value"
+timestamp_path: "timestamp"

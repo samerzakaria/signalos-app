@@ -1,0 +1,8 @@
+id: scenario_129
+wave: "W11"
+title: "checkpoint restore returns False for missing checkpoint"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import checkpoint_restore; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); out=Path(tempfile.mktemp(suffix='.md')); result=checkpoint_restore(t, 'ckpt-999', out); print(result)\""
+    expect_exit: 0
+    expect_stdout_contains: "False"

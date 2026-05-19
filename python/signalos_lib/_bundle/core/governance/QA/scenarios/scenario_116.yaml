@@ -1,0 +1,8 @@
+id: scenario_116
+wave: "W10"
+title: "signal-cso scan generates OWASP+STRIDE threat entries"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import generate_owasp_stride; from pathlib import Path; import tempfile, os; t=tempfile.mkdtemp(); entries=generate_owasp_stride('api', '10', Path(t)); print(len(entries)); print(entries[0].id)\""
+    expect_exit: 0
+    expect_stdout_contains: "threat-001"

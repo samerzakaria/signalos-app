@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
+import subprocess
 import sys
 import traceback
+from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
 from importlib import resources
 from io import StringIO
@@ -201,6 +204,20 @@ def dispatch_cli(command: str, args: list[str], req_id: str = "") -> str:
     cwd = os.getcwd()
     redacted = redact_arg_list(args)
 
+    # Wave checkpoint: capture pre-wave HEAD SHA so "Undo Wave" can
+    # restore the workspace to its pre-approval state.
+    if command == "signal-checkpoint":
+        return handle_checkpoint(redacted, cwd)
+
+    # Wave rollback: hard-reset to a prior checkpoint and delete any
+    # files the wave wrote that aren't tracked.
+    if command == "signal-rollback":
+        return handle_rollback(redacted, cwd)
+
+    # Sandbox status + toggle (Docker availability + .signalos/sandbox.json).
+    if command == "signal-sandbox":
+        return handle_sandbox(redacted, cwd)
+
     # Wave 1 / G0-1: signal-init --mode skip is a no-op, not a spec dump.
     if command == "signal-init":
         stripped = strip_context_arg(redacted)
@@ -296,6 +313,25 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
 
     if command in {"signal-qa", "signal-qa-only"}:
         return [command, *cleaned_args]
+
+    # /signal-orchestrate and /signal-build both reach the parallel wave runner.
+    # The CLI subcommand is `orchestrate` (no signal- prefix), so we translate.
+    # /signal-build is treated as an alias for /signal-orchestrate -- the
+    # signal-build spec describes "Phase 3 build runs Build×N parallel agents"
+    # which is exactly what orchestrate does. Until a dedicated TDD-loop
+    # executor lands, build == orchestrate of the current wave's plan.
+    if command in {"signal-orchestrate", "signal-build"}:
+        return ["orchestrate", *cleaned_args]
+
+    # /signal-sign G0..G5 -> `signalos sign G<n>` (the gate-signing CLI)
+    if command == "signal-sign":
+        return ["sign", *cleaned_args]
+
+    # /signal-harness call|status|abort -> `signalos harness <action>`
+    if command == "signal-harness":
+        if cleaned_args and cleaned_args[0] in {"call", "status", "abort"}:
+            return ["harness", *cleaned_args]
+        return None
 
     direct = {
         "signal-learn",
@@ -460,6 +496,256 @@ def brain_add(text: str, entry_type: str) -> dict:
     if rc != 0:
         raise RuntimeError(redact_text((err_text or out or f"brain put exited {rc}").strip()))
     return redact_response(json.loads(out)) if out.strip() else {"text": text, "type": entry_type}
+
+
+# ---------------------------------------------------------------------------
+# Wave checkpoint + rollback (#3: "Undo Wave")
+#
+# Before a wave runs, the UI calls /signal-checkpoint to capture the
+# current HEAD SHA. After the wave, the user can click "Rollback wave"
+# which calls /signal-rollback. Rollback resets the workspace to the
+# captured SHA and deletes any files the wave wrote that aren't tracked.
+#
+# Audit-trail integrity: we do NOT delete wave_started / task_completed
+# entries. We APPEND a wave_rolled_back entry that includes the SHA we
+# returned to and the file count we removed. The original history stays.
+# ---------------------------------------------------------------------------
+
+def _checkpoint_dir(cwd: str) -> str:
+    return os.path.join(cwd, ".signalos", "wave-checkpoints")
+
+
+def _checkpoint_path(cwd: str, wave_id: str) -> str:
+    return os.path.join(_checkpoint_dir(cwd), f"wave-{wave_id}.json")
+
+
+def _run_git(args: list[str], cwd: str) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            shell=False,
+        )
+        return (proc.returncode, proc.stdout or "", proc.stderr or "")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return (127, "", str(exc))
+
+
+def _append_audit(cwd: str, entry: dict) -> None:
+    """Append a JSON line to .signalos/AUDIT_TRAIL.jsonl. Creates the
+    file if missing; never overwrites existing entries (we mark events,
+    we don't rewrite history)."""
+    audit_dir = os.path.join(cwd, ".signalos")
+    os.makedirs(audit_dir, exist_ok=True)
+    audit_path = os.path.join(audit_dir, "AUDIT_TRAIL.jsonl")
+    entry = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **entry,
+    }
+    with open(audit_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def _parse_kv_args(args: list[str]) -> dict[str, str]:
+    """Parse --key value pairs into a dict. Anything not a --flag is
+    silently ignored."""
+    out: dict[str, str] = {}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--") and i + 1 < len(args):
+            out[a[2:]] = args[i + 1]
+            i += 2
+        else:
+            i += 1
+    return out
+
+
+def handle_checkpoint(args: list[str], cwd: str) -> str:
+    """Capture pre-wave HEAD SHA. Usage: signal-checkpoint --wave <id>"""
+    kv = _parse_kv_args(args)
+    wave_id = kv.get("wave", "?")
+
+    rc, sha_out, err_text = _run_git(["rev-parse", "HEAD"], cwd)
+    if rc != 0:
+        return json.dumps({
+            "ok": False,
+            "error": f"git rev-parse HEAD failed: {err_text.strip() or 'not a git repo?'}",
+        })
+    sha = sha_out.strip()
+    if not sha:
+        return json.dumps({"ok": False, "error": "empty HEAD SHA"})
+
+    os.makedirs(_checkpoint_dir(cwd), exist_ok=True)
+    checkpoint = {
+        "wave": wave_id,
+        "sha": sha,
+        "started_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "files_written": [],
+    }
+    with open(_checkpoint_path(cwd, wave_id), "w", encoding="utf-8") as fh:
+        json.dump(checkpoint, fh, indent=2)
+
+    _append_audit(cwd, {
+        "kind": "wave_checkpoint",
+        "wave": wave_id,
+        "sha": sha,
+    })
+    return json.dumps({"ok": True, "sha": sha, "wave": wave_id})
+
+
+def handle_rollback(args: list[str], cwd: str) -> str:
+    """Reset workspace to a captured checkpoint. Usage:
+        signal-rollback --wave <id> [--files <comma-separated-paths>]
+    Returns JSON with {ok, sha, files_deleted, note}.
+    """
+    kv = _parse_kv_args(args)
+    wave_id = kv.get("wave", "?")
+    explicit_files: list[str] = []
+    if "files" in kv:
+        explicit_files = [f.strip() for f in kv["files"].split(",") if f.strip()]
+
+    cp_path = _checkpoint_path(cwd, wave_id)
+    if not os.path.isfile(cp_path):
+        return json.dumps({
+            "ok": False,
+            "error": (
+                f"no checkpoint found for wave {wave_id}. The wave must "
+                f"have been approved BEFORE this app version (which adds "
+                f"checkpointing). Cannot roll back without a target SHA."
+            ),
+        })
+
+    try:
+        with open(cp_path, "r", encoding="utf-8") as fh:
+            checkpoint = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return json.dumps({"ok": False, "error": f"checkpoint corrupt: {exc}"})
+
+    sha = checkpoint.get("sha")
+    if not sha:
+        return json.dumps({"ok": False, "error": "checkpoint missing sha"})
+
+    # 1. Verify the SHA still exists (not garbage-collected).
+    rc, _, err_text = _run_git(["cat-file", "-e", sha], cwd)
+    if rc != 0:
+        return json.dumps({
+            "ok": False,
+            "error": (
+                f"checkpoint SHA {sha[:8]} no longer reachable from this "
+                f"repo (was it force-pushed away or garbage-collected?). "
+                f"Rollback aborted; nothing changed."
+            ),
+        })
+
+    # 2. Hard reset to the captured SHA. This wipes tracked-file changes
+    #    but leaves untracked files alone -- those we handle next.
+    rc, _, err_text = _run_git(["reset", "--hard", sha], cwd)
+    if rc != 0:
+        return json.dumps({
+            "ok": False,
+            "error": f"git reset --hard {sha[:8]} failed: {err_text.strip()}",
+        })
+
+    # 3. Delete the wave's untracked files. We prefer the explicit list
+    #    (from approvePlan, which knows what the wave wrote) but fall
+    #    back to the checkpoint's recorded list, then to git's view of
+    #    untracked files inside the workspace (last resort).
+    candidates = explicit_files or list(checkpoint.get("files_written") or [])
+    deleted: list[str] = []
+    for rel in candidates:
+        if not rel or rel.startswith("/") or ".." in rel.replace("\\", "/").split("/"):
+            continue  # path-traversal guard
+        abs_path = os.path.join(cwd, rel)
+        try:
+            if os.path.isfile(abs_path):
+                os.remove(abs_path)
+                deleted.append(rel)
+        except OSError:
+            continue
+
+    _append_audit(cwd, {
+        "kind": "wave_rolled_back",
+        "wave": wave_id,
+        "reset_to_sha": sha,
+        "files_deleted": deleted,
+        "files_requested": len(candidates),
+    })
+
+    return json.dumps({
+        "ok": True,
+        "wave": wave_id,
+        "sha": sha,
+        "files_deleted": deleted,
+        "note": (
+            f"Reset workspace to {sha[:8]}. Deleted {len(deleted)} of "
+            f"{len(candidates)} wave-written file(s). Untracked files "
+            f"the wave didn't record may remain -- run `git status` to "
+            f"see what's left."
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Sandbox toggle + status (#3: containerized execution)
+#
+# /signal-sandbox status              -> { ok, docker_available, config }
+# /signal-sandbox enable [--image-js X] [--image-py Y]   -> set enabled=true
+# /signal-sandbox disable             -> set enabled=false
+# ---------------------------------------------------------------------------
+
+def handle_sandbox(args: list[str], cwd: str) -> str:
+    """UI bridge for the sandboxed-execution settings + capability probe."""
+    # Lazy import so the IPC server doesn't pull signalos_lib at startup
+    # (cold-start cost) when nobody asks for sandbox state.
+    from signalos_lib.sandbox import (
+        docker_available,
+        get_sandbox_config,
+        set_sandbox_config,
+    )
+
+    subcommand = args[0] if args else "status"
+    kv = _parse_kv_args(args[1:] if args else [])
+    root = Path(cwd)
+
+    if subcommand == "status":
+        return json.dumps({
+            "ok": True,
+            "docker_available": docker_available(),
+            "config": get_sandbox_config(root),
+        })
+
+    if subcommand == "enable":
+        patches: dict = {"enabled": True}
+        if "image-js" in kv:
+            patches["image_js"] = kv["image-js"]
+        if "image-py" in kv:
+            patches["image_py"] = kv["image-py"]
+        cfg = set_sandbox_config(root, **patches)
+        return json.dumps({
+            "ok": True,
+            "docker_available": docker_available(),
+            "config": cfg,
+        })
+
+    if subcommand == "disable":
+        cfg = set_sandbox_config(root, enabled=False)
+        return json.dumps({
+            "ok": True,
+            "docker_available": docker_available(),
+            "config": cfg,
+        })
+
+    return json.dumps({
+        "ok": False,
+        "error": (
+            f"Unknown signal-sandbox subcommand: {subcommand}. "
+            f"Use: status / enable / disable"
+        ),
+    })
 
 
 def audit_list(limit: int) -> list[dict]:

@@ -1,7 +1,9 @@
-import { secretsList } from '../../state';
+import { secretsList, revealedSecrets, copiedSecret } from '../../state';
 
 export function VaultView() {
   const list = secretsList.value;
+  const revealed = revealedSecrets.value;
+  const copied = copiedSecret.value;
   const n = list.length;
   const heroTx = n === 0 ? "No secrets stored yet" : n === 1 ? "One secret safely sealed" : n + " secrets safely sealed";
 
@@ -30,7 +32,7 @@ export function VaultView() {
               <h3>Project keys</h3>
               <button className="btn btn-soft" onClick={() => window.openAddSecret()}><i className="ti ti-plus"></i> Add secret</button>
             </div>
-            
+
             {list.length === 0 ? (
               <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ink-3)', fontSize: '13px' }}>
                 No secrets yet. Click Add secret to store your first key.
@@ -38,15 +40,19 @@ export function VaultView() {
             ) : (
               list.map((s, i) => {
                 const name = s.name || s.key || "";
+                const isRevealed = name in revealed;
+                const displayValue = isRevealed ? revealed[name] : "••••••••••••••••";
+                const eyeIcon = isRevealed ? 'ti-eye-off' : 'ti-eye';
+                const copyIcon = copied === name ? 'ti-check' : 'ti-copy';
                 return (
                   <div className="srow" data-secret-name={name} key={i}>
                     <div className="s-ic"><i className="ti ti-key"></i></div>
                     <div className="s-info"><div className="s-nm">{name}</div><div className="s-meta">{s.file || ".env.local"}</div></div>
-                    <div className="s-val">••••••••••••••••</div>
+                    <div className="s-val">{displayValue}</div>
                     <div className="s-act">
-                      <div className="ico" onClick={(e) => window.toggleSecret(e.currentTarget)} aria-label="Reveal"><i className="ti ti-eye"></i></div>
-                      <div className="ico" onClick={(e) => window.copySecret(e.currentTarget)} aria-label="Copy"><i className="ti ti-copy"></i></div>
-                      <div className="ico" onClick={(e) => window.deleteSecret(e.currentTarget)} aria-label="Delete"><i className="ti ti-trash"></i></div>
+                      <div className="ico" onClick={() => window.toggleSecret(name)} aria-label="Reveal"><i className={`ti ${eyeIcon}`}></i></div>
+                      <div className="ico" onClick={() => window.copySecret(name)} aria-label="Copy"><i className={`ti ${copyIcon}`}></i></div>
+                      <div className="ico" onClick={() => window.deleteSecret(name)} aria-label="Delete"><i className="ti ti-trash"></i></div>
                     </div>
                   </div>
                 );

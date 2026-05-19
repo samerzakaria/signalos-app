@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,47 @@ _WORKTREE_MANAGER = "core/execution/build/worktree-manager.sh"
 
 # AMD-CORE-012: task timeout (T1)
 _DEFAULT_TASK_TIMEOUT = 3600  # seconds; override with SIGNALOS_TASK_TIMEOUT_SECS
+
+
+# ---------------------------------------------------------------------------
+# Progress emission for the desktop UI
+# ---------------------------------------------------------------------------
+#
+# When this module is invoked via signalos_ipc_server's run_core_cli, stdout
+# is captured into a StringIO buffer and returned as the command output.
+# That means normal `sys.stdout.write` does NOT reach the Rust-side parser
+# which only sees sidecar process stdout.
+#
+# To stream per-task progress to the UI in real time, we write directly to
+# `sys.__stdout__` (the original process stdout, bypassing redirect_stdout).
+# Rust's CommandEvent::Stdout handler parses each line and forwards
+# `kind: "progress"` JSON as a `sidecar:progress` Tauri event, which the
+# frontend already listens for (services/orchestratorEvents.ts).
+#
+# Existing PhaseContract events from signalos_ipc_server.py use the same
+# JSON shape, so the frontend has one event handler for everything.
+
+def _emit_task_progress(wave_id: str, task_id: str, state: str, detail: str | None = None) -> None:
+    """Emit a per-task progress event to the real process stdout.
+
+    Frontend correlates these to plan card tasks via phase="orchestrate"
+    and substep=task_id.
+    """
+    payload = {
+        "id": f"orchestrate-{wave_id}",
+        "kind": "progress",
+        "phase": "orchestrate",
+        "substep": task_id,
+        "state": state,  # "running" | "done" | "error"
+        "detail": detail,
+        "ts": int(time.time() * 1000),
+    }
+    try:
+        sys.__stdout__.write(json.dumps(payload) + "\n")
+        sys.__stdout__.flush()
+    except Exception:
+        # Never let progress emission crash the orchestrator
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +106,61 @@ def _state_file(root: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Worktree-manager shell-outs
 # ---------------------------------------------------------------------------
+
+def _bash_available() -> bool:
+    """Return True if `bash` resolves to a working shell on this machine.
+
+    On Windows this is typically Git Bash (C:/Program Files/Git/bin/bash.exe);
+    a missing or non-functional bash falls back to no-worktree mode.
+    """
+    import shutil
+    if shutil.which("bash") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", "echo ok"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return proc.returncode == 0 and "ok" in (proc.stdout or "")
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _tasks_from_plan(plan_path: Path, wave_id: str) -> list[dict[str, Any]]:
+    """No-worktree fallback: load tasks straight from PLAN.tasks.yaml.
+
+    Used when bash isn't available (Windows without Git Bash) or when
+    the user passes --no-worktrees. The orchestrator runs tasks
+    sequentially in the workspace root rather than in isolated git
+    worktrees -- less safe, but unblocks the platform.
+    """
+    try:
+        from signalos_lib.plan import load_tasks
+        doc = load_tasks(plan_path)
+    except Exception as exc:
+        sys.stdout.write(f"[orchestrate] Could not load {plan_path}: {exc}\n")
+        return []
+
+    out: list[dict[str, Any]] = []
+    for t in doc.tasks:
+        if t.wave and str(t.wave) != str(wave_id):
+            # Skip tasks tagged with a different wave
+            continue
+        out.append({
+            "task": t.id,
+            "branch": t.branch or f"task-{t.id}",
+            "step_id": t.id,
+            "wave": t.wave or wave_id,
+            "title": t.title,
+            "description": t.description,
+            "files": list(t.files),
+            "tier": t.tier,
+            "depends_on": list(t.depends_on),
+            "skills": list(t.skills),
+            "previous_failure": t.previous_failure,
+        })
+    return out
+
 
 def _run_wm(root: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
     wm = _worktree_manager(root)
@@ -103,6 +199,629 @@ def _read_tasks(root: Path) -> list[dict[str, Any]]:
 # Step execution for a single worktree task
 # ---------------------------------------------------------------------------
 
+_FILE_BLOCK_RE = re.compile(
+    r"^[#`>\-\s*]*?(?:filepath|FILE|path)\s*:\s*([^\n\r`]+?)\s*$\n+```(?:[a-zA-Z0-9+\-_]*)\n([\s\S]*?)\n```",
+    re.MULTILINE,
+)
+
+
+def _extract_files_from_response(response: str) -> list[tuple[str, str]]:
+    """Parse a harness LLM response into [(path, content), ...].
+
+    Looks for blocks shaped like:
+
+        ### filepath: src/components/TodoList.tsx
+        ```tsx
+        ...code...
+        ```
+
+    or with `FILE:` / `path:` headers, with or without code-fence language tag.
+    Returns the matches in document order. An empty list means the LLM did
+    not emit a structured response and the caller should not write anything.
+    """
+    if not response:
+        return []
+    out: list[tuple[str, str]] = []
+    for match in _FILE_BLOCK_RE.finditer(response):
+        path = match.group(1).strip().strip("`'\"")
+        content = match.group(2)
+        if not path:
+            continue
+        # Reject paths that try to escape the workspace.
+        if ".." in path.split("/") or path.startswith("/") or (len(path) > 2 and path[1] == ":"):
+            continue
+        # Trim a leading newline if the regex captured one.
+        if content.startswith("\n"):
+            content = content[1:]
+        out.append((path, content))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Dependency auto-detection (#3: auto-deps)
+#
+# The LLM frequently emits code that imports a package without remembering
+# to add it to package.json (or requirements.txt). Static-scan the written
+# files for top-level imports, diff against the workspace's declared deps,
+# and write .signalos/missing-deps.json. The preview step reads this file
+# before `npm install` and adds the missing entries.
+# ---------------------------------------------------------------------------
+
+# ESM/CJS bare-import: `import X from 'pkg'`, `import { x } from "pkg"`,
+# `import 'pkg'`, `require('pkg')`. Captures the package specifier.
+_JS_IMPORT_RE = re.compile(
+    r"""(?:^|\s)
+        (?: import \s+ (?:[^'"]+? \s+ from \s+ )?
+          | require \s* \(
+        )
+        ['"]([^'"]+)['"]""",
+    re.VERBOSE | re.MULTILINE,
+)
+
+# Built-in Node modules that should never be flagged as missing deps.
+_NODE_BUILTINS = frozenset({
+    "assert", "buffer", "child_process", "cluster", "console", "crypto",
+    "dgram", "dns", "events", "fs", "http", "https", "net", "os", "path",
+    "process", "querystring", "readline", "stream", "string_decoder",
+    "timers", "tls", "tty", "url", "util", "v8", "vm", "zlib", "worker_threads",
+    "fs/promises", "node:fs", "node:path", "node:os", "node:crypto",
+    "node:child_process", "node:url", "node:util",
+})
+
+
+def _scan_js_imports(content: str) -> set[str]:
+    """Return the set of bare module specifiers imported by *content*.
+
+    Relative imports (`./`, `../`) and Node built-ins are excluded.
+    Scoped packages (`@scope/name`) and sub-paths (`pkg/sub`) are
+    reduced to their installable package name.
+    """
+    out: set[str] = set()
+    for m in _JS_IMPORT_RE.finditer(content):
+        spec = m.group(1).strip()
+        if not spec or spec.startswith(".") or spec.startswith("/"):
+            continue
+        # `node:fs` and `fs/promises` style.
+        if spec.startswith("node:") or spec in _NODE_BUILTINS:
+            continue
+        if "/" in spec and not spec.startswith("@"):
+            # `pkg/sub` -> `pkg`
+            spec = spec.split("/", 1)[0]
+        elif spec.startswith("@") and spec.count("/") >= 1:
+            # `@scope/name/sub` -> `@scope/name`
+            parts = spec.split("/")
+            spec = "/".join(parts[:2])
+        if spec in _NODE_BUILTINS:
+            continue
+        out.add(spec)
+    return out
+
+
+def _declared_npm_deps(root: Path) -> set[str]:
+    """Union of dependencies + devDependencies from the workspace's
+    package.json. Empty set if package.json is absent or malformed."""
+    pkg = root / "package.json"
+    if not pkg.is_file():
+        return set()
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    out: set[str] = set()
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        section = data.get(key)
+        if isinstance(section, dict):
+            out.update(section.keys())
+    return out
+
+
+def _record_missing_deps(root: Path, written_files: list[str]) -> list[str]:
+    """Scan *written_files* (paths relative to *root*) for JS imports
+    that aren't in package.json. Append any new ones to
+    .signalos/missing-deps.json (a deduplicated JSON array).
+
+    Returns the list of newly-discovered missing deps from THIS task so
+    callers can surface them in audit / progress.
+    """
+    # No package.json -> not a Node workspace (or pre-init); we have no
+    # baseline to diff against and flagging every import would be noise.
+    if not (root / "package.json").is_file():
+        return []
+
+    js_exts = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+    imported: set[str] = set()
+    for rel in written_files:
+        target = root / rel
+        if target.suffix.lower() not in js_exts or not target.is_file():
+            continue
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        imported |= _scan_js_imports(content)
+    if not imported:
+        return []
+
+    declared = _declared_npm_deps(root)
+    missing = sorted(imported - declared)
+    if not missing:
+        return []
+
+    # Merge with any pre-existing record so the preview step has a
+    # cumulative list across the wave.
+    record_path = root / ".signalos" / "missing-deps.json"
+    existing: list[str] = []
+    if record_path.is_file():
+        try:
+            existing = json.loads(record_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except (OSError, ValueError):
+            existing = []
+    new_set = set(existing) | set(missing)
+    merged = sorted(new_set)
+    truly_new = sorted(set(missing) - set(existing))
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return truly_new
+
+
+def _append_files_to_wave_checkpoint(root: Path, wave_id: str, new_files: list[str]) -> None:
+    """Merge *new_files* into the wave's checkpoint files_written list.
+
+    The checkpoint is created by the IPC server's handle_checkpoint
+    before the wave starts; we just update its files_written array as
+    tasks complete so the rollback handler knows what to delete.
+    Missing-checkpoint and corrupt-JSON cases are handled silently --
+    rollback for waves without a checkpoint just won't have the file
+    list (it's already a fallback path on the rollback side).
+    """
+    cp = root / ".signalos" / "wave-checkpoints" / f"wave-{wave_id}.json"
+    if not cp.is_file():
+        return
+    try:
+        data = json.loads(cp.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    existing = data.get("files_written") or []
+    if not isinstance(existing, list):
+        existing = []
+    merged = sorted(set(existing) | set(new_files))
+    data["files_written"] = merged
+    try:
+        cp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _write_extracted_files(root: Path, files: list[tuple[str, str]]) -> list[str]:
+    """Write each (path, content) tuple under *root*, creating parent dirs.
+
+    Returns the list of paths written. Skips paths that resolve outside the
+    workspace root (defense-in-depth on top of the regex check).
+    """
+    written: list[str] = []
+    root_resolved = root.resolve()
+    for rel, content in files:
+        try:
+            target = (root / rel).resolve()
+            # Reject paths that escape the workspace root.
+            try:
+                target.relative_to(root_resolved)
+            except ValueError:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            written.append(rel)
+        except OSError:
+            # Individual file failures don't abort the whole task -- record
+            # what we managed to write.
+            continue
+    return written
+
+
+_SKILL_BUDGET_CHARS = 2800
+
+
+def _load_skill(root: Path, relative_path: str) -> str:
+    """Read a SKILL.md from the workspace, trimmed to _SKILL_BUDGET_CHARS.
+
+    Returns empty string if the file isn't present (project not signal-init'd
+    yet, or skill not bundled). Per-skill budget keeps the per-task prompt
+    under control when multiple skills get loaded.
+    """
+    p = root / relative_path
+    if not p.is_file():
+        return ""
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if len(text) > _SKILL_BUDGET_CHARS:
+        return text[:_SKILL_BUDGET_CHARS] + "\n\n[...skill trimmed for prompt budget...]\n"
+    return text
+
+
+# Catalog of skill keys the plan layer may attach explicitly to a task.
+# Must stay in sync with VALID_SKILL_KEYS in src/services/signalosPrompt.ts.
+# Each entry maps key -> (display-label, workspace-relative SKILL.md path).
+#
+# All 34 bundle SKILL.md files are routable. The first 15 are "deliverable"
+# skills (have a structured-output artifact validator in skill_validators.py);
+# the rest are context / process skills that get injected into prompts when
+# relevant but don't have enforcement gates -- their value is the guidance
+# they put in front of the LLM, not a post-write check.
+_SKILL_KEY_TO_PATH: dict[str, tuple[str, str]] = {
+    # --- Build pillar ----------------------------------------------------
+    "test-driven-development":      ("Test-Driven Development",        "core/execution/build/test-driven-development/SKILL.md"),
+    "test-generation":              ("Test Generation",                 "core/execution/build/test-generation/SKILL.md"),
+    "e2e-testing":                  ("End-to-End Browser Testing",      "core/execution/build/e2e-testing/SKILL.md"),
+    "systematic-debugging":         ("Systematic Debugging",            "core/execution/build/systematic-debugging/SKILL.md"),
+    "verification-before-completion": ("Verification Before Completion", "core/execution/build/verification-before-completion/SKILL.md"),
+    # --- Plan pillar -----------------------------------------------------
+    "writing-plans":                ("Writing Plans",                   "core/execution/plan/writing-plans/SKILL.md"),
+    "executing-plans":              ("Executing Plans",                 "core/execution/plan/executing-plans/SKILL.md"),
+    # --- Review pillar ---------------------------------------------------
+    "comprehensive-code-review":    ("Comprehensive Code Review",       "core/execution/review/comprehensive-code-review/SKILL.md"),
+    "receiving-code-review":        ("Receiving Code Review",           "core/execution/review/receiving-code-review/SKILL.md"),
+    "requesting-code-review":       ("Requesting Code Review",          "core/execution/review/requesting-code-review/SKILL.md"),
+    # --- Governance ------------------------------------------------------
+    "security-audit":               ("Security Audit",                  "core/governance/SecurityAudit/SKILL.md"),
+    "retro-run":                    ("Retro Run",                       "core/governance/Retro/retro-run/SKILL.md"),
+    "retrospective-analyze":        ("Retrospective Analyze",           "core/governance/Retro/retrospective-analyze/SKILL.md"),
+    # --- Subagents -------------------------------------------------------
+    "subagent-driven-development":  ("Subagent-Driven Development",     "core/execution/subagents/subagent-driven-development/SKILL.md"),
+    "dispatching-parallel-agents":  ("Dispatching Parallel Agents",     "core/execution/subagents/dispatching-parallel-agents/SKILL.md"),
+    # --- Worktree --------------------------------------------------------
+    "using-git-worktrees":          ("Using Git Worktrees",             "core/execution/worktree/using-git-worktrees/SKILL.md"),
+    "finishing-a-development-branch": ("Finishing a Development Branch", "core/execution/worktree/finishing-a-development-branch/SKILL.md"),
+    # --- Cognitive / process skills (advisory text injection) -----------
+    "belief-seed-generation":       ("Belief Seed Generation",          "core/execution/skills/belief-seed-generation/SKILL.md"),
+    "brainstorming":                ("Brainstorming",                   "core/execution/skills/brainstorming/SKILL.md"),
+    "compress-context":             ("Compress Context",                "core/execution/skills/compress-context/SKILL.md"),
+    "context":                      ("Context Loading",                 "core/execution/skills/context/SKILL.md"),
+    "design":                       ("Design",                          "core/execution/skills/design/SKILL.md"),
+    "existing-product-kit":         ("Existing Product Kit",            "core/execution/skills/existing-product-kit/SKILL.md"),
+    "headless-execution":           ("Headless Execution",              "core/execution/skills/headless-execution/SKILL.md"),
+    "intent-router":                ("Intent Router",                   "core/execution/skills/intent-router/SKILL.md"),
+    "memory":                       ("Memory",                          "core/execution/skills/memory/SKILL.md"),
+    "observability-dashboard":      ("Observability Dashboard",         "core/execution/skills/observability-dashboard/SKILL.md"),
+    "operator-tooling":             ("Operator Tooling",                "core/execution/skills/operator-tooling/SKILL.md"),
+    "parallel-orchestration":       ("Parallel Orchestration",          "core/execution/skills/parallel-orchestration/SKILL.md"),
+    "plugin-registry":              ("Plugin Registry",                 "core/execution/skills/plugin-registry/SKILL.md"),
+    "product-surface-mapping":      ("Product Surface Mapping",         "core/execution/skills/product-surface-mapping/SKILL.md"),
+    "review":                       ("Review (lightweight)",            "core/execution/skills/review/SKILL.md"),
+    "session-journal":              ("Session Journal",                 "core/execution/skills/session-journal/SKILL.md"),
+    "stakeholder-interview":        ("Stakeholder Interview",           "core/execution/skills/stakeholder-interview/SKILL.md"),
+    "task-schema":                  ("Task Schema",                     "core/execution/skills/task-schema/SKILL.md"),
+}
+
+
+def _relevant_skills(task: dict[str, Any], root: Path) -> list[tuple[str, str]]:
+    """Pick which SKILL.md docs apply to *task* and load their content.
+
+    Skills come from two sources, unioned (explicit wins on order):
+      1. Explicit ``task["skills"]`` keys set by the planner (chat AI tags
+         tasks with skills like "security-audit", "test-generation").
+      2. Keyword regex fallback against title + description, for plans
+         that don't carry explicit tags.
+
+    Verification skill is always included because "did this actually work"
+    applies to every task.
+    """
+    title = (task.get("title") or "").lower()
+    desc  = (task.get("description") or "").lower()
+    haystack = f"{title} {desc}"
+
+    candidates: list[tuple[str, str, str]] = [
+        # (keyword regex, label, path-from-workspace).
+        # Covers all 34 routable skills. Order matters only for the
+        # display label; de-dup is by SKILL.md path further down.
+        # --- Build ---
+        ("tdd|red.green.refactor|write tests? first",
+         "Test-Driven Development",
+         "core/execution/build/test-driven-development/SKILL.md"),
+        ("test|spec|vitest|jest|pytest|coverage|test suite",
+         "Test Generation",
+         "core/execution/build/test-generation/SKILL.md"),
+        ("e2e|end.?to.?end|playwright|cypress|browser test|headless|smoke test",
+         "End-to-End Browser Testing",
+         "core/execution/build/e2e-testing/SKILL.md"),
+        ("debug|investigate|reproduce|bug|crash|stack\\s*trace|regression",
+         "Systematic Debugging",
+         "core/execution/build/systematic-debugging/SKILL.md"),
+        ("verify|verification|self.check|self.review|sanity check",
+         "Verification Before Completion",
+         "core/execution/build/verification-before-completion/SKILL.md"),
+        # --- Plan ---
+        ("write.*plan|decompose|breakdown|design the architecture",
+         "Writing Plans",
+         "core/execution/plan/writing-plans/SKILL.md"),
+        ("execute.*plan|dispatch|run the plan|kick off",
+         "Executing Plans",
+         "core/execution/plan/executing-plans/SKILL.md"),
+        # --- Review ---
+        ("code review|review pr|review this|review the changes",
+         "Comprehensive Code Review",
+         "core/execution/review/comprehensive-code-review/SKILL.md"),
+        ("address.*review|address.*feedback|address.*comments|respond.*review|incorporate.*comments|incorporate.*feedback",
+         "Receiving Code Review",
+         "core/execution/review/receiving-code-review/SKILL.md"),
+        ("request.*review|open.*pr|prepare.*review",
+         "Requesting Code Review",
+         "core/execution/review/requesting-code-review/SKILL.md"),
+        # --- Governance ---
+        ("security|vulnerab|injection|xss|csrf|owasp|stride|threat|auth\\w*|password|secret",
+         "Security Audit",
+         "core/governance/SecurityAudit/SKILL.md"),
+        ("retro|post.?mortem|lessons learned",
+         "Retro Run",
+         "core/governance/Retro/retro-run/SKILL.md"),
+        ("analyze.*retro|retrospective.*analyze|trend.*retro",
+         "Retrospective Analyze",
+         "core/governance/Retro/retrospective-analyze/SKILL.md"),
+        # --- Subagents ---
+        ("subagent|sub.agent|delegate",
+         "Subagent-Driven Development",
+         "core/execution/subagents/subagent-driven-development/SKILL.md"),
+        ("parallel agents?|dispatch.*agents?|fan.out",
+         "Dispatching Parallel Agents",
+         "core/execution/subagents/dispatching-parallel-agents/SKILL.md"),
+        # --- Worktree ---
+        ("worktree|isolated branch",
+         "Using Git Worktrees",
+         "core/execution/worktree/using-git-worktrees/SKILL.md"),
+        ("merge.*branch|finish.*branch|cleanup.*worktree|retire.*branch",
+         "Finishing a Development Branch",
+         "core/execution/worktree/finishing-a-development-branch/SKILL.md"),
+        # --- Cognitive / process ---
+        ("belief|hypothesis seed|prior assumption",
+         "Belief Seed Generation",
+         "core/execution/skills/belief-seed-generation/SKILL.md"),
+        ("brainstorm|ideation|divergent thinking",
+         "Brainstorming",
+         "core/execution/skills/brainstorming/SKILL.md"),
+        ("compress.*context|trim.*context|summarize.*context",
+         "Compress Context",
+         "core/execution/skills/compress-context/SKILL.md"),
+        ("load.*context|gather.*context|read.*context",
+         "Context Loading",
+         "core/execution/skills/context/SKILL.md"),
+        ("design.*system|architecture|tech.?spec",
+         "Design",
+         "core/execution/skills/design/SKILL.md"),
+        ("existing.*product|brownfield|legacy",
+         "Existing Product Kit",
+         "core/execution/skills/existing-product-kit/SKILL.md"),
+        ("headless|non.interactive|ci mode",
+         "Headless Execution",
+         "core/execution/skills/headless-execution/SKILL.md"),
+        ("intent.*rout|route the intent|classify.*intent",
+         "Intent Router",
+         "core/execution/skills/intent-router/SKILL.md"),
+        ("memory|recall|long.term context",
+         "Memory",
+         "core/execution/skills/memory/SKILL.md"),
+        ("observability|metrics dashboard|telemetry view",
+         "Observability Dashboard",
+         "core/execution/skills/observability-dashboard/SKILL.md"),
+        ("operator|sre|admin tool",
+         "Operator Tooling",
+         "core/execution/skills/operator-tooling/SKILL.md"),
+        ("parallel orchestration|coordinate parallel|wave parallel",
+         "Parallel Orchestration",
+         "core/execution/skills/parallel-orchestration/SKILL.md"),
+        ("plugin|extension point|registry",
+         "Plugin Registry",
+         "core/execution/skills/plugin-registry/SKILL.md"),
+        ("product surface|surface mapping|user surface",
+         "Product Surface Mapping",
+         "core/execution/skills/product-surface-mapping/SKILL.md"),
+        ("session journal|session log|build journal",
+         "Session Journal",
+         "core/execution/skills/session-journal/SKILL.md"),
+        ("stakeholder|interview.*user|user research",
+         "Stakeholder Interview",
+         "core/execution/skills/stakeholder-interview/SKILL.md"),
+        ("task schema|plan schema|tasks?\\.yaml",
+         "Task Schema",
+         "core/execution/skills/task-schema/SKILL.md"),
+    ]
+
+    seen_paths: set[str] = set()
+    out: list[tuple[str, str]] = []
+
+    # 1) Explicit skills from the plan -- ordered first so the agent reads
+    #    the planner's intentional choices before the keyword fallback.
+    raw_skills = task.get("skills") or []
+    if isinstance(raw_skills, list):
+        for key in raw_skills:
+            if not isinstance(key, str):
+                continue
+            entry = _SKILL_KEY_TO_PATH.get(key.strip().lower())
+            if entry is None:
+                # Unknown key -- silent skip (forward-compat with future
+                # bundle additions; JS validator already enforces the
+                # current catalog).
+                continue
+            label, path = entry
+            if path in seen_paths:
+                continue
+            content = _load_skill(root, path)
+            if content:
+                out.append((label, content))
+                seen_paths.add(path)
+            else:
+                # Catalog entry resolves to a path that's not in the
+                # workspace. This means the user's workspace has an
+                # older bundle snapshot than the app. Surface a clear
+                # remediation hint to stdout (orchestrator log) so the
+                # user discovers the staleness instead of silently
+                # getting a less-informed prompt.
+                sys.stdout.write(
+                    f"[orchestrate] WARN: task requested skill '{key}' but "
+                    f"{path} is missing from the workspace. "
+                    f"Run `signalos init <workspace> --refresh-bundle` to "
+                    f"update bundled protocol files.\n"
+                )
+                seen_paths.add(path)
+
+    # 2) Keyword fallback for plans that don't tag tasks explicitly.
+    for pattern, label, path in candidates:
+        if path in seen_paths:
+            continue
+        if re.search(pattern, haystack):
+            content = _load_skill(root, path)
+            if content:
+                out.append((label, content))
+                seen_paths.add(path)
+
+    # 3) Always-on verification skill.
+    verification_path = "core/execution/build/verification-before-completion/SKILL.md"
+    if verification_path not in seen_paths:
+        verification = _load_skill(root, verification_path)
+        if verification:
+            out.append(("Verification Before Completion", verification))
+
+    return out
+
+
+_EXISTING_FILES_BUDGET = 50_000  # total bytes of existing-file context per task
+
+
+def _read_existing_files_context(root: Path, files: list[str]) -> str:
+    """Read the current on-disk contents of *files* under *root* and format
+    them for inclusion in the task prompt (iterative-refinement support).
+
+    Files that don't exist yet are silently skipped -- this is a hint, not
+    a prerequisite. Total injected bytes capped at _EXISTING_FILES_BUDGET
+    so a giant file doesn't blow the prompt budget.
+    """
+    if not files:
+        return ""
+    blocks: list[str] = []
+    spent = 0
+    for rel in files:
+        target = (root / rel)
+        try:
+            if not target.is_file():
+                continue
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if spent + len(text) > _EXISTING_FILES_BUDGET:
+            # Include a truncation marker and stop -- the LLM should still
+            # see SOMETHING for files that fit so it doesn't regenerate
+            # them blind.
+            remaining = _EXISTING_FILES_BUDGET - spent
+            if remaining > 200:
+                text = text[:remaining] + "\n\n[...truncated for prompt budget...]\n"
+            else:
+                continue
+        # Pick a reasonable code-fence language from the extension.
+        suffix = target.suffix.lstrip(".") or ""
+        blocks.append(f"### {rel}\n\n```{suffix}\n{text}\n```")
+        spent += len(text)
+        if spent >= _EXISTING_FILES_BUDGET:
+            break
+    if not blocks:
+        return ""
+    return (
+        "\n\nCurrent state of files you may modify (read these before "
+        "producing any new content -- preserve unrelated behaviour, fix only "
+        "what the task asks for):\n\n"
+        + "\n\n---\n\n".join(blocks)
+        + "\n\n---\n"
+    )
+
+
+def _build_task_prompt(task: dict[str, Any], root: Path | None = None) -> str:
+    """Build a structured prompt that instructs the LLM to emit files.
+
+    The prompt now includes (in order):
+      - Optional "previous attempt failed" section for retried tasks
+      - Task identity (id, title, branch, wave, tier, description)
+      - Declared file list
+      - Current contents of any declared files that already exist on disk
+        (iterative-refinement support: the LLM edits instead of regenerates)
+      - Matching SKILL.md docs from core/execution/{build,review,plan,worktree}
+        (loaded from the workspace at runtime so user-customized skills win)
+      - The mandatory output protocol (### filepath: ... fenced blocks)
+
+    The skill and existing-files sections are omitted when *root* is None.
+    """
+    task_id = task.get("task") or task.get("branch", "unknown")
+    title = task.get("title") or ""
+    description = task.get("description") or ""
+    files = task.get("files") or []
+    branch = task.get("branch", "")
+    wave = task.get("wave", "?")
+    tier = task.get("tier", "T2")
+    previous_failure = task.get("previous_failure") or ""
+
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(no specific files declared -- decide which files are needed)"
+
+    # Smart-retry context: previous failure prepended so the LLM sees it
+    # before anything else and adjusts its approach.
+    retry_section = ""
+    if previous_failure:
+        retry_section = (
+            f"\n## Previous attempt failed\n\n"
+            f"Reason: {previous_failure.strip()}\n\n"
+            f"Avoid repeating this failure mode. Read the task carefully "
+            f"and produce a different approach if needed.\n"
+        )
+
+    existing_section = ""
+    if root is not None:
+        existing_section = _read_existing_files_context(root, files)
+
+    skills_section = ""
+    if root is not None:
+        skills = _relevant_skills(task, root)
+        if skills:
+            blocks = []
+            for label, content in skills:
+                blocks.append(f"### {label}\n\n{content.strip()}")
+            skills_section = (
+                "\n\nApplicable SignalOS skills (consult before producing files):\n\n"
+                + "\n\n---\n\n".join(blocks)
+                + "\n\n---\n"
+            )
+
+    return (
+        f"You are SignalOS harness executing one task in wave {wave}.\n"
+        f"{retry_section}"
+        f"\nTask id: {task_id}\n"
+        f"Task title: {title}\n"
+        f"Branch: {branch}\n"
+        f"Trust tier: {tier}\n\n"
+        f"Description:\n{description or '(no description)'}\n\n"
+        f"Files to create or modify:\n{file_list}"
+        f"{existing_section}"
+        f"{skills_section}\n\n"
+        "Output format (MANDATORY):\n"
+        "- For each file you produce, emit a single block in this exact shape:\n"
+        "    ### filepath: <relative-path-from-workspace-root>\n"
+        "    ```<language>\n"
+        "    <full file contents>\n"
+        "    ```\n"
+        "- One block per file. Use the same shape even if the language is unknown.\n"
+        "- Do not paraphrase or summarise the file contents inside the block.\n"
+        "- After all file blocks, you may add a short prose summary (<= 3 lines).\n"
+        "- Do not invent files outside the declared list unless strictly necessary.\n"
+        "- Use forward slashes in paths. Paths must be relative to the workspace.\n"
+        "- Do not include code fences nested inside a file's content; use the\n"
+        "  outermost fence as the only one. If the file itself is markdown that\n"
+        "  contains code fences, use tildes (~~~) for the outer fence.\n"
+    )
+
+
 def _execute_task(
     task: dict[str, Any],
     root: Path,
@@ -111,38 +830,216 @@ def _execute_task(
     model: str,
     status_callback: Any,
 ) -> dict[str, Any]:
-    """Execute one task via run_step and return the result dict.
+    """Execute one task: prompt LLM via the harness, parse code blocks, write files.
 
-    Called from a ThreadPoolExecutor worker. Handles T2 pauses by
-    catching the pause condition and returning early with status='paused'.
+    Called from a ThreadPoolExecutor worker. The harness handles journal +
+    metrics emission via the hook scripts; this wrapper builds a structured
+    prompt and turns the LLM response into actual on-disk file writes so
+    "build me a todo app" actually produces code instead of just an audited
+    LLM call.
     """
     task_id = task.get("task") or task.get("branch", "unknown")
     branch  = task.get("branch", "")
     step_id = task.get("step_id") or branch or f"task-{task_id}"
 
-    # Build a minimal prompt for the task
-    prompt = (
-        f"Execute task '{task_id}' in branch '{branch}' for wave {task.get('wave', '?')}. "
-        f"This is a parallel worktree task. Complete the implementation and report status."
-    )
+    prompt = _build_task_prompt(task, root)
 
-    try:
-        result = harness_lib.run_step(
-            step_id=step_id,
-            prompt=prompt,
-            model=model,
-            session_id=session_id,
-            cwd=root,
-            intent=f"orchestrated wave task: {task_id}",
-            provider=provider,
+    # TDD-tagged tasks run through a two-phase red->green loop in
+    # tdd_runner. Every other task runs as a single LLM call.
+    from signalos_lib.tdd_runner import is_tdd_task, run_tdd_task
+
+    def _call_llm_closure(p: str) -> tuple[str, dict[str, Any]]:
+        try:
+            r = harness_lib.run_step(
+                step_id=step_id,
+                prompt=p,
+                model=model,
+                session_id=session_id,
+                cwd=root,
+                intent=f"orchestrated wave task: {task_id}",
+                provider=provider,
+            )
+        except Exception as exc:
+            r = {
+                "step_id": step_id,
+                "status": "failed",
+                "failure": str(exc),
+                "exit_code": 2,
+            }
+        # Pull the full response text so the TDD loop can hand it to
+        # extract_files. _read_harness_response returns the file text;
+        # if missing we use the preview as a fallback.
+        text = ""
+        if isinstance(r, dict) and r.get("status") == "completed":
+            text = _read_harness_response(root, session_id, r) or ""
+        return (text, r if isinstance(r, dict) else {"status": "failed"})
+
+    def _emit_tdd_progress(label: str, detail: str | None) -> None:
+        # Forward TDD phase events through the same progress channel
+        # the UI already listens on so the plan card can render
+        # "tdd-red", "tdd-red-run", "tdd-green-run", "tdd-done".
+        _emit_task_progress(
+            wave_id=str(task.get("wave") or "?"),
+            task_id=str(task_id),
+            state="running",
+            detail=f"{label}: {detail}" if detail else label,
         )
-    except Exception as exc:
-        result = {
-            "step_id": step_id,
-            "status": "failed",
-            "failure": str(exc),
-            "exit_code": 2,
-        }
+
+    if is_tdd_task(task):
+        result = run_tdd_task(
+            task=task,
+            root=root,
+            base_prompt=prompt,
+            call_llm=_call_llm_closure,
+            write_files=_write_extracted_files,
+            extract_files=_extract_files_from_response,
+            emit_progress=_emit_tdd_progress,
+        )
+    else:
+        try:
+            result = harness_lib.run_step(
+                step_id=step_id,
+                prompt=prompt,
+                model=model,
+                session_id=session_id,
+                cwd=root,
+                intent=f"orchestrated wave task: {task_id}",
+                provider=provider,
+            )
+        except Exception as exc:
+            result = {
+                "step_id": step_id,
+                "status": "failed",
+                "failure": str(exc),
+                "exit_code": 2,
+            }
+
+    # Parse the LLM's response and write files. The harness saved a trimmed
+    # response_preview; we need the full response for file extraction, which
+    # we re-read from the harness's call state.
+    # For TDD tasks, file writing already happened inside run_tdd_task and
+    # result["files_written"] is populated; we skip the re-extract path.
+    files_written: list[str] = list(result.get("files_written") or []) if isinstance(result, dict) else []
+    extraction_note: str | None = None
+    if not is_tdd_task(task) and isinstance(result, dict) and result.get("status") == "completed":
+        full_response = _read_harness_response(root, session_id, result)
+        if full_response:
+            extracted = _extract_files_from_response(full_response)
+            if extracted:
+                files_written = _write_extracted_files(root, extracted)
+                if files_written:
+                    extraction_note = f"wrote {len(files_written)} file(s)"
+                    # Update wave checkpoint with this task's files so the
+                    # rollback command can wipe them on user request.
+                    try:
+                        _append_files_to_wave_checkpoint(
+                            root,
+                            str(task.get("wave") or "?"),
+                            files_written,
+                        )
+                    except Exception as exc:  # pragma: no cover -- defensive
+                        sys.stdout.write(f"[orchestrate] checkpoint-append failed: {exc}\n")
+
+                    # Auto-deps: scan the just-written files for bare-module
+                    # imports that aren't in package.json. The preview path
+                    # reads .signalos/missing-deps.json before npm install.
+                    try:
+                        new_missing = _record_missing_deps(root, files_written)
+                        if new_missing:
+                            extraction_note += f"; flagged {len(new_missing)} missing npm dep(s)"
+                            sys.stdout.write(
+                                f"[orchestrate] auto-deps: discovered missing "
+                                f"package(s) on disk: {', '.join(new_missing)}. "
+                                f"Recorded in .signalos/missing-deps.json.\n"
+                            )
+                    except Exception as exc:  # pragma: no cover -- defensive
+                        sys.stdout.write(f"[orchestrate] auto-deps scan failed: {exc}\n")
+
+                    # E2E browser smoke (only when task is tagged
+                    # e2e-testing). This spawns the project's dev server
+                    # and runs Playwright headless against the localhost
+                    # URL. A failure (hydration crash, missing selector,
+                    # console error) converts the task to status=failed
+                    # with the smoke output as previous_failure for
+                    # smart-retry.
+                    try:
+                        from signalos_lib.e2e_runner import is_e2e_task, run_e2e_task
+                        if is_e2e_task(task):
+                            sys.stdout.write("[orchestrate] e2e: spawning dev server + Playwright smoke...\n")
+                            e2e = run_e2e_task(task, root)
+                            if e2e.get("skipped"):
+                                sys.stdout.write(f"[orchestrate] e2e: skipped ({e2e.get('log', '')[:200]})\n")
+                            elif not e2e["ok"]:
+                                sys.stdout.write(
+                                    "[orchestrate] e2e: smoke FAILED — "
+                                    + (e2e.get("failure") or "no detail")[:400] + "\n"
+                                )
+                                result = {
+                                    **result,
+                                    "status": "failed",
+                                    "failure": e2e["failure"],
+                                }
+                                extraction_note = f"{extraction_note}; e2e smoke failed"
+                            else:
+                                sys.stdout.write(
+                                    f"[orchestrate] e2e: OK ({e2e.get('url')}, "
+                                    f"{len(e2e.get('checkedSelectors', []))} selector(s) verified)\n"
+                                )
+                    except Exception as exc:  # pragma: no cover -- defensive
+                        sys.stdout.write(f"[orchestrate] e2e smoke crashed: {exc}\n")
+
+                    # Smart skill enforcement (#1): for each skill tagged on
+                    # this task, check the expected structured-output
+                    # artifact exists with the right shape. Violations
+                    # convert the task to failed and feed previous_failure
+                    # into the smart-retry channel so the next attempt
+                    # sees the exact problem.
+                    try:
+                        from signalos_lib.skill_validators import validate_skill_artifacts
+                        violations = validate_skill_artifacts(
+                            skills=task.get("skills"),
+                            task=task,
+                            root=root,
+                            written_files=files_written,
+                            task_response=full_response,
+                        )
+                        errors = [v for v in violations if v.severity == "error"]
+                        warnings = [v for v in violations if v.severity == "warning"]
+                        if warnings:
+                            sys.stdout.write(
+                                f"[orchestrate] skill-enforcement (warn): "
+                                + "; ".join(str(v) for v in warnings) + "\n"
+                            )
+                        if errors:
+                            failure_msg = (
+                                "Skill artifact violation(s):\n"
+                                + "\n".join(f"  - {v}" for v in errors)
+                            )
+                            result = {
+                                **result,
+                                "status": "failed",
+                                "failure": failure_msg,
+                            }
+                            extraction_note = f"{extraction_note}; {len(errors)} skill violation(s)"
+                            sys.stdout.write(
+                                f"[orchestrate] skill-enforcement (fail): "
+                                + "; ".join(str(v) for v in errors) + "\n"
+                            )
+                    except Exception as exc:  # pragma: no cover -- defensive
+                        sys.stdout.write(f"[orchestrate] skill validation crashed: {exc}\n")
+                else:
+                    extraction_note = "extracted file blocks but write failed"
+            else:
+                # LLM didn't follow the structured output protocol; mark the
+                # task as failed so the user sees it. The response_preview
+                # is still saved for inspection.
+                result = {**result, "status": "failed", "failure": "no file blocks in response"}
+                extraction_note = "LLM response had no parseable file blocks"
+
+    if files_written:
+        result = {**result, "files_written": files_written, "summary": extraction_note}
+    elif extraction_note:
+        result = {**result, "summary": extraction_note}
 
     # Notify status card
     try:
@@ -151,6 +1048,29 @@ def _execute_task(
         pass  # status card failures are non-fatal
 
     return {**task, "result": result, "step_id": step_id}
+
+
+def _read_harness_response(root: Path, session_id: str | None, result: dict[str, Any]) -> str:
+    """Pull the LLM's full response back out of the harness call directory.
+
+    harness.run_step writes preview.txt to .signalos/sessions/<sid>/calls/<call_id>/preview.txt
+    (redacted, trimmed). The full response is also persisted via the same
+    path with the response embedded. For file extraction we want the full
+    text; if only preview is available, fall back to that.
+    """
+    call_id = result.get("call_id") or result.get("callId")
+    sid = result.get("session_id") or session_id
+    if not call_id or not sid:
+        return ""
+    call_dir = root / ".signalos" / "sessions" / str(sid) / "calls" / str(call_id)
+    for candidate in ("response.txt", "preview.txt", "response.md"):
+        p = call_dir / candidate
+        if p.is_file():
+            try:
+                return p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+    return ""
 
 
 
@@ -265,36 +1185,69 @@ def run_wave(
         f"max_concurrent={max_concurrent} · session={session_id}\n"
     )
 
-    # Step 1: Create worktrees
-    sys.stdout.write(f"[orchestrate] Creating worktrees...\n")
-    proc = _run_wm(root, "create", "--wave", wave_id, "--plan", plan_path)
-    if proc.returncode != 0:
-        return {
-            "wave_id": wave_id,
-            "session_id": session_id,
-            "status": "worktree_create_failed",
-            "tasks": [],
-            "completed": 0,
-            "failed": 1,
-            "paused": 0,
-            "elapsed_ms": 0,
-        }
+    # Step 1: Create worktrees (skipped when bash is unavailable or the
+    # caller forced --no-worktrees via SIGNALOS_NO_WORKTREES=1). When skipped,
+    # tasks are loaded directly from PLAN.tasks.yaml and executed in root.
+    use_worktrees = (
+        os.environ.get("SIGNALOS_NO_WORKTREES") != "1"
+        and _bash_available()
+        and _worktree_manager(root).is_file()
+    )
 
-    # Step 2: Read task list
-    tasks = _read_tasks(root)
-    if not tasks:
-        sys.stdout.write("[orchestrate] No tasks found in worktree-state.json\n")
-        print_status_card(root)
-        return {
-            "wave_id": wave_id,
-            "session_id": session_id,
-            "status": "empty",
-            "tasks": [],
-            "completed": 0,
-            "failed": 0,
-            "paused": 0,
-            "elapsed_ms": 0,
-        }
+    tasks: list[dict[str, Any]] = []
+    if use_worktrees:
+        sys.stdout.write(f"[orchestrate] Creating worktrees...\n")
+        proc = _run_wm(root, "create", "--wave", wave_id, "--plan", plan_path)
+        if proc.returncode != 0:
+            return {
+                "wave_id": wave_id,
+                "session_id": session_id,
+                "status": "worktree_create_failed",
+                "tasks": [],
+                "completed": 0,
+                "failed": 1,
+                "paused": 0,
+                "elapsed_ms": 0,
+            }
+        # Step 2: Read task list from worktree-state.json
+        tasks = _read_tasks(root)
+        if not tasks:
+            sys.stdout.write("[orchestrate] No tasks found in worktree-state.json\n")
+            print_status_card(root)
+            return {
+                "wave_id": wave_id,
+                "session_id": session_id,
+                "status": "empty",
+                "tasks": [],
+                "completed": 0,
+                "failed": 0,
+                "paused": 0,
+                "elapsed_ms": 0,
+            }
+    else:
+        # No-worktree fallback path. Read tasks from PLAN.tasks.yaml directly.
+        # Each task runs in the workspace root (sequential, isolation gone).
+        # This is the path Windows users without Git Bash hit by default.
+        reason = "bash unavailable" if not _bash_available() else (
+            "worktree-manager.sh missing" if not _worktree_manager(root).is_file()
+            else "SIGNALOS_NO_WORKTREES=1"
+        )
+        sys.stdout.write(
+            f"[orchestrate] No-worktree mode ({reason}). Tasks will run sequentially in workspace root.\n"
+        )
+        tasks = _tasks_from_plan(Path(plan_path), wave_id)
+        if not tasks:
+            sys.stdout.write(f"[orchestrate] No tasks loaded from {plan_path}\n")
+            return {
+                "wave_id": wave_id,
+                "session_id": session_id,
+                "status": "empty",
+                "tasks": [],
+                "completed": 0,
+                "failed": 0,
+                "paused": 0,
+                "elapsed_ms": 0,
+            }
 
     # Filter to only tasks for this wave
     wave_tasks = [t for t in tasks if str(t.get("wave", "")) == str(wave_id)]
@@ -359,6 +1312,11 @@ def run_wave(
         sys.stdout.write(
             f"[orchestrate] Level {level_idx}: dispatching {len(runnable)} task(s)...\n"
         )
+        # Emit a 'running' progress event per dispatched task so the UI can
+        # mark them as in_progress immediately, before the LLM call returns.
+        for task in runnable:
+            sid = task.get("step_id") or task.get("task") or task.get("branch", "unknown")
+            _emit_task_progress(wave_id, sid, "running", detail=task.get("title"))
         with ThreadPoolExecutor(max_workers=min(max_concurrent, len(runnable))) as pool:
             futures = {
                 pool.submit(
@@ -381,6 +1339,7 @@ def run_wave(
                         sys.stdout.write(
                             f"[orchestrate] Task {step_id} TIMED OUT after {task_timeout}s\n"
                         )
+                        _emit_task_progress(wave_id, step_id, "error", detail=f"timed out after {task_timeout}s")
                         _audit_abort(step_id, "task_timeout")
                         aborted_task_ids.add(tid)
                         entry = {
@@ -417,10 +1376,14 @@ def run_wave(
                                 f"[orchestrate] Task {step_id} is PAUSED (T2). "
                                 f"Resume with: signalos pause resume {step_id}\n"
                             )
+                            _emit_task_progress(wave_id, step_id, "running", detail="paused (T2) — awaiting resume")
                         elif status in ("failed", "aborted"):
                             # T3: mark for downstream cancellation
                             tid = futures[future].get("task") or futures[future].get("branch", step_id)
                             aborted_task_ids.add(tid)
+                            _emit_task_progress(wave_id, step_id, "error", detail=step_result.get("reason") or status)
+                        else:
+                            _emit_task_progress(wave_id, step_id, "done", detail=step_result.get("summary"))
                     except Exception as exc:
                         task_results.append({
                             "result": {"status": "failed", "failure": str(exc)},
@@ -432,11 +1395,16 @@ def run_wave(
     # Step 4: Print final status card
     print_status_card(root)
 
-    # Step 5: Reconcile + retire
-    sys.stdout.write("[orchestrate] Reconciling worktrees...\n")
-    _run_wm(root, "reconcile", "--wave", wave_id)
-    sys.stdout.write("[orchestrate] Retiring merged worktrees...\n")
-    _run_wm(root, "retire", "--wave", wave_id)
+    # Step 5: Reconcile + retire (only when worktrees were used; the
+    # no-bash fallback path leaves files in workspace root and has nothing
+    # to merge or retire).
+    if use_worktrees:
+        sys.stdout.write("[orchestrate] Reconciling worktrees...\n")
+        _run_wm(root, "reconcile", "--wave", wave_id)
+        sys.stdout.write("[orchestrate] Retiring merged worktrees...\n")
+        _run_wm(root, "retire", "--wave", wave_id)
+    else:
+        sys.stdout.write("[orchestrate] No-worktree mode: skipping reconcile/retire.\n")
 
     # Step 6: Summarise
     completed = sum(

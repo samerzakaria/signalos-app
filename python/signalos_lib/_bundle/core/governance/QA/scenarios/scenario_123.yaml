@@ -1,0 +1,8 @@
+id: scenario_123
+wave: "W10"
+title: "signal-cso inject-scan detects os.system risk in risky file"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import scan_injection_risks; from pathlib import Path; import tempfile; t=tempfile.mkdtemp(); f=Path(t)/'risky.py'; f.write_text('import os\nos.system(\\\"rm -rf /\\\")\n'); r=scan_injection_risks(Path(t), str(f)); print(len(r)); print(r[0]['risk'])\""
+    expect_exit: 0
+    expect_stdout_contains: "Shell injection via os.system"

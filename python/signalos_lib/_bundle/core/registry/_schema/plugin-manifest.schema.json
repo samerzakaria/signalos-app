@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://signalos.dev/schemas/plugin-manifest.v1.json",
+  "title": "SignalOS plugin manifest (v1)",
+  "description": "Concept adapted from a5c-ai/babysitter (MIT). No source code copied. Manifest shape for a SignalOS plugin tarball. Validated by cli/signalos_lib/registry.validate_manifest (stdlib-only).",
+  "type": "object",
+  "required": ["name", "version", "type", "compat", "entry_points", "signature"],
+  "additionalProperties": true,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Namespaced plugin id. @signalos/* reserved for the core team; community/* open; anything else refused at install time.",
+      "pattern": "^(@signalos/[a-z0-9][a-z0-9-]*|community/[a-z0-9][a-z0-9-]*)$",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "version": {
+      "type": "string",
+      "description": "Semver string (major.minor.patch with optional prerelease / build metadata).",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "type": {
+      "type": "string",
+      "description": "Plugin category. Determines which key must appear under entry_points.",
+      "enum": ["skill", "command", "emitter", "hook", "overlay"]
+    },
+    "compat": {
+      "type": "object",
+      "description": "Compatibility constraints the host SignalOS Core must satisfy.",
+      "required": ["signalos_core"],
+      "additionalProperties": false,
+      "properties": {
+        "signalos_core": {
+          "type": "string",
+          "description": "Semver range (subset supported: >=, <=, >, <, =, ^, ~, *, plus space-separated AND of clauses). No transitive deps.",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "entry_points": {
+      "type": "object",
+      "description": "Map from a fixed key (matching the manifest's type) to a path inside the extracted tarball.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
+    "signature": {
+      "type": "object",
+      "description": "Cosign signature metadata. Algorithm is fixed; ref is a sha256 digest over the tarball bytes.",
+      "required": ["algo", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "algo": { "const": "cosign" },
+        "ref":  { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "trust_tier_default": {
+      "type": "string",
+      "description": "Default trust tier for the plugin. The audit trail always records T3 regardless; this field is advisory until a co-signed Amendment lands.",
+      "enum": ["T1", "T2", "T3"],
+      "default": "T3"
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "Flat dependency list. No transitive resolution; cycles refused.",
+      "items": {
+        "type": "object",
+        "required": ["name", "version"],
+        "additionalProperties": false,
+        "properties": {
+          "name":    { "type": "string", "pattern": "^(@signalos/[a-z0-9][a-z0-9-]*|community/[a-z0-9][a-z0-9-]*)$" },
+          "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name":  { "type": "string", "minLength": 1, "maxLength": 256 },
+        "url":   { "type": "string", "minLength": 1, "maxLength": 512 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 256 }
+      }
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  }
+}

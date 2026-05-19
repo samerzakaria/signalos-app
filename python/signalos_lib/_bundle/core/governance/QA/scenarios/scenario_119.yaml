@@ -1,0 +1,8 @@
+id: scenario_119
+wave: "W10"
+title: "signal-cso canary check returns found=False when file missing"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import check_canary_token; from pathlib import Path; import tempfile; t=tempfile.mkdtemp(); r=check_canary_token(Path(t), 'notexist'); print(r['found'])\""
+    expect_exit: 0
+    expect_stdout_contains: "False"

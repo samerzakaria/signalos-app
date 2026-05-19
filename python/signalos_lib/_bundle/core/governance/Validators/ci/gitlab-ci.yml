@@ -1,0 +1,82 @@
+# SignalOS Validators — GitLab CI
+#
+# INSTALLATION:
+#   Copy this file to .gitlab-ci.yml in your project root, or include it in your
+#   existing .gitlab-ci.yml with:
+#     include:
+#       - local: signalos/core/governance/Validators/ci/gitlab-ci.yml
+#
+#   Adjust SIGNALOS_PATH if SignalOS is vendored in a non-standard location.
+#
+# BEHAVIOR:
+#   Runs all 9 validators on every merge request.
+#   Each validator is a separate job; all must pass for the pipeline to succeed.
+
+stages:
+  - validate
+
+variables:
+  SIGNALOS_PATH: signalos
+
+gate-signature-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/gate-signature-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+trust-tier-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/trust-tier-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+tier-sheet-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/tier-sheet-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+artifact-shape-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/artifact-shape-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+path-consistency-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/path-consistency-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+expectation-redline-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/expectation-redline-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+constitution-amendment-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/constitution-amendment-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+decision-dna-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/decision-dna-guard.sh" --repo-root .
+  only:
+    - merge_requests
+
+client-signal-verbatim-guard:
+  stage: validate
+  script:
+    - bash "$SIGNALOS_PATH/core/governance/Validators/client-signal-verbatim-guard.sh" --repo-root .
+  only:
+    - merge_requests

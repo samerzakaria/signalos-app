@@ -1,0 +1,100 @@
+# SignalOS Metrics Map — Backend-Neutral Metric Definitions
+#
+# This file owns the MEANING of each metric: what it measures, what
+# threshold means success, how stale is too stale, and which Belief it
+# maps to.
+#
+# It does NOT contain backend-specific details. No query strings, no
+# backend names, no query_ref paths. Those live in:
+#   queries/<backend>/<metric_id>.yaml
+#
+# The adapter resolves backend-specific queries at runtime based on
+# the active mode and backend. The metric_id is the join key.
+#
+# Top-level schema (semantic only):
+#   metric_id        Unique snake_case identifier (the YAML key)
+#   belief_id        Maps to core/strategy/BELIEF.md section
+#   expectation_id   Maps to EXPECTATION_MAP.md item
+#   description      Human-readable purpose
+#   target           Success condition as a string (">=50", "<=1")
+#   direction        "above" | "below"
+#   window_hours     Signal Window duration (default: 72)
+#   staleness_sla    Max seconds between fresh readings (default: 3600)
+#   source_type      "timeseries" | "gauge" | "counter" | "log_query"
+#   access_mode      "read" | "push" | "read_write"
+#   evidence_policy  How this metric feeds Gate 5
+#     required       true = Gate 5 blocks without this reading
+#     min_readings   Minimum readings in the window
+
+
+# AMD-CORE-013 W7: OTel resource attributes
+# service.name = signalos-core  service.version = 2.2.0
+# Metric naming follows OTel semantic conventions:
+#   signalos.step.duration (unit: ms)
+#   signalos.step.tokens.input / signalos.step.tokens.output
+otel_resource:
+  service.name: signalos-core
+  service.version: "2.2.0"
+
+metrics:
+
+  register_daily:
+    belief_id: belief-01
+    expectation_id: exp-01-registrations
+    description: Daily new user registrations
+    target: ">=50"
+    direction: above
+    window_hours: 72
+    staleness_sla: 3600
+    source_type: counter
+    access_mode: read
+    alert_rule:
+      expr: register_daily < 50
+      for: 1h
+      severity: warning
+      message: "Daily registrations below target (< 50) for over 1 hour"
+    evidence_policy:
+      required: true
+      min_readings: 3
+
+  api_error_rate:
+    belief_id: belief-01
+    expectation_id: exp-02-reliability
+    description: Percentage of API requests returning 5xx status
+    target: "<=1"
+    direction: below
+    window_hours: 72
+    staleness_sla: 1800
+    source_type: timeseries
+    access_mode: read
+    evidence_policy:
+      required: true
+      min_readings: 12
+
+  api_latency_p99:
+    belief_id: belief-01
+    expectation_id: exp-03-performance
+    description: 99th percentile API request latency in milliseconds
+    target: "<=500"
+    direction: below
+    window_hours: 72
+    staleness_sla: 1800
+    source_type: timeseries
+    access_mode: read
+    evidence_policy:
+      required: false
+      min_readings: 6
+
+  onboarding_funnel_completion:
+    belief_id: belief-01
+    expectation_id: exp-04-adoption
+    description: Percentage of users completing the full onboarding funnel
+    target: ">=60"
+    direction: above
+    window_hours: 168
+    staleness_sla: 7200
+    source_type: gauge
+    access_mode: read
+    evidence_policy:
+      required: true
+      min_readings: 3

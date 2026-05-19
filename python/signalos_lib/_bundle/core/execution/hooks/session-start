@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+# session-start — Session Initialization + Fail-Hard Default Enforcement
+#
+# Runs at the start of every AI coding session in a SignalOS product repo.
+# Enforces:
+#  - Constitution §4.1 (gate sequence validity)
+#  - Preamble Law 4 (no unowned agent invocations pending)
+#  - §10.3 (Constitution hash matches the last recorded amendment hash)
+#  - §1 fail-hard defaults for Scale Track and Delivery Mode
+#
+# Also emits the session preamble expected by every agent (see
+# core/tool-adapters/_shared/session-preamble.md).
+#
+# Exit 0 = session may start. Exit non-zero = session blocked.
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+ERRORS=0
+WARNINGS=0
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+echo -e "${BLUE}SignalOS session-start — repo $REPO_ROOT${NC}"
+
+# ─── Check 1: Product-Constitution present (Gate 0) ─────────────────────────
+CONSTITUTION_FILE="$REPO_ROOT/core/governance/Governance/CONSTITUTION.md"
+if [ ! -f "$CONSTITUTION_FILE" ]; then
+  echo -e "${RED}✗ BLOCKED: Product-Constitution missing at core/governance/Governance/CONSTITUTION.md${NC}"
+  echo "  Gate 0 is a prerequisite. Run signal-init to bootstrap."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─── Check 2: Constitution hash matches last amendment record ───────────────
+HASH_LOG="$REPO_ROOT/core/governance/Retro/.constitution-hashes.log"
+if [ -f "$CONSTITUTION_FILE" ] && [ -f "$HASH_LOG" ]; then
+  CURRENT_HASH=$(sha256sum "$CONSTITUTION_FILE" | awk '{print $1}')
+  LAST_RECORDED=$(tail -n1 "$HASH_LOG" | awk '{print $2}')
+  if [ -n "$LAST_RECORDED" ] && [ "$CURRENT_HASH" != "$LAST_RECORDED" ]; then
+    echo -e "${RED}✗ BLOCKED: Constitution hash mismatch.${NC}"
+    echo "  Current:      $CURRENT_HASH"
+    echo "  Last recorded: $LAST_RECORDED"
+    echo ""
+    echo "  Constitution §10.3: out-of-band edits without an amendment record are a protocol violation."
+    echo "  Resolve: record a delta in AMENDMENTS.md and re-run session-start."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Check 3: Gate sequence validity ────────────────────────────────────────
+# If an artifact exists for gate N, all prior gates must also have artifacts.
+GATE1="$REPO_ROOT/core/strategy/BELIEF.md"
+GATE1_LITE="$REPO_ROOT/core/strategy/BELIEF_LITE.md"
+GATE2="$REPO_ROOT/core/strategy/EXPECTATION_MAP.md"
+GATE3="$REPO_ROOT/core/strategy/DESIGN_NOTE.md"
+GATE4="$REPO_ROOT/core/execution/TRUST_TIER.md"
+GATE5="$REPO_ROOT/core/governance/QUALITY_CHECK.md"
+
+# Quick track is allowed to skip Gate 2 full artifact; Belief-lite covers both.
+# Other tracks must follow strict order.
+HAS_BELIEF=false
+if [ -f "$GATE1" ] || [ -f "$GATE1_LITE" ]; then HAS_BELIEF=true; fi
+
+if [ -f "$GATE5" ] && [ ! -f "$GATE4" ]; then
+  echo -e "${RED}✗ BLOCKED: Gate 5 artifact present but Gate 4 (TRUST_TIER.md) missing.${NC}"
+  ERRORS=$((ERRORS + 1))
+fi
+if [ -f "$GATE4" ] && [ ! -f "$GATE3" ]; then
+  echo -e "${YELLOW}⚠ Gate 4 present but Gate 3 (DESIGN_NOTE.md) missing — allowed only if scale_track=quick + trust_tier_ceiling=T1${NC}"
+  WARNINGS=$((WARNINGS + 1))
+fi
+if [ -f "$GATE3" ] && [ ! -f "$GATE2" ] && [ ! -f "$GATE1_LITE" ]; then
+  echo -e "${RED}✗ BLOCKED: Gate 3 present but Gate 2 (EXPECTATION_MAP.md) missing.${NC}"
+  ERRORS=$((ERRORS + 1))
+fi
+if [ -f "$GATE2" ] && ! $HAS_BELIEF; then
+  echo -e "${RED}✗ BLOCKED: Gate 2 present but Gate 1 (BELIEF.md or BELIEF_LITE.md) missing.${NC}"
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─── Check 4: Scale Track declaration (fail-hard default to 'wave') ─────────
+SCALE_TRACK="wave"
+if [ -f "$GATE1_LITE" ]; then
+  DECLARED=$(grep -E '^scale_track:' "$GATE1_LITE" | head -n1 | awk '{print $2}' || echo "")
+  if [ -n "$DECLARED" ]; then SCALE_TRACK="$DECLARED"; fi
+elif [ -f "$GATE1" ]; then
+  DECLARED=$(grep -E '^scale_track:' "$GATE1" | head -n1 | awk '{print $2}' || echo "")
+  if [ -n "$DECLARED" ]; then SCALE_TRACK="$DECLARED"; fi
+fi
+
+case "$SCALE_TRACK" in
+  quick|wave|campaign) ;;
+  *)
+    echo -e "${YELLOW}⚠ Invalid scale_track '$SCALE_TRACK' — defaulting to 'wave' (fail-hard)${NC}"
+    SCALE_TRACK="wave"
+    WARNINGS=$((WARNINGS + 1))
+    ;;
+esac
+
+# Quick track must not touch permanently-T3 surfaces
+if [ "$SCALE_TRACK" = "quick" ] && [ -f "$GATE4" ]; then
+  if grep -qiE '(migration|auth|payment|billing|secret|deploy|IaC|infrastructure)' "$GATE4"; then
+    echo -e "${RED}✗ BLOCKED: scale_track=quick cannot touch permanently-T3 surfaces.${NC}"
+    echo "  See core/execution/SCALE_TRACKS.md — Quick ceiling is T2."
+    echo "  Resolve: halt Wave and re-declare as scale_track=wave with full Trust Tier declaration."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# Campaign track must have a Campaign-Constitution
+CAMPAIGN_CONSTITUTION="$REPO_ROOT/core/governance/Governance/CAMPAIGN_CONSTITUTION.md"
+if [ "$SCALE_TRACK" = "campaign" ] && [ ! -f "$CAMPAIGN_CONSTITUTION" ]; then
+  echo -e "${RED}✗ BLOCKED: scale_track=campaign declared but CAMPAIGN_CONSTITUTION.md missing.${NC}"
+  echo "  See core/execution/SCALE_TRACKS.md — Campaign requires PO + PE co-signed Campaign-Constitution."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─── Check 5: Delivery Mode declaration (fail-hard default to 'fresh-wave') ─
+DELIVERY_MODE="fresh-wave"
+if [ -f "$CONSTITUTION_FILE" ]; then
+  DECLARED_MODE=$(grep -E '^delivery_mode:' "$CONSTITUTION_FILE" | head -n1 | awk '{print $2}' || echo "")
+  if [ -n "$DECLARED_MODE" ]; then DELIVERY_MODE="$DECLARED_MODE"; fi
+fi
+
+case "$DELIVERY_MODE" in
+  fresh-wave|daemon) ;;
+  *)
+    echo -e "${YELLOW}⚠ Invalid delivery_mode '$DELIVERY_MODE' — defaulting to 'fresh-wave' (fail-hard)${NC}"
+    DELIVERY_MODE="fresh-wave"
+    WARNINGS=$((WARNINGS + 1))
+    ;;
+esac
+
+# Daemon mode must have a non-expired quarterly retro
+if [ "$DELIVERY_MODE" = "daemon" ] && [ -f "$CONSTITUTION_FILE" ]; then
+  NEXT_RETRO_DUE=$(grep -E '^next_product_retro_due:' "$CONSTITUTION_FILE" | head -n1 | awk '{print $2}' || echo "")
+  if [ -n "$NEXT_RETRO_DUE" ]; then
+    TODAY=$(date -u +%Y-%m-%d)
+    if [[ "$TODAY" > "$NEXT_RETRO_DUE" ]]; then
+      echo -e "${RED}✗ BLOCKED: DAEMON_EXPIRED — quarterly product retro overdue${NC}"
+      echo "  next_product_retro_due: $NEXT_RETRO_DUE"
+      echo "  today:                  $TODAY"
+      echo "  See core/execution/DELIVERY_MODES.md — daemon mode reverts to fresh-wave until retro is completed."
+      ERRORS=$((ERRORS + 1))
+    fi
+  fi
+
+  # Daemon mode + Campaign is not allowed
+  if [ "$SCALE_TRACK" = "campaign" ]; then
+    echo -e "${RED}✗ BLOCKED: scale_track=campaign is not allowed in delivery_mode=daemon.${NC}"
+    echo "  Exit daemon mode first, then declare the Campaign."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Check 6: Ownership enforcement (Preamble Law 4) ───────────────────────
+# Machine-enforced: delegate to ownership-guard.sh for rigorous validation
+OWNERSHIP_GUARD="$REPO_ROOT/core/governance/Validators/ownership-guard.sh"
+if [ -x "$OWNERSHIP_GUARD" ]; then
+  if ! bash "$OWNERSHIP_GUARD" check --repo-root "$REPO_ROOT" --wave "${WAVE_ID:-}" --warn 2>&1; then
+    echo -e "${YELLOW}⚠ Ownership check raised warnings. Preamble Law 4: every agent has a named human owner.${NC}"
+    WARNINGS=$((WARNINGS + 1))
+  fi
+else
+  # Fallback: legacy check via HANDOFFS.md
+  HANDOFF_LOG="$REPO_ROOT/core/governance/Worktree-sync/HANDOFFS.md"
+  if [ -f "$HANDOFF_LOG" ]; then
+    UNOWNED=$(grep -E 'owner:\s*(TBD|none|$)' "$HANDOFF_LOG" | tail -n 20 || true)
+    if [ -n "$UNOWNED" ]; then
+      echo -e "${YELLOW}⚠ Unowned agent invocations detected:${NC}"
+      echo "$UNOWNED" | sed 's/^/    /'
+      echo "  Preamble Law 4: every agent has a named human owner. Unowned output is non-binding."
+      WARNINGS=$((WARNINGS + 1))
+    fi
+  fi
+fi
+
+# ─── Check 7 (AMD-CORE-009): Wiring Guard ───────────────────────────────────
+# Run wiring-guard with --quiet so only failures surface. A wiring gap at
+# session-start is a hard block (ERRORS++) per the fail-hard default (§1).
+WIRING_GUARD="$REPO_ROOT/core/governance/Validators/wiring-guard.sh"
+if [ -x "$WIRING_GUARD" ]; then
+  if ! bash "$WIRING_GUARD" --quiet --repo-root "$REPO_ROOT" 2>&1; then
+    echo -e "${RED}✗ BLOCKED: Wiring Guard detected structural inconsistencies.${NC}"
+    echo "  Run: bash core/governance/Validators/wiring-guard.sh --repo-root $REPO_ROOT"
+    echo "  Fix all failing checks before starting the session."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Emit session preamble ──────────────────────────────────────────────────
+PREAMBLE="$REPO_ROOT/.signalos-session-preamble.md"
+{
+  echo "# SignalOS Session Preamble"
+  echo ""
+  echo "- Repo: $REPO_ROOT"
+  echo "- Scale Track: $SCALE_TRACK"
+  echo "- Delivery Mode: $DELIVERY_MODE"
+  if [ -f "$CONSTITUTION_FILE" ]; then
+    echo "- Constitution hash: $(sha256sum "$CONSTITUTION_FILE" | awk '{print $1}')"
+  fi
+  echo "- Session started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo ""
+  echo "## The Four Laws (active)"
+  echo "1. Every Wave carries a signed Belief."
+  echo "2. Every agent invocation declares a Trust Tier (undeclared → T3)."
+  echo "3. Every retro produces a Constitution delta."
+  echo "4. Every agent has a named human owner."
+} > "$PREAMBLE"
+
+# ─── Summary ────────────────────────────────────────────────────────────────
+if [ $ERRORS -gt 0 ]; then
+  echo ""
+  echo -e "${RED}✗ session-start blocked. Fix $ERRORS error(s) above.${NC}"
+  exit 1
+fi
+
+if [ $WARNINGS -gt 0 ]; then
+  echo -e "${YELLOW}⚠ $WARNINGS warning(s). Session starting but attention required.${NC}"
+fi
+
+echo -e "${GREEN}✓ session-start OK. scale_track=$SCALE_TRACK · delivery_mode=$DELIVERY_MODE${NC}"
+echo "  Preamble written to $PREAMBLE"
+
+
+# ─── Resolve {{...}} preamble vars (AMD-CORE-037, W16) ──────────────────────
+# Substitutes PRODUCT_NAME, WAVE_ID, CONSTITUTION_HASH, etc. in
+# integrations/rules/signalos-preamble.mdc and writes the resolved markdown
+# to .signalos/session-preamble.md so the agent sees real values, not
+# literal {{...}} strings. Fail-open: never blocks session-start.
+SIGNALOS_CLI="$REPO_ROOT/cli/signalos"
+if [ -f "$SIGNALOS_CLI" ]; then
+  python3 "$SIGNALOS_CLI" session-preamble \
+    --repo-root "$REPO_ROOT" \
+    --session-type "${SIGNALOS_SESSION_TYPE:-session}" \
+    >/dev/null 2>&1 || true
+fi
+
+# ─── Brain context injection (AMD-CORE-030) ─────────────────────────────────
+# Prepend top brain entries to the session preamble. Fail-open: never blocks.
+BRAIN_INJECT="$REPO_ROOT/core/execution/hooks/_lib/brain-session-inject.sh"
+if [ -f "$BRAIN_INJECT" ]; then
+  bash "$BRAIN_INJECT" --preamble "$PREAMBLE" --repo-root "$REPO_ROOT" 2>/dev/null || true
+fi
+
+# ─── Wave status card ────────────────────────────────────────────────────────
+# Print the live Wave status card so every IDE session opens with the current
+# picture — gates, tasks, and the next action for each human role.
+# Fail-open: a missing CLI never blocks session-start.
+SIGNALOS_CLI="$REPO_ROOT/cli/signalos"
+if [ -f "$SIGNALOS_CLI" ]; then
+  echo ""
+  python3 "$SIGNALOS_CLI" status --repo-root "$REPO_ROOT" 2>/dev/null || true
+fi
+
+
+# ─── Check 10: Session retention warning (AMD-CORE-011) ─────────────────────
+RETENTION_DAYS="${SIGNALOS_SESSION_RETENTION_DAYS:-90}"
+SESSIONS_DIR="${REPO_ROOT}/.signalos/sessions"
+if [ -d "$SESSIONS_DIR" ]; then
+  OLD_COUNT=$(find "$SESSIONS_DIR" -maxdepth 1 -mindepth 1 -type d -mtime +"$RETENTION_DAYS" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${OLD_COUNT:-0}" -gt 0 ]; then
+    echo -e "${YELLOW}⚠ $OLD_COUNT session(s) older than ${RETENTION_DAYS}d. Run: signalos session archive --auto${NC}"
+  fi
+fi
+
+exit 0

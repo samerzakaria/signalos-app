@@ -332,6 +332,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Don't prompt — create the path if missing")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite an existing non-empty target")
+    parser.add_argument("--refresh-bundle", action="store_true",
+                        help="Refresh the bundled protocol files (skills, "
+                             "governance templates, etc.) in an existing "
+                             "workspace. Implies --force for bundle files "
+                             "but preserves user-authored data (.env, "
+                             "PLAN.md.signed, AUDIT_TRAIL.jsonl, and any "
+                             "file outside the bundle namespace).")
     parser.add_argument("--keep-existing", action="store_true",
                         help="Allow non-empty target but never overwrite "
                              "files that already exist. The bundle fills in "
@@ -372,7 +379,12 @@ def main(argv: list[str]) -> int:
                 "signalos init: --force and --keep-existing are mutually exclusive.\n"
             )
             return 1
-        if not _is_target_empty(target) and not (args.force or args.keep_existing):
+        if args.refresh_bundle and args.keep_existing:
+            sys.stderr.write(
+                "signalos init: --refresh-bundle and --keep-existing are mutually exclusive.\n"
+            )
+            return 1
+        if not _is_target_empty(target) and not (args.force or args.keep_existing or args.refresh_bundle):
             sys.stderr.write(
                 f"signalos init: target '{target}' is not empty "
                 f"(use --keep-existing to merge without overwriting, "
@@ -381,13 +393,15 @@ def main(argv: list[str]) -> int:
             return 1
 
     # 2. Copy the packaged bundle (unless --minimal)
+    #    --refresh-bundle is treated as a more discoverable name for
+    #    --force when the goal is updating shipped protocol files in an
+    #    existing workspace. Either flag overwrites bundle files;
+    #    _PROTECTED_FILES are never touched.
     file_count = 0
     if not args.minimal:
         try:
-            # --keep-existing means "allow non-empty target but never
-            # overwrite". _copy_bundle already preserves existing files
-            # when force=False; we just pass force=False here.
-            file_count = _copy_bundle(target, force=args.force)
+            overwrite = args.force or args.refresh_bundle
+            file_count = _copy_bundle(target, force=overwrite)
         except RuntimeError as exc:
             sys.stderr.write(f"signalos init: {exc}\n")
             return 2

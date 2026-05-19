@@ -1,0 +1,7 @@
+id: scenario_142
+title: "devex_plan TRIAGE mode"
+wave: W13
+amd: AMD-CORE-034
+command: |
+  python3 -c "import sys; sys.path.insert(0,'cli'); from signalos_lib.devex import devex_plan; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); p=devex_plan(t,'TRIAGE','13'); print(p.id)"
+expect_stdout_contains: "dxplan-001"

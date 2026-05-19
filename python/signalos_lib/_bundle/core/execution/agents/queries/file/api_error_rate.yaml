@@ -1,0 +1,6 @@
+# Backend-specific query: file (mock/CI/demo)
+# Metric: api_error_rate
+file_path: ".signalos/mock-metrics/api_error_rate.json"
+format: json
+value_path: "value"
+timestamp_path: "timestamp"

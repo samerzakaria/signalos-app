@@ -1,0 +1,8 @@
+id: scenario_137
+wave: "W12"
+title: "benchmark_list returns records"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.deploy import record_benchmark, benchmark_list; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); record_benchmark(t,'https://a.com','12',1000.0,100.0,0.01,200.0,400.0); records=benchmark_list(t,'12'); print(len(records))\""
+    expect_exit: 0
+    expect_stdout_contains: "1"

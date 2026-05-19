@@ -1,9 +1,16 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [preact()],
+  // Vitest: jsdom for component tests, setup file wires
+  // @testing-library/jest-dom matchers + Tauri IPC stubs.
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors
   clearScreen: false,

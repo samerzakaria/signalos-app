@@ -1,7 +1,10 @@
+import { modalOpen } from '../state';
+
 export function NewProjectModal() {
+  const cls = modalOpen.value === 'newProjectModal' ? 'modal-overlay open' : 'modal-overlay';
   return (
     <>
-<div className="modal-overlay" id="newProjectModal" onClick={(e) => window.closeNewProject(e)}>
+<div className={cls} id="newProjectModal" onClick={(e) => window.closeNewProject(e)}>
   <div className="modal proj-modal" onClick={(e) => e.stopPropagation()}>
     <div className="modal-head">
       <h3>New project</h3>

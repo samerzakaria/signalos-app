@@ -1,0 +1,10 @@
+# Backend-specific query: file (mock/CI/demo)
+# Metric: register_daily
+# Referenced by: metrics-map.yaml (when using file backend override)
+#
+# The file backend reads metric values from a local JSON file instead
+# of querying a live backend. Used for CI, demos, audits, and offline testing.
+file_path: ".signalos/mock-metrics/register_daily.json"
+format: json
+value_path: "value"
+timestamp_path: "timestamp"

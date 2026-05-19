@@ -1,0 +1,6 @@
+# Backend-specific query: Datadog
+# Metric: api_latency_p99
+# Referenced by: metrics-map.yaml → api_latency_p99.source.implementation.query_ref
+query: 'avg:trace.http.request.duration.by.resource_name{service:api}.rollup(avg, 300)'
+unit: milliseconds
+value_path: "series[0].pointlist[-1][1]"

@@ -6,8 +6,10 @@ name: Smoke
 on:
   pull_request:
     branches: [main]
+  # Every-branch push: solo-dev feature-branch work needs CI signal
+  # immediately, not only at merge-to-main time.
   push:
-    branches: [main]
+    branches: ['**']
   workflow_dispatch:
 
 env:
@@ -87,6 +89,18 @@ jobs:
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
+
+      # Node + npm install: `cargo tauri build` invokes `npm run build`
+      # as its beforeBuildCommand (defined in tauri.conf.json), which
+      # requires tsc + vite + all devDependencies. Without this step the
+      # build step fails with either "tsc not found" (Windows/macOS) or
+      # cascading TS2307/TS7006 errors (Ubuntu, where tsc is globally
+      # pre-installed but node_modules is empty).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: npm install
+        run: npm install
 
       # Generate all required icon sizes from the SVG source
       - name: Generate app icons

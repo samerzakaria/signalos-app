@@ -1,0 +1,10 @@
+id: scenario_151
+title: freeze_dir creates freeze record
+wave: W14
+amd: AMD-CORE-035
+command: python3
+args:
+  - "-c"
+  - "import sys; sys.path.insert(0,'cli'); from signalos_lib.safety import freeze_dir; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); r=freeze_dir(t,'src/db','14','test'); print(r.status)"
+expect_exit: 0
+expect_stdout_contains: "frozen"

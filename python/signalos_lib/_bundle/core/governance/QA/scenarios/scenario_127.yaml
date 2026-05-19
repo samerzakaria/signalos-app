@@ -1,0 +1,8 @@
+id: scenario_127
+wave: "W11"
+title: "checkpoint list shows saved entries"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import checkpoint_save, checkpoint_list; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); checkpoint_save(t, '11', 'lbl', '/nonexistent', ''); entries=checkpoint_list(t); print(len(entries)); print(entries[0].id)\""
+    expect_exit: 0
+    expect_stdout_contains: "ckpt-001"

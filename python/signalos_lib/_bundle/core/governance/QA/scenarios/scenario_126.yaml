@@ -1,0 +1,8 @@
+id: scenario_126
+wave: "W11"
+title: "checkpoint save creates index entry"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import checkpoint_save; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); e=checkpoint_save(t, '11', 'pre-refactor', '/nonexistent/ctx.md', 'test note'); print(e.id); print(e.wave)\""
+    expect_exit: 0
+    expect_stdout_contains: "ckpt-001"

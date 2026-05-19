@@ -1,0 +1,8 @@
+id: scenario_128
+wave: "W11"
+title: "checkpoint restore writes context file to output path"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import checkpoint_save, checkpoint_restore; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); e=checkpoint_save(t, '11', 'lbl', '/nonexistent', 'note'); out=Path(tempfile.mktemp(suffix='.md')); result=checkpoint_restore(t, e.id, out); print(result); print(out.exists())\""
+    expect_exit: 0
+    expect_stdout_contains: "True"

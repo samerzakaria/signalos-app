@@ -1,0 +1,81 @@
+# SignalOS Metrics Adapter Configuration
+# Copy to .signalos/metrics-config.yaml and customize for your environment.
+#
+# Two observability modes:
+#   standard (otlp)  — push metrics to an OpenTelemetry collector (canonical)
+#   compat (direct)  — talk directly to a backend (simple deployments)
+#
+# Verify: metrics-adapter.sh check --config .signalos/metrics-config.yaml
+#
+# Mode precedence (flag > env var > config > operation default):
+#   push with no mode specified        → OTLP
+#   read with no mode specified        → direct (OTLP is push-only)
+#   --backend <name> on command line   → direct
+#   --mode otlp on command line        → OTLP
+#   --mode direct on command line      → direct
+#   SIGNALOS_METRICS_BACKEND env set   → direct
+#   this file says mode: otlp          → OTLP, unless read operation
+#   this file says mode: direct        → direct
+#
+# Transport failure policy:
+#   AUDIT_TRAIL.jsonl always writes, even when external transport fails.
+#   External delivery success is optional unless Gate 5 requires it.
+#
+# Metric definitions:
+#   This file does NOT define metrics. Metric meaning, thresholds, and
+#   staleness SLAs live in metrics-map.yaml (backend-neutral).
+#   Backend-specific queries live in queries/<backend>/<metric>.yaml.
+#   This file only owns transport config (endpoints, auth, mode).
+
+# ─── Mode ────────────────────────────────────────────────────────────────────
+# "otlp" = standard (default for push), "direct" = compatibility
+mode: otlp
+
+# ─── Standard Mode: OTLP ─────────────────────────────────────────────────────
+# Canonical architecture. Push to any OpenTelemetry-compatible collector.
+# The collector routes to Prometheus, Grafana, Datadog, CloudWatch, etc.
+# SignalOS does not need to know the backend.
+otlp:
+  endpoint: http://localhost:4318
+  # Name of env var holding OTLP headers (e.g. "Authorization=Bearer xxx")
+  headers_env: OTEL_EXPORTER_OTLP_HEADERS
+  service_name: signalos
+
+# ─── Compatibility Mode: Direct Backends ──────────────────────────────────────
+# For simple deployments without a collector. Configure only what you use.
+direct:
+  default_backend: prometheus
+
+  prometheus:
+    endpoint: https://prometheus.internal:9090
+    pushgateway: https://pushgateway.internal:9091
+    auth_token_env: PROM_TOKEN
+
+  grafana:
+    endpoint: https://grafana.internal
+    api_key_env: GRAFANA_API_KEY
+    datasource_uid: prometheus-1
+
+  datadog:
+    api_key_env: DD_API_KEY
+    app_key_env: DD_APP_KEY
+    # Site: datadoghq.com (US1), us3.datadoghq.com, us5.datadoghq.com,
+    #       datadoghq.eu (EU1), ap1.datadoghq.com (AP1)
+    site: datadoghq.com
+
+  cloudwatch:
+    namespace: SignalOS
+    region: us-east-1
+
+  # File backend — local JSON files, no network required.
+  # Used for CI, demos, audits, pre-handoff validation, offline testing.
+  file:
+    metrics_dir: .signalos/mock-metrics
+
+# ─── Metrics ─────────────────────────────────────────────────────────────────
+# Metric meaning, thresholds, windows, and staleness SLAs are defined in
+# metrics-map.yaml (backend-neutral). Backend-specific queries are in
+# queries/<backend>/<metric_id>.yaml.
+#
+# This file only needs to point to the metrics map:
+metrics_map: metrics-map.yaml

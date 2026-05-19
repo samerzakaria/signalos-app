@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# pre-deploy — Segregation of Duties (SoD) Enforcement Hook
+#
+# Enforces Constitution §4.2: "PE signs and executes the merge; DevOps presses
+# deploy. Never the same human on the same release."
+#
+# This hook runs in the deploy pipeline (not a git hook). The deploy runner
+# must set DEVOPS_DEPLOY_SIGNER as an env var. The merge signer is read from
+# .signalos-merge-signer (written by pre-merge).
+#
+# Exit 0 = deploy permitted. Exit non-zero = deploy blocked.
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+ERRORS=0
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+echo "pre-deploy hook — SoD enforcement"
+
+# ─── Rule 1: Merge signer must be identifiable ──────────────────────────────
+MERGE_SIGNER_FILE="$REPO_ROOT/.signalos-merge-signer"
+if [ ! -f "$MERGE_SIGNER_FILE" ]; then
+  echo -e "${RED}✗ BLOCKED: Merge signer record not found at .signalos-merge-signer${NC}"
+  echo "  pre-merge hook did not run or did not record the PE signer."
+  echo "  SoD cannot be verified. Deploy blocked."
+  ERRORS=$((ERRORS + 1))
+else
+  # W-6: safe read — never source untrusted file; extract only the expected key
+  PE_MERGE_SIGNER=$(grep -E '^PE_MERGE_SIGNER=[A-Za-z0-9 _-]+$' "$MERGE_SIGNER_FILE" | cut -d= -f2-)
+  export PE_MERGE_SIGNER
+fi
+
+# ─── Rule 2: DevOps signer must be set ──────────────────────────────────────
+if [ -z "${DEVOPS_DEPLOY_SIGNER:-}" ]; then
+  echo -e "${RED}✗ BLOCKED: DEVOPS_DEPLOY_SIGNER env var not set${NC}"
+  echo "  The deploy runner must identify themselves."
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─── Rule 3: SoD — merge signer ≠ deploy signer ─────────────────────────────
+if [ -n "${PE_MERGE_SIGNER:-}" ] && [ -n "${DEVOPS_DEPLOY_SIGNER:-}" ]; then
+  if [ "$PE_MERGE_SIGNER" = "$DEVOPS_DEPLOY_SIGNER" ]; then
+    echo -e "${RED}✗ BLOCKED: SoD violation. Merge signer and deploy signer are the same person.${NC}"
+    echo "  Merge signed by:  $PE_MERGE_SIGNER"
+    echo "  Deploy signer:    $DEVOPS_DEPLOY_SIGNER"
+    echo ""
+    echo "  Constitution §4.2: 'PE signs and executes the merge; DevOps presses deploy."
+    echo "   Never the same human on the same release.'"
+    echo ""
+    echo "  If this squad is solo-operator, the delta must be recorded as a standing"
+    echo "  product-Constitution amendment (see core/governance/Retro/AMENDMENTS.md)."
+    ERRORS=$((ERRORS + 1))
+  else
+    echo -e "${GREEN}  SoD OK: merge=$PE_MERGE_SIGNER deploy=$DEVOPS_DEPLOY_SIGNER${NC}"
+  fi
+fi
+
+# ─── Rule 4: Release path declaration ───────────────────────────────────────
+# If the deploy targets a release-path surface (payment, auth, data), DevOps
+# may have vetoed the Trust Tier at Gate 4. Verify no vetoed surface is being
+# deployed.
+TIER_FILE="$REPO_ROOT/core/execution/TRUST_TIER.md"
+if [ -f "$TIER_FILE" ]; then
+  if grep -qE 'DevOps veto:\s*true' "$TIER_FILE"; then
+    echo -e "${RED}✗ BLOCKED: Trust Tier declaration has an unresolved DevOps veto${NC}"
+    echo "  Resolve the veto in TRUST_TIER.md before deploying."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Summary ────────────────────────────────────────────────────────────────
+if [ $ERRORS -gt 0 ]; then
+  echo ""
+  echo -e "${RED}✗ Deploy blocked. Fix $ERRORS error(s) above.${NC}"
+  echo ""
+  echo "PROTOCOL VIOLATION: SoD check failed. Deploy blocked."
+  echo "Named owner DevOps must reconcile."
+  exit 1
+fi
+
+echo -e "${GREEN}✓ pre-deploy checks passed. SoD honoured. Deploying.${NC}"
+exit 0

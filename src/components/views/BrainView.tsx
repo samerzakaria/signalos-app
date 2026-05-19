@@ -1,7 +1,9 @@
-import { brainList } from '../../state';
+import { brainList, brainFilter } from '../../state';
 
 export function BrainView() {
   const entries = brainList.value;
+  const filter = brainFilter.value;
+  const cls = (f: string) => filter === f ? 'brain-type active' : 'brain-type';
 
   return (
     <>
@@ -19,11 +21,11 @@ export function BrainView() {
             <button className="btn btn-soft" onClick={() => window.addBrainEntry()}><i className="ti ti-plus"></i> Add note</button>
           </div>
           <div className="brain-type-seg">
-            <div className="brain-type active" onClick={(e) => window.filterBrain(e.currentTarget,'all')}>All</div>
-            <div className="brain-type" onClick={(e) => window.filterBrain(e.currentTarget,'note')}><i className="ti ti-notes" style={{ 'fontSize': '13px' }}></i> Notes</div>
-            <div className="brain-type" onClick={(e) => window.filterBrain(e.currentTarget,'decision')}><i className="ti ti-scale" style={{ 'fontSize': '13px' }}></i> Decisions</div>
-            <div className="brain-type" onClick={(e) => window.filterBrain(e.currentTarget,'artifact')}><i className="ti ti-file-code" style={{ 'fontSize': '13px' }}></i> Artifacts</div>
-            <div className="brain-type" onClick={(e) => window.filterBrain(e.currentTarget,'qa')}><i className="ti ti-help-circle" style={{ 'fontSize': '13px' }}></i> Q&amp;A</div>
+            <div className={cls('all')} onClick={() => window.filterBrain(null, 'all')}>All</div>
+            <div className={cls('note')} onClick={() => window.filterBrain(null, 'note')}><i className="ti ti-notes" style={{ 'fontSize': '13px' }}></i> Notes</div>
+            <div className={cls('decision')} onClick={() => window.filterBrain(null, 'decision')}><i className="ti ti-scale" style={{ 'fontSize': '13px' }}></i> Decisions</div>
+            <div className={cls('artifact')} onClick={() => window.filterBrain(null, 'artifact')}><i className="ti ti-file-code" style={{ 'fontSize': '13px' }}></i> Artifacts</div>
+            <div className={cls('qa')} onClick={() => window.filterBrain(null, 'qa')}><i className="ti ti-help-circle" style={{ 'fontSize': '13px' }}></i> Q&amp;A</div>
           </div>
           <div className="card">
             

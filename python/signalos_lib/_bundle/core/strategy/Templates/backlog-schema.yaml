@@ -1,0 +1,39 @@
+# core/governance/Governance/BACKLOG.yaml
+# Two-Speed Backlog
+#
+# Status lifecycle:
+#   raw       → captured idea, not yet refined. Discovery has not processed it.
+#   refined   → Belief scored, acceptance criteria written, ready for Delivery.
+#   in-progress → Delivery Agent is currently executing this item.
+#   done      → All acceptance criteria verified, merged to main.
+#   deferred  → Deprioritised. Will be reconsidered in future wave Pre-Wave.
+#   cancelled → Invalidated by direction change or new information.
+#
+# Only 'refined' items can be picked up for building.
+# Product team is responsible for moving items from raw → refined.
+
+backlog:
+
+  - id: "wave-1-001"
+    title: "Example: Add user authentication with email + password"
+    belief: "Problem: Users cannot log in | Bet: Email/password auth reduces support tickets by 40% | Signal: <5 support tickets/week after 72h"
+    status: refined
+    bet_score: 6.0  # (Risk:3 × Impact:4) / TestCost:2
+    blast_radius: "Contained"  # Contained | Cross-Cutting | Foundation
+    wave: 1
+    created: "2026-04-15"
+    acceptance_criteria:
+      - criterion: "User can register with email and password"
+        verification: "POST /auth/register returns 201 with user_id"
+      - criterion: "User can log in and receive a JWT"
+        verification: "POST /auth/login returns 200 with token field"
+      - criterion: "Invalid password returns 401, not 500"
+        verification: "POST /auth/login with wrong password returns 401"
+      - criterion: "Token expires after 24 hours"
+        verification: "Token decoded exp claim = issued_at + 86400"
+    expectation_map_delta: "Client expects OAuth social login. We are building email/password first. Delta: social login deferred to Wave 2."
+    notes: ""
+
+  # Add new items below. Use the format above.
+  # Raw items (captured mid-wave) only need id, title, status:raw, wave, created.
+

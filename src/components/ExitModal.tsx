@@ -1,7 +1,10 @@
+import { modalOpen } from '../state';
+
 export function ExitModal() {
+  const cls = modalOpen.value === 'exitModal' ? 'modal-overlay open' : 'modal-overlay';
   return (
     <>
-<div className="modal-overlay" id="exitModal" onClick={() => window.closeModal('exitModal')}>
+<div className={cls} id="exitModal" onClick={() => window.closeModal('exitModal')}>
   <div className="modal" onClick={(e) => e.stopPropagation()} style={{ 'width': '400px' }}>
     <div className="modal-head">
       <h3>Exit SignalOS?</h3>

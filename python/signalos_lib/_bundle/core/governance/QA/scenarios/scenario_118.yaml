@@ -1,0 +1,8 @@
+id: scenario_118
+wave: "W10"
+title: "signal-cso canary check returns found=True after planting"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import plant_canary_token, check_canary_token; from pathlib import Path; import tempfile; t=tempfile.mkdtemp(); plant_canary_token(Path(t), 'ci'); r=check_canary_token(Path(t), 'ci'); print(r['found'])\""
+    expect_exit: 0
+    expect_stdout_contains: "True"

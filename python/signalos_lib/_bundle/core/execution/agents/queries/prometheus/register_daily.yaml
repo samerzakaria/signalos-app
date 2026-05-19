@@ -1,0 +1,6 @@
+# Backend-specific query: Prometheus
+# Metric: register_daily
+# Referenced by: metrics-map.yaml → register_daily.source.implementation.query_ref
+query: 'sum(increase(user_registrations_total[24h]))'
+unit: registrations
+value_path: "data.result[0].value[1]"

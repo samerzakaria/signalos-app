@@ -1,0 +1,67 @@
+# SignalOS Validators — GitHub Actions
+#
+# INSTALLATION:
+#   Copy this file to .github/workflows/signalos.yml in your project root.
+#   Adjust SIGNALOS_PATH if SignalOS is vendored in a non-standard location.
+#
+# BEHAVIOR:
+#   Runs all 9 validators on every pull request.
+#   Each validator is a separate step; all must pass for the check to succeed.
+
+name: SignalOS Validators
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+
+env:
+  SIGNALOS_PATH: signalos
+
+jobs:
+  signalos-validators:
+    name: SignalOS Validators
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gate Signature Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/gate-signature-guard.sh" --repo-root .
+
+      - name: Trust Tier Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/trust-tier-guard.sh" --repo-root .
+
+      - name: Tier Sheet Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/tier-sheet-guard.sh" --repo-root .
+
+      - name: Artifact Shape Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/artifact-shape-guard.sh" --repo-root .
+
+      - name: Path Consistency Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/path-consistency-guard.sh" --repo-root .
+
+      - name: Expectation Redline Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/expectation-redline-guard.sh" --repo-root .
+
+      - name: Constitution Amendment Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/constitution-amendment-guard.sh" --repo-root .
+
+      - name: Decision DNA Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/decision-dna-guard.sh" --repo-root .
+
+      - name: Client Signal Verbatim Guard
+        continue-on-error: false
+        run: bash "${{ env.SIGNALOS_PATH }}/core/governance/Validators/client-signal-verbatim-guard.sh" --repo-root .

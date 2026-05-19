@@ -2,12 +2,33 @@ export {};
 
 type TauriInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
+interface TauriDialog {
+  open?: (opts?: {
+    directory?: boolean;
+    multiple?: boolean;
+    title?: string;
+    defaultPath?: string;
+  }) => Promise<string | string[] | null>;
+}
+
 declare global {
   interface Window {
     __TAURI__?: {
       core?: { invoke?: TauriInvoke };
       invoke?: TauriInvoke;
+      dialog?: TauriDialog;
+      shell?: { open?: (url: string) => Promise<void> };
     };
+    pickWorkspaceFolder: () => Promise<void>;
+    instantiateGovernanceAndSignG0: () => Promise<{ filled: string[]; signed: boolean }>;
+    approvePlan: (bubbleId: string) => Promise<void>;
+    cancelWave: (bubbleId: string) => void;
+    retryTask: (bubbleId: string, taskId: string) => Promise<void>;
+    rollbackWave: (bubbleId: string) => Promise<void>;
+    showSignForm: () => void;
+    previewRun: () => Promise<void>;
+    previewStop: () => Promise<void>;
+    previewReload: () => void;
     addBrainEntry: () => void;
     attachFile: () => void;
     changeModel: () => void;
@@ -20,14 +41,14 @@ declare global {
     composerInput: (e: Event) => void;
     composerKey: (e: KeyboardEvent) => void;
     confirmOverride: () => void;
-    copySecret: (el: EventTarget | null) => void;
+    copySecret: (name: string) => void;
     createProject: () => void;
     cycleActivity: (el: EventTarget | null) => void;
-    deleteSecret: (el: EventTarget | null) => void;
+    deleteSecret: (name: string) => void;
     exitApp: (save: boolean) => void;
     exportHandoff: (btn?: EventTarget | null) => void;
     exportReport: (btn?: EventTarget | null) => void;
-    filterBrain: (el: EventTarget | null, type: string) => void;
+    filterBrain: (_el: EventTarget | null, type: string) => void;
     finishOnboarding: () => void;
     forgetWorkspace: () => void;
     freezeWave: () => void;
@@ -52,8 +73,8 @@ declare global {
     saveIdentity: () => void;
     saveSecret: () => void;
     selectAI: (ai: string) => void;
-    selectProv: (el: EventTarget | null) => void;
-    sendChip: (el: EventTarget | null) => void;
+    selectProv: (provider: string, model: string, keyLabel: string) => void;
+    sendChip: (text: string) => void;
     sendMsg: () => void;
     shareProject: () => void;
     showFileWriteToast: (files: unknown) => void;
@@ -62,14 +83,14 @@ declare global {
     switchDevice: (mode: string) => void;
     switchSbTab: (tab: string) => void;
     switchTab: (tab: string) => void;
-    termChip: (el: EventTarget | null) => void;
+    termChip: (cmd: string) => void;
     termKey: (e: KeyboardEvent) => void;
     termSubmit: (val?: string) => void;
     testEngine: () => void;
     toggleEnfPopover: () => void;
     toggleKey: () => void;
     toggleMoreProvs: () => void;
-    toggleSecret: (el: EventTarget | null) => void;
+    toggleSecret: (name: string) => void;
     unfreezeWave: () => void;
     voiceInput: () => void;
   }

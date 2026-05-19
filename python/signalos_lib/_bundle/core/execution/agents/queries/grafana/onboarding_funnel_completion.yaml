@@ -1,0 +1,7 @@
+# Backend-specific query: Grafana
+# Metric: onboarding_funnel_completion
+# Referenced by: metrics-map.yaml → onboarding_funnel_completion.source.implementation.query_ref
+query: 'sum(onboarding_step_completed{step="final"}) / sum(onboarding_step_completed{step="start"}) * 100'
+unit: percent
+datasource_uid: prometheus-1
+value_path: "results[0].frames[0].data.values[1][-1]"

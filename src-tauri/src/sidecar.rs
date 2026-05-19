@@ -120,9 +120,16 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
     }
 
     let shell = app.shell();
+    // Snapshot all keychain-stored API keys into env vars at spawn time so
+    // the Python harness (orchestrator, signal-harness call) can resolve
+    // LLM providers without the user exporting env vars manually. Re-snapshot
+    // on every restart so a key updated in Settings takes effect after
+    // restart_python_sidecar.
+    let env_keys = crate::keychain::snapshot_env_keys();
     let (mut rx, mut child) = shell
         .sidecar("signalos-python")
         .context("Failed to find signalos-python sidecar")?
+        .envs(env_keys)
         .spawn()
         .context("Failed to spawn signalos-python")?;
 

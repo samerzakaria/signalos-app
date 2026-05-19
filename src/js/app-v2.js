@@ -17,19 +17,13 @@ import * as ipc from "./ipc.js";
 import { isFinished as wizardFinished, resetWizard } from "./wizard.js";
 import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from "./conversation.js";
 import { loadDashboard } from "./ui/dashboard.js";
-import { loadBuild } from "./ui/chat.js";
+import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamError } from "./ui/chat.js";
 
 // ─── Global state ──────────────────────────────────────────────────────────────
 
 import { state } from "./state.js";
 
-const OB_TAGS = [
-  "Every great thing starts with a spark.",
-  "The right brain,<br/>the right budget.",
-  "Your name on every gate.<br/>That's accountability.",
-];
-
-import { esc, showError, formatTs } from "./util.js";
+import { esc, showError } from "./util.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -153,23 +147,6 @@ export function updateCostDisplay(cost) {
   state.cost = cost.session_usd ?? cost.total_usd ?? 0;
 }
 
-function providerDisplayName(p) {
-  const names = {
-    anthropic: "Claude",
-    openai: "GPT-4o",
-    gemini: "Gemini",
-    ollama: "Ollama",
-    openrouter: "OpenRouter",
-    deepseek: "DeepSeek",
-    mistral: "Mistral",
-    groq: "Groq",
-    cerebras: "Cerebras",
-    together: "Together AI",
-    xai: "xAI",
-    qwen: "Qwen",
-  };
-  return names[p] || p;
-}
 
 // ─── Tab navigation ────────────────────────────────────────────────────────────
 
@@ -250,65 +227,10 @@ window.switchSbTab = switchSbTab;
 export async function loadEnforcement() {
   try {
     const enfState = await ipc.enforcement.state();
-    renderEnforcementPills(enfState);
+    state.enforcementRules = enfState?.rules || [];
     state.waveFrozen = Boolean(enfState?.wave_frozen);
-    const frozenBanner = document.getElementById("frozenBanner");
-    if (frozenBanner) {
-      frozenBanner.classList.toggle("visible", state.waveFrozen);
-    }
-    const freezeBtn = document.getElementById("freezeBtn");
-    if (freezeBtn) {
-      freezeBtn.innerHTML = state.waveFrozen
-        ? '<i class="ti ti-sun"></i> Unfreeze wave'
-        : '<i class="ti ti-snowflake"></i> Freeze wave';
-    }
   } catch (e) {
     console.warn("Could not load enforcement state:", e.message);
-  }
-}
-
-function renderEnforcementPills(enfState) {
-  const pill = document.getElementById("enfPill");
-  if (!pill) return;
-  const rules = enfState?.rules || [];
-  const warns = rules.filter((r) => r.status === "warn").length;
-  const errors = rules.filter((r) => r.status === "blocked" || r.status === "error").length;
-
-  // Remove popover from pill so we can replace outer HTML safely
-  const popover = document.getElementById("enfPopover");
-
-  if (errors > 0) {
-    pill.className = "enf-pill blocked";
-    pill.childNodes[0].textContent = "";
-    pill.innerHTML = `<i class="ti ti-shield-off"></i> ${errors} blocked`;
-  } else if (warns > 0) {
-    pill.className = "enf-pill warn";
-    pill.innerHTML = `<i class="ti ti-shield-half"></i> ${warns} warning${warns > 1 ? "s" : ""}`;
-  } else {
-    pill.className = "enf-pill ok";
-    pill.innerHTML = '<i class="ti ti-shield-check"></i> All clear';
-  }
-
-  // Re-attach popover
-  if (popover) pill.appendChild(popover);
-
-  // Render rules inside popover
-  const rulesContainer = document.getElementById("enfRules");
-  if (rulesContainer && rules.length > 0) {
-    rulesContainer.innerHTML = rules
-      .map((r) => {
-        const ok = r.status === "ok" || r.status === "pass";
-        const icCls = ok ? "ok" : "warn";
-        const icIcon = ok ? "ti-check" : "ti-alert-triangle";
-        return `<div class="rule-row">
-          <div class="rule-ic ${icCls}"><i class="ti ${icIcon}"></i></div>
-          <div class="rule-tx">
-            <div class="rule-name">${esc(r.name || r.rule || "")}</div>
-            <div class="rule-desc">${esc(r.description || r.desc || "")}</div>
-          </div>
-        </div>`;
-      })
-      .join("");
   }
 }
 
@@ -316,13 +238,6 @@ async function freezeWave() {
   try {
     await ipc.enforcement.freeze();
     state.waveFrozen = true;
-    const banner = document.getElementById("frozenBanner");
-    if (banner) banner.classList.add("visible");
-    const btn = document.getElementById("freezeBtn");
-    if (btn) {
-      btn.innerHTML = '<i class="ti ti-sun"></i> Unfreeze wave';
-      btn.onclick = unfreezeWave;
-    }
     addAIBubble("Wave frozen. No AI file writes allowed until you unfreeze.");
     switchTab("build");
   } catch (e) {
@@ -335,13 +250,6 @@ async function unfreezeWave() {
   try {
     await ipc.enforcement.unfreeze();
     state.waveFrozen = false;
-    const banner = document.getElementById("frozenBanner");
-    if (banner) banner.classList.remove("visible");
-    const btn = document.getElementById("freezeBtn");
-    if (btn) {
-      btn.innerHTML = '<i class="ti ti-snowflake"></i> Freeze wave';
-      btn.onclick = freezeWave;
-    }
     addAIBubble("Wave unfrozen. Enforcement rules still active — proceed carefully.");
     switchTab("build");
   } catch (e) {
@@ -352,7 +260,6 @@ window.unfreezeWave = unfreezeWave;
 
 function toggleEnfPopover() {
   state.enfOpen = !state.enfOpen;
-  document.getElementById("enfPopover")?.classList.toggle("open", state.enfOpen);
 }
 window.toggleEnfPopover = toggleEnfPopover;
 
@@ -360,12 +267,11 @@ window.toggleEnfPopover = toggleEnfPopover;
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".enf-pill")) {
     state.enfOpen = false;
-    document.getElementById("enfPopover")?.classList.remove("open");
   }
 });
 
 async function openOverride() {
-  document.getElementById("enfPopover")?.classList.remove("open");
+  state.enfOpen = false;
   openModal("overrideModal");
 }
 window.openOverride = openOverride;
@@ -474,8 +380,7 @@ async function openGate() {
 window.openGate = openGate;
 
 function showSignForm() {
-  const form = document.getElementById("signForm");
-  if (form) form.style.display = form.style.display === "none" ? "flex" : "none";
+  state.signFormOpen = !state.signFormOpen;
 }
 window.showSignForm = showSignForm;
 
@@ -575,10 +480,8 @@ async function addBrainEntry() {
 }
 window.addBrainEntry = addBrainEntry;
 
-function filterBrain(el, type) {
-  document.querySelectorAll(".brain-type").forEach((b) => b.classList.remove("active"));
-  el.classList.add("active");
-  // Re-render filtered (re-load and client-side filter)
+function filterBrain(_el, type) {
+  state.brainFilter = type;
   ipc.brain
     .search(type === "all" ? "" : type)
     .then((entries) => {
@@ -601,53 +504,49 @@ async function loadVault() {
   }
 }
 
-async function toggleSecret(btn) {
-  const row = btn.closest(".srow");
-  if (!row) return;
-  const name = row.dataset.secretName;
-  const val = row.querySelector(".s-val");
-  const ico = btn.querySelector("i");
-  if (val.textContent.includes("•")) {
-    try {
-      const raw = await ipc.secrets.reveal(name);
-      val.textContent = raw;
-      if (ico) ico.className = "ti ti-eye-off";
-      // Auto-hide after 30 seconds
-      setTimeout(() => {
-        val.textContent = "••••••••••••••••";
-        if (ico) ico.className = "ti ti-eye";
-      }, 30000);
-    } catch (e) {
-      showError("Could not reveal secret: " + e.message);
-    }
-  } else {
-    val.textContent = "••••••••••••••••";
-    if (ico) ico.className = "ti ti-eye";
+async function toggleSecret(name) {
+  if (!name) return;
+  const current = state.revealedSecrets || {};
+  if (name in current) {
+    // Hide
+    const { [name]: _omit, ...rest } = current;
+    state.revealedSecrets = rest;
+    return;
+  }
+  try {
+    const raw = await ipc.secrets.reveal(name);
+    state.revealedSecrets = { ...current, [name]: raw };
+    // Auto-hide after 30 seconds
+    setTimeout(() => {
+      const cur = state.revealedSecrets || {};
+      if (name in cur) {
+        const { [name]: _o, ...rest } = cur;
+        state.revealedSecrets = rest;
+      }
+    }, 30000);
+  } catch (e) {
+    showError("Could not reveal secret: " + e.message);
   }
 }
 window.toggleSecret = toggleSecret;
 
-async function copySecret(btn) {
-  const row = btn.closest(".srow");
-  if (!row) return;
-  const name = row.dataset.secretName;
+async function copySecret(name) {
+  if (!name) return;
   try {
     const raw = await ipc.secrets.reveal(name);
     await navigator.clipboard.writeText(raw);
-    const ico = btn.querySelector("i");
-    const orig = ico?.className;
-    if (ico) ico.className = "ti ti-check";
-    setTimeout(() => { if (ico && orig) ico.className = orig; }, 1500);
+    state.copiedSecret = name;
+    setTimeout(() => {
+      if (state.copiedSecret === name) state.copiedSecret = null;
+    }, 1500);
   } catch (e) {
     showError("Could not copy secret: " + e.message);
   }
 }
 window.copySecret = copySecret;
 
-async function deleteSecret(btn) {
-  const row = btn.closest(".srow");
-  if (!row) return;
-  const name = row.dataset.secretName;
+async function deleteSecret(name) {
+  if (!name) return;
   if (!confirm("Delete secret " + name + "? This cannot be undone.")) return;
   try {
     await ipc.secrets.delete(name);
@@ -699,62 +598,12 @@ async function loadHistory() {
       ipc.audit.list(100),
       ipc.provider.getCost(),
     ]);
-    renderHistoryRows(entries || []);
-    renderHistoryCost(cost);
+    state.auditTrail = entries || [];
+    if (cost) updateCostDisplay(cost);
   } catch (e) {
     console.warn("History load error:", e.message);
     showError("Could not load History: " + e.message);
   }
-}
-
-function renderHistoryRows(entries) {
-  const container = document.querySelector('[data-view="history"] .card');
-  if (!container) return;
-  const head = container.querySelector(".secrets-head");
-  container.querySelectorAll(".history-item").forEach((r) => r.remove());
-
-  if (!entries.length) {
-    const empty = document.createElement("div");
-    empty.style.cssText = "padding:24px;text-align:center;color:var(--ink-3);font-size:13px";
-    empty.textContent = "No history yet.";
-    container.appendChild(empty);
-    return;
-  }
-
-  entries.forEach((entry) => {
-    const action = entry.action || "";
-    const isSign = action.includes("sign") || action.includes("gate");
-    const isFreeze = action.includes("freeze") || action.includes("override");
-    const icCls = isSign ? "sign" : isFreeze ? "freeze" : "build";
-    const icIcon = isSign ? "ti-pencil" : isFreeze ? "ti-alert-triangle" : "ti-hammer";
-    const badgeText = isSign ? "Signed" : isFreeze ? "Override" : "Done";
-    const badgeCls = isSign ? "done" : isFreeze ? "" : "done";
-    const badgeStyle = isFreeze ? "style=\"background:var(--amber-soft);color:var(--amber-deep)\"" : "";
-
-    const div = document.createElement("div");
-    div.className = "history-item";
-    div.innerHTML = `
-      <div class="history-ic ${icCls}"><i class="ti ${icIcon}"></i></div>
-      <div class="history-tx">
-        <div class="history-title">${esc(action)}</div>
-        <div class="history-meta">${esc(formatTs(entry.ts || entry.timestamp || ""))}</div>
-      </div>
-      <span class="history-badge ${badgeCls}" ${badgeStyle}>${esc(badgeText)}</span>`;
-    container.appendChild(div);
-  });
-
-  // Update vstats
-  const buildRuns = entries.filter((e) => (e.action || "").includes("build")).length;
-  const gatesSigned = entries.filter((e) => (e.action || "").includes("sign")).length;
-  const stats = document.querySelectorAll('[data-view="history"] .vstat .vstat-v');
-  if (stats[0]) stats[0].textContent = String(buildRuns);
-  if (stats[1]) stats[1].textContent = String(gatesSigned);
-}
-
-function renderHistoryCost(cost) {
-  if (!cost) return;
-  const sessionSpend = document.querySelector('[data-view="settings"] .settings-path[data-session-spend]');
-  if (sessionSpend) sessionSpend.textContent = "$" + (cost.session_usd || 0).toFixed(4);
 }
 
 async function exportHandoff(btn) {
@@ -837,44 +686,26 @@ async function loadSettings() {
     ]);
 
     if (id) {
-      const settingsName = document.getElementById("settingsName");
-      if (settingsName) settingsName.value = id.name || "";
-      const settingsRole = document.getElementById("settingsRole");
-      if (settingsRole) settingsRole.value = id.role || "PO";
+      state.userName = id.name || "";
+      state.userRole = id.role || "PO";
     }
 
     if (prov) {
-      const provSelect = document.getElementById("settingsProvider");
-      if (provSelect) provSelect.value = prov.provider || "anthropic";
-      const modelSelect = document.getElementById("settingsModel");
-      if (modelSelect) modelSelect.value = prov.model || "";
+      state.ai = prov.provider || "anthropic";
+      state.aiModel = prov.model || "";
     }
 
     if (cost) {
-      const spendEl = document.getElementById("settingsSessionSpend");
-      if (spendEl) spendEl.textContent = "$" + (cost.session_usd || 0).toFixed(4);
-      const budgetInput = document.getElementById("settingsBudget");
-      if (budgetInput && cost.budget_usd) budgetInput.value = cost.budget_usd;
+      state.cost = cost.session_usd ?? cost.total_usd ?? 0;
+      if (cost.budget_usd) state.monthlyCap = cost.budget_usd;
     }
 
-    // Workspace path
     const ws = await ipc.workspace.get().catch(() => null);
-    if (ws) {
-      const wsPath = document.getElementById("settingsWorkspacePath");
-      if (wsPath) wsPath.textContent = ws.path || ws;
-    }
+    if (ws) state.workspacePath = ws.path || ws;
 
-    // Engine status
     try {
       const engineStatus = await ipc.engine.status();
-      const engBadge = document.getElementById("engineStatusBadge");
-      if (engBadge) {
-        const running = engineStatus?.running ?? engineStatus?.status === "running";
-        engBadge.className = running ? "live-badge" : "live-badge";
-        engBadge.innerHTML = running
-          ? '<span class="dot"></span> Running'
-          : '<span style="width:6px;height:6px;border-radius:50%;background:var(--danger);display:inline-block"></span> Stopped';
-      }
+      state.engineRunning = Boolean(engineStatus?.running ?? engineStatus?.status === "running");
     } catch {
       // Engine status not critical
     }
@@ -884,19 +715,11 @@ async function loadSettings() {
 }
 
 async function saveIdentity() {
-  const name = document.getElementById("settingsName")?.value.trim();
-  const role = document.getElementById("settingsRole")?.value;
+  const name = (state.userName || "").trim();
+  const role = state.userRole;
   if (!name) { showError("Name is required"); return; }
   try {
     await ipc.identity.set(name, role);
-    state.userName = name;
-    state.userRole = role;
-    const sbUserName = document.getElementById("sbUserName");
-    if (sbUserName) sbUserName.textContent = name;
-    const sbUserRole = document.getElementById("sbUserRole");
-    if (sbUserRole) sbUserRole.textContent = role;
-    const sbAv = document.getElementById("sbAvatar");
-    if (sbAv) sbAv.textContent = name[0]?.toUpperCase() || "?";
   } catch (e) {
     showError("Could not save identity: " + e.message);
   }
@@ -904,8 +727,8 @@ async function saveIdentity() {
 window.saveIdentity = saveIdentity;
 
 async function saveBudget() {
-  const val = parseFloat(document.getElementById("settingsBudget")?.value);
-  if (isNaN(val) || val < 0) { showError("Invalid budget amount"); return; }
+  const val = state.monthlyCap;
+  if (val === null || isNaN(val) || val < 0) { showError("Invalid budget amount"); return; }
   try {
     await ipc.provider.setBudget(val);
   } catch (e) {
@@ -919,7 +742,6 @@ async function resetSessionCost() {
     await ipc.provider.resetSession();
     const cost = await ipc.provider.getCost();
     updateCostDisplay(cost);
-    await loadSettings();
   } catch (e) {
     showError("Could not reset session: " + e.message);
   }
@@ -927,14 +749,10 @@ async function resetSessionCost() {
 window.resetSessionCost = resetSessionCost;
 
 async function changeProvider() {
-  const provSelect = document.getElementById("settingsProvider");
-  const p = provSelect?.value;
+  const p = state.ai;
   if (!p) return;
   try {
     await ipc.provider.setActive(p);
-    state.ai = p;
-    const provDisplay = document.getElementById("provDisplay");
-    if (provDisplay) provDisplay.textContent = providerDisplayName(p) + " · live";
   } catch (e) {
     showError("Could not change provider: " + e.message);
   }
@@ -942,12 +760,10 @@ async function changeProvider() {
 window.changeProvider = changeProvider;
 
 async function changeModel() {
-  const modelSelect = document.getElementById("settingsModel");
-  const model = modelSelect?.value;
+  const model = state.aiModel;
   if (!model) return;
   try {
     await ipc.provider.setModel(state.ai, model);
-    state.aiModel = model;
   } catch (e) {
     showError("Could not change model: " + e.message);
   }
@@ -972,11 +788,8 @@ window.replaceApiKey = replaceApiKey;
 async function forgetWorkspace() {
   if (!confirm("Remove this workspace from SignalOS? Your files stay on your computer.")) return;
   try {
-    // Reset workspace — no specific IPC for "forget", so set to empty signals reset
     await ipc.workspace.set("");
-    const wsPath = document.getElementById("settingsWorkspacePath");
-    if (wsPath) wsPath.textContent = "(none)";
-    state.workspace = "";
+    state.workspacePath = "";
   } catch (e) {
     showError("Could not forget workspace: " + e.message);
   }
@@ -984,64 +797,45 @@ async function forgetWorkspace() {
 window.forgetWorkspace = forgetWorkspace;
 
 async function testEngine() {
-  const btn = document.getElementById("testEngineBtn");
-  if (btn) btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Testing…';
+  state.engineTestState = "testing";
   try {
     await ipc.engine.ping();
-    if (btn) btn.innerHTML = '<i class="ti ti-circle-check" style="color:var(--success)"></i> OK';
-    setTimeout(() => { if (btn) btn.innerHTML = '<i class="ti ti-activity"></i> Test'; }, 2000);
+    state.engineTestState = "ok";
+    setTimeout(() => { state.engineTestState = "idle"; }, 2000);
   } catch (e) {
-    if (btn) btn.innerHTML = '<i class="ti ti-alert-circle" style="color:var(--danger)"></i> Failed';
-    setTimeout(() => { if (btn) btn.innerHTML = '<i class="ti ti-activity"></i> Test'; }, 2000);
+    state.engineTestState = "failed";
+    setTimeout(() => { state.engineTestState = "idle"; }, 2000);
     showError("Engine test failed: " + e.message);
   }
 }
 window.testEngine = testEngine;
 
 async function restartEngine() {
-  const btn = document.getElementById("restartEngineBtn");
-  if (btn) btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Restarting…';
+  state.engineRestartState = "restarting";
   try {
     await ipc.engine.restart();
-    if (btn) btn.innerHTML = '<i class="ti ti-refresh"></i> Restart';
-    const engBadge = document.getElementById("engineStatusBadge");
-    if (engBadge) engBadge.innerHTML = '<span class="dot"></span> Running';
+    state.engineRestartState = "idle";
+    state.engineRunning = true;
   } catch (e) {
+    state.engineRestartState = "idle";
     showError("Engine restart failed: " + e.message);
-    if (btn) btn.innerHTML = '<i class="ti ti-refresh"></i> Restart';
   }
 }
 window.restartEngine = restartEngine;
 
 async function checkForUpdates() {
-  const btn = document.getElementById("updateBtn");
-  const result = document.getElementById("updateResult");
-  const tx = document.getElementById("updateResultTx");
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> Checking…';
-  }
-  if (result) result.classList.remove("visible");
+  state.updateCheck = { checking: true, visible: false, hasUpdate: false, message: "" };
   try {
     const update = await ipc.updater.check(state.updateChannel);
     const hasUpdate = update?.available || update?.update_available;
-    if (tx) tx.textContent = hasUpdate ? "Update available: " + (update.version || "") : "Up to date";
-    if (result) {
-      const icon = result.querySelector("i");
-      if (icon) {
-        icon.className = hasUpdate ? "ti ti-cloud-download" : "ti ti-circle-check";
-        icon.style.color = hasUpdate ? "var(--accent)" : "var(--success)";
-      }
-      result.classList.add("visible");
-    }
+    state.updateCheck = {
+      checking: false,
+      visible: true,
+      hasUpdate,
+      message: hasUpdate ? "Update available: " + (update.version || "") : "Up to date",
+    };
   } catch (e) {
-    if (tx) tx.textContent = "Check failed";
-    if (result) result.classList.add("visible");
-  } finally {
-    if (btn) {
-      btn.innerHTML = '<i class="ti ti-cloud-download"></i> Check for updates';
-      btn.disabled = false;
-    }
+    state.updateCheck = { checking: false, visible: true, hasUpdate: false, message: "Check failed" };
   }
 }
 window.checkForUpdates = checkForUpdates;
@@ -1049,41 +843,24 @@ window.checkForUpdates = checkForUpdates;
 // ─── Terminal ──────────────────────────────────────────────────────────────────
 
 async function loadTerminal() {
-  // Check sidecar status
   try {
     const status = await ipc.engine.status();
-    const banner = document.querySelector(".sidecar-banner");
-    if (banner) {
-      const running = status?.running ?? status?.status === "running";
-      banner.className = running ? "sidecar-banner" : "sidecar-banner error";
-      banner.innerHTML = running
-        ? '<i class="ti ti-circle-check"></i> SignalOS Core running · Python sidecar ready'
-        : '<i class="ti ti-alert-circle"></i> SignalOS Core not running';
-    }
+    state.engineRunning = Boolean(status?.running ?? status?.status === "running");
   } catch {
     // Not critical
   }
+}
 
-  // Set terminal path
-  const termPath = document.querySelector(".term-path");
-  if (termPath && state.workspace) {
-    const parts = state.workspace.replace(/\\/g, "/").split("/");
-    termPath.textContent = parts[parts.length - 1] || state.workspace;
-  }
+function pushTermLine(line) {
+  state.terminalLines = [...state.terminalLines, line];
 }
 
 async function termExecReal(cmd) {
-  const body = document.getElementById("termBody");
-  if (!body) return;
+  const pathName = state.workspace ? state.workspace.replace(/\\/g, "/").split("/").filter(Boolean).pop() || state.workspace : "signalos";
 
-  // Echo command
-  const echo = document.createElement("div");
-  echo.className = "term-line";
-  const pathName = state.workspace ? state.workspace.replace(/\\/g, "/").split("/").pop() : "signalos";
-  echo.innerHTML = `<span class="t-path">${esc(pathName)}</span> <span class="t-sym">$</span> <span class="t-cmd">${esc(cmd)}</span>`;
-  body.appendChild(echo);
+  pushTermLine({ kind: "echo", text: cmd, pathName });
 
-  if (!cmd.trim()) { body.scrollTop = body.scrollHeight; return; }
+  if (!cmd.trim()) return;
 
   if (state.termHistory[state.termHistory.length - 1] !== cmd) {
     state.termHistory.push(cmd);
@@ -1091,67 +868,50 @@ async function termExecReal(cmd) {
   state.termHistIdx = -1;
 
   if (cmd === "clear" || cmd === "cls") {
-    body.innerHTML = "";
+    state.terminalLines = [];
     return;
   }
 
-  // Show loading line
-  const loading = document.createElement("div");
-  loading.className = "term-line t-dim";
-  loading.textContent = "Running…";
-  body.appendChild(loading);
-  body.scrollTop = body.scrollHeight;
+  pushTermLine({ kind: "loading", text: "Running…" });
 
   try {
     const result = await ipc.signal.runAndWait(cmd.replace(/^\//, ""), []);
-    loading.remove();
-    const lines = typeof result === "string" ? result.split("\n") : (result?.output || result?.lines || [String(result)]);
-    lines.forEach((line) => {
-      if (!line && lines.length === 1) return;
-      const d = document.createElement("div");
-      d.className = "term-line";
-      d.textContent = line;
-      body.appendChild(d);
-    });
+    const raw = typeof result === "string" ? result.split("\n") : (result?.output || result?.lines || [String(result)]);
+    const outputLines = raw.filter((line, i) => !(i === 0 && !line) || raw.length > 1).map((line) => ({ kind: "output", text: line }));
+    // Drop trailing loading line, append output
+    state.terminalLines = state.terminalLines.slice(0, -1).concat(outputLines);
   } catch (e) {
-    loading.remove();
-    const err = document.createElement("div");
-    err.className = "term-line t-err";
-    err.textContent = e.message || "Command failed";
-    body.appendChild(err);
+    state.terminalLines = state.terminalLines.slice(0, -1).concat([{ kind: "error", text: e.message || "Command failed" }]);
   }
-
-  body.scrollTop = body.scrollHeight;
 }
 
 function termKey(e) {
-  const input = e.target;
   if (e.key === "Enter") {
-    const cmd = input.value;
-    input.value = "";
+    const cmd = state.termInputValue || "";
+    state.termInputValue = "";
     state.termHistIdx = -1;
     termExecReal(cmd).catch(() => {});
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
     if (state.termHistory.length) {
       state.termHistIdx = Math.min(state.termHistIdx + 1, state.termHistory.length - 1);
-      input.value = state.termHistory[state.termHistory.length - 1 - state.termHistIdx];
+      state.termInputValue = state.termHistory[state.termHistory.length - 1 - state.termHistIdx];
     }
   } else if (e.key === "ArrowDown") {
     e.preventDefault();
     if (state.termHistIdx > 0) {
       state.termHistIdx--;
-      input.value = state.termHistory[state.termHistory.length - 1 - state.termHistIdx];
+      state.termInputValue = state.termHistory[state.termHistory.length - 1 - state.termHistIdx];
     } else {
       state.termHistIdx = -1;
-      input.value = "";
+      state.termInputValue = "";
     }
   }
 }
 window.termKey = termKey;
 
-function termChip(el) {
-  termExecReal(el.textContent).catch(() => {});
+function termChip(cmd) {
+  termExecReal(cmd || "").catch(() => {});
 }
 window.termChip = termChip;
 
@@ -1248,12 +1008,12 @@ window.showFileWriteToast = showFileWriteToast;
 // ─── Modals ────────────────────────────────────────────────────────────────────
 
 function openModal(id) {
-  document.getElementById(id)?.classList.add("open");
+  state.modalOpen = id;
 }
 window.openModal = openModal;
 
 function closeModal(id) {
-  document.getElementById(id)?.classList.remove("open");
+  if (state.modalOpen === id) state.modalOpen = null;
 }
 window.closeModal = closeModal;
 
@@ -1349,110 +1109,94 @@ function _doExit() {
 
 // ─── Onboarding ────────────────────────────────────────────────────────────────
 
-let obStep = 1;
-
 function initOnboarding() {
-  obStep = 1;
-  showObStep(1);
-}
-
-function showObStep(step) {
-  document.querySelectorAll(".ob-step").forEach((s) => s.classList.remove("active"));
-  const stepEl = document.querySelector(`.ob-step[data-step="${step}"]`);
-  if (stepEl) stepEl.classList.add("active");
-
-  // Update dots
-  for (let i = 1; i <= 3; i++) {
-    document.getElementById(`pd-${i}`)?.classList.toggle("active", i <= step);
-  }
-
-  // Update tag
-  const obTag = document.getElementById("obTag");
-  if (obTag) obTag.innerHTML = OB_TAGS[step - 1] || "";
+  state.obStep = 1;
 }
 
 function nextStep() {
-  if (obStep >= 3) return;
-  obStep++;
-  showObStep(obStep);
+  if (state.obStep >= 3) return;
+  state.obStep = state.obStep + 1;
 }
 window.nextStep = nextStep;
 
 function prevStep() {
-  if (obStep <= 1) return;
-  obStep--;
-  showObStep(obStep);
+  if (state.obStep <= 1) return;
+  state.obStep = state.obStep - 1;
 }
 window.prevStep = prevStep;
 
-function selectProv(el) {
-  document.querySelectorAll(".prov-card").forEach((o) => o.classList.remove("sel"));
-  el.classList.add("sel");
-  state.ai = el.dataset.ai || "anthropic";
-  state.aiModel = el.dataset.model || "";
-  const lbl = el.dataset.keyLabel || "API key";
-  const keyLabelEl = document.getElementById("keyLabel");
-  if (keyLabelEl) keyLabelEl.textContent = lbl;
+function selectProv(provider, model, label) {
+  state.ai = provider || "anthropic";
+  state.aiModel = model || "";
+  state.keyLabel = label || "API key";
 }
 window.selectProv = selectProv;
 window.selectAI = selectProv;
 
 function toggleMoreProvs() {
-  const more = document.getElementById("provMore");
-  const btn = document.getElementById("provMoreBtn");
-  const open = more?.style.display !== "none";
-  if (more) more.style.display = open ? "none" : "grid";
-  btn?.classList.toggle("open", !open);
-  if (btn) {
-    btn.innerHTML = open
-      ? '<i class="ti ti-chevron-down"></i> 7 more providers'
-      : '<i class="ti ti-chevron-up"></i> Show fewer';
-  }
+  state.provMoreOpen = !state.provMoreOpen;
 }
 window.toggleMoreProvs = toggleMoreProvs;
 
 function toggleKey() {
-  const input = document.getElementById("apiKey");
-  const tog = document.getElementById("keyTog");
   state.keyVisible = !state.keyVisible;
-  if (input) input.type = state.keyVisible ? "text" : "password";
-  if (tog) tog.innerHTML = state.keyVisible ? '<i class="ti ti-eye-off"></i>' : '<i class="ti ti-eye"></i>';
 }
 window.toggleKey = toggleKey;
 
 async function finishOnboarding() {
-  const nameEl = document.getElementById("identName");
-  const roleEl = document.getElementById("identRole");
-  const name = (nameEl?.value || "").trim() || "User";
-  const role = roleEl?.value || "PO";
-
-  const apiKeyEl = document.getElementById("apiKey");
-  const apiKey = apiKeyEl?.value.trim() || "";
-
-  const budgetEl = document.getElementById("budgetInput");
-  const budget = parseFloat(budgetEl?.value) || 0;
+  const name = (state.userName || "").trim() || "User";
+  const role = state.userRole || "PO";
+  const apiKey = (state.apiKeyInput || "").trim();
+  const budget = parseFloat(state.budgetInputValue) || 0;
+  const folder = (state.workspacePath || "").trim();
 
   try {
-    // Save identity
     await ipc.identity.set(name, role);
     state.userName = name;
     state.userRole = role;
 
-    // Store API key
     if (apiKey) {
       await ipc.keychain.store(state.ai, apiKey);
-      // Test connection
       await ipc.provider.test(state.ai, apiKey, state.aiModel);
     }
 
-    // Set provider
     await ipc.provider.setActive(state.ai);
     if (state.aiModel) await ipc.provider.setModel(state.ai, state.aiModel);
 
-    // Set budget
-    if (budget > 0) await ipc.provider.setBudget(budget);
+    if (budget > 0) {
+      await ipc.provider.setBudget(budget);
+      state.monthlyCap = budget;
+    }
 
-    // Mark wizard done in localStorage
+    // Set workspace + scaffold .signalos/ + governance docs + sign Gate 0.
+    // Each step is best-effort; one failure shouldn't block the rest of
+    // onboarding. The order matters: workspace.set -> signal-init (which
+    // creates .signalos/, copies the bundle including the governance
+    // templates, runs `git init`) -> instantiateGovernanceAndSignG0
+    // (fills the {Product Name} / [DATE] placeholders in
+    // Governance/SOUL-DOCUMENT.md / CONSTITUTION.md / DECISION-DNA.md
+    // and signs G0).
+    if (folder) {
+      try {
+        await ipc.workspace.set(folder);
+        state.workspace = folder;
+      } catch (e) {
+        console.warn("workspace.set at onboarding failed:", e?.message || e);
+      }
+      try {
+        await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
+      } catch (e) {
+        console.warn("signal-init at onboarding failed:", e?.message || e);
+      }
+      if (typeof window.instantiateGovernanceAndSignG0 === "function") {
+        // fire-and-forget; the chat preamble's protocol context will
+        // pick up the filled docs on its next reload
+        window.instantiateGovernanceAndSignG0().catch((e) =>
+          console.warn("governance instantiation failed:", e?.message || e)
+        );
+      }
+    }
+
     const LS_KEY = "signalos.onboarding.wizard.v1";
     const WIZARD_VERSION = 2;
     localStorage.setItem(LS_KEY, JSON.stringify({
@@ -1467,21 +1211,8 @@ async function finishOnboarding() {
       finishedAt: new Date().toISOString(),
     }));
 
-    // Transition to app
     document.getElementById("onboarding").classList.remove("active");
     document.getElementById("app").classList.add("active");
-
-    // Update user display
-    const sbAv = document.getElementById("sbAvatar");
-    if (sbAv) sbAv.textContent = name[0]?.toUpperCase() || "?";
-    const sbUserName = document.getElementById("sbUserName");
-    if (sbUserName) sbUserName.textContent = name;
-    const sbUserRole = document.getElementById("sbUserRole");
-    if (sbUserRole) sbUserRole.textContent = role;
-    const signName = document.getElementById("signName");
-    if (signName) signName.value = name;
-    const provDisplay = document.getElementById("provDisplay");
-    if (provDisplay) provDisplay.textContent = providerDisplayName(state.ai) + " · live";
 
     await bootApp();
   } catch (e) {
@@ -1493,9 +1224,7 @@ window.finishOnboarding = finishOnboarding;
 // ─── Preview ───────────────────────────────────────────────────────────────────
 
 function switchDevice(mode) {
-  document.querySelectorAll(".dev-b").forEach((b) => b.classList.toggle("active", b.dataset.device === mode));
-  const pvDevice = document.getElementById("pvDevice");
-  if (pvDevice) pvDevice.className = "pv-device " + mode;
+  state.previewDevice = mode;
 }
 window.switchDevice = switchDevice;
 
@@ -1504,10 +1233,7 @@ async function refreshPreview() {
     const previews = await ipc.preview.list();
     if (previews && previews.length > 0) {
       const p = previews[0];
-      const pvUrl = document.querySelector(".pv-url");
-      if (pvUrl) {
-        pvUrl.innerHTML = `<i class="ti ti-lock"></i> ${esc(p.url || p.address || "localhost")}`;
-      }
+      state.previewUrl = p.url || p.address || "";
     }
   } catch {
     // Preview may not be running
@@ -1516,8 +1242,7 @@ async function refreshPreview() {
 window.refreshPreview = refreshPreview;
 
 function openExternal() {
-  const pvUrl = document.querySelector(".pv-url");
-  const url = pvUrl?.textContent?.trim();
+  const url = state.previewUrl;
   if (url && window.__TAURI__) {
     window.__TAURI__?.shell?.open(url).catch(() => {});
   }

@@ -1,0 +1,10 @@
+id: scenario_152
+title: guard_check detects frozen dir
+wave: W14
+amd: AMD-CORE-035
+command: python3
+args:
+  - "-c"
+  - "import sys; sys.path.insert(0,'cli'); from signalos_lib.safety import freeze_dir, guard_check; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); freeze_dir(t,'src/db','14'); result=guard_check(t,'src/db'); print(result['frozen'])"
+expect_exit: 0
+expect_stdout_contains: "True"

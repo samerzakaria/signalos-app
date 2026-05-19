@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# pre-merge — Gate 5 Signature + Worktree-Sync Enforcement Hook
+#
+# Enforces Constitution §4 (Gate 5 must be signed before merge) and §5.2
+# (Worktree-Sync agent must have reconciled before merge).
+#
+# Install as a server-side pre-receive hook OR run via CI before merge.
+# Exit 0 = merge permitted. Exit non-zero = merge blocked.
+#
+# Arguments:
+#   $1 = branch being merged (e.g. wave-03-checkout)
+#   $2 = target branch (e.g. main)
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+ERRORS=0
+BRANCH="${1:-$(git rev-parse --abbrev-ref HEAD)}"
+TARGET="${2:-main}"
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+echo "pre-merge hook — branch=$BRANCH target=$TARGET"
+
+# ─── Rule 1: Gate 5 Quality Check must be signed ───────────────────────────
+QC_FILE="$REPO_ROOT/core/governance/QUALITY_CHECK.md"
+if [ ! -f "$QC_FILE" ]; then
+  echo -e "${RED}✗ BLOCKED: Gate 5 Quality Check artifact missing at core/governance/QUALITY_CHECK.md${NC}"
+  echo "  PROTOCOL VIOLATION: Constitution §4 Gate 5 not signed. Wave $BRANCH blocked."
+  echo "  Named owner QA must reconcile."
+  ERRORS=$((ERRORS + 1))
+else
+  # Gate 5 requires Stage-1 PASS + Stage-2 PASS + QA signature
+  if ! grep -qE 'Stage-1:\s*PASS' "$QC_FILE"; then
+    echo -e "${RED}✗ BLOCKED: Gate 5 Stage-1 not marked PASS in QUALITY_CHECK.md${NC}"
+    ERRORS=$((ERRORS + 1))
+  fi
+  if ! grep -qE 'Stage-2:\s*(PASS|WAIVED)' "$QC_FILE"; then
+    echo -e "${RED}✗ BLOCKED: Gate 5 Stage-2 not marked PASS (or signed WAIVED) in QUALITY_CHECK.md${NC}"
+    ERRORS=$((ERRORS + 1))
+  fi
+  if ! grep -qiE 'QA[[:space:]]+signature:\s*\S+' "$QC_FILE"; then
+    echo -e "${RED}✗ BLOCKED: QA signature missing on QUALITY_CHECK.md${NC}"
+    echo "  Required format: 'QA signature: [name] [date]'"
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Rule 2: Worktree-Sync completion ───────────────────────────────────────
+SYNC_LOG="$REPO_ROOT/Worktree-sync/HANDOFFS.md"
+if [ -f "$SYNC_LOG" ]; then
+  # Look for an unreconciled handoff referencing this branch
+  if grep -qE "branch:\s*$BRANCH.*status:\s*(open|unreconciled)" "$SYNC_LOG"; then
+    echo -e "${RED}✗ BLOCKED: Worktree-Sync has unreconciled handoffs for $BRANCH${NC}"
+    echo "  Constitution §5.2 requires Worktree-Sync reconciliation before merge."
+    ERRORS=$((ERRORS + 1))
+  fi
+else
+  echo -e "${YELLOW}⚠ WARNING: Worktree-sync/HANDOFFS.md not found — Worktree-Sync reconciliation cannot be verified${NC}"
+fi
+
+# ─── Rule 3: Target branch must be protected ────────────────────────────────
+if [ "$TARGET" != "main" ] && [ "$TARGET" != "master" ] && ! echo "$TARGET" | grep -qE '^release/'; then
+  echo -e "${YELLOW}⚠ WARNING: Merging to non-protected target ($TARGET). pre-merge is advisory for non-protected branches.${NC}"
+fi
+
+# ─── Rule 4: PE identity — no agent may merge (Constitution §3.3) ──────────
+# The PE must be identifiable as a human. Merge actors with a known agent
+# identity are blocked outright. In a CI context the runner must pass
+# PE_MERGE_SIGNER as env var.
+
+# 4a. Reject known agent identities
+KNOWN_AGENT_MARKERS=("signalos-agent" "bot" "automation" "ci-runner" "github-actions")
+MERGE_AUTHOR="${PE_MERGE_SIGNER:-$(git config user.name 2>/dev/null || echo "")}"
+
+for marker in "${KNOWN_AGENT_MARKERS[@]}"; do
+  if echo "$MERGE_AUTHOR" | grep -qi "$marker"; then
+    echo -e "${RED}✗ BLOCKED: Merge actor '$MERGE_AUTHOR' matches agent pattern '$marker'.${NC}"
+    echo "  Constitution §3.3: no agent may merge. A human PE must run the merge."
+    ERRORS=$((ERRORS + 1))
+    break
+  fi
+done
+
+# 4b. PE_MERGE_SIGNER must be set (not just a warning — fail-closed)
+if [ -z "${PE_MERGE_SIGNER:-}" ]; then
+  echo -e "${RED}✗ BLOCKED: PE_MERGE_SIGNER env var not set — PE identity cannot be verified.${NC}"
+  echo "  Set PE_MERGE_SIGNER=<your name> to prove a human is merging."
+  ERRORS=$((ERRORS + 1))
+else
+  # Persist for pre-deploy SoD check
+  echo "PE_MERGE_SIGNER=$PE_MERGE_SIGNER" > "$REPO_ROOT/.signalos-merge-signer"
+fi
+
+# ─── Summary ────────────────────────────────────────────────────────────────
+if [ $ERRORS -gt 0 ]; then
+  echo ""
+  echo -e "${RED}✗ Merge blocked. Fix $ERRORS error(s) above.${NC}"
+  echo ""
+  echo "PROTOCOL VIOLATION: Gate 5 (Quality Check) not signed. Wave $BRANCH blocked."
+  echo "Named owner QA / Reviewer must reconcile."
+  exit 1
+fi
+
+echo -e "${GREEN}✓ pre-merge checks passed. Gate 5 signed. Worktree-Sync reconciled.${NC}"
+exit 0

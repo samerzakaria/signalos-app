@@ -1,0 +1,7 @@
+id: scenario_144
+title: "devex_list returns metrics"
+wave: W13
+amd: AMD-CORE-034
+command: |
+  python3 -c "import sys; sys.path.insert(0,'cli'); from signalos_lib.devex import devex_measure, devex_list; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); devex_measure(t,'TTHW',90.0,'13'); devex_measure(t,'TTHW',85.0,'13'); print(len(devex_list(t,'13')))"
+expect_stdout_contains: "2"

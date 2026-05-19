@@ -1,0 +1,10 @@
+id: scenario_154
+title: signal-careful enable CLI works
+wave: W14
+amd: AMD-CORE-035
+command: python3
+args:
+  - "-c"
+  - "import sys; sys.path.insert(0,'cli'); from signalos_lib.commands.safety import cmd_signal_careful; import tempfile; from pathlib import Path; t=Path(tempfile.mkdtemp()); r=cmd_signal_careful(['enable','--repo-root',str(t)]); print(r)"
+expect_exit: 0
+expect_stdout_contains: "0"

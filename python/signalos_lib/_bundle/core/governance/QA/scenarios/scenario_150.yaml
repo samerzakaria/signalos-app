@@ -1,0 +1,10 @@
+id: scenario_150
+title: careful_status returns inactive when no flag
+wave: W14
+amd: AMD-CORE-035
+command: python3
+args:
+  - "-c"
+  - "import sys; sys.path.insert(0,'cli'); from signalos_lib.safety import careful_status; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); s=careful_status(t); print(s.active)"
+expect_exit: 0
+expect_stdout_contains: "False"

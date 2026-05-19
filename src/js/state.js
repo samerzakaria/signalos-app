@@ -8,6 +8,7 @@ export const state = new Proxy({}, {
     if (prop === 'govGates') return signals.govGatesList.value;
     if (prop === 'auditTrail') return signals.auditList.value;
     if (prop === 'cost') return signals.currentCost.value;
+    if (prop === 'workspace') return signals.workspacePath.value;
     return target[prop];
   },
   set(target, prop, value) {
@@ -20,6 +21,7 @@ export const state = new Proxy({}, {
     if (prop === 'govGates') { signals.govGatesList.value = value; return true; }
     if (prop === 'auditTrail') { signals.auditList.value = value; return true; }
     if (prop === 'cost') { signals.currentCost.value = value; return true; }
+    if (prop === 'workspace') { signals.workspacePath.value = value; return true; }
     target[prop] = value;
     return true;
   }

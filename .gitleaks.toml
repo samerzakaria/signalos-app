@@ -1,0 +1,31 @@
+# Gitleaks configuration — allow-list intentional test fixtures.
+#
+# Several test files deliberately contain secret-shaped strings to verify
+# that our own redaction / validation layers detect them correctly:
+#   - python/test_skill_validators.py    -> tests security-audit skill validator
+#   - python/test_signalos_attachments.py -> tests attachment redaction
+#   - python/test_signalos_secret_guard.py -> tests the secret guard
+#   - python/signalos_lib/_bundle/core/execution/hooks/_lib/redact.py
+#                                         -> the redaction library's own corpus
+#
+# All of these are tagged in the human-readable scripts/test-gates.sh
+# secret_scan function as well; this file mirrors that exclusion for
+# gitleaks so the CI annotations stop crying wolf on intentional fixtures.
+#
+# Schema reference: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional secret-shaped test fixtures and the redaction-corpus module"
+paths = [
+    '''python/test_skill_validators\.py''',
+    '''python/test_signalos_attachments\.py''',
+    '''python/test_signalos_secret_guard\.py''',
+    '''python/signalos_lib/_bundle/core/execution/hooks/_lib/redact\.py''',
+    # The bundle ships protocol templates that occasionally cite example
+    # secret-shaped strings in their security-audit guidance. Same rule:
+    # exclusion mirrors scripts/test-gates.sh secret_scan().
+    '''python/signalos_lib/_bundle/.*''',
+]

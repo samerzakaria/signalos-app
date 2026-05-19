@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# pre-commit — Anti-Shortcut Enforcement Hook
+# Adapted from troykelly/claude-skills
+#
+# Install: cp core/execution/hooks/pre-commit .git/hooks/pre-commit
+#          chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+ERRORS=0
+
+echo "Anti-Shortcut Hook running..."
+
+# ─── Rule 1: No commit without test coverage (repo-wide, AMD-CORE-010) ──────
+# Per-commit check replaced: repo-wide check ensures at least one test file
+# references each staged source module (W2.2-A fix for Plan-agent false-positives).
+STAGED_SRC=$(git diff --cached --name-only | grep -E '\.(​ts|tsx|js|jsx|py|go|rs|rb)$' | grep -v '__tests__' | grep -v '\.test\.' | grep -v '\.spec\.' | grep -v 'test_' || true)
+
+if [ -n "$STAGED_SRC" ]; then
+  UNCOVERED=""
+  while IFS= read -r src_file; do
+    [ -z "$src_file" ] && continue
+    module_name=$(basename "$src_file" | sed 's/\.[^.]*$//')
+    if ! git ls-files | grep -E '(__tests__|\.test\.|\.spec\.|test_|_test\.)' | xargs grep -l "$module_name" 2>/dev/null | grep -q .; then
+      UNCOVERED="${UNCOVERED}    $src_file\n"
+    fi
+  done <<< "$STAGED_SRC"
+
+  if [ -n "$UNCOVERED" ]; then
+    echo -e "${RED}✗ BLOCKED: Staged source has no repo-wide test coverage.${NC}"
+    echo "  Uncovered modules:"
+    printf "%b" "$UNCOVERED"
+    echo ""
+    echo "  TDD is mandatory. Ensure a test file references each module before committing."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
+# ─── Rule 2: No TODO without DEFER comment ──────────────────────────────────
+TODOS=$(git diff --cached | grep '^\+' | grep -i 'TODO' | grep -v 'DEFER' | grep -v '^+++' || true)
+
+if [ -n "$TODOS" ]; then
+  echo -e "${YELLOW}⚠ WARNING: TODO found without DEFER comment.${NC}"
+  echo "  Every TODO must have a DEFER comment so it can be harvested into the backlog."
+  echo "  Format: // TODO: description — DEFER: add to backlog as raw item"
+  echo ""
+  echo "$TODOS" | head -5 | sed 's/^/  /'
+  # Warning only — not blocking, but visible
+fi
+
+# ─── Rule 3: No direct commits to main/master ───────────────────────────────
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+  echo -e "${RED}✗ BLOCKED: Direct commit to ${BRANCH} is not allowed.${NC}"
+  echo "  Use a worktree branch: wave-{N}/ticket-{id}-{description}"
+  ERRORS=$((ERRORS + 1))
+fi
+
+# ─── Rule 4: Commit message must reference ticket or quick-fix ──────────────
+COMMIT_MSG_FILE=$(git rev-parse --git-dir)/COMMIT_EDITMSG
+if [ -f "$COMMIT_MSG_FILE" ]; then
+  COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+  if ! echo "$COMMIT_MSG" | grep -qE '(ticket-|quick/|wave-|fix:|feat:|chore:|docs:|refactor:)'; then
+    echo -e "${YELLOW}⚠ WARNING: Commit message does not reference a ticket or type prefix.${NC}"
+    echo "  Recommended: 'feat: ticket-001 — add rate limiting middleware'"
+  fi
+fi
+
+
+# ─── Rule 5: No staged secrets (AMD-CORE-011) ───────────────────────────────
+REDACT_PY="${REPO_ROOT:-$(git rev-parse --show-toplevel)}/core/execution/hooks/_lib/redact.py"
+if [ -f "$REDACT_PY" ]; then
+  if git diff --cached --no-color | python3 "$REDACT_PY" --scan-diff 2>&1; then
+    : # clean
+  else
+    echo -e "${RED}✗ BLOCKED: Staged diff contains a secret pattern.${NC}"
+    echo "  Remove the secret before committing. See redact.py rules 1-16."
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+# ─── Summary ─────────────────────────────────────────────────────────────────
+if [ $ERRORS -gt 0 ]; then
+  echo ""
+  echo -e "${RED}✗ Commit blocked. Fix $ERRORS error(s) above.${NC}"
+  echo ""
+  echo "Anti-shortcut rules exist to protect craft quality."
+  echo "If you believe this is a false positive, check the rule in:"
+  echo "  core/execution/hooks/pre-commit"
+  exit 1
+fi
+
+echo -e "${GREEN}✓ Anti-shortcut checks passed.${NC}"
+exit 0

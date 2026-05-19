@@ -1,6 +1,9 @@
-import { userName, userRole, govGatesList, auditList } from '../state';
+import { userName, userRole, govGatesList, auditList, fileTreeEntries, recentlyChangedFiles, workspacePath } from '../state';
 
 export function Sidebar() {
+  const tree = fileTreeEntries.value;
+  const flashed = recentlyChangedFiles.value;
+  const ws = workspacePath.value;
   return (
     <>
 <aside className="sidebar">
@@ -44,9 +47,28 @@ export function Sidebar() {
         <input placeholder="Filter files…"/>
       </div>
       <div className="ftree" id="leftFileTree">
-        <div style={{ padding: '16px 12px', fontSize: '12px', color: 'var(--ink-3)' }}>
-          No workspace open.
-        </div>
+        {!ws ? (
+          <div style={{ padding: '16px 12px', fontSize: '12px', color: 'var(--ink-3)' }}>
+            No workspace open.
+          </div>
+        ) : tree.length === 0 ? (
+          <div style={{ padding: '16px 12px', fontSize: '12px', color: 'var(--ink-3)' }}>
+            Workspace empty. Build something to populate it.
+          </div>
+        ) : (
+          tree.map((entry) => {
+            const isDir = entry.kind === 'dir';
+            const cls = 'ftree-item' + (isDir ? ' dir' : '');
+            const icon = isDir ? 'ti-folder' : 'ti-file-code';
+            const recently = flashed.has(entry.path) || flashed.has(entry.name);
+            return (
+              <div className={cls} key={entry.path || entry.name}>
+                <i className={`ti ${icon}`}></i> {entry.name}
+                {recently ? <span className="diff-badge new">NEW</span> : null}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
 

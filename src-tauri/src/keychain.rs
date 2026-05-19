@@ -59,3 +59,62 @@ fn validate_provider(provider: &str) -> Result<(), String> {
         other => Err(format!("Unknown provider: {}", other)),
     }
 }
+
+/// Provider id -> env-var name expected by the harness / vendor SDKs.
+///
+/// This is the bridge that makes `signalos orchestrate` and `signalos harness`
+/// actually able to call LLMs. The harness reads from env vars (so the
+/// Python subprocess can stay stdlib-only with no Rust callbacks); the chat
+/// path reads from the keychain directly. Same key, two access paths.
+pub fn env_var_for_provider(provider: &str) -> Option<&'static str> {
+    match provider {
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "openai" => Some("OPENAI_API_KEY"),
+        "gemini" => Some("GEMINI_API_KEY"),
+        "qwen" => Some("DASHSCOPE_API_KEY"),
+        "openrouter" => Some("OPENROUTER_API_KEY"),
+        "deepseek" => Some("DEEPSEEK_API_KEY"),
+        "mistral" => Some("MISTRAL_API_KEY"),
+        "groq" => Some("GROQ_API_KEY"),
+        "cerebras" => Some("CEREBRAS_API_KEY"),
+        "together" => Some("TOGETHER_API_KEY"),
+        "xai" => Some("XAI_API_KEY"),
+        "ollama" => None, // local, no key needed
+        _ => None,
+    }
+}
+
+/// Snapshot every keychain-stored API key as { env_var: key } pairs.
+///
+/// Returns the env-var bag the Python sidecar should be spawned with so
+/// the harness can resolve providers without the user manually exporting
+/// env vars before launching the app.
+///
+/// Errors fetching individual keys (e.g. NoEntry) are silently skipped --
+/// the harness will report a clearer error for the specific provider it
+/// tries to use later.
+pub fn snapshot_env_keys() -> std::collections::HashMap<String, String> {
+    let providers = [
+        "anthropic",
+        "openai",
+        "gemini",
+        "qwen",
+        "openrouter",
+        "deepseek",
+        "mistral",
+        "groq",
+        "cerebras",
+        "together",
+        "xai",
+    ];
+    let mut env = std::collections::HashMap::new();
+    for p in providers {
+        let Some(var) = env_var_for_provider(p) else {
+            continue;
+        };
+        if let Ok(Some(key)) = get_api_key(p.to_string()) {
+            env.insert(var.to_string(), key);
+        }
+    }
+    env
+}

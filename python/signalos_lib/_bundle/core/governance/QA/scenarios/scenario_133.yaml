@@ -1,0 +1,8 @@
+id: scenario_133
+wave: "W12"
+title: "land_deploy transitions status"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.deploy import setup_deploy, land_deploy; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); r=setup_deploy(t,'12','staging'); updated=land_deploy(t,r.id); print(updated.status)\""
+    expect_exit: 0
+    expect_stdout_contains: "landed"

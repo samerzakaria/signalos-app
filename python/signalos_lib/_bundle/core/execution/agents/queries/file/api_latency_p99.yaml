@@ -1,0 +1,6 @@
+# Backend-specific query: file (mock/CI/demo)
+# Metric: api_latency_p99
+file_path: ".signalos/mock-metrics/api_latency_p99.json"
+format: json
+value_path: "value"
+timestamp_path: "timestamp"

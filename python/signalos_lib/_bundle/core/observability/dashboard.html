@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!-- Concept adapted from a5c-ai/babysitter (MIT). No source code copied. -->
+<!-- SignalOS Core v1.1 — metrics-sidecar static HTML dashboard (placeholder). -->
+<!--
+  This file is a placeholder so the dashboard path exists in git even when
+  .signalos/sessions/*/metrics.jsonl is empty. Regenerate with:
+
+      python3 core/observability/render-dashboard.py \
+        --output core/observability/dashboard.html
+
+  The renderer is Python stdlib only (no JS, no CDN, no build step) and
+  produces byte-identical HTML on identical input.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>SignalOS Core — metrics dashboard (placeholder)</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+margin:0;padding:40px;background:#f9fafb;color:#111827;max-width:780px;}
+h1{font-size:20px;margin:0 0 16px;}
+p{line-height:1.55;color:#374151;font-size:14px;}
+code{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:4px;padding:2px 6px;
+font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12px;}
+pre{background:#111827;color:#f9fafb;border-radius:6px;padding:12px 14px;
+font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12px;
+overflow-x:auto;}
+.meta{color:#6b7280;font-size:12px;margin-top:24px;}
+</style>
+</head>
+<body>
+<h1>SignalOS Core — metrics sidecar dashboard</h1>
+<p>This page is a placeholder. The real dashboard is a single static HTML
+document generated from per-session <code>metrics.jsonl</code> files under
+<code>.signalos/sessions/</code>. No JavaScript, no CDN, no build step.</p>
+
+<p>Regenerate it with:</p>
+<pre>python3 core/observability/render-dashboard.py \
+  --output core/observability/dashboard.html</pre>
+
+<p>The renderer is Python stdlib only. Given identical input bytes, two
+invocations produce byte-identical HTML — this makes the snapshot
+safely git-trackable. Concept adapted from a5c-ai/babysitter (MIT); no
+source code copied.</p>
+
+<div class="meta">See <code>core/execution/skills/observability-dashboard/SKILL.md</code>
+for the read-side redaction contract, chart-extension rules, and
+<code>jq</code> recipes for reading raw metrics.</div>
+</body>
+</html>

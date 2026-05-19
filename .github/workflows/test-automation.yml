@@ -9,8 +9,13 @@
 name: test-automation
 
 on:
+  # Run on EVERY branch push so feature-branch work is verified across
+  # the OS matrix immediately instead of waiting for a merge to main.
+  # Solo-dev reality: most work happens on feature branches; if CI only
+  # runs on main, the entire branch is unverified until merge time and
+  # cross-platform regressions sneak in undetected.
   push:
-    branches: [ main ]
+    branches: ['**']
   pull_request:
     branches: [ main ]
   schedule:
@@ -49,6 +54,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install Python sidecar deps
+        # PyYAML is required by signalos_lib.plan (PLAN.tasks.yaml
+        # round-trip) which test_orchestrator_core / _skills exercise.
+        # test-gates.sh L0 runs the python unit tests as one of the
+        # gates, so this install must happen BEFORE that step (mirrors
+        # the l1-build job's identical install).
+        shell: bash
+        run: python -m pip install "pyyaml>=6.0,<7"
       - name: cargo fmt check
         working-directory: src-tauri
         run: cargo fmt --check
@@ -69,6 +82,35 @@ jobs:
         run: npm install
       - name: typecheck (tsc --noEmit)
         run: npm run typecheck
+
+  # ── L1 Sandbox · Docker integration (Linux-only) ──────────────────────────
+  # Path 2 verification: prove the sandbox plumbing actually works against a
+  # real Docker daemon. Test_sandbox_integration.py spawns alpine containers,
+  # asserts the workspace mount is rw, that maybe_wrap_for_sandbox produces
+  # an argv the daemon accepts, and that command output flows back to host.
+  #
+  # Linux-only because GitHub-hosted Windows + macOS runners don't ship with
+  # Docker. The integration test module skips cleanly when docker_available()
+  # is False (so this isn't a regression on those platforms; it just doesn't
+  # run there). Local devs without Docker Desktop also see clean skips.
+  l1-sandbox-integration:
+    name: L1 · sandbox integration (Docker)
+    needs: l0-precommit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Verify Docker is available on the runner
+        run: |
+          docker --version
+          docker info --format '{{.ServerVersion}}'
+      - name: Pre-pull alpine (warm the layer cache before the test runs)
+        run: docker pull alpine:latest
+      - name: Run sandbox integration tests
+        working-directory: python
+        run: |
+          python -m unittest test_sandbox_integration -v
 
   # ── L1 CI Build + Verify (compile, full tests, SCA, image scan) ───────────
   l1-build:
@@ -100,6 +142,12 @@ jobs:
         run: bash scripts/ensure-sidecar.sh
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+      - name: Install Python sidecar deps (for unit tests)
+        # PyYAML is required by signalos_lib.plan (PLAN.tasks.yaml
+        # round-trip) which test_orchestrator_core / _skills exercise.
+        # Anthropic SDK is optional at import time but harmless to add.
+        shell: bash
+        run: python -m pip install "pyyaml>=6.0,<7"
       - name: cargo check (all targets)
         working-directory: src-tauri
         run: cargo check --all-targets
@@ -187,6 +235,13 @@ jobs:
         run: bash scripts/ensure-sidecar.sh
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+      - name: Install Python sidecar deps
+        # test-gates.sh L1 runs L0 first, which includes python unit
+        # tests. Same pyyaml dep as l0-precommit + l1-build. Mirror it
+        # here so the L1 extended-gates run doesn't break on the same
+        # ModuleNotFoundError I missed first time around.
+        shell: bash
+        run: python -m pip install "pyyaml>=6.0,<7"
       - name: Run extended test-gates
         run: bash scripts/test-gates.sh L1
 

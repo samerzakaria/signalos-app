@@ -1,0 +1,8 @@
+id: scenario_120
+wave: "W10"
+title: "signal-cso threat_list filters by wave correctly"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.security import generate_owasp_stride, threat_list; from pathlib import Path; import tempfile; t=tempfile.mkdtemp(); generate_owasp_stride('db', '10', Path(t)); generate_owasp_stride('web', '11', Path(t)); r=threat_list(Path(t), wave='10'); print(len(r))\""
+    expect_exit: 0
+    expect_stdout_contains: "9"

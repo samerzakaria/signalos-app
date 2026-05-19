@@ -1,0 +1,8 @@
+id: scenario_125
+wave: "W11"
+title: "autoplan_load returns saved tasks"
+steps:
+  - action: cli
+    command: "python3 -c \"import sys; sys.path.insert(0,'cli'); from signalos_lib.velocity import autoplan, autoplan_load; from pathlib import Path; import tempfile; t=Path(tempfile.mkdtemp()); autoplan('Add auth\\nAdd tests', '11', t); tasks=autoplan_load('11', t); print(len(tasks)); print(tasks[0].id)\""
+    expect_exit: 0
+    expect_stdout_contains: "task-001"

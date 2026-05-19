@@ -1,0 +1,6 @@
+# Backend-specific query: Prometheus
+# Metric: api_error_rate
+# Referenced by: metrics-map.yaml → api_error_rate.source.implementation.query_ref
+query: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) * 100'
+unit: percent
+value_path: "data.result[0].value[1]"
