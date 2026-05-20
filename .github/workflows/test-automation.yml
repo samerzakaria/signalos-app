@@ -21,6 +21,11 @@ on:
   schedule:
     # Nightly L6 deep-validation run (4 hours window for soak / chaos).
     - cron: "0 3 * * *"
+  # Manual fallback — lets the maintainer kick a run from the Actions
+  # tab when an auto-trigger silently misses (Actions disabled, concurrency
+  # cancellation, etc.). Use the "Run workflow" button on
+  # github.com/<repo>/actions/workflows/test-automation.yml
+  workflow_dispatch:
 
 # Reusable system-deps install. Tauri on Linux needs WebKit + GTK + glib
 # headers + librsvg before any cargo check / clippy / build will succeed.
@@ -120,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: [ ubuntu-latest, windows-2025, macos-latest ]
     steps:
       - uses: actions/checkout@v4
       - name: Install Tauri Linux system deps
@@ -182,7 +187,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: [ ubuntu-latest, windows-2025, macos-latest ]
     steps:
       - uses: actions/checkout@v4
       - name: Install Tauri Linux system deps
