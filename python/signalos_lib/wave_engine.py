@@ -747,6 +747,79 @@ class WaveEngine:
             "system_bubble": sign_bubble,
         }
 
+    # -- violation-confirmation flow (M-W7) -------------------------------
+
+    def request_violation_confirmation(
+        self,
+        *,
+        violation_kind: str,
+        findings: list[str] | None = None,
+        gate: str | None = None,
+    ) -> dict[str, Any]:
+        """Surface a 3-way violation prompt (§8) for the chat layer.
+
+        Wraps refusal_taxonomy.build_violation_prompt with a
+        wave-engine system bubble so the chat layer's rendering path
+        is the same as the rest of the engine's transparent-status
+        messages.
+        """
+        from .refusal_taxonomy import build_violation_prompt
+
+        prompt = build_violation_prompt(
+            violation_kind=violation_kind,
+            findings=findings,
+            gate=gate or self.current_gate,
+        )
+        bubble = build_system_bubble(
+            kind="reroute", gate=gate or self.current_gate,
+            detail=prompt["text"],
+        )
+        return {"prompt": prompt, "system_bubble": bubble}
+
+    def confirm_violation(
+        self,
+        *,
+        violation_kind: str,
+        choice: str,
+        user_reply: str,
+        findings: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Record the user's response to a violation prompt (§8).
+
+        Returns the audit-trail entry the caller appends to
+        .signalos/AUDIT_TRAIL.jsonl. The engine never logs the
+        confirmation itself — the audit-write path is owned by the
+        orchestrator's _append_audit_entry helper. This separation
+        keeps the engine pure and the audit writer the single source
+        of truth for trail file shape.
+        """
+        from .refusal_taxonomy import record_violation_confirmation
+
+        entry = record_violation_confirmation(
+            violation_kind=violation_kind,
+            choice=choice,
+            user_reply=user_reply,
+            gate=self.current_gate,
+            findings=findings,
+        )
+
+        # System bubble describing what just happened so the chat layer
+        # shows the user that their choice was captured.
+        if entry["choice"] == "fix-now":
+            text = "Holding ship — re-running after fixes."
+        elif entry["choice"] == "defer":
+            text = "Deferring to next wave — tracked in backlog, shipped as-is."
+        else:  # override-with-log
+            text = (
+                "Override recorded — shipping with violation logged "
+                "in the audit trail."
+            )
+        bubble = build_system_bubble(
+            kind="sign-recorded", gate=self.current_gate, detail=text,
+        )
+        bubble["text"] = text
+        return {"audit_entry": entry, "system_bubble": bubble}
+
     # -- translator-mode (M-W6) -------------------------------------------
 
     def translate_external(
