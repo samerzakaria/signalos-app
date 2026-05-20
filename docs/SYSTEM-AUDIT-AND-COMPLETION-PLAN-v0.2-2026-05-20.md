@@ -25,14 +25,18 @@ This document is built **batch by batch**. Each batch is a verification pass ove
    - 2.9 [Tool-adapter emitters (Batch 9 — DONE)](#29-tool-adapter-emitters)
 3. [Truly orphaned items — consolidated](#3-truly-orphaned-items--consolidated)
 4. [Completion plan (per no-delete principle)](#4-completion-plan-per-no-delete-principle)
-   - 2.4 Hook scripts (Batch 4 — pending)
-   - 2.5 SKILL.md routing (Batch 5 — pending)
-   - 2.6 Frontend signals (Batch 6 — pending)
-   - 2.7 Legacy JS (Batch 7 — pending)
-   - 2.8 Governance docs (Batch 8 — pending)
-   - 2.9 Tool-adapter emitters (Batch 9 — pending)
-3. Truly orphaned items (consolidated) — pending until all batches done
-4. Completion plan (per no-delete principle) — pending until §3 done
+5. [Verification status](#5-verification-status)
+6. [Independent verification pass (2026-05-20, evening)](#6-independent-verification-pass-2026-05-20-evening)
+   - 6.1 [Counts spot-checked](#61-counts-spot-checked)
+   - 6.2 [Orphan claims spot-checked](#62-orphan-claims-spot-checked)
+   - 6.3 [Vision-progress estimate](#63-vision-progress-estimate-new--not-in-original-v02)
+   - 6.4 [Highest-leverage two items (re-prioritization)](#64-highest-leverage-two-items-re-prioritization-from-4)
+   - 6.5 [Credibility risk worth naming](#65-credibility-risk-worth-naming)
+   - 6.6 [Principle: Enforcement universality (AMD-CORE-110)](#66-principle-enforcement-universality-proposed-amd-core-110)
+     - 6.6.1 [Enforcement ≠ always block — override-with-audit](#661-enforcement--always-block--the-override-with-audit-extension)
+   - 6.7 [Implication: G3 produces doc AND UI prototype](#67-implication-g3-design-produces-doc-and-ui-prototype)
+   - 6.8 [Refined violator inventory (post-feedback)](#68-refined-violator-inventory-post-feedback-2026-05-20)
+7. [Definition of done + first PR](#7-definition-of-done--first-pr)
 
 ---
 
@@ -1048,6 +1052,33 @@ Items identified in batches 1-9 that have **no live invoker** in the current cod
 
 (The legacy JS retractions are the only items in this list that involve actual deletion. Per AMD-CORE-100, deletion requires a G5-signed DECISION-DNA entry documenting WHY the superseding implementation took over. Until that entry is written, the legacy file stays.)
 
+### 3.1 Reconciliation with §6.8 violator list
+
+§3 catches "code with no caller." §6.8 (added after the enforcement-universality principle landed) catches "output channel that bypasses the framework." Some items overlap; some are unique to one list. Single unified view:
+
+| §3 item | §6.8 item | Status |
+|---|---|---|
+| #1 `regression.py` orphan | — | §3 only — planning-risk in §6.8.4 (auto-fire on QA failure, not opt-in) |
+| #2 `get_cost_summary` orphan | — | §3 only |
+| #3 `wired-commands.js` orphan | #9-#13 (5 reframed BuildView tiles) | **Overlapping** — wire wired-commands.js INTO orchestrator's gate-transition hooks (not into chat.js); tiles become "regenerate" |
+| #4 13 spec-dump slash commands | #9-#13 + auto-fire wiring | **Overlapping** — same fix as #3 |
+| #5 `pre-tool-use-guard.sh` half-wired | #3 (orchestrator file writes skip guard) | **Overlapping** — same fix, counted once |
+| #6 `pre-session-compress.sh` | — | §3 only |
+| #7 `hooks.json` install-only registry | — | §3 only — accepted |
+| #8-#15 8 stalled-migration legacy JS | — | §3 only |
+| #16 `test-debt.js` (no UI surface) | — | §3 only — planning-risk in §6.8.4 (must be system-emitted, not user-clicked) |
+| #17 `PROMPT-LIBRARY.md` etc. display-only | — | §3 only |
+| #18 8 `emit.sh` dormant | — | §3 only |
+| — | #1 BuildView `/signal-build` duplicate | **§6.8 only** — delete tile |
+| — | #2 BuildView `/signal-freeze` duplicate | **§6.8 only** — delete tile (also #8) |
+| — | #4 Skill validators run post-write | **§6.8 only** — move to pre-write |
+| — | #5 Chat replies have no guard | **§6.8 only** — new validator |
+| — | #6 No git auto-commit at wave end | **§6.8 only** — new output channel |
+| — | #7 `status.py` doesn't emit activities/criteria | **§6.8 only** — output channel dry |
+| — | #8 Freeze state divergence (Python vs Rust) | **§6.8 only** — pick one store |
+
+**Unified count:** 18 (§3) + 7 (§6.8 unique) − 3 (overlap) = **22 distinct items.**
+
 ---
 
 ## 4. Completion plan (per no-delete principle)
@@ -1101,16 +1132,31 @@ Estimated 1 day to write + 0.5 day per gate × 5 gates = 3.5 days.
 
 ### 4.6 Total effort estimate
 
-| Phase | Effort |
-|---|---|
-| Phase 1 — Security | 4-7 days |
-| Phase 2 — Stalled migrations | 4-6 days |
-| Phase 3 — Structural | 3.5-4.5 days |
-| Phase 4 — Retractions | 4 days |
-| Phase 5 — CI gates | 3.5 days |
-| **Total** | **~19-25 days of focused engineering** |
+| Phase | Scope | Effort |
+|---|---|---|
+| Phase 1 — Security (orphan list only) | `pre-tool-use-guard` wiring + `pre-session-compress` decision | 4-7 days |
+| Phase 2 — Stalled migrations | wired-commands import + test-debt UI + emit.sh invocation | 4-6 days |
+| Phase 3 — Structural | regression CLI + cost summary surface + governance-doc decisions | 3.5-4.5 days |
+| Phase 4 — Retractions | 8 legacy JS files via G5-signed Decision-DNA | 4 days |
+| Phase 5 — CI gates | anti-regression checks | 3.5 days |
+| **Orphan-list subtotal** | | **~19-25 days** |
+| Phase 6 — Enforcement universality (§6.8) | the 6 silent runtime violations + 5 UI reframings + planning-risk guardrails | **+11-15 days** |
+| **Total to OS-grade outcome** | | **~30-40 days of focused engineering** |
 
-This is much smaller than v0.1's "6-10 months" because v0.1 over-counted unfinished commitments by ~10× (most of the 60+ items v0.1 listed were verified as already wired in v0.2). The real list is 18 items, almost all of them tactical.
+**Why the §6 additions add 11-15 days and not zero:** the original §3 orphan list catches "code with no caller." §6.8 adds a stricter criterion ("output channels that bypass the enforcement framework") that surfaces 6 new items not in §3:
+
+| New item from §6.8 | Effort |
+|---|---|
+| Move skill validators pre-write (currently post-write) | 3-5 days |
+| Chat-response guard (parallel to IPC secret-redact) | ~2 days |
+| `signalos status --json` emits gate activities + criteria | ~2 days |
+| Git auto-commit at wave end + G5-gated push | 5-7 days (per v0.1 §7.3.3) |
+| Freeze-state consolidation per AMD-CORE-107 | 1-2 days |
+| BuildView tile reframing + 2 deletions | already in Phase 2 above |
+
+The pre-write-guard item (§3 #5) overlaps with §6.8's "skip pre-tool-use-guard"; counted once in Phase 1.
+
+This is still much smaller than v0.1's "6-10 months" because v0.1 over-counted unfinished commitments by ~10× (most of the 60+ items v0.1 listed were verified as already wired in v0.2). The real list is 18 orphan items + 6 enforcement-universality items = ~24 substantive tickets, each well-scoped.
 
 ---
 
@@ -1335,6 +1381,77 @@ For each, the failure mode and the correct shape:
 - 2 tile deletions are trivial (~30 min) — collapsed into item 1
 - The 6 silent runtime violations are the substantial work: pre-write guard (3-5 days per §4.1), chat-response guard (~2 days, new), git automation (per §3.3 in v0.1 plan ~5-7 days), status emission (~2 days), validation timing migration (~3-5 days), freeze-state consolidation per AMD-CORE-107 (~1-2 days)
 
-**Updated total estimate:** ~30-35 days of focused engineering for the OS-grade outcome (vs §4.6's 19-25 days which assumed the v0.2 orphan list only).
+**Updated total estimate:** ~30-40 days of focused engineering for the OS-grade outcome (vs §4.6's orphan-list-only 19-25 days). See §4.6 for the reconciled breakdown.
+
+---
+
+## 7. Definition of done + first PR
+
+### 7.1 Definition of done
+
+The plan is complete when ALL of the following are true (verified by §4.5's anti-regression CI plus manual review):
+
+| # | Check | How to verify |
+|---|---|---|
+| 1 | Every `python/signalos_lib/*.py` module has at least one caller | `test_no_dead_code.py::test_python_modules_wired` — AST walk vs cli.py dispatch table |
+| 2 | Every `#[tauri::command]` is invoked by at least one `src/` file | grep `invoke("<name>"` against the Rust command registry in main.rs |
+| 3 | Every `_bundle/.../commands/*.md` has either `map_slash_command` routing OR is in an explicit reference-only allow-list | grep dispatch table vs file enumeration |
+| 4 | Every `_bundle/.../hooks/*.sh` is either invoked at runtime OR declared in `claude-hooks.json`/`cursor-hooks.json` with a corresponding IDE-side invocation | grep `subprocess.run.*\.sh` + JSON declarative parse |
+| 5 | Every `core/tool-adapters/emitters/<ide>/emit.sh` is invoked by `_register_ide_hooks` for the detected IDE | grep + integration test |
+| 6 | `pre-tool-use-guard.sh` is invoked on every orchestrator file write | integration test: malicious payload (secret-shaped string, path outside workspace, dangerous bash) is rejected with AUDIT_TRAIL.jsonl entry |
+| 7 | Chat-response guard runs on every LLM reply rendered into a bubble | unit test: hallucinated path / secret-shaped string is redacted before render |
+| 8 | `signalos status --json` emits `activities` and `criteria` arrays for every gate | snapshot test: DashboardView renders non-empty stepper |
+| 9 | Wave end auto-commits to git; G5 sign auto-pushes to remote | integration test: complete a wave, observe `git log` shows the commit; sign G5, observe `git push` succeeds |
+| 10 | Freeze state has a single source of truth | grep `wave_frozen|freeze_wave` returns matches only on the chosen path (Python OR Rust, not both); both UI surfaces (Toolbar Freeze + BuildView tile decision) reflect the same state |
+| 11 | G3 transition auto-emits a design+prototype task; `_validate_design` enforces one of three shapes (prototype dir / external-ref / no-UI-attestation) | integration test per shape |
+| 12 | Solo-owner role can skip gate signs with each skip recorded as a violation in audit trail | role test: skip G3 sign as solo-owner → AUDIT_TRAIL.jsonl has a `violation:gate-skip` entry |
+| 13 | BuildView `/signal-build` and `/signal-freeze` tiles are deleted; remaining 5 tiles are "regenerate" semantics | screenshot review |
+| 14 | All CI workflows green across 3 OSes + real Docker + the new `test_no_dead_code.py` | green build on `main` |
+| 15 | One end-to-end run from a clean install: install → onboard → "build me a financial dashboard" → wave completes → preview launches → G5 sign → git push → tagged release | manual beta-tester checklist |
+
+When 15/15 pass, the plan is executed and the next audit version (v0.3) can begin.
+
+### 7.2 First PR — start here
+
+The single most-leveraged opening move (per §6.4 + §6.8):
+
+**PR-1: "Enforcement universality foundation"** — ~1 week, one PR.
+
+| File | Change |
+|---|---|
+| `python/signalos_lib/_bundle/core/governance/Governance/DECISION-DNA.md` | Append AMD-CORE-110 (§6.6 principle) + AMD-CORE-111 (§6.6.1 override-with-audit role model) |
+| `python/signalos_lib/orchestrator.py::_write_extracted_files` | Invoke `pre-tool-use-guard.sh` on each extracted file before writing. Reject + record `AUDIT_TRAIL.jsonl` entry on guard refusal |
+| `python/signalos_lib/orchestrator.py::run_wave` | After harness response, call `runDocCommand` chain at gate transitions (G2→G3 auto-fires design, wave-end auto-fires debrief) — implementation reused from `wired-commands.js` ported to Python |
+| `src/components/views/BuildView.tsx:249,274` | Delete `/signal-build` and `/signal-freeze` tiles. Keep remaining 6 tiles with relabeled descriptions ("Regenerate design", "Regenerate debrief", "Force refresh status", "Request another review", "Skip G5 sign (logged violation)", "Show notes") |
+| `python/test_orchestrator_core.py` | Add `test_pre_write_guard_blocks_malicious_payload` and `test_g3_auto_fires_on_transition` |
+| `docs/PR-1-RELEASE-NOTES.md` | New file: lists the AMD-CORE additions, the guarded write path, the auto-trigger hooks, and the deleted/relabeled tiles |
+
+**Acceptance:**
+- `test_no_dead_code.py` skeleton passes for items #6, #11, #13 above
+- A test that simulates a malicious LLM payload (secret-shaped string in a Write call) is rejected with audit-trail evidence
+- BuildView screenshots show 6 tiles instead of 8, with renamed labels
+
+**Why this PR first:**
+- Lands the principle (AMD-CORE-110/111) and the most credibility-critical fix (pre-write guard) in one go
+- Reframes the BuildView tiles per §6.8.2 — the most visible UX gap
+- Cheapest path to "SignalOS is now a real OS, not a CLI wrapper" — closes 4 of 8 done-list items in one PR
+- After PR-1 merges, the rest of the work (Phases 2-6 in §4.6) can land in parallel by subsystem
+
+### 7.3 Subsequent PR sequence (high level)
+
+| PR | Scope | Days | Done-list items closed |
+|---|---|---|---|
+| PR-1 | Enforcement foundation (above) | ~5-7 | #6, #11, #13 (partial) |
+| PR-2 | Chat-response guard + freeze-state consolidation | ~3-4 | #7, #10 |
+| PR-3 | `status.py` emits activities + criteria; DashboardView shows real data | ~2-3 | #8 |
+| PR-4 | Git auto-commit at wave end + G5-gated push + GitHub repo creation flow | ~5-7 | #9 |
+| PR-5 | Test debt UI (read-only review surface) + regression auto-generation | ~3-4 | (Phase 3 items) |
+| PR-6 | `emit.sh` invocation in `_register_ide_hooks` + 8 stalled-migration retractions | ~4-5 | #5, #1-#5 anti-regression CI seeds |
+| PR-7 | Anti-regression CI: `test_no_dead_code.py` complete | ~3-4 | #1, #2, #3, #4, #5 |
+| PR-8 | Beta tester run — clean machine, end-to-end | ~5 + cycle | #15 |
+
+Each PR is independently mergeable. The end-state is reached after PR-8.
+
+---
 
 When all batches are complete, §3 consolidates the truly orphaned set and §4 gives the per-item completion plan.
