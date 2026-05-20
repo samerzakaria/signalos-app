@@ -126,10 +126,37 @@ def _spawn_dev_server(
 
     Returns (process, url, log_tail). url is None on failure;
     log_tail is the last ~2KB of stdout/stderr for diagnostics.
+
+    When sandboxed mode is enabled in .signalos/sandbox.json AND Docker
+    is reachable, the spawn is wrapped in `docker run --network host`.
+    Host networking lets the Playwright runner (which still executes on
+    host -- see _run_playwright_smoke) reach the dev server via
+    127.0.0.1:<port> without juggling per-port `-p` mappings (Vite/Next
+    sometimes shift ports if the default is taken). The dev-server
+    spawn is the high-blast-radius surface (postinstall hooks, the
+    LLM-written app code); the trusted Playwright runner is intentionally
+    NOT wrapped in this commit.
     """
+    # Wrap in `docker run` when sandboxed mode is on. host_network=True
+    # so the host-side Playwright runner can reach the dev server at
+    # 127.0.0.1 the same way it would unsandboxed. Lazy import keeps the
+    # sandbox module out of the e2e-runner import graph when it's unused.
+    from signalos_lib.sandbox import maybe_wrap_for_sandbox
+    cmd, sandboxed = maybe_wrap_for_sandbox(root, cmd, host_network=True)
+    if sandboxed:
+        sys.stdout.write(
+            "[e2e] dev server (sandboxed) running inside Docker "
+            "(--network host; image from .signalos/sandbox.json)\n"
+        )
+
     # On Windows, `npm` is a .cmd shim; subprocess needs shell=True OR
     # we resolve to npm.cmd explicitly. shell=True with a list is safe
     # here because the list is fully constructed by us, not user input.
+    # When sandboxed, cmd[0] is "docker" (a real binary on PATH on every
+    # platform), so the .cmd-shim workaround is unnecessary -- and
+    # collapsing argv to a space-joined string for shell=True would
+    # break docker arg quoting. Only take the shell=True branch when
+    # the spawn is NOT wrapped.
     is_windows = os.name == "nt"
     popen_kwargs: dict[str, Any] = {
         "cwd": str(root),
@@ -138,7 +165,7 @@ def _spawn_dev_server(
         "text": True,
         "bufsize": 1,
     }
-    if is_windows:
+    if is_windows and not sandboxed:
         popen_kwargs["shell"] = True
         popen_argv: str | list[str] = " ".join(cmd)
     else:

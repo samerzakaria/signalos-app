@@ -9,5 +9,6 @@ pub mod ipc;
 pub mod keychain;
 pub mod provider;
 pub mod runtime;
+pub mod sandbox;
 pub mod sidecar;
 pub mod test_automation;

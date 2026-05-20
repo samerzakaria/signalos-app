@@ -18,17 +18,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from signalos_lib.e2e_runner import (
+    _spawn_dev_server,
     detect_dev_server_command,
     is_e2e_task,
     playwright_available,
     run_e2e_task,
     _extract_selectors_from_description,
 )
+from signalos_lib.sandbox import set_sandbox_config
 
 
 class IsE2eTask(unittest.TestCase):
@@ -166,6 +169,98 @@ class RunE2eTaskAdvisoryFallbacks(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertTrue(result.get("skipped"))
             self.assertIn("playwright", result["log"].lower())
+
+
+class SpawnDevServerSandboxWrap(unittest.TestCase):
+    """F item 3: when sandbox mode is enabled, _spawn_dev_server must
+    invoke its subprocess through `docker run --network host ...` instead
+    of running the raw npm command on host. host_network is required so
+    Playwright (still on host in this commit) can reach the dev server
+    at 127.0.0.1 without dealing with port-mapping discovery.
+
+    We assert against the argv passed to subprocess.Popen by mocking
+    Popen; we never actually start docker or a dev server here."""
+
+    def _captured_popen_argv(self, popen_mock: MagicMock) -> list[str] | str:
+        """Pull the argv positional out of the first Popen call. Popen
+        is called as Popen(argv, **kwargs) in _spawn_dev_server."""
+        self.assertTrue(popen_mock.called, "subprocess.Popen was never invoked")
+        args, _kwargs = popen_mock.call_args
+        return args[0]
+
+    def test_wraps_dev_server_in_docker_when_sandbox_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, enabled=True)
+            # Build a Popen mock that "fails to start" so the readline
+            # loop exits immediately -- we don't care about server
+            # behavior here, only about the argv we'd have used.
+            fake_proc = MagicMock()
+            fake_proc.stdout = None
+            fake_proc.poll.return_value = 1
+            with patch(
+                "signalos_lib.sandbox.docker_available", return_value=True,
+            ), patch(
+                "signalos_lib.e2e_runner.subprocess.Popen", return_value=fake_proc,
+            ) as popen_mock:
+                _spawn_dev_server(root, ["npm", "run", "dev"], startup_timeout_sec=0.1)
+
+            argv = self._captured_popen_argv(popen_mock)
+            # When wrapped, argv MUST be a list (not a shell string) and
+            # MUST start with `docker run`.
+            self.assertIsInstance(argv, list)
+            self.assertEqual(argv[0], "docker")
+            self.assertEqual(argv[1], "run")
+            # The original npm command survives at the tail.
+            self.assertEqual(argv[-3:], ["npm", "run", "dev"])
+
+    def test_wrap_uses_host_network_for_dev_server(self) -> None:
+        """host_network=True must be passed through; Playwright lives on
+        host and reaches the server at 127.0.0.1, so the container must
+        share the host's network namespace."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, enabled=True)
+            fake_proc = MagicMock()
+            fake_proc.stdout = None
+            fake_proc.poll.return_value = 1
+            with patch(
+                "signalos_lib.sandbox.docker_available", return_value=True,
+            ), patch(
+                "signalos_lib.e2e_runner.subprocess.Popen", return_value=fake_proc,
+            ) as popen_mock:
+                _spawn_dev_server(root, ["npm", "run", "dev"], startup_timeout_sec=0.1)
+
+            argv = self._captured_popen_argv(popen_mock)
+            self.assertIsInstance(argv, list)
+            self.assertIn("--network", argv)
+            net_idx = argv.index("--network")
+            self.assertEqual(argv[net_idx + 1], "host")
+
+    def test_no_wrap_when_sandbox_disabled(self) -> None:
+        """Off-toggle: when sandbox is disabled (default), _spawn_dev_server
+        must invoke the dev command directly -- no `docker` prefix. On
+        Windows the spawn collapses to a shell string; on POSIX it stays
+        a list. Both cases must NOT include `docker`."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            # Sandbox config left at defaults: enabled=False.
+            fake_proc = MagicMock()
+            fake_proc.stdout = None
+            fake_proc.poll.return_value = 1
+            with patch(
+                "signalos_lib.e2e_runner.subprocess.Popen", return_value=fake_proc,
+            ) as popen_mock:
+                _spawn_dev_server(root, ["npm", "run", "dev"], startup_timeout_sec=0.1)
+
+            argv = self._captured_popen_argv(popen_mock)
+            if isinstance(argv, list):
+                self.assertNotIn("docker", argv)
+                self.assertEqual(argv[:3], ["npm", "run", "dev"])
+            else:
+                # Windows shell=True branch: shell string.
+                self.assertNotIn("docker", argv)
+                self.assertIn("npm", argv)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,11 @@ __all__ = [
 
 _DEFAULT_IMAGE_JS = "node:20-alpine"
 _DEFAULT_IMAGE_PY = "python:3.11-slim"
+# Shell scripts (bash/sh) need bash + the standard unix toolchain. The
+# default JS image (node:20-alpine) doesn't have bash, so wrapping a
+# `bash` invocation against it would fail with "bash: not found".
+# debian:bookworm-slim is ~75 MB and has bash + sed + awk + coreutils.
+_DEFAULT_IMAGE_SH = "debian:bookworm-slim"
 
 
 def _sandbox_path(root: Path) -> Path:
@@ -84,6 +89,7 @@ def get_sandbox_config(root: Path) -> dict[str, Any]:
             "enabled": False,
             "image_js": _DEFAULT_IMAGE_JS,
             "image_py": _DEFAULT_IMAGE_PY,
+            "image_sh": _DEFAULT_IMAGE_SH,
             "extra_mounts": [],
         }
     try:
@@ -93,6 +99,7 @@ def get_sandbox_config(root: Path) -> dict[str, Any]:
             "enabled": False,
             "image_js": _DEFAULT_IMAGE_JS,
             "image_py": _DEFAULT_IMAGE_PY,
+            "image_sh": _DEFAULT_IMAGE_SH,
             "extra_mounts": [],
         }
     if not isinstance(data, dict):
@@ -101,6 +108,7 @@ def get_sandbox_config(root: Path) -> dict[str, Any]:
     data.setdefault("enabled", False)
     data.setdefault("image_js", _DEFAULT_IMAGE_JS)
     data.setdefault("image_py", _DEFAULT_IMAGE_PY)
+    data.setdefault("image_sh", _DEFAULT_IMAGE_SH)
     data.setdefault("extra_mounts", [])
     return data
 
@@ -109,7 +117,7 @@ def set_sandbox_config(root: Path, **patches: Any) -> dict[str, Any]:
     """Update sandbox config; only listed keys are touched."""
     current = get_sandbox_config(root)
     for k, v in patches.items():
-        if k in {"enabled", "image_js", "image_py", "extra_mounts"}:
+        if k in {"enabled", "image_js", "image_py", "image_sh", "extra_mounts"}:
             current[k] = v
     p = _sandbox_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -153,10 +161,16 @@ def docker_available() -> bool:
 # ---------------------------------------------------------------------------
 
 def _classify_command(cmd: list[str]) -> str:
-    """Return 'js' if *cmd* runs Node/npm/npx/pnpm/yarn; 'py' if Python.
+    """Return 'js' / 'py' / 'sh' for image selection.
 
-    Anything else defaults to 'js' (most users' workspaces are JS); the
-    image can be overridden per-workspace via sandbox.json if needed.
+    - py:  python / python3 / pytest / pip / uv
+    - sh:  bash / sh / dash / zsh -- the harness's hook subprocess paths
+           shell out to bundle bash scripts; they need bash + standard
+           unix tools, which node:20-alpine doesn't have.
+    - js:  everything else (npm / npx / node / yarn / etc.)
+
+    Each maps to an image_{kind} entry in sandbox.json; users can
+    override any of them per-workspace.
     """
     if not cmd:
         return "js"
@@ -165,6 +179,8 @@ def _classify_command(cmd: list[str]) -> str:
         return "py"
     if name.startswith("python"):
         return "py"
+    if name in {"bash", "sh", "dash", "zsh", "bash.exe"}:
+        return "sh"
     return "js"
 
 
@@ -175,6 +191,7 @@ def build_docker_run_argv(
     image: str | None = None,
     extra_mounts: list[str] | None = None,
     ports: list[str] | None = None,
+    host_network: bool = False,
 ) -> list[str]:
     """Construct the `docker run` argv that runs *cmd* inside a container.
 
@@ -190,6 +207,12 @@ def build_docker_run_argv(
         path's `npm run dev`), it passes ports=["5173:5173"] and we
         emit explicit `-p host:container` mappings. The container still
         keeps its own namespace; only the named ports are bridged.
+      - `host_network=True` opts into `--network host`. Use only for
+        cases where the host-side caller (e.g. Playwright running on
+        host) needs to reach the containerized server at 127.0.0.1
+        without dealing with port-mapping discovery. This trades some
+        of the blast-radius reduction (shared network namespace) for
+        operational simplicity in the dev-server case.
 
     No long-lived container management here -- this is per-command. A
     future commit can swap this for a `docker exec` against a kept-warm
@@ -198,13 +221,29 @@ def build_docker_run_argv(
     cfg = get_sandbox_config(root)
     if image is None:
         kind = _classify_command(cmd)
-        image = cfg.get("image_py" if kind == "py" else "image_js")
+        # kind -> config key
+        image_key = {"py": "image_py", "sh": "image_sh", "js": "image_js"}.get(kind, "image_js")
+        image = cfg.get(image_key)
     workspace_abs = str(root.resolve())
     argv = [
-        "docker", "run", "--rm",
+        "docker", "run", "--rm", "-i",
+        # -i (--interactive): forward stdin into the container. Required
+        # for any wrapped call that passes input= to subprocess.run
+        # (e.g. the harness's redact.py filter pipes text through stdin).
+        # Harmless when there's no input.
         "-v", f"{workspace_abs}:/workspace",
         "-w", "/workspace",
     ]
+    if host_network:
+        # OPT-IN: container shares the host's network namespace. Used
+        # by preview / e2e dev-server wraps where the user's browser
+        # (or Playwright running on host) needs to reach the dev
+        # server at 127.0.0.1:<port>. Defeats network isolation; the
+        # container can reach anywhere the host can. We still keep
+        # process + filesystem isolation (workspace mount only). This
+        # is a deliberate tradeoff for the "run a dev server" use case
+        # where pre-declaring every possible port via -p isn't viable.
+        argv.extend(["--network", "host"])
     for p in (ports or []):
         argv.extend(["-p", p])
     for m in (extra_mounts or []) + list(cfg.get("extra_mounts") or []):
@@ -220,6 +259,7 @@ def maybe_wrap_for_sandbox(
     *,
     image: str | None = None,
     ports: list[str] | None = None,
+    host_network: bool = False,
 ) -> tuple[list[str], bool]:
     """Wrap *cmd* in `docker run` if sandboxed mode is enabled.
 
@@ -233,10 +273,21 @@ def maybe_wrap_for_sandbox(
     needs a port reachable from host (e.g. the preview wrap passing
     ["5173:5173"] for `npm run dev`). Default isolation otherwise.
 
+    `host_network`: opt-in for the e2e / preview dev-server case where
+    the container needs to share the host's network namespace so
+    Playwright / the user's browser can reach the dev server at
+    127.0.0.1:<arbitrary-port>. Defeats network isolation; keeps
+    process + filesystem isolation. See build_docker_run_argv comment.
+
     Falls back to *cmd* unchanged when:
       - Sandbox mode is off in .signalos/sandbox.json
       - Docker isn't installed / daemon isn't running
     """
     if is_sandbox_enabled(root):
-        return (build_docker_run_argv(root, cmd, image=image, ports=ports), True)
+        return (
+            build_docker_run_argv(
+                root, cmd, image=image, ports=ports, host_network=host_network,
+            ),
+            True,
+        )
     return (cmd, False)

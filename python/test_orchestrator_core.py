@@ -37,6 +37,7 @@ from signalos_lib.orchestrator import (
     _emit_task_progress,
     _extract_files_from_response,
     _read_existing_files_context,
+    _read_harness_response,
     _record_missing_deps,
     _relevant_skills,
     _scan_js_imports,
@@ -354,6 +355,151 @@ class RelevantSkillsRegexFallback(unittest.TestCase):
             self.assertIn("Verification Before Completion", labels)
         finally:
             shutil.rmtree(ws)
+
+
+# ---------------------------------------------------------------------------
+# _read_harness_response  (harness -> orchestrator filename handoff)
+#
+# REGRESSION SHIELD: the harness writes the LLM response to
+# `response.preview.txt`. The orchestrator's earlier candidate list
+# only looked for `response.txt` / `preview.txt` / `response.md`, so
+# every wave silently produced zero files while reporting "completed".
+# These tests lock the contract: response.preview.txt must be found.
+# ---------------------------------------------------------------------------
+
+class ReadHarnessResponse(unittest.TestCase):
+    def _make_session(self, root: Path, sid: str, call_id: str) -> Path:
+        # Mirror harness._call_dir layout: sessions/<sid>/harness/<call_id>/
+        cdir = root / ".signalos" / "sessions" / sid / "harness" / call_id
+        cdir.mkdir(parents=True, exist_ok=True)
+        return cdir
+
+    def test_finds_response_preview_txt(self) -> None:
+        """The actual filename harness._persist_response_preview writes
+        today. If this assertion ever flips False, file extraction
+        breaks across the whole orchestrator."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cdir = self._make_session(root, "sess-1", "call-1")
+            (cdir / "response.preview.txt").write_text(
+                "### filepath: src/foo.ts\n```ts\nexport const foo = 1;\n```\n"
+            )
+            result = {"call_id": "call-1", "session_id": "sess-1"}
+            text = _read_harness_response(root, "sess-1", result)
+            self.assertIn("### filepath: src/foo.ts", text)
+            self.assertIn("export const foo = 1;", text)
+
+    def test_finds_legacy_response_txt(self) -> None:
+        """Fallback for legacy session dirs from older harness versions."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cdir = self._make_session(root, "s", "c")
+            (cdir / "response.txt").write_text("legacy content")
+            text = _read_harness_response(
+                root, "s", {"call_id": "c", "session_id": "s"},
+            )
+            self.assertEqual(text, "legacy content")
+
+    def test_prefers_response_preview_over_legacy_names(self) -> None:
+        """If both files exist, response.preview.txt wins (it's the
+        current canonical name)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cdir = self._make_session(root, "s", "c")
+            (cdir / "response.preview.txt").write_text("current")
+            (cdir / "response.txt").write_text("legacy")
+            text = _read_harness_response(
+                root, "s", {"call_id": "c", "session_id": "s"},
+            )
+            self.assertEqual(text, "current")
+
+    def test_falls_back_to_response_preview_field_when_no_file(self) -> None:
+        """In-memory fallback: when the disk write hasn't happened yet
+        (or a test patched the harness), the result dict's
+        response_preview can still carry usable text."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            result = {
+                "call_id": "c",
+                "session_id": "s",
+                "response_preview": "from memory",
+            }
+            self.assertEqual(_read_harness_response(root, "s", result), "from memory")
+
+    def test_returns_empty_when_no_call_id(self) -> None:
+        """Defensive: bad result dict produces empty string, not exception."""
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_read_harness_response(Path(d), None, {}), "")
+
+    def test_returns_empty_when_no_file_and_no_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            result = {"call_id": "c", "session_id": "s"}  # no response_preview
+            self.assertEqual(_read_harness_response(root, "s", result), "")
+
+    def test_end_to_end_with_real_harness(self) -> None:
+        """Integration: actually call harness.run_step with TestProvider
+        and confirm the response flows back through _read_harness_response
+        and into _extract_files_from_response producing the expected
+        files. This is the regression test that would have caught the
+        filename + directory-path mismatch bugs from the start.
+
+        Critical: the canned response MUST be longer than 200 chars so
+        result.response_preview (which harness truncates) cannot mask
+        a broken disk-read path. If you shrink this, you're testing the
+        in-memory fallback, not the disk read."""
+        import signalos_lib.harness as h
+
+        # ~600 chars: well above the 200-char response_preview truncation.
+        # If disk read is broken, response_preview won't carry both file
+        # blocks, the second file extraction will fail, and the test
+        # catches it.
+        long_filler = "// " + ("x" * 80 + "\n") * 5
+        canned = (
+            f"I'll add the requested module.\n\n"
+            f"### filepath: src/hello.ts\n```ts\n"
+            f"{long_filler}"
+            f"export const x = 1;\n```\n\n"
+            f"### filepath: src/world.ts\n```ts\n"
+            f"export const y = 2;\n```\n"
+        )
+        self.assertGreater(len(canned), 200, "canned must exceed 200-char preview")
+
+        original_canned = h._HARNESS_TEST_CANNED  # type: ignore[attr-defined]
+        h._HARNESS_TEST_CANNED = canned  # type: ignore[attr-defined]
+        try:
+            with tempfile.TemporaryDirectory(prefix="harness-integration-") as d:
+                root = Path(d)
+                (root / ".signalos").mkdir()
+                result = h.run_step(
+                    step_id="t1",
+                    prompt="Build two files",
+                    session_id="sess-integ",
+                    cwd=root,
+                    intent="integration test",
+                    provider=h.TestProvider(),
+                )
+                self.assertEqual(result["status"], "completed", result)
+
+                # Sanity: result.response_preview is TRUNCATED to 200 chars,
+                # so any in-memory fallback alone can't see the second file.
+                preview_field = result.get("response_preview", "")
+                self.assertLessEqual(len(preview_field), 200)
+                self.assertNotIn("src/world.ts", preview_field,
+                                 "preview should not contain second file -- "
+                                 "if it does, test is no longer guarding the "
+                                 "disk-read path")
+
+                # Real handoff: must find the full text on disk.
+                response_text = _read_harness_response(root, "sess-integ", result)
+                self.assertIn("### filepath: src/hello.ts", response_text)
+                self.assertIn("### filepath: src/world.ts", response_text)
+
+                files = _extract_files_from_response(response_text)
+                self.assertEqual(len(files), 2, files)
+                self.assertEqual({f[0] for f in files}, {"src/hello.ts", "src/world.ts"})
+        finally:
+            h._HARNESS_TEST_CANNED = original_canned  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

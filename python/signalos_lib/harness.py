@@ -110,7 +110,7 @@ class AnthropicProvider:
         model: str,
     ) -> tuple[str, int | None, int | None]:
         try:
-            import anthropic
+            import anthropic  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "signalos harness: the `anthropic` package is not installed. "
@@ -151,14 +151,14 @@ class OpenAIProvider:
         model: str,
     ) -> tuple[str, int | None, int | None]:
         try:
-            import openai  # noqa: F401
+            import openai  # noqa: F401  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "signalos harness: the `openai` package is not installed. "
                 "Run `pip install openai>=1.0` and retry."
             ) from exc
 
-        import openai as _openai
+        import openai as _openai  # type: ignore[import-not-found]
         client = _openai.OpenAI()  # picks up OPENAI_API_KEY from env
         resp = client.chat.completions.create(
             model=model,
@@ -187,14 +187,14 @@ class GeminiProvider:
         model: str,
     ) -> tuple[str, int | None, int | None]:
         try:
-            import google.generativeai  # noqa: F401
+            import google.generativeai  # noqa: F401  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "signalos harness: the `google-generativeai` package is not installed. "
                 "Run `pip install google-generativeai>=0.5` and retry."
             ) from exc
 
-        import google.generativeai as genai
+        import google.generativeai as genai  # type: ignore[import-not-found]
         # GOOGLE_API_KEY picked up from env automatically when using configure()
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if api_key:
@@ -431,6 +431,13 @@ def _fire_hook(
         argv.extend(["--actor", actor])
     if extra_args:
         argv.extend(extra_args)
+    # Sandbox wrap: when .signalos/sandbox.json has enabled=true AND
+    # Docker is reachable, the hook script runs in a container with the
+    # workspace mounted at /workspace. Trusted bundle code, but wrapping
+    # it completes the sandbox-toggle promise (every subprocess routes
+    # through the same gate -- defense in depth).
+    from signalos_lib.sandbox import maybe_wrap_for_sandbox
+    argv, _ = maybe_wrap_for_sandbox(root, argv)
     proc = subprocess.run(argv, check=False, cwd=str(root))
     return proc.returncode
 
@@ -476,10 +483,17 @@ def _append_metric(
         return 0
     # Relative-from-root POSIX path + cwd=str(root). See _fire_hook for
     # the full rationale (WSL bash vs git-bash path-form portability).
-    proc = subprocess.run(
+    # Sandbox wrap: same rationale as _fire_hook -- bundle script,
+    # workspace-scoped writes only.
+    from signalos_lib.sandbox import maybe_wrap_for_sandbox
+    argv, _ = maybe_wrap_for_sandbox(
+        root,
         ["bash", helper.relative_to(root).as_posix(),
          "--session-id", session_id,
          "--metric", json.dumps(metric, separators=(",", ":"))],
+    )
+    proc = subprocess.run(
+        argv,
         check=False,
         cwd=str(root),
     )
@@ -565,9 +579,14 @@ def _resolve_or_create_session(root: Path, session_id: str | None) -> str:
         if script.is_file():
             # Relative-from-root POSIX path + cwd=str(root). See
             # _fire_hook for the full rationale.
-            subprocess.run(
+            from signalos_lib.sandbox import maybe_wrap_for_sandbox
+            argv, _ = maybe_wrap_for_sandbox(
+                root,
                 ["bash", script.relative_to(root).as_posix(),
                  "--session-id", sid, "--actor", HARNESS_TOOL_NAME],
+            )
+            subprocess.run(
+                argv,
                 check=False,
                 cwd=str(root),
             )
@@ -862,12 +881,23 @@ def _redact_text(root: Path, text: str) -> str:
         return text
     wrapped = json.dumps({"t": text})
     try:
+        # Sandbox wrap: redact.py is a pure stdin/stdout filter; safe to
+        # run in a container. Use relative-from-root path so the helper
+        # resolves the same way inside the container (workspace at
+        # /workspace) as on host (cwd=root). The image classifier picks
+        # python:3.11-slim from the `python3` cmd[0].
+        from signalos_lib.sandbox import maybe_wrap_for_sandbox
+        argv, _ = maybe_wrap_for_sandbox(
+            root,
+            ["python3", helper.relative_to(root).as_posix(), "--filter"],
+        )
         proc = subprocess.run(
-            ["python3", str(helper), "--filter"],
+            argv,
             input=wrapped,
             capture_output=True,
             text=True,
             check=False,
+            cwd=str(root),
         )
         if proc.returncode != 0:
             return text

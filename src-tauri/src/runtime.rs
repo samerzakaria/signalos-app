@@ -242,11 +242,29 @@ pub async fn start_preview(
         if let Some((bin, args)) = contract.install {
             update_runtime(&key_clone, |r| r.status = "installing".into());
             emit_event(&app_clone, &key_clone, "status", "Installing dependencies");
+            // Sandbox wrap: when .signalos/sandbox.json has enabled:true
+            // AND Docker is reachable, transparently rewrite (bin, args)
+            // into a `docker run ...` invocation. host_network=true
+            // because the host browser must reach the dev server later;
+            // ports are unknown at install time so we don't pre-map any.
+            let args_owned: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
+            let (wrapped_bin, wrapped_args, was_wrapped) = crate::sandbox::maybe_wrap_for_sandbox(
+                &workspace_clone,
+                bin,
+                &args_owned,
+                crate::sandbox::WrapOptions {
+                    host_network: true,
+                    ..Default::default()
+                },
+            );
+            if was_wrapped {
+                emit_event(&app_clone, &key_clone, "status", "Sandboxed (Docker)");
+            }
             let outcome = run_blocking(
                 &app_clone,
                 &key_clone,
-                bin,
-                args,
+                &wrapped_bin,
+                &wrapped_args,
                 &workspace_clone,
                 contract.port_regex,
                 &mut stop_rx,
@@ -282,8 +300,25 @@ pub async fn start_preview(
         // Run phase — keep child alive, capture port from stdout
         update_runtime(&key_clone, |r| r.status = "starting".into());
         emit_event(&app_clone, &key_clone, "status", "Starting dev server");
-        let mut cmd = Command::new(contract.run.0);
-        cmd.args(contract.run.1)
+        // Sandbox wrap for the dev server. host_network=true so the
+        // host browser (and Playwright) can hit 127.0.0.1:<port> once
+        // vite logs the port; `--network host` means stdout still
+        // emits the URL exactly as the unwrapped command would.
+        let run_args_owned: Vec<String> = contract.run.1.iter().map(|s| (*s).to_string()).collect();
+        let (run_bin, run_args, run_was_wrapped) = crate::sandbox::maybe_wrap_for_sandbox(
+            &workspace_clone,
+            contract.run.0,
+            &run_args_owned,
+            crate::sandbox::WrapOptions {
+                host_network: true,
+                ..Default::default()
+            },
+        );
+        if run_was_wrapped {
+            emit_event(&app_clone, &key_clone, "status", "Sandboxed (Docker)");
+        }
+        let mut cmd = Command::new(&run_bin);
+        cmd.args(&run_args)
             .current_dir(&workspace_clone)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -430,7 +465,7 @@ async fn run_blocking(
     app: &AppHandle,
     key: &str,
     bin: &str,
-    args: &[&str],
+    args: &[String],
     cwd: &PathBuf,
     _port_regex: &str,
     stop_rx: &mut tokio::sync::mpsc::Receiver<()>,

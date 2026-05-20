@@ -167,6 +167,63 @@ class DockerRunArgvShape(unittest.TestCase):
             self.assertNotIn("--network", argv)
             self.assertNotIn("host", [argv[i] for i, a in enumerate(argv) if i > 0 and argv[i - 1] == "--network"])
 
+    def test_interactive_flag_is_present(self) -> None:
+        """Default argv includes -i so subprocess.run(..., input=...) actually
+        forwards stdin into the container. Required by the harness's
+        redact filter (and any future stdin-driven wrapper)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            argv = build_docker_run_argv(root, ["echo", "x"])
+            self.assertIn("-i", argv)
+
+    def test_bash_command_picks_image_sh(self) -> None:
+        """bash / sh / dash / zsh commands route to image_sh (which has
+        bash by default) -- node:20-alpine doesn't have bash, so wrapping
+        a bundle hook script against it would fail at runtime with
+        'bash: not found'."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, image_sh="debian:bookworm-slim")
+            argv = build_docker_run_argv(root, ["bash", "some-script.sh"])
+            self.assertIn("debian:bookworm-slim", argv)
+            self.assertNotIn("node:20-alpine", argv)
+
+    def test_python_command_still_picks_image_py(self) -> None:
+        """Sanity check that adding the sh classifier didn't break the
+        python detector path (the redact filter uses python3)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, image_py="python:3.12-slim")
+            argv = build_docker_run_argv(root, ["python3", "-c", "print(1)"])
+            self.assertIn("python:3.12-slim", argv)
+
+    def test_host_network_opt_in_emits_network_host(self) -> None:
+        """The preview / e2e dev-server wraps need the container to
+        share the host's network namespace so Playwright (and the
+        user's browser) can reach the dev server at 127.0.0.1. This
+        is an opt-in tradeoff: process + filesystem isolation stay,
+        network isolation is given up. The default must remain off."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            argv = build_docker_run_argv(root, ["npm", "run", "dev"], host_network=True)
+            # --network host must appear as a flag pair
+            self.assertIn("--network", argv)
+            idx = argv.index("--network")
+            self.assertEqual(argv[idx + 1], "host")
+
+    def test_maybe_wrap_threads_host_network_through(self) -> None:
+        """The public maybe_wrap_for_sandbox must pass host_network down
+        to build_docker_run_argv so callers don't bypass the API."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, enabled=True)
+            with patch("signalos_lib.sandbox.docker_available", return_value=True):
+                wrapped, was_wrapped = maybe_wrap_for_sandbox(
+                    root, ["npm", "run", "dev"], host_network=True,
+                )
+            self.assertTrue(was_wrapped)
+            self.assertIn("--network", wrapped)
+
     def test_command_is_appended_at_the_end(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

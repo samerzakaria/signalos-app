@@ -693,7 +693,7 @@ def handle_rollback(args: list[str], cwd: str) -> str:
 # Sandbox toggle + status (#3: containerized execution)
 #
 # /signal-sandbox status              -> { ok, docker_available, config }
-# /signal-sandbox enable [--image-js X] [--image-py Y]   -> set enabled=true
+# /signal-sandbox enable [--image-js X] [--image-py Y] [--image-sh Z]  -> set enabled=true
 # /signal-sandbox disable             -> set enabled=false
 # ---------------------------------------------------------------------------
 
@@ -724,6 +724,8 @@ def handle_sandbox(args: list[str], cwd: str) -> str:
             patches["image_js"] = kv["image-js"]
         if "image-py" in kv:
             patches["image_py"] = kv["image-py"]
+        if "image-sh" in kv:
+            patches["image_sh"] = kv["image-sh"]
         cfg = set_sandbox_config(root, **patches)
         return json.dumps({
             "ok": True,

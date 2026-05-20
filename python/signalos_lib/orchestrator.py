@@ -1053,24 +1053,48 @@ def _execute_task(
 def _read_harness_response(root: Path, session_id: str | None, result: dict[str, Any]) -> str:
     """Pull the LLM's full response back out of the harness call directory.
 
-    harness.run_step writes preview.txt to .signalos/sessions/<sid>/calls/<call_id>/preview.txt
-    (redacted, trimmed). The full response is also persisted via the same
-    path with the response embedded. For file extraction we want the full
-    text; if only preview is available, fall back to that.
+    `harness._persist_response_preview` saves the (redacted, 4 KB-capped)
+    response to .signalos/sessions/<sid>/calls/<call_id>/response.preview.txt
+    immediately after the LLM call. We must look for that exact filename
+    or file extraction silently no-ops and every wave produces zero files.
+
+    `response.txt`, `preview.txt`, and `response.md` are kept as
+    fallbacks for legacy session directories or future harness writes
+    that might use those names.
+
+    Last-resort: the result dict carries `response_preview` (first 200
+    chars) -- not enough for real LLM responses but useful when running
+    against the canned TestProvider, whose entire response fits.
     """
     call_id = result.get("call_id") or result.get("callId")
     sid = result.get("session_id") or session_id
-    if not call_id or not sid:
-        return ""
-    call_dir = root / ".signalos" / "sessions" / str(sid) / "calls" / str(call_id)
-    for candidate in ("response.txt", "preview.txt", "response.md"):
-        p = call_dir / candidate
-        if p.is_file():
-            try:
-                return p.read_text(encoding="utf-8")
-            except OSError:
-                continue
-    return ""
+    if call_id and sid:
+        # SOURCE OF TRUTH for the call-dir layout is harness._call_dir():
+        #   .signalos/sessions/<sid>/harness/<call_id>/...
+        # The earlier "calls/" subdir name was a divergence between the
+        # two modules' assumptions and meant the orchestrator looked in
+        # an empty directory after every wave -- file extraction silently
+        # no-op'd. If harness's layout ever changes, mirror it here.
+        call_dir = root / ".signalos" / "sessions" / str(sid) / "harness" / str(call_id)
+        # response.preview.txt is the actual filename harness writes today.
+        # The others are historical / forward-compatible.
+        for candidate in (
+            "response.preview.txt",
+            "response.txt",
+            "preview.txt",
+            "response.md",
+        ):
+            p = call_dir / candidate
+            if p.is_file():
+                try:
+                    return p.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+    # In-memory fallback: when the disk write hasn't completed (or the
+    # harness was patched in a test), the result dict's response_preview
+    # may contain the full text -- worth trying before giving up.
+    preview = result.get("response_preview") or ""
+    return preview if isinstance(preview, str) else ""
 
 
 
