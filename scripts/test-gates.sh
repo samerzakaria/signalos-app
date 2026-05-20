@@ -63,6 +63,7 @@ secret_scan()       {
             # Test fixtures deliberately contain fake-shaped secrets so the
             # redaction layer can be tested against them. Exclude here.
             python/test_*.py) continue ;;
+            *.test.ts|*.test.tsx) continue ;;
             scripts/validate-installed-runtime.ps1) continue ;;
         esac
         [[ -f "$f" ]] || continue

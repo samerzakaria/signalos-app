@@ -117,7 +117,11 @@ Run-Gate "L0: secret scan (regex)" {
     # The in-tree secret regex set lives in python/signalos_secret_guard.py.
     # Scan tracked text files for high-confidence secret patterns.
     $bad = 0
-    $files = git ls-files | Where-Object { $_ -notmatch '\.(png|jpg|jpeg|webp|ico|icns|pdf|docx|pptx|xlsx|exe|dll|so|dylib)$' -and $_ -notmatch '^python/signalos_lib/_bundle/' -and $_ -notmatch '^docs/test-automation/' -and $_ -notmatch '^python/test_' -and $_ -notmatch '^scripts/validate-installed-runtime\.ps1$' }
+    # Excludes: binary blobs, the bundled SignalOS protocol files, the
+    # test-automation docs (worked examples), Python test fixtures (which
+    # deliberately contain fake-shaped secrets so the redaction layer can
+    # be tested against them), and the parity-test JS/TS test fixtures.
+    $files = git ls-files | Where-Object { $_ -notmatch '\.(png|jpg|jpeg|webp|ico|icns|pdf|docx|pptx|xlsx|exe|dll|so|dylib)$' -and $_ -notmatch '^python/signalos_lib/_bundle/' -and $_ -notmatch '^docs/test-automation/' -and $_ -notmatch '^python/test_' -and $_ -notmatch '\.test\.tsx?$' -and $_ -notmatch '^scripts/validate-installed-runtime\.ps1$' }
     foreach ($f in $files) {
         if (-not (Test-Path $f)) { continue }
         $text = Get-Content $f -Raw -ErrorAction SilentlyContinue
