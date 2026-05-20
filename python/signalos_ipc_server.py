@@ -909,11 +909,22 @@ def _build_engine(project_id: str = "default"):
 
     Deferred import — keeps signalos_ipc_server cheap to import for the
     non-wave-engine code paths (status, sign, brain, etc.).
+
+    When SIGNALOS_LLM_JUDGE_DRIFT=1 is set (per design §13.Q2 — opt-in
+    LLM-judged scope-drift), the engine is constructed with the harness
+    LLM-judge wired in. The cheap heuristic still runs first; the judge
+    only fires in the ambiguous zone (0.1 < overlap < 0.4).
     """
     from pathlib import Path as _Path
     from signalos_lib.wave_engine import WaveEngine
+    from signalos_lib.wave_engine_judge import build_llm_judge, llm_judge_enabled
 
-    return WaveEngine(_Path(os.getcwd()).resolve(), project_id=project_id)
+    judge = build_llm_judge() if llm_judge_enabled() else None
+    return WaveEngine(
+        _Path(os.getcwd()).resolve(),
+        project_id=project_id,
+        llm_judge=judge,
+    )
 
 
 def _serialize_engine_result(result: dict) -> dict:

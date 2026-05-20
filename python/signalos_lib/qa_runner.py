@@ -68,6 +68,59 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
+# Encoding-safe glyphs (Windows cp1252 stdout can't encode emoji)
+#
+# On Linux/macOS terminals default to UTF-8 and the emoji icons render fine.
+# Windows Python defaults to cp1252 for stdout outside Windows Terminal —
+# printing ✅ / ❌ / ⚠ raises UnicodeEncodeError mid-test. _glyph picks an
+# ASCII fallback when stdout encoding can't handle the emoji; _safe_print
+# wraps print() to swallow the rare UnicodeEncodeError that slips through.
+# ---------------------------------------------------------------------------
+
+_UNICODE_GLYPHS: dict[str, str] = {
+    "pass":  "✅",
+    "fail":  "❌",
+    "skip":  "⏭",
+    "warn":  "⚠",
+    "arrow": "↪",
+}
+_ASCII_GLYPHS: dict[str, str] = {
+    "pass":  "[OK]",
+    "fail":  "[X]",
+    "skip":  "[-]",
+    "warn":  "[!]",
+    "arrow": "->",
+}
+
+
+def _stdout_supports_unicode() -> bool:
+    enc = getattr(sys.stdout, "encoding", None) or ""
+    return enc.lower().replace("-", "") in {"utf8", "utf16", "utf32"}
+
+
+def _glyph(name: str) -> str:
+    if _stdout_supports_unicode():
+        return _UNICODE_GLYPHS.get(name, _ASCII_GLYPHS.get(name, ""))
+    return _ASCII_GLYPHS.get(name, "")
+
+
+def _safe_print(*args: Any, **kwargs: Any) -> None:
+    """print() that degrades to ASCII when the active encoding can't
+    encode one of the chars (Windows cp1252 etc). Last-resort safety net
+    so a single Unicode char never aborts the whole QA suite."""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        safe_args = [
+            (a.encode(enc, errors="replace").decode(enc, errors="replace")
+             if isinstance(a, str) else a)
+            for a in args
+        ]
+        print(*safe_args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Lazy YAML import (stdlib has no yaml — require PyYAML, matching AMD-CORE-007
 # optional-dep pattern: raise ImportError with install hint if missing)
 # ---------------------------------------------------------------------------
@@ -415,7 +468,7 @@ def _autogen_regression_for_failed_scenario(
     # produced when a scenario fails. Quiet by default (no print on stdout)
     # to avoid duplicating qa_runner's per-scenario status line.
     print(
-        f"  ↪ auto-generated regression: {out_path} "
+        f"  {_glyph('arrow')} auto-generated regression: {out_path} "
         f"(from failing scenario {sid}: {result.error or 'failed assertions'})",
         file=sys.stderr,
     )
@@ -518,16 +571,21 @@ def run_scenario_suite(
                 _autogen_regression_for_failed_scenario(scenario, result)
             except Exception as exc:  # pragma: no cover — defensive
                 # Journal-style stderr write; QA run is non-blocking.
-                print(
-                    f"  ⚠ regression auto-gen failed for {scenario.get('id', '?')}: {exc}",
+                _safe_print(
+                    f"  {_glyph('warn')} regression auto-gen failed for {scenario.get('id', '?')}: {exc}",
                     file=sys.stderr,
                 )
 
         if verbose:
-            icon = "✅" if result.status == SCENARIO_PASS else ("⏭" if result.status == SCENARIO_SKIP else "❌")
-            print(f"  {icon}  [{result.status.upper()}]  {result.id}  {result.name}  ({result.duration_ms:.0f} ms)")
+            if result.status == SCENARIO_PASS:
+                icon = _glyph("pass")
+            elif result.status == SCENARIO_SKIP:
+                icon = _glyph("skip")
+            else:
+                icon = _glyph("fail")
+            _safe_print(f"  {icon}  [{result.status.upper()}]  {result.id}  {result.name}  ({result.duration_ms:.0f} ms)")
             if result.error:
-                print(f"         ↳ {result.error}")
+                _safe_print(f"         {_glyph('arrow')} {result.error}")
 
     # Tally
     pass_count = sum(1 for r in results if r.status == SCENARIO_PASS)
