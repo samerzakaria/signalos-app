@@ -747,6 +747,59 @@ class WaveEngine:
             "system_bubble": sign_bubble,
         }
 
+    # -- G5 handoff (M-W5) -------------------------------------------------
+
+    def run_g5_handoff(
+        self,
+        wave_id: str,
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fire the post-G5 automation: the M4 auto-commit of wave output.
+
+        Per WAVE-ENGINE-DESIGN §2 — G5 is the ship gate. The engine
+        integrates with the M4 git-automation already in
+        `orchestrator._auto_commit_wave` so a G5 sign triggers the
+        local commit of the wave's output as a clean reviewable change.
+        Push is intentionally manual (per the harness's "user owns
+        hard-to-reverse actions" rule); the engine surfaces a follow-up
+        bubble suggesting the user push when ready.
+
+        Idempotent — if the workspace is already clean (nothing to
+        commit) the underlying helper returns
+        `{"status": "skipped", "reason": "clean-tree"}`. If git fails
+        (pre-commit hook reject, etc.) the wave is NOT failed retroactively;
+        the engine returns the failure for the caller to surface.
+        """
+        # Defer import so wave_engine remains independent of the orchestrator
+        # at module-load time. (Avoids circular-import surprises.)
+        from .orchestrator import _auto_commit_wave
+
+        outcome = _auto_commit_wave(self.repo_root, wave_id, summary)
+
+        if outcome.get("status") == "committed":
+            bubble = build_system_bubble(
+                kind="complete", gate="G5",
+                detail=(
+                    f"Wave {wave_id} auto-committed locally — review with "
+                    "`git log -1`, then push when ready."
+                ),
+            )
+        elif outcome.get("status") == "skipped":
+            bubble = build_system_bubble(
+                kind="complete", gate="G5",
+                detail=f"Wave {wave_id} complete; nothing new to commit.",
+            )
+        else:
+            bubble = build_system_bubble(
+                kind="complete", gate="G5",
+                detail=(
+                    f"Wave {wave_id} complete but auto-commit failed: "
+                    f"{outcome.get('reason', 'unknown')}. Address and "
+                    "commit manually before pushing."
+                ),
+            )
+        return {"commit_outcome": outcome, "system_bubble": bubble}
+
     # -- user reply interpretation (M-W3 auto-sign) ------------------------
 
     def handle_user_reply(self, reply: str) -> dict[str, Any]:
