@@ -1411,46 +1411,46 @@ The plan is complete when ALL of the following are true (verified by §4.5's ant
 
 When 15/15 pass, the plan is executed and the next audit version (v0.3) can begin.
 
-### 7.2 First PR — start here
+### 7.2 First milestone — start here
 
-The single most-leveraged opening move (per §6.4 + §6.8):
+(Solo workflow: direct commits to `main`, no branches/PRs. Each milestone below is a logical batch of commits with its own acceptance test; ship when green.)
 
-**PR-1: "Enforcement universality foundation"** — ~1 week, one PR.
+**Milestone 1: "Enforcement universality foundation"** — ~5-7 days, several commits on `main`.
 
 | File | Change |
 |---|---|
-| `python/signalos_lib/_bundle/core/governance/Governance/DECISION-DNA.md` | Append AMD-CORE-110 (§6.6 principle) + AMD-CORE-111 (§6.6.1 override-with-audit role model) |
+| `python/signalos_lib/_bundle/core/governance/Governance/DECISION-DNA.md` | Append AMD-CORE-110 (§6.6 principle) + AMD-CORE-111 (§6.6.1 override-with-audit role model). Sign G3 yourself (solo-owner role) |
 | `python/signalos_lib/orchestrator.py::_write_extracted_files` | Invoke `pre-tool-use-guard.sh` on each extracted file before writing. Reject + record `AUDIT_TRAIL.jsonl` entry on guard refusal |
 | `python/signalos_lib/orchestrator.py::run_wave` | After harness response, call `runDocCommand` chain at gate transitions (G2→G3 auto-fires design, wave-end auto-fires debrief) — implementation reused from `wired-commands.js` ported to Python |
 | `src/components/views/BuildView.tsx:249,274` | Delete `/signal-build` and `/signal-freeze` tiles. Keep remaining 6 tiles with relabeled descriptions ("Regenerate design", "Regenerate debrief", "Force refresh status", "Request another review", "Skip G5 sign (logged violation)", "Show notes") |
 | `python/test_orchestrator_core.py` | Add `test_pre_write_guard_blocks_malicious_payload` and `test_g3_auto_fires_on_transition` |
-| `docs/PR-1-RELEASE-NOTES.md` | New file: lists the AMD-CORE additions, the guarded write path, the auto-trigger hooks, and the deleted/relabeled tiles |
 
-**Acceptance:**
-- `test_no_dead_code.py` skeleton passes for items #6, #11, #13 above
+**Acceptance (green-light to start Milestone 2):**
 - A test that simulates a malicious LLM payload (secret-shaped string in a Write call) is rejected with audit-trail evidence
-- BuildView screenshots show 6 tiles instead of 8, with renamed labels
+- BuildView shows 6 tiles instead of 8, with renamed labels
+- CI is green across 3 OSes
 
-**Why this PR first:**
-- Lands the principle (AMD-CORE-110/111) and the most credibility-critical fix (pre-write guard) in one go
+**Why this milestone first:**
+- Lands the principle (AMD-CORE-110/111) and the most credibility-critical fix (pre-write guard) together
 - Reframes the BuildView tiles per §6.8.2 — the most visible UX gap
-- Cheapest path to "SignalOS is now a real OS, not a CLI wrapper" — closes 4 of 8 done-list items in one PR
-- After PR-1 merges, the rest of the work (Phases 2-6 in §4.6) can land in parallel by subsystem
+- Cheapest path to "SignalOS is now a real OS, not a CLI wrapper" — closes 4 of 15 done-list items in one milestone
 
-### 7.3 Subsequent PR sequence (high level)
+### 7.3 Milestone sequence
 
-| PR | Scope | Days | Done-list items closed |
+| # | Scope | Days | Done-list items closed |
 |---|---|---|---|
-| PR-1 | Enforcement foundation (above) | ~5-7 | #6, #11, #13 (partial) |
-| PR-2 | Chat-response guard + freeze-state consolidation | ~3-4 | #7, #10 |
-| PR-3 | `status.py` emits activities + criteria; DashboardView shows real data | ~2-3 | #8 |
-| PR-4 | Git auto-commit at wave end + G5-gated push + GitHub repo creation flow | ~5-7 | #9 |
-| PR-5 | Test debt UI (read-only review surface) + regression auto-generation | ~3-4 | (Phase 3 items) |
-| PR-6 | `emit.sh` invocation in `_register_ide_hooks` + 8 stalled-migration retractions | ~4-5 | #5, #1-#5 anti-regression CI seeds |
-| PR-7 | Anti-regression CI: `test_no_dead_code.py` complete | ~3-4 | #1, #2, #3, #4, #5 |
-| PR-8 | Beta tester run — clean machine, end-to-end | ~5 + cycle | #15 |
+| 1 | Enforcement foundation (above) | ~5-7 | #6, #11, #13 (partial) |
+| 2 | Chat-response guard + freeze-state consolidation | ~3-4 | #7, #10 |
+| 3 | `status.py` emits activities + criteria; DashboardView shows real data | ~2-3 | #8 |
+| 4 | Git auto-commit at wave end + G5-gated push + GitHub repo creation flow | ~5-7 | #9 |
+| 5 | Test debt UI (read-only review surface) + regression auto-generation | ~3-4 | (Phase 3 items) |
+| 6 | `emit.sh` invocation in `_register_ide_hooks` + 8 stalled-migration retractions | ~4-5 | #5, #1-#5 anti-regression CI seeds |
+| 7 | Anti-regression CI: `test_no_dead_code.py` complete | ~3-4 | #1, #2, #3, #4, #5 |
+| 8 | Clean-machine end-to-end smoke (replaces v0.1's "beta tester run") — fresh install, onboard, "build me X", G5 sign, push | ~3-5 | #15 |
 
-Each PR is independently mergeable. The end-state is reached after PR-8.
+Each milestone has an acceptance test; you ship when green and move to the next. Solo workflow means there's no merge ceremony — the commit that turns the acceptance test green IS the merge. Tag a release (`v0.3.0`, `v0.4.0`...) at the end of each milestone so beta installs have semver-stable checkpoints.
+
+**Sequencing note:** milestones 2-7 are mostly independent. If a milestone gets blocked (e.g., GitHub repo creation OAuth in #4 hits a setup snag), skip forward and circle back. Only #1 must come first because it lands the principle entries that the rest reference.
 
 ---
 
