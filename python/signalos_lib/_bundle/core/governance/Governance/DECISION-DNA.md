@@ -171,3 +171,66 @@ Adopt SignalOS v1.0 as the canonical operating system for this product: Constitu
 
 **Rationale:** The reframe in the audit ("existence is not the right test — does the chain fire correctly at runtime?") exposed five places where files existed and were referenced, but the system still broke when an adopter actually ran it: `{{...}}` literals reached agents unsubstituted (C1); greenfield deadlocked between signal-onboard and signal-init (C4); the stakeholder-interview skill had no entry point so its prerequisite was unsatisfiable (H1); register-hooks.sh was a silent manual step responsible for the most common "installed but inert" deployment (H3); Core's own waves silently skipped Gate 2 with no doctrine to acknowledge the case (M2). Each fires on every adopter session or every Core-self wave; closure had to come before any next surface.
 
+---
+
+## AMD-CORE-110 · Enforcement universality
+
+**Date:** 2026-05-20
+**Wave:** W17 (signalos-app M1)
+**Author:** PO (signalos-core)
+**Decision:** Every output channel SignalOS produces — chat replies, file writes, subprocess execution, gate transitions, design artifacts, deploy actions — must pass through the same enforcement framework (gates + validators + hooks) as user-written code. Enforcement is not opt-in per channel; it IS the framework.
+
+**Why:**
+1. If SignalOS produces any output through any path that bypasses its own gates, validators, or hooks, SignalOS is not an operating system — it is a CLI wrapper.
+2. An OS enforces its kernel guarantees on every syscall. Same standard applies here: the protocol is the kernel; the gates are the syscall boundary.
+3. Without this principle, "unused = unfinished" (AMD-CORE-100) becomes incoherent — orphan checks only catch "code with no caller," not "output channel that bypasses the framework," which is the larger failure mode.
+
+**Operational consequence:**
+- Buttons that look like commands are an anti-pattern; they advertise an à la carte model the framework doesn't offer.
+- Per-skill validators (`skill_validators.py`) must extend to cover all output channels, not just file writes.
+- The `pre-tool-use-guard.sh` must run on every orchestrator file write — currently a gap closed in this same wave.
+
+**Verification:**
+- Anti-regression CI (`test_no_dead_code.py`) gates: every output-producing code path is mapped to a validator or gate.
+- Audit trail records every system-initiated trigger so reviewers can confirm enforcement fired.
+
+**Trade-off accepted:** Some flexibility is lost — a developer cannot quickly add a button that bypasses gates. This is the point.
+
+**Signed:** signalos-core · 2026-05-20
+
+---
+
+## AMD-CORE-111 · Enforcement ≠ always block (override-with-audit extension)
+
+**Date:** 2026-05-20
+**Wave:** W17 (signalos-app M1)
+**Author:** PO (signalos-core)
+**Decision:** Enforcement is "block by default + allow override-with-logged-violation for authorized roles." The audit trail is the integrity layer; the gate is the recommendation.
+
+**Role policy:**
+- **Solo-owner** (proven sole stakeholder of the product): can skip gate signs; each skip is recorded as a `violation:gate-skip` entry in `AUDIT_TRAIL.jsonl`.
+- **Operator**: can override per-gate via the Toolbar Override button; logged as `override:gate-override`.
+- **Service-account / CI**: override requires valid OIDC token + matching role policy; logged as `override:oidc`.
+- **Anonymous / unauthenticated**: cannot skip or override; gate sign is required.
+
+**Semantic distinction:**
+- **Override** = "I am authorized to make this call" (logged as override).
+- **Violation** = "I am skipping a protection I'm supposed to honor, and accept that this is recorded as such" (logged as violation).
+
+Both leave audit-trail evidence; the difference matters for downstream review. Override evidence is normal operational record; violation evidence stacks up and signals process drift.
+
+**Why:**
+1. Pure "always block" is unworkable for solo owners — they cannot peer-review themselves.
+2. Pure "allow anything" defeats the protocol — there is no integrity.
+3. Block-with-recorded-override-or-violation preserves both productivity and auditability.
+
+**Implication for validators:** every `_validate_*` skill validator that returns a violation must emit an audit-trail entry naming the violation kind, the role at the time, and the artifact context.
+
+**Verification:**
+- Role test: a solo-owner who skips G3 sign produces an `AUDIT_TRAIL.jsonl` entry with `action="violation:gate-skip"`, `role="solo-owner"`, and `gate="G3"`.
+- An anonymous user who attempts to skip the same gate is refused with no audit entry (because no skip occurred).
+
+**Trade-off accepted:** A user who silently accumulates violations may produce shippable software that no peer ever reviewed. The audit trail makes this visible; the policy is that visibility is sufficient — the framework does not refuse to ship on N violations. That's a future tightening if needed.
+
+**Signed:** signalos-core · 2026-05-20
+

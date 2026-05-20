@@ -21,6 +21,18 @@ TRUST_TIER="${REPO_ROOT}/core/execution/TRUST_TIER.md"
 PERMANENTLY_T3="${REPO_ROOT}/core/PERMANENTLY_T3.md"
 AUDIT_TRAIL="${REPO_ROOT}/.signalos/AUDIT_TRAIL.jsonl"
 
+# Pick a working Python interpreter. On Windows Git Bash, `python3` may resolve
+# to a Microsoft Store stub that errors out; fall back to `python`. With
+# `set -e` + `pipefail`, an unusable python3 inside the secret-scan pipe would
+# cause a false-positive block.
+if python3 --version >/dev/null 2>&1; then
+  PYTHON=python3
+elif python --version >/dev/null 2>&1; then
+  PYTHON=python
+else
+  PYTHON=python3  # let the failure surface clearly downstream
+fi
+
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
@@ -52,7 +64,7 @@ fi
 if [ -n "$WRITE_CONTENT" ] && [ -f "$REDACT_PY" ]; then
   # Format as a minimal unified diff (+line per content line)
   DIFF_INPUT=$(echo "$WRITE_CONTENT" | sed 's/^/+/')
-  if echo "$DIFF_INPUT" | python3 "$REDACT_PY" --scan-diff 2>&1; then
+  if echo "$DIFF_INPUT" | "$PYTHON" "$REDACT_PY" --scan-diff 2>&1; then
     : # clean
   else
     echo -e "${RED}✗ BLOCKED: Write content contains a secret pattern.${NC}" >&2

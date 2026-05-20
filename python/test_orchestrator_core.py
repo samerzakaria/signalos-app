@@ -225,6 +225,76 @@ class WriteExtractedFiles(unittest.TestCase):
             _write_extracted_files(root, [("x.ts", "new")])
             self.assertEqual((root / "x.ts").read_text(), "new")
 
+    @unittest.skipUnless(_bash_available(), "bash unavailable")
+    def test_pre_write_guard_blocks_malicious_payload(self) -> None:
+        """AMD-CORE-110: orchestrator must invoke pre-tool-use-guard.sh on
+        every file write, refuse the write on non-zero exit, and append a
+        violation:write-blocked entry to AUDIT_TRAIL.jsonl.
+
+        Strategy: stage the real guard + redact.py + a stub
+        PERMANENTLY_T3.md so the guard runs end-to-end. Submit two files:
+        one clean, one containing an AWS-key-shaped string the secret
+        scanner rejects. Assert the clean file lands, the malicious file
+        does not, and the audit trail records the block.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            # Stage the guard + its redact.py dependency in the layout the
+            # guard expects (workspace-relative).
+            hooks_dst = root / "core" / "execution" / "hooks"
+            hooks_dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                _BUNDLE / "core" / "execution" / "hooks" / "pre-tool-use-guard.sh",
+                hooks_dst / "pre-tool-use-guard.sh",
+            )
+            (hooks_dst / "pre-tool-use-guard.sh").chmod(0o755)
+            (hooks_dst / "_lib").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                _BUNDLE / "core" / "execution" / "hooks" / "_lib" / "redact.py",
+                hooks_dst / "_lib" / "redact.py",
+            )
+
+            clean = ("docs/notes.md", "Hello world. Nothing sensitive.")
+            # AKIA-prefixed string is a canonical AWS access key pattern
+            # the redact.py secret scanner detects.
+            malicious = ("src/leaked.ts", 'const k = "AKIAIOSFODNN7EXAMPLE";')
+
+            written = _write_extracted_files(root, [clean, malicious])
+
+            self.assertIn("docs/notes.md", written, "clean file must be written")
+            self.assertNotIn(
+                "src/leaked.ts",
+                written,
+                "malicious file must be refused by the guard",
+            )
+            self.assertTrue(
+                (root / "docs" / "notes.md").is_file(),
+                "clean file expected on disk",
+            )
+            self.assertFalse(
+                (root / "src" / "leaked.ts").is_file(),
+                "malicious file must not exist on disk",
+            )
+
+            trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+            self.assertTrue(trail.is_file(), "audit trail must be written")
+            entries = [
+                json.loads(line)
+                for line in trail.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            blocks = [
+                e for e in entries
+                if e.get("action") == "violation:write-blocked"
+                and e.get("path") == "src/leaked.ts"
+            ]
+            self.assertEqual(
+                len(blocks),
+                1,
+                f"expected one violation:write-blocked entry for src/leaked.ts; "
+                f"got entries: {entries}",
+            )
+
 
 # ---------------------------------------------------------------------------
 # _tasks_from_plan  (YAML -> dict[])

@@ -399,11 +399,67 @@ def _append_files_to_wave_checkpoint(root: Path, wave_id: str, new_files: list[s
         pass
 
 
+def _run_pre_write_guard(root: Path, rel_path: str, content: str) -> tuple[bool, str]:
+    """Invoke pre-tool-use-guard.sh on a pending file write (AMD-CORE-110).
+
+    Returns (permitted, reason). permitted=True means the write may proceed;
+    permitted=False means the guard rejected and the write must be skipped.
+    The reason string is empty on success, or contains the guard's stderr +
+    a hint of which check fired on failure.
+
+    Fallback policy: if the guard script is absent (bundle not installed in
+    this workspace) or bash is unavailable, this returns (True, "guard-missing")
+    or (True, "guard-skipped-no-bash"). The caller records these as audit
+    entries so silent bypass is visible; the lenient default keeps existing
+    flows working for users who have not re-init'd.
+    """
+    guard = root / "core" / "execution" / "hooks" / "pre-tool-use-guard.sh"
+    if not guard.is_file():
+        return True, "guard-missing"
+    if not _bash_available():
+        return True, "guard-skipped-no-bash"
+    try:
+        result = subprocess.run(
+            ["bash", str(guard)],
+            cwd=str(root),
+            env={
+                **os.environ,
+                "SIGNALOS_PLUGIN_ROOT": str(root),
+                "CLAUDE_TOOL_INPUT_FILE_PATH": str((root / rel_path).resolve()),
+                "CLAUDE_TOOL_INPUT_CONTENT": content,
+            },
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Guard invocation itself failed -- treat as missing (lenient) but
+        # record so the operator notices.
+        return True, f"guard-error: {exc}"
+    if result.returncode == 0:
+        return True, ""
+    return False, (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+
+
+def _append_audit_entry(root: Path, entry: dict[str, Any]) -> None:
+    """Append a JSON entry to .signalos/AUDIT_TRAIL.jsonl. Silent on failure."""
+    trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    try:
+        trail.parent.mkdir(parents=True, exist_ok=True)
+        with trail.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
 def _write_extracted_files(root: Path, files: list[tuple[str, str]]) -> list[str]:
     """Write each (path, content) tuple under *root*, creating parent dirs.
 
     Returns the list of paths written. Skips paths that resolve outside the
-    workspace root (defense-in-depth on top of the regex check).
+    workspace root (defense-in-depth on top of the regex check). Each write
+    is gated by pre-tool-use-guard.sh per AMD-CORE-110 — files the guard
+    rejects are not written and an audit entry is appended.
     """
     written: list[str] = []
     root_resolved = root.resolve()
@@ -415,6 +471,27 @@ def _write_extracted_files(root: Path, files: list[tuple[str, str]]) -> list[str
                 target.relative_to(root_resolved)
             except ValueError:
                 continue
+            # AMD-CORE-110: pre-write guard. Lenient on guard-missing /
+            # bash-missing -- caller still gets a write -- but record both
+            # cases so silent bypass is visible in audit.
+            permitted, reason = _run_pre_write_guard(root, rel, content)
+            if not permitted:
+                _append_audit_entry(root, {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "action": "violation:write-blocked",
+                    "path": rel,
+                    "reason": reason,
+                    "source": "orchestrator._write_extracted_files",
+                })
+                continue
+            if reason in {"guard-missing", "guard-skipped-no-bash"} or reason.startswith("guard-error"):
+                _append_audit_entry(root, {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "action": "guard-bypass",
+                    "path": rel,
+                    "reason": reason,
+                    "source": "orchestrator._write_extracted_files",
+                })
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             written.append(rel)

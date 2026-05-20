@@ -244,37 +244,27 @@ export function BuildView() {
               <div className="cmd-item" onClick={() => window.runCmd('/signal-status')}>
                 <div className="cmd-item-ic"><i className="ti ti-activity"></i></div>
                 <span className="cmd-item-name">/signal-status</span>
-                <span className="cmd-item-desc">Show gate state</span>
-              </div>
-              <div className="cmd-item" onClick={() => window.runCmd('/signal-build')}>
-                <div className="cmd-item-ic"><i className="ti ti-hammer"></i></div>
-                <span className="cmd-item-name">/signal-build</span>
-                <span className="cmd-item-desc">Run build pipeline</span>
+                <span className="cmd-item-desc">Force refresh status</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-review')}>
                 <div className="cmd-item-ic"><i className="ti ti-eye"></i></div>
                 <span className="cmd-item-name">/signal-review</span>
-                <span className="cmd-item-desc">Code review</span>
+                <span className="cmd-item-desc">Regenerate code review</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-design')}>
                 <div className="cmd-item-ic"><i className="ti ti-palette"></i></div>
                 <span className="cmd-item-name">/signal-design</span>
-                <span className="cmd-item-desc">Design notes</span>
+                <span className="cmd-item-desc">Regenerate design</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-debrief')}>
                 <div className="cmd-item-ic"><i className="ti ti-report"></i></div>
                 <span className="cmd-item-name">/signal-debrief</span>
-                <span className="cmd-item-desc">Wave retrospective</span>
+                <span className="cmd-item-desc">Regenerate wave retrospective</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-ship')}>
                 <div className="cmd-item-ic"><i className="ti ti-rocket"></i></div>
                 <span className="cmd-item-name">/signal-ship</span>
-                <span className="cmd-item-desc">Ship checklist</span>
-              </div>
-              <div className="cmd-item" onClick={() => window.runCmd('/signal-freeze')}>
-                <div className="cmd-item-ic"><i className="ti ti-snowflake"></i></div>
-                <span className="cmd-item-name">/signal-freeze</span>
-                <span className="cmd-item-desc">Freeze wave</span>
+                <span className="cmd-item-desc">Skip G5 sign and ship now (logged violation)</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-brain')}>
                 <div className="cmd-item-ic"><i className="ti ti-brain"></i></div>
