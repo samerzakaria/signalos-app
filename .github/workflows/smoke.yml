@@ -96,7 +96,7 @@ jobs:
       # build step fails with either "tsc not found" (Windows/macOS) or
       # cascading TS2307/TS7006 errors (Ubuntu, where tsc is globally
       # pre-installed but node_modules is empty).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
       - name: npm install
