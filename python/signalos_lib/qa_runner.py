@@ -61,6 +61,7 @@ __all__ = [
 import glob
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -367,6 +368,61 @@ def _run_scenario(
 
 
 # ---------------------------------------------------------------------------
+# Regression auto-generation (Milestone 5 / §6.8.4)
+# ---------------------------------------------------------------------------
+
+def _autogen_regression_for_failed_scenario(
+    scenario: dict[str, Any],
+    result: ScenarioResult,
+) -> Path | None:
+    """
+    Auto-generate a regression entry under
+    ``core/governance/QA/regressions/`` for a failing scenario.
+
+    Returns the path of the written file, or None if generation was
+    skipped (e.g. missing required fields — defensive). Errors raise
+    so the caller can decide whether to log or re-raise.
+    """
+    from signalos_lib.regression import generate_regression_from_dict
+
+    sid = scenario.get("id") or "unknown"
+    name = scenario.get("name") or f"Regression for {sid}"
+    url = scenario.get("url")
+    if not url:
+        # Cannot build a regression entry without a repro URL.
+        return None
+
+    # Bug-id is derived from the failing scenario id + timestamp so the
+    # generator can produce a unique reg-NNN slot and the user can trace
+    # the regression back to the originating QA run.
+    ts_token = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    bug_id = f"{sid}-{ts_token}"
+
+    payload: dict[str, Any] = {
+        "bug_id": bug_id,
+        "name": name,
+        "url": url,
+        "steps": scenario.get("steps", []),
+        "assertions": scenario.get("assertions", []),
+        "capture_vitals": bool(scenario.get("evidence", {}).get("vitals", False)),
+        "pr_ref": "",
+        "fixed_at": "",
+    }
+
+    out_path = generate_regression_from_dict(payload)
+
+    # Optional journal-style stderr breadcrumb so users see which file was
+    # produced when a scenario fails. Quiet by default (no print on stdout)
+    # to avoid duplicating qa_runner's per-scenario status line.
+    print(
+        f"  ↪ auto-generated regression: {out_path} "
+        f"(from failing scenario {sid}: {result.error or 'failed assertions'})",
+        file=sys.stderr,
+    )
+    return out_path
+
+
+# ---------------------------------------------------------------------------
 # Public API — run_scenario_suite
 # ---------------------------------------------------------------------------
 
@@ -449,6 +505,23 @@ def run_scenario_suite(
 
         result = _run_scenario(scenario, scr_dir, capture_vitals)
         results.append(result)
+
+        # Milestone 5 / §6.8.4: regression entries are system-emitted.
+        # When a main-suite scenario fails, auto-generate a regression
+        # YAML so the next QA run replays the failure path. We skip
+        # already-regression scenarios (no need to regenerate one for
+        # a failing replay) and wrap in try/except so a generation
+        # failure cannot block the rest of the QA run — it logs to
+        # stderr and continues.
+        if result.status == SCENARIO_FAIL and not is_regression:
+            try:
+                _autogen_regression_for_failed_scenario(scenario, result)
+            except Exception as exc:  # pragma: no cover — defensive
+                # Journal-style stderr write; QA run is non-blocking.
+                print(
+                    f"  ⚠ regression auto-gen failed for {scenario.get('id', '?')}: {exc}",
+                    file=sys.stderr,
+                )
 
         if verbose:
             icon = "✅" if result.status == SCENARIO_PASS else ("⏭" if result.status == SCENARIO_SKIP else "❌")

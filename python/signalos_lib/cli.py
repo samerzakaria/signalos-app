@@ -365,6 +365,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p_qa.add_argument("--quiet", dest="qa_verbose", action="store_false",
                       help="Suppress per-scenario stdout")
 
+    # Milestone 5 / §6.8.4 — `signalos qa regression` subcommand.
+    # Two modes:
+    #   qa regression --generate --bug-id ... --name ... [--url ...]
+    #       Manual escape hatch (qa_runner auto-generates on failure).
+    #   qa regression --run [--pattern <glob>]
+    #       Filtered replay of regression scenarios.
+    p_qa_cmd = sub.add_parser("qa",
+        help="QA sub-commands (regression generation/replay) (M5 §6.8.4)")
+    p_qa_cmd.add_argument("qa_sub", choices=["regression"], metavar="SUBCOMMAND")
+    p_qa_cmd.add_argument("--generate", action="store_true",
+                          help="Generate a regression scenario YAML.")
+    p_qa_cmd.add_argument("--run", action="store_true",
+                          help="Run regression scenarios (filtered by --pattern).")
+    p_qa_cmd.add_argument("--bug-id", dest="qa_bug_id", default=None, metavar="ID",
+                          help="Bug ID (e.g. BUG-042) — required with --generate.")
+    p_qa_cmd.add_argument("--name", dest="qa_name", default=None, metavar="TEXT",
+                          help="Human-readable regression name — required with --generate.")
+    p_qa_cmd.add_argument("--url", dest="qa_url", default="", metavar="URL",
+                          help="Repro URL — required with --generate.")
+    p_qa_cmd.add_argument("--pattern", dest="qa_pattern", default=None, metavar="GLOB",
+                          help="Filename glob (matched under core/governance/QA/regressions/).")
+    p_qa_cmd.add_argument("--wave", default="unknown", metavar="WAVE")
+
     p_qa_only = sub.add_parser("signal-qa-only",
         help="Run non-gating QA scenarios without updating QUALITY_CHECK.md (W7)")
     p_qa_only.add_argument("--scenarios", default="core/governance/QA/scenarios/*.yaml",
@@ -426,6 +449,73 @@ def _dispatch_signal_qa(args: argparse.Namespace, gating: bool) -> int:
     return 1 if pack.fail_count > 0 else 0
 
 
+def _dispatch_qa_regression(args: argparse.Namespace) -> int:
+    """Dispatch `signalos qa regression ...` (M5 §6.8.4)."""
+    # The subparser only allows qa_sub="regression"; further branching is
+    # on --generate vs --run.
+    if getattr(args, "qa_sub", None) != "regression":
+        sys.stderr.write("signalos qa: only the 'regression' sub-command is supported.\n")
+        return 2
+
+    do_generate = bool(getattr(args, "generate", False))
+    do_run = bool(getattr(args, "run", False))
+    if do_generate and do_run:
+        sys.stderr.write("signalos qa regression: pass either --generate or --run, not both.\n")
+        return 2
+    if not do_generate and not do_run:
+        sys.stderr.write("signalos qa regression: pass --generate or --run.\n")
+        return 2
+
+    if do_generate:
+        bug_id = getattr(args, "qa_bug_id", None)
+        name = getattr(args, "qa_name", None)
+        url = getattr(args, "qa_url", "") or ""
+        if not bug_id or not name:
+            sys.stderr.write(
+                "signalos qa regression --generate: --bug-id and --name are required.\n"
+            )
+            return 2
+        from signalos_lib.regression import generate_regression_from_dict
+        try:
+            out_path = generate_regression_from_dict(
+                {
+                    "bug_id": bug_id,
+                    "name": name,
+                    "url": url or f"https://example.invalid/{bug_id}",
+                }
+            )
+        except Exception as exc:
+            sys.stderr.write(f"signalos qa regression --generate failed: {exc}\n")
+            return 1
+        sys.stdout.write(f"regression written: {out_path}\n")
+        return 0
+
+    # do_run: filtered replay of regression scenarios
+    pattern = getattr(args, "qa_pattern", None)
+    # Match filename glob under the regressions dir. If pattern is None,
+    # run all regression scenarios.
+    if pattern:
+        # Append .yaml if the user didn't include an extension, matching
+        # how /signal-qa globs scenario files.
+        suffix = pattern if pattern.endswith(".yaml") else f"{pattern}.yaml"
+        regression_pattern = f"core/governance/QA/regressions/{suffix}"
+    else:
+        regression_pattern = "core/governance/QA/regressions/*.yaml"
+
+    from signalos_lib.qa_runner import run_scenario_suite
+    # We don't have a main scenario suite to run — pass an empty glob so
+    # only regression scenarios execute. load_scenarios returns [] for
+    # globs that match no files, so this is safe.
+    pack = run_scenario_suite(
+        scenario_pattern="core/governance/QA/__none__/*.yaml",
+        regression_pattern=regression_pattern,
+        wave=getattr(args, "wave", "unknown") or "unknown",
+        gating=False,
+        verbose=True,
+    )
+    return 1 if pack.fail_count > 0 else 0
+
+
 def _dispatch_completion(args: argparse.Namespace) -> int:
     root = _repo_root()
     comp_dir = root / "cli" / "completions"
@@ -460,6 +550,8 @@ def main(argv: list[str]) -> int:
         return _dispatch_signal_qa(args, gating=True)
     if cmd == "signal-qa-only":
         return _dispatch_signal_qa(args, gating=False)
+    if cmd == "qa":
+        return _dispatch_qa_regression(args)
 
     rest = remainder
 

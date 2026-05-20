@@ -1,4 +1,5 @@
 import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../state';
+import { TestDebtPanel } from '../TestDebtPanel';
 
 export function BuildView() {
   const bubbles = chatBubbles.value;
@@ -235,6 +236,23 @@ export function BuildView() {
             })}
           </div>
         </div>
+
+        <aside
+          className="build-right-rail"
+          data-testid="build-right-rail"
+          style={{
+            position: 'absolute',
+            right: '16px',
+            top: '72px',
+            width: '320px',
+            maxHeight: 'calc(100vh - 220px)',
+            overflowY: 'auto',
+            zIndex: 5,
+            pointerEvents: 'auto',
+          }}
+        >
+          <TestDebtPanel />
+        </aside>
 
         <div className="chat-foot">
           <div className="chat-foot-inner">

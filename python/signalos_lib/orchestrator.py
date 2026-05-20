@@ -453,6 +453,164 @@ def _append_audit_entry(root: Path, entry: dict[str, Any]) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Auto-commit at wave end (M4 / audit completion plan)
+# ---------------------------------------------------------------------------
+#
+# When a wave finishes successfully we want the agent to actually *ship*
+# the files it just wrote: stage everything in the workspace, generate a
+# commit message summarising the wave, and land a commit. The push step
+# is gated on G5 sign and lives in sign.py — auto-commit just locks in
+# local state so a later G5 sign has something to push.
+#
+# This step is best-effort by design:
+#   - No .git dir              -> silent skip (uninitialized workspace is valid)
+#   - Clean tree               -> silent skip (no empty commits)
+#   - Subprocess / hook failure -> audit-trail entry, but does NOT block
+#                                  the run_wave success return. The user
+#                                  can always `git commit` manually.
+
+def _auto_commit_wave(
+    root: Path,
+    wave_id: str,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Stage + commit wave output in the workspace. Best-effort.
+
+    Returns a small dict describing the outcome ({"status": "skipped"|"committed"|"failed", ...})
+    purely so callers / tests can observe what happened. The caller does
+    NOT need to inspect the return value to decide whether the wave
+    succeeded — that's already settled by the time we reach this point.
+    """
+    git_dir = root / ".git"
+    if not git_dir.exists():
+        # Uninitialized workspace — auto-commit is not meaningful here.
+        return {"status": "skipped", "reason": "no-git-dir"}
+
+    # 1. Is there anything to commit?
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "auto-commit-failed",
+            "wave_id": wave_id,
+            "reason": f"git-status-error: {exc}",
+        })
+        return {"status": "failed", "reason": f"git-status-error: {exc}"}
+
+    if status_proc.returncode != 0:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "auto-commit-failed",
+            "wave_id": wave_id,
+            "reason": (status_proc.stderr or "").strip() or "git status non-zero",
+        })
+        return {"status": "failed", "reason": "git-status-nonzero"}
+
+    if not status_proc.stdout.strip():
+        return {"status": "skipped", "reason": "clean-tree"}
+
+    # 2. Build a commit message from the wave summary.
+    task_titles = []
+    for task in summary.get("tasks", []) or []:
+        title = task.get("title") or task.get("task") or task.get("branch")
+        if title and title not in task_titles:
+            task_titles.append(str(title))
+    # Cap the subject-line title list so the first message line stays sane.
+    subject_titles = ", ".join(task_titles[:3]) or "wave output"
+    if len(task_titles) > 3:
+        subject_titles += f", +{len(task_titles) - 3} more"
+
+    completed = summary.get("completed", 0)
+    failed = summary.get("failed", 0)
+    # files_written count: aggregate per-task results' files_written arrays.
+    files_count = 0
+    for task in summary.get("tasks", []) or []:
+        fw = (task.get("result") or {}).get("files_written") or []
+        if isinstance(fw, list):
+            files_count += len(fw)
+
+    body_lines = [
+        f"Wave summary: {completed} task(s) complete, "
+        f"{files_count} file(s) written, {failed} failed.",
+        "",
+        "Auto-committed by SignalOS at wave end.",
+    ]
+    commit_msg = (
+        f"feat(wave-{wave_id}): {subject_titles}\n\n"
+        + "\n".join(body_lines)
+    )
+
+    # 3. Stage and commit.
+    try:
+        add_proc = subprocess.run(
+            ["git", "add", "-A"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        if add_proc.returncode != 0:
+            _append_audit_entry(root, {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "action": "auto-commit-failed",
+                "wave_id": wave_id,
+                "reason": (add_proc.stderr or "").strip() or "git add non-zero",
+            })
+            return {"status": "failed", "reason": "git-add-failed"}
+
+        commit_proc = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "auto-commit-failed",
+            "wave_id": wave_id,
+            "reason": f"subprocess-error: {exc}",
+        })
+        return {"status": "failed", "reason": f"subprocess-error: {exc}"}
+
+    if commit_proc.returncode != 0:
+        # A pre-commit hook can reject the commit. Record but don't fail
+        # the wave — user can address the hook output and commit manually.
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "auto-commit-failed",
+            "wave_id": wave_id,
+            "reason": (commit_proc.stderr or commit_proc.stdout or "").strip()[:500]
+                       or f"exit {commit_proc.returncode}",
+        })
+        return {"status": "failed", "reason": "git-commit-failed"}
+
+    _append_audit_entry(root, {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "action": "auto-commit-ok",
+        "wave_id": wave_id,
+        "files_count": files_count,
+        "tasks_committed": task_titles,
+    })
+    sys.stdout.write(
+        f"[orchestrate] auto-commit: wave-{wave_id} committed "
+        f"({files_count} file(s), {len(task_titles)} task(s))\n"
+    )
+    return {"status": "committed", "files_count": files_count, "message": commit_msg}
+
+
 def _write_extracted_files(root: Path, files: list[tuple[str, str]]) -> list[str]:
     """Write each (path, content) tuple under *root*, creating parent dirs.
 
@@ -1529,7 +1687,7 @@ def run_wave(
         for sid in paused_tasks:
             sys.stdout.write(f"  PE → signalos pause resume {sid}\n")
 
-    return {
+    summary = {
         "wave_id": wave_id,
         "session_id": session_id,
         "status": overall_status,
@@ -1539,3 +1697,22 @@ def run_wave(
         "paused": paused,
         "elapsed_ms": elapsed_ms,
     }
+
+    # M4: auto-commit wave output. Best-effort — never blocks the return.
+    # Only fire on a successful wave (no failed/aborted tasks); otherwise
+    # we'd be locking in half-finished state the user almost certainly
+    # wants to revisit.
+    if overall_status == "all_completed" and completed > 0:
+        try:
+            commit_outcome = _auto_commit_wave(root, wave_id, summary)
+            summary["auto_commit"] = commit_outcome
+        except Exception as exc:  # pragma: no cover — defensive
+            _append_audit_entry(root, {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "action": "auto-commit-failed",
+                "wave_id": wave_id,
+                "reason": f"unhandled: {exc}",
+            })
+            summary["auto_commit"] = {"status": "failed", "reason": f"unhandled: {exc}"}
+
+    return summary
