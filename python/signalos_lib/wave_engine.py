@@ -40,6 +40,9 @@ __all__ = [
     "inspect",
     "detect_scope_drift",
     "WaveEngine",
+    "classify_user_reply",
+    "AFFIRMATION_ALLOWLIST",
+    "build_system_bubble",
 ]
 
 
@@ -379,6 +382,148 @@ def detect_scope_drift(
 
 
 # ---------------------------------------------------------------------------
+# Affirmation classifier (§8) — M-W3 auto-sign trigger
+# ---------------------------------------------------------------------------
+#
+# v1 is strict — an allowlist of unambiguous affirmation phrases per the
+# design's "false-positive over false-negative" rule (a wrong "yes" silently
+# signs and damages integrity; a wrong "no" just costs one extra turn).
+# v2 (after the classifier has earned trust per design §13.3) lets an LLM
+# judge from richer replies.
+
+AFFIRMATION_ALLOWLIST: frozenset[str] = frozenset({
+    "yes", "y", "yeah", "yep",
+    "confirm", "confirmed",
+    "approve", "approved",
+    "looks good", "lgtm",
+    "proceed", "go", "go ahead",
+    "sign", "sign it",
+    "ok", "okay",
+    "ship it", "ship",
+})
+
+# Reply tokens that signal the user wants to refine, not sign.
+_REFINEMENT_HINTS: frozenset[str] = frozenset({
+    "change", "instead", "actually", "wait", "no", "not", "but", "rather",
+    "different", "reword", "rewrite", "redo", "again", "tweak", "edit",
+    "amend", "modify",
+})
+
+
+def classify_user_reply(reply: str) -> dict[str, Any]:
+    """Categorise a user's chat reply as affirm / refine / question / other.
+
+    Per WAVE-ENGINE-DESIGN §8 — the engine auto-signs the current gate
+    when the reply is unambiguously affirmative. Anything else falls
+    through to the chat layer for normal handling (refine the agent's
+    output, answer a question, etc).
+
+    Returns:
+        {
+            "kind": "affirm" | "refine" | "question" | "other",
+            "matched_phrase": str | None,  # which allowlist phrase matched
+            "raw": str,
+        }
+    """
+    base = {"raw": reply, "matched_phrase": None}
+    if not reply:
+        return {**base, "kind": "other"}
+
+    normalised = reply.strip().lower()
+    # Strip terminal punctuation that wouldn't change intent.
+    normalised_stripped = normalised.rstrip(".!?,;: ")
+
+    # Question wins outright — never auto-sign on a "?" reply.
+    if normalised.endswith("?"):
+        return {**base, "kind": "question"}
+
+    # Exact-match against the allowlist (case-insensitive).
+    if normalised_stripped in AFFIRMATION_ALLOWLIST:
+        return {**base, "kind": "affirm", "matched_phrase": normalised_stripped}
+
+    # Multi-word allowlist phrases ("looks good", "ship it") match when
+    # the reply starts with the phrase and the remainder is short padding.
+    for phrase in AFFIRMATION_ALLOWLIST:
+        if " " in phrase and normalised_stripped.startswith(phrase):
+            remainder = normalised_stripped[len(phrase):].strip()
+            if len(remainder) <= 12:
+                return {**base, "kind": "affirm", "matched_phrase": phrase}
+
+    # Refinement signal: any of the hint words present.
+    tokens = set(re.findall(r"[a-z']+", normalised))
+    if tokens & _REFINEMENT_HINTS:
+        return {**base, "kind": "refine"}
+
+    return {**base, "kind": "other"}
+
+
+# ---------------------------------------------------------------------------
+# System bubble builder (§5) — re-route + sign messages for the chat layer
+# ---------------------------------------------------------------------------
+
+_GATE_HUMAN_NAMES: dict[str, str] = {
+    "G0": "Soul",
+    "G1": "Belief",
+    "G2": "Plan",
+    "G3": "Design",
+    "G4": "Build",
+    "G5": "Ship",
+}
+
+
+def build_system_bubble(
+    *,
+    kind: str,
+    gate: str | None = None,
+    detail: str = "",
+) -> dict[str, Any]:
+    """Construct a structured system-kind chat bubble per §5.
+
+    The engine returns these inside its action results so the chat layer
+    can render a small "system" message ahead of the agent's reply
+    ("Build isn't done yet — kicking off the build agent first.").
+
+    *kind* values used today:
+      - "reroute"      — engine is firing a prior gate's agent first
+      - "sign-recorded"— gate was just signed; user-evidence captured
+      - "scope-drift"  — render the 4-way drift prompt
+      - "complete"     — all gates signed; wave finished
+
+    Returns:
+        {
+            "kind": str,                  # one of the values above
+            "gate": "G0".."G5" | None,
+            "text": "<rendered user-facing one-liner>",
+            "detail": "<optional longer explanation>",
+        }
+    """
+    gate_name = _GATE_HUMAN_NAMES.get(gate or "", "")
+    label = f"{gate_name} ({gate})" if gate and gate_name else (gate or "")
+
+    if kind == "reroute":
+        text = (
+            f"{label} isn't signed yet — firing that agent first."
+            if label else "Routing to the next gate's agent first."
+        )
+    elif kind == "sign-recorded":
+        text = f"Captured your answer as {label} sign-off — saved to audit trail." \
+            if label else "Sign-off captured — saved to audit trail."
+    elif kind == "scope-drift":
+        text = "This new request feels different from the signed Soul — see options."
+    elif kind == "complete":
+        text = "All gates signed — wave complete."
+    else:
+        text = detail or kind
+
+    return {
+        "kind": kind,
+        "gate": gate,
+        "text": text,
+        "detail": detail,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Wave engine — state holder + transitions (§3.1)
 # ---------------------------------------------------------------------------
 
@@ -414,6 +559,7 @@ class WaveEngine:
         self.current_gate: str | None = None
         self.last_inspection: dict[str, Any] | None = None
         self.last_drift: dict[str, Any] | None = None
+        self.last_user_request: str | None = None
         self.history: list[tuple[WaveState, WaveState]] = []
 
     # -- state-machine primitive -------------------------------------------
@@ -441,8 +587,11 @@ class WaveEngine:
                 "current_gate": "G0".."G5" | None,
                 "inspection": <full inspect() result>,
                 "drift": <detect_scope_drift() result or None>,
+                "agent": <load_agent() result> | None,  # M-W3 — loaded gate agent
+                "system_bubble": <build_system_bubble() result> | None,
             }
         """
+        self.last_user_request = user_request
         self.transition(WaveState.INSPECT)
         self.last_inspection = inspect(self.repo_root, project_id=self.project_id)
 
@@ -460,6 +609,8 @@ class WaveEngine:
                 "current_gate": None,
                 "inspection": self.last_inspection,
                 "drift": drift,
+                "agent": None,
+                "system_bubble": build_system_bubble(kind="scope-drift"),
             }
 
         self.transition(WaveState.DECIDE)
@@ -470,16 +621,32 @@ class WaveEngine:
                 "current_gate": None,
                 "inspection": self.last_inspection,
                 "drift": drift,
+                "agent": None,
+                "system_bubble": build_system_bubble(kind="complete"),
             }
 
         next_gate = self.last_inspection["next_gate"]
         self.current_gate = next_gate
         self.transition(WaveState.DISPATCH)
+
+        # M-W3: load the gate's agent .md as the LLM system prompt.
+        from .agent_loader import load_agent
+        agent = load_agent(next_gate)
+
+        # Re-route bubble: when the user asked for a later gate (e.g.
+        # "ship this") but a prior gate is unsigned, emit a system bubble
+        # naming the re-route so the chat UI can show transparent status.
+        # Today we don't yet parse the user_request for explicit intent;
+        # the bubble fires whenever we fire any agent before all gates
+        # are signed, so the user always sees what the engine is doing.
+        system_bubble = build_system_bubble(kind="reroute", gate=next_gate)
         return {
             "action": f"fire-agent-{next_gate}",
             "current_gate": next_gate,
             "inspection": self.last_inspection,
             "drift": drift,
+            "agent": agent,
+            "system_bubble": system_bubble,
         }
 
     def resolve_scope_drift(self, choice: str) -> dict[str, Any]:
@@ -529,6 +696,10 @@ class WaveEngine:
         (and signature-block update in the artifact markdown) is owned
         by `sign.py` and remains the source of truth. The engine merely
         notes the transition so it can route to the next gate.
+
+        Returns a result dict including a `system_bubble` field (§5)
+        that the chat layer renders as a small "sign-off captured" or
+        "wave complete" message.
         """
         if self.state not in (WaveState.DISPATCH, WaveState.AWAIT_USER_CONFIRM):
             raise RuntimeError(
@@ -546,6 +717,11 @@ class WaveEngine:
         signed_gate = self.current_gate
         self.transition(WaveState.ADVANCE)
 
+        sign_bubble = build_system_bubble(
+            kind="sign-recorded", gate=signed_gate,
+            detail=f"evidence: {evidence!r}",
+        )
+
         # Determine next unsigned gate (caller should pass updated inspection).
         idx = GATE_ORDER.index(signed_gate)
         next_gates = GATE_ORDER[idx + 1:]
@@ -556,6 +732,8 @@ class WaveEngine:
                 "signed_gate": signed_gate,
                 "current_gate": None,
                 "evidence": evidence,
+                "system_bubble": sign_bubble,
+                "complete_bubble": build_system_bubble(kind="complete"),
             }
 
         next_gate = next_gates[0]
@@ -566,4 +744,60 @@ class WaveEngine:
             "signed_gate": signed_gate,
             "current_gate": next_gate,
             "evidence": evidence,
+            "system_bubble": sign_bubble,
+        }
+
+    # -- user reply interpretation (M-W3 auto-sign) ------------------------
+
+    def handle_user_reply(self, reply: str) -> dict[str, Any]:
+        """Interpret a user chat reply and auto-route per WAVE-ENGINE-DESIGN §8.
+
+        - Affirmative reply (yes/confirm/approve/...) → auto-sign current
+          gate, return the sign result so the caller can ship the audit
+          entry + advance to the next gate's agent.
+        - Refinement reply (change/instead/rewrite/...) → return
+          {action: "refine"} so the caller re-invokes the same agent with
+          the refinement as input.
+        - Question reply (ends in "?") → return {action: "answer-question"}
+          so the caller answers conversationally without advancing.
+        - Anything else → return {action: "ambiguous"} so the chat layer
+          can ask for explicit confirmation rather than guessing.
+
+        This is the auto-sign trigger. The engine never silently signs
+        on ambiguity — the design's "false-positive over false-negative"
+        rule (§8) is the integrity guarantee.
+        """
+        classification = classify_user_reply(reply)
+        kind = classification["kind"]
+
+        if kind == "affirm":
+            if self.state not in (WaveState.DISPATCH, WaveState.AWAIT_USER_CONFIRM):
+                # User said "yes" when the engine wasn't waiting for a sign —
+                # treat as ambiguous so the chat layer asks what they meant.
+                return {
+                    "action": "ambiguous",
+                    "reason": "affirmation outside DISPATCH/AWAIT_USER_CONFIRM",
+                    "classification": classification,
+                }
+            sign_result = self.sign_current_gate(evidence=reply)
+            return {
+                **sign_result,
+                "auto_signed": True,
+                "classification": classification,
+            }
+
+        if kind == "question":
+            return {
+                "action": "answer-question",
+                "classification": classification,
+            }
+        if kind == "refine":
+            return {
+                "action": "refine",
+                "current_gate": self.current_gate,
+                "classification": classification,
+            }
+        return {
+            "action": "ambiguous",
+            "classification": classification,
         }
