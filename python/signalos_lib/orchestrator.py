@@ -1543,6 +1543,7 @@ def run_wave(
     provider_name: str | None = None,
     cwd: Path | None = None,
     model: str = harness_lib.DEFAULT_MODEL,
+    project_id: str = "default",
 ) -> dict[str, Any]:
     """Orchestrate parallel execution of all tasks in a Wave.
 
@@ -1553,9 +1554,15 @@ def run_wave(
     5. Calls worktree-manager.sh reconcile then retire after all tasks
     6. Returns a summary dict with per-task results
 
+    The *project_id* parameter is plumbing for future multi-project support
+    per WAVE-ENGINE-DESIGN §3.2. Today only "default" flows from callers;
+    the router and audit entries record it so future UI exposure doesn't
+    require an engine refactor.
+
     Returns dict keys:
         wave_id, session_id, tasks, completed, failed, paused,
-        elapsed_ms, status ("all_completed"|"some_failed"|"empty")
+        elapsed_ms, status ("all_completed"|"some_failed"|"empty"),
+        project_id
     """
     root = _repo_root(cwd)
 
@@ -1565,11 +1572,12 @@ def run_wave(
     #   - signal that an earlier gate-agent must fire first (re-route)
     #   - proceed under headless override (logged as violation)
     #   - refuse for pathological cases (status read failure / gate corruption)
-    route = _route_next_gate_action(root, wave_id, session_id)
+    route = _route_next_gate_action(root, wave_id, session_id, project_id=project_id)
     if route["action"] == "refuse-pathological":
         return {
             "wave_id": wave_id,
             "session_id": session_id,
+            "project_id": project_id,
             "status": "blocked_by_status_error",
             "tasks": [],
             "completed": 0,
@@ -1587,6 +1595,7 @@ def run_wave(
         return {
             "wave_id": wave_id,
             "session_id": session_id,
+            "project_id": project_id,
             "status": "needs_gate",
             "tasks": [],
             "completed": 0,
@@ -1627,6 +1636,7 @@ def run_wave(
             return {
                 "wave_id": wave_id,
                 "session_id": session_id,
+                "project_id": project_id,
                 "status": "worktree_create_failed",
                 "tasks": [],
                 "completed": 0,
@@ -1642,6 +1652,7 @@ def run_wave(
             return {
                 "wave_id": wave_id,
                 "session_id": session_id,
+                "project_id": project_id,
                 "status": "empty",
                 "tasks": [],
                 "completed": 0,
@@ -1666,6 +1677,7 @@ def run_wave(
             return {
                 "wave_id": wave_id,
                 "session_id": session_id,
+                "project_id": project_id,
                 "status": "empty",
                 "tasks": [],
                 "completed": 0,
@@ -1856,6 +1868,7 @@ def run_wave(
     summary = {
         "wave_id": wave_id,
         "session_id": session_id,
+        "project_id": project_id,
         "status": overall_status,
         "tasks": task_results,
         "completed": completed,

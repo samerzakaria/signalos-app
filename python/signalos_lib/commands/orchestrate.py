@@ -75,6 +75,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--project-id",
+        default="default",
+        metavar="ID",
+        dest="project_id",
+        help=(
+            "Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). "
+            "Default 'default' preserves today's workspace-root layout."
+        ),
+    )
     return parser
 
 
@@ -102,6 +112,7 @@ def main(argv: list[str]) -> int:
             provider_name=args.provider,
             cwd=args.cwd,
             model=model,
+            project_id=args.project_id,
         )
     except (ValueError, RuntimeError) as exc:
         sys.stderr.write(f"signalos orchestrate: {exc}\n")

@@ -188,5 +188,74 @@ class RunWaveRoutingTests(unittest.TestCase):
         self.assertEqual(result["route"]["action"], "refuse-pathological")
 
 
+class ProjectIdPlumbingTests(unittest.TestCase):
+    """M-W1 step 2: project_id threads through run_wave, status, IPC.
+
+    Per WAVE-ENGINE-DESIGN §3.2 the parameter is plumbing for future
+    multi-project UI exposure; today only 'default' flows from callers,
+    but each state-touching surface must accept and round-trip it so
+    that future UI changes don't need an engine refactor.
+    """
+
+    def test_run_wave_threads_project_id_into_router_audit_entries(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            (root / ".signalos").mkdir()
+            with mock.patch("signalos_lib.status.get_wave_status",
+                            side_effect=OSError("disk failure")):
+                run_wave("1", "PLAN.tasks.yaml", session_id="s",
+                         cwd=root, project_id="alpha")
+            trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+            entries = [json.loads(line) for line in trail.read_text().splitlines() if line.strip()]
+        self.assertTrue(any(e.get("project_id") == "alpha" for e in entries),
+                        "run_wave must forward project_id to the router's audit entries")
+
+    def test_run_wave_default_project_id_when_not_passed(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            with mock.patch("signalos_lib.status.get_wave_status",
+                            side_effect=OSError("disk failure")):
+                result = run_wave("1", "PLAN.tasks.yaml", session_id="s", cwd=root)
+        self.assertEqual(result["project_id"], "default")
+
+    def test_run_wave_returns_project_id_in_needs_gate_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            with mock.patch("signalos_lib.status.get_wave_status",
+                            return_value={"gates": {"G0": False}}):
+                result = run_wave("1", "PLAN.tasks.yaml", session_id="s",
+                                  cwd=root, project_id="beta")
+        self.assertEqual(result["status"], "needs_gate")
+        self.assertEqual(result["project_id"], "beta")
+
+    def test_get_wave_status_returns_project_id_in_payload(self):
+        """status.get_wave_status round-trips project_id so downstream
+        consumers (UI, IPC) can render it without re-querying."""
+        from signalos_lib.status import get_wave_status
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            data = get_wave_status(root, project_id="alpha")
+        self.assertEqual(data["project_id"], "alpha")
+
+    def test_build_status_json_returns_project_id_in_payload(self):
+        from signalos_lib.status import build_status_json
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            data = build_status_json(root, project_id="gamma")
+        self.assertEqual(data["project_id"], "gamma")
+
+    def test_get_wave_status_defaults_project_id_to_default(self):
+        from signalos_lib.status import get_wave_status
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            data = get_wave_status(root)
+        self.assertEqual(data["project_id"], "default")
+
+
 if __name__ == "__main__":
     unittest.main()

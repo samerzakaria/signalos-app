@@ -596,6 +596,7 @@ def _enrich_gates_with_details(
 def build_status_json(
     repo_root: str | Path,
     product_id: str | None = None,
+    project_id: str = "default",
 ) -> dict[str, Any]:
     """Return the full status payload that `signalos status --json` emits.
 
@@ -605,9 +606,14 @@ def build_status_json(
 
         python -c "from signalos_lib.status import build_status_json; \\
                    import json; print(json.dumps(build_status_json('.')))"
+
+    The *project_id* parameter is plumbing for future multi-project support
+    per WAVE-ENGINE-DESIGN §3.2. Today only "default" is used; the value
+    flows through to the returned payload so callers (IPC, CLI, tests) can
+    round-trip it without losing the namespace.
     """
     root = Path(repo_root).resolve() if not isinstance(repo_root, Path) else repo_root.resolve()
-    data = get_wave_status(root, product_id=product_id)
+    data = get_wave_status(root, product_id=product_id, project_id=project_id)
     data["gate_details"] = _enrich_gates_with_details(
         root, data.get("gates", {}), str(data.get("wave_id") or "-"),
     )
@@ -617,12 +623,20 @@ def build_status_json(
 def get_wave_status(
     repo_root: Path,
     product_id: str | None = None,
+    project_id: str = "default",
 ) -> dict[str, Any]:
     """Read all state from disk and return a status dict.
 
     When *product_id* is provided tasks are read from the product-scoped
     worktree-state.json (.signalos/products/<id>/worktree-state.json).
     Gate and belief state are always repo-level.
+
+    The *project_id* parameter is plumbing for future multi-project support
+    per WAVE-ENGINE-DESIGN §3.2. With project_id == "default" (the only
+    value used today) the layout matches today's workspace-root layout
+    — no path changes. Future milestones that expose a project picker in
+    the UI will use project_id != "default" to namespace state under
+    `.signalos/projects/<project_id>/...`.
     """
     gates = _detect_gates(repo_root)
     phase = _detect_phase(gates)
@@ -643,6 +657,7 @@ def get_wave_status(
         "next_action": {"role": role, "command": action_cmd},
         "repo_root": str(repo_root),
         "product_id": product_id,
+        "project_id": project_id,
         "ide": detect_ide(),
     }
 
@@ -910,12 +925,16 @@ def render_multi_product_dashboard(records: list[dict[str, Any]]) -> str:
 def print_status_card(
     repo_root: Path | None = None,
     product_id: str | None = None,
+    project_id: str = "default",
 ) -> None:
     """Print the status card for the given repo root (or cwd).
 
     When *product_id* is provided tasks are scoped to that product
     namespace. When None and products exist the multi-product dashboard
     is printed instead of the single-product card.
+
+    *project_id* is plumbing for multi-project support per
+    WAVE-ENGINE-DESIGN §3.2; today only "default" is used.
     """
     root = repo_root or _repo_root()
 
@@ -931,6 +950,6 @@ def print_status_card(
             sys.stdout.write(render_multi_product_dashboard(records) + "\n")
             return
 
-    status = get_wave_status(root, product_id=product_id)
+    status = get_wave_status(root, product_id=product_id, project_id=project_id)
     card = render_status_card(status)
     sys.stdout.write(card + "\n")

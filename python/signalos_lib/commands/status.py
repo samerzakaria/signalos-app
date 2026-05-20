@@ -70,6 +70,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "(.signalos/products/<id>/). AMD-CORE-020."
         ),
     )
+    parser.add_argument(
+        "--project-id",
+        default="default",
+        metavar="ID",
+        dest="project_id",
+        help=(
+            "Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). "
+            "Default 'default' preserves today's workspace-root layout. "
+            "Future UI exposes a project picker that drives this."
+        ),
+    )
     return parser
 
 
@@ -107,7 +118,9 @@ def main(argv: list[str]) -> int:
         # `activities` and `criteria` arrays the DashboardView reads.
         try:
             root = repo_root if repo_root is not None else status_lib._repo_root()
-            data = status_lib.build_status_json(root, product_id=product_id)
+            data = status_lib.build_status_json(
+                root, product_id=product_id, project_id=args.project_id,
+            )
             sys.stdout.write(json.dumps(data, default=str) + "\n")
             # Exit 1 if Gate 5 signed, else 0
             gates = data.get("gates", {})
@@ -120,7 +133,9 @@ def main(argv: list[str]) -> int:
     else:
         # Human/card mode
         try:
-            status_lib.print_status_card(repo_root, product_id=product_id)
+            status_lib.print_status_card(
+                repo_root, product_id=product_id, project_id=args.project_id,
+            )
         except Exception as exc:
             sys.stderr.write(f"signalos status: {exc}\n")
             # Exit 0 -- status is advisory

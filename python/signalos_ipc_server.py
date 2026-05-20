@@ -119,12 +119,16 @@ def handle(req: dict) -> dict:
     raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
     args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
+    # WAVE-ENGINE-DESIGN §3.2 — multi-project plumbing. UI does not yet
+    # expose a project picker, so callers omit `project_id` and we default
+    # to "default" (today's workspace-root layout).
+    project_id = str(req.get("project_id") or "default")
 
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
     try:
-        return route(req_id, command, args)
+        return route(req_id, command, args, project_id=project_id)
     except Exception as exc:
         return {
             "id": req_id,
@@ -134,15 +138,15 @@ def handle(req: dict) -> dict:
         }
 
 
-def route(req_id: str, command: str, args: list[str]) -> dict:
+def route(req_id: str, command: str, args: list[str], project_id: str = "default") -> dict:
     if command.startswith("/signal-") or command.startswith("signal-"):
-        return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id))
+        return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id, project_id=project_id))
 
     if command == "state:wave":
-        return ok(req_id, data=get_wave_state())
+        return ok(req_id, data=get_wave_state(project_id=project_id))
 
     if command == "state:gates":
-        return ok(req_id, data=get_gate_states())
+        return ok(req_id, data=get_gate_states(project_id=project_id))
 
     if command == "gate:sign":
         if len(args) < 2:
@@ -220,9 +224,14 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
     return err(req_id, f"Unknown command: {command}")
 
 
-def dispatch_cli(command: str, args: list[str], req_id: str = "") -> str:
+def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: str = "default") -> str:
     cwd = os.getcwd()
     redacted = redact_arg_list(args)
+    # WAVE-ENGINE-DESIGN §3.2 — multi-project plumbing. The UI does not yet
+    # expose a project picker, so the IPC layer accepts project_id but only
+    # forwards it to subcommands that have a --project-id flag wired. Future
+    # M-Wx milestones extend the list of commands that consume it.
+    _ = project_id  # plumbing — used by future M-W3+ command-wiring
 
     # Wave checkpoint: capture pre-wave HEAD SHA so "Undo Wave" can
     # restore the workspace to its pre-approval state.
@@ -420,8 +429,8 @@ def read_command_spec(command: str) -> str:
     return ""
 
 
-def get_wave_state() -> dict:
-    status = get_status_json()
+def get_wave_state(project_id: str = "default") -> dict:
+    status = get_status_json(project_id=project_id)
     wave_id = str(status.get("wave_id") or "-").strip()
     phase_name = str(status.get("phase") or "ONBOARDING")
     gates = status.get("gates") or {}
@@ -436,8 +445,8 @@ def get_wave_state() -> dict:
     }
 
 
-def get_gate_states() -> list[dict]:
-    status = get_status_json()
+def get_gate_states(project_id: str = "default") -> list[dict]:
+    status = get_status_json(project_id=project_id)
     gate_status = status.get("gates") or {}
     # M3: status.py::build_status_json now emits a `gate_details` array with
     # per-gate `activities` and `criteria`. Index by gate key so we can attach
@@ -799,9 +808,17 @@ def audit_list(limit: int) -> list[dict]:
     return list(reversed(entries))[:limit]
 
 
-def get_status_json() -> dict:
-    fallback = {"wave_id": "-", "phase": "ONBOARDING", "gates": {f"G{i}": False for i in range(6)}}
-    rc, out, _ = run_core_cli(["status", "--repo-root", os.getcwd(), "--json"])
+def get_status_json(project_id: str = "default") -> dict:
+    fallback = {
+        "wave_id": "-",
+        "phase": "ONBOARDING",
+        "gates": {f"G{i}": False for i in range(6)},
+        "project_id": project_id,
+    }
+    rc, out, _ = run_core_cli([
+        "status", "--repo-root", os.getcwd(), "--json",
+        "--project-id", project_id,
+    ])
     if rc != 0 or not out.strip():
         return fallback
     try:
