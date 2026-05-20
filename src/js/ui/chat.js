@@ -101,16 +101,31 @@ async function sendMsg() {
   // / complete bubble) before the LLM stream starts. tryBegin swallows
   // sidecar failures; the LLM path runs unchanged when the engine is
   // unavailable, so this hook is non-destructive.
+  let scopeDriftFired = false;
   try {
     const wave = await waveEngineTryBegin(val);
     if (wave && wave.system_bubble && wave.system_bubble.text) {
-      state.chatBubbles = [...state.chatBubbles, {
+      const bubble = {
         id: nowId(),
         kind: 'system',
         text: wave.system_bubble.text,
         gate: wave.current_gate || null,
         waveAction: wave.action,
-      }];
+      };
+      // For scope-drift prompts, attach the user's original request so
+      // the ChatBubbleSystem 4-way buttons can fire wave:scope-drift-resolve.
+      if (wave.action === 'scope-drift-prompt') {
+        bubble.waveUserRequest = val;
+        scopeDriftFired = true;
+      }
+      state.chatBubbles = [...state.chatBubbles, bubble];
+    }
+    // When the engine returns scope-drift, the user needs to pick an
+    // option before the LLM stream is meaningful — skip the stream and
+    // let the prompt buttons drive the next turn.
+    if (scopeDriftFired) {
+      state.busy = false;
+      return;
     }
   } catch (waveErr) {
     // Non-fatal — log and proceed to the LLM stream.

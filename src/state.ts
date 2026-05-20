@@ -127,6 +127,28 @@ export interface ChatBubble {
   // button after this so a double-click can't re-issue the destructive
   // command.
   rolledBack?: boolean;
+
+  // ── Wave-engine system bubble metadata (M-W3+ / chat hook) ────────────
+  // For kind === 'system' bubbles produced by the wave engine. Used by
+  // ChatBubbleSystem to render interactive prompts (4-way scope-drift,
+  // 3-way violation) instead of a plain info row.
+  gate?: 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | null;
+  /** Engine action that produced this bubble — drives interactive UI:
+   *  'scope-drift-prompt' → 4-way (amend / new-parallel / new-folder / keep)
+   *  'violation-prompt'   → 3-way (fix-now / defer / override-with-log)
+   *  anything else        → plain info row */
+  waveAction?: string;
+  /** Original user request — needed to re-fire wave:scope-drift-resolve. */
+  waveUserRequest?: string;
+  /** Violation prompt payload — needed to re-fire wave:violation-confirm. */
+  waveViolation?: {
+    violation_kind: string;
+    findings: string[];
+    gate?: 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | null;
+  };
+  /** Set after a prompt button is clicked so the buttons disable + the
+   *  bubble shows the chosen action. */
+  waveResolved?: { choice: string; followupText?: string };
 }
 export const chatBubbles = signal<ChatBubble[]>([]);
 export const chatInputValue = signal<string>('');

@@ -1,5 +1,7 @@
+import type { ChatBubble } from '../../state';
 import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../state';
 import { TestDebtPanel } from '../TestDebtPanel';
+import { ChatBubbleSystem } from '../ChatBubbleSystem';
 
 export function BuildView() {
   const bubbles = chatBubbles.value;
@@ -215,12 +217,18 @@ export function BuildView() {
               }
               if (b.kind === 'system') {
                 return (
-                  <div className="msg spark" key={b.id}>
-                    <div className="msg-av"><i className="ti ti-info-circle"></i></div>
-                    <div>
-                      <div className="bubble" style={{ background: 'var(--info-soft)', color: 'var(--info-deep)', fontSize: '12.5px' }}>{b.text}</div>
-                    </div>
-                  </div>
+                  <ChatBubbleSystem
+                    key={b.id}
+                    bubble={b}
+                    onFollowup={(followup) => {
+                      chatBubbles.value = [...chatBubbles.value, followup];
+                    }}
+                    onResolved={(id, resolution) => {
+                      chatBubbles.value = chatBubbles.value.map((cb: ChatBubble) =>
+                        cb.id === id ? { ...cb, waveResolved: resolution } : cb
+                      );
+                    }}
+                  />
                 );
               }
               // ai
