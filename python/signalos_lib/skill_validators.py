@@ -370,6 +370,125 @@ def _validate_retro_run(task: dict, root: Path, _written: list[str], _resp: str)
     return []
 
 
+# ---------------------------------------------------------------------------
+# G3 design validator (audit §6.7 — three valid shapes)
+# ---------------------------------------------------------------------------
+
+# File suffixes that constitute a UI surface. The no-UI-attestation shape
+# is contradicted if the task writes any file with one of these.
+_UI_SUFFIXES: frozenset[str] = frozenset({".tsx", ".jsx", ".html", ".htm", ".css", ".scss", ".sass", ".vue", ".svelte"})
+
+# Marker phrases for each shape inside design-doc.md.
+_EXTERNAL_REF_HEADINGS = ("External design reference", "External design ref")
+_NO_UI_ATTESTATION_PHRASE = "UI surface: none"
+
+
+def _designs_dir(root: Path, wave_id: str) -> Path:
+    return root / ".signalos" / "designs" / wave_id
+
+
+def _design_doc_path(root: Path, wave_id: str) -> Path:
+    return _designs_dir(root, wave_id) / "design-doc.md"
+
+
+def _validate_design(task: dict, root: Path, written: list[str], _resp: str) -> list[SkillViolation]:
+    """G3 design validator per v0.2 audit §6.7.
+
+    Accepts exactly one of three shapes:
+      (1) doc + prototype/        — design-doc.md AND a non-empty prototype dir
+      (2) doc + external-ref      — design-doc.md with an external-design-reference section
+      (3) doc + no-UI-attestation — design-doc.md with "UI surface: none" attestation
+                                    AND the task's file list contains no UI writes
+
+    Failure of all three shapes triggers smart-retry via the
+    orchestrator's previous_failure path, same as
+    `_validate_security_audit` and `_validate_test_generation`.
+    """
+    wave_id = str(task.get("wave") or task.get("wave_id") or "").strip()
+    if not wave_id:
+        return [SkillViolation(
+            skill="design",
+            message="task missing 'wave' id; cannot resolve .signalos/designs/<wave>/",
+        )]
+
+    doc_path = _design_doc_path(root, wave_id)
+    if not doc_path.is_file():
+        return [SkillViolation(
+            skill="design",
+            message=(
+                f"design-doc.md missing at .signalos/designs/{wave_id}/. "
+                "G3 requires a design doc paired with one of: prototype/ "
+                "directory, external-design-ref section, or no-UI-attestation."
+            ),
+        )]
+
+    try:
+        doc_content = doc_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return [SkillViolation(
+            skill="design",
+            message=f"design-doc.md unreadable: {exc.__class__.__name__}: {exc}",
+        )]
+
+    # Shape 1 — doc + prototype/
+    proto_dir = _designs_dir(root, wave_id) / "prototype"
+    if proto_dir.is_dir():
+        try:
+            proto_files = [p for p in proto_dir.rglob("*") if p.is_file()]
+        except OSError:
+            proto_files = []
+        if proto_files:
+            return []  # shape 1 satisfied
+        # Empty prototype dir is a refusal condition per design.md
+        return [SkillViolation(
+            skill="design",
+            message=(
+                f"prototype/ directory exists at .signalos/designs/{wave_id}/prototype/ "
+                "but is empty. Either populate it (Storybook stories, HTML mock, "
+                "or feature-flagged component) or remove the directory and use "
+                "external-design-ref or no-UI-attestation shape."
+            ),
+        )]
+
+    # Shape 2 — doc + external-design-ref
+    has_external_ref_heading = any(
+        _has_sections(doc_content, [heading]) == []
+        for heading in _EXTERNAL_REF_HEADINGS
+    )
+    if has_external_ref_heading:
+        return []  # shape 2 satisfied
+
+    # Shape 3 — doc + no-UI-attestation. Attestation must be present AND
+    # the task's written file list must contain no UI surfaces.
+    if _NO_UI_ATTESTATION_PHRASE in doc_content:
+        ui_writes = [
+            rel for rel in (written or [])
+            if Path(rel).suffix.lower() in _UI_SUFFIXES
+        ]
+        if ui_writes:
+            return [SkillViolation(
+                skill="design",
+                message=(
+                    "no-UI-attestation contradicts task output — design-doc.md "
+                    f"declares 'UI surface: none' but the task wrote UI files: "
+                    f"{', '.join(ui_writes[:5])}"
+                    + (f" (+{len(ui_writes) - 5} more)" if len(ui_writes) > 5 else "")
+                    + ". Choose doc + prototype/ or doc + external-design-ref instead."
+                ),
+            )]
+        return []  # shape 3 satisfied
+
+    return [SkillViolation(
+        skill="design",
+        message=(
+            f"design-doc.md at .signalos/designs/{wave_id}/ doesn't match any "
+            "of the three valid shapes. Provide one of: a non-empty prototype/ "
+            "directory, an '## External design reference' section, or a "
+            "'UI surface: none' attestation line."
+        ),
+    )]
+
+
 def _validate_retrospective_analyze(_task: dict, root: Path, _written: list[str], _resp: str) -> list[SkillViolation]:
     content = _read_artifact(root, ".signalos/retros/analysis.md")
     if content is None:
@@ -412,6 +531,7 @@ VALIDATORS: dict[str, _Validator] = {
     "verification-before-completion": _validate_verification_before_completion,
     "retro-run":                      _validate_retro_run,
     "retrospective-analyze":          _validate_retrospective_analyze,
+    "design":                         _validate_design,
 }
 
 

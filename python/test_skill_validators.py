@@ -303,9 +303,11 @@ class UnknownSkillsSkippedSilently(unittest.TestCase):
         # The cognitive / process skills (brainstorming, memory, ...)
         # should NOT have validators -- their value is the prompt
         # content, not an artifact.
+        # "design" was advisory pre-M-W4 but landed as an enforced
+        # validator in the M-W4 design-shape work (audit §6.7).
         for advisory_key in (
             "brainstorming", "memory", "context", "intent-router",
-            "compress-context", "design", "operator-tooling",
+            "compress-context", "operator-tooling",
         ):
             self.assertNotIn(advisory_key, VALIDATORS,
                             f"Advisory skill {advisory_key!r} should not have a validator")
@@ -332,6 +334,129 @@ class MultipleSkillsCompose(unittest.TestCase):
             self.assertGreaterEqual(len(violations), 2)
             skills_hit = {v.skill for v in violations}
             self.assertEqual(skills_hit, {"security-audit", "test-generation"})
+
+
+# ---------------------------------------------------------------------------
+# G3 design validator (audit §6.7 three-shape contract)
+# ---------------------------------------------------------------------------
+
+def _design_dir(root: Path, wave_id: str) -> Path:
+    p = root / ".signalos" / "designs" / wave_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+class DesignValidatorThreeShapes(unittest.TestCase):
+    """Per audit §6.7 the validator accepts any one of three shapes."""
+
+    def test_doc_plus_populated_prototype_dir_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text(
+                "# Design\nChosen approach: feature-flagged React component.\n",
+            )
+            (ddir / "prototype").mkdir()
+            (ddir / "prototype" / "Card.stories.tsx").write_text("export const x = 1;")
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root, ["Card.stories.tsx"], "",
+            )
+            self.assertEqual(violations, [])
+
+    def test_doc_plus_external_design_reference_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text(
+                "# Design\n\n## External design reference\n"
+                "Figma file: https://figma.com/design/abc/Spec\n",
+            )
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root, [], "",
+            )
+            self.assertEqual(violations, [])
+
+    def test_doc_plus_no_UI_attestation_passes_when_task_has_no_ui_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text(
+                "# Design\nUI surface: none — see attestation\n"
+                "Backend schema migration only.\n",
+            )
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root,
+                ["migrations/001_add_col.sql", "src/schema.py"], "",
+            )
+            self.assertEqual(violations, [])
+
+
+class DesignValidatorRefusals(unittest.TestCase):
+    def test_missing_design_doc_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root, [], "",
+            )
+            self.assertEqual(len(violations), 1)
+            self.assertIn("design-doc.md missing", violations[0].message)
+
+    def test_empty_prototype_dir_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text("# Design\nchosen approach\n")
+            (ddir / "prototype").mkdir()  # exists but empty
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root, [], "",
+            )
+            self.assertEqual(len(violations), 1)
+            self.assertIn("prototype/", violations[0].message)
+            self.assertIn("empty", violations[0].message)
+
+    def test_no_ui_attestation_contradicted_by_ui_writes_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text(
+                "# Design\nUI surface: none — see attestation\n",
+            )
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root,
+                ["src/components/Card.tsx", "src/page.html"], "",
+            )
+            self.assertEqual(len(violations), 1)
+            msg = violations[0].message
+            self.assertIn("no-UI-attestation contradicts", msg)
+            self.assertIn("Card.tsx", msg)
+
+    def test_no_shape_match_fails_with_three_shape_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ddir = _design_dir(root, "W7.1")
+            (ddir / "design-doc.md").write_text(
+                "# Design\nSome plain prose about the approach.\n",
+            )
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave="W7.1"), root, [], "",
+            )
+            self.assertEqual(len(violations), 1)
+            msg = violations[0].message
+            self.assertIn("three valid shapes", msg)
+
+    def test_task_without_wave_id_fails_with_clear_message(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            violations = validate_skill_artifacts(
+                ["design"], _task(wave=""), root, [], "",
+            )
+            self.assertEqual(len(violations), 1)
+            self.assertIn("'wave' id", violations[0].message)
+
+
+class DesignValidatorRegistration(unittest.TestCase):
+    def test_design_validator_registered_in_dispatch_table(self) -> None:
+        self.assertIn("design", VALIDATORS)
 
 
 if __name__ == "__main__":
