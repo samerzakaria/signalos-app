@@ -159,7 +159,7 @@ def _tasks_from_plan(plan_path: Path, wave_id: str) -> list[dict[str, Any]]:
             "skills": list(t.skills),
             "previous_failure": t.previous_failure,
         })
-    return out
+    return ensure_design_skill_tagged(out)
 
 
 def _run_wm(root: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
@@ -190,9 +190,90 @@ def _read_tasks(root: Path) -> list[dict[str, Any]]:
         return []
     try:
         data = json.loads(sf.read_text(encoding="utf-8"))
-        return data.get("worktrees", [])
+        return ensure_design_skill_tagged(data.get("worktrees", []))
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# G3 design auto-tagging (audit §6.7 — orchestrator emits a G3 sub-task
+# whenever the wave's phase transitions G2 → G3; the auto-tagger here
+# ensures the "design" skill validator runs on any such task even when
+# the plan author forgot to add the skill explicitly.)
+# ---------------------------------------------------------------------------
+
+# Path prefix that classifies a task as G3 design output. Any task that
+# writes under .signalos/designs/<wave>/... is producing design artifacts
+# and should be validated against the three-shape contract.
+_DESIGN_OUTPUT_PREFIX = (".signalos", "designs")
+
+
+def _looks_like_design_task(task: dict[str, Any]) -> bool:
+    """Return True iff *task* should run through the design validator.
+
+    Three signals (any one is sufficient):
+      1. task["gate"] == "G3"
+      2. task["skills"] already contains "design" (explicit author intent)
+      3. task["files"] includes any path under .signalos/designs/<wave>/
+
+    The third signal is the "even when the author forgot the tag" path —
+    the validator's three-shape contract is enforced as long as the
+    output lands in the canonical design directory.
+    """
+    gate = task.get("gate")
+    if isinstance(gate, str) and gate.upper() == "G3":
+        return True
+    skills = task.get("skills") or []
+    if isinstance(skills, list) and any(
+        isinstance(s, str) and s.strip().lower() == "design" for s in skills
+    ):
+        return True
+    files = task.get("files") or []
+    if isinstance(files, list):
+        for f in files:
+            if not isinstance(f, str):
+                continue
+            parts = f.replace("\\", "/").split("/")
+            if len(parts) >= 2 and parts[0] == _DESIGN_OUTPUT_PREFIX[0] \
+                    and parts[1] == _DESIGN_OUTPUT_PREFIX[1]:
+                return True
+    return False
+
+
+def ensure_design_skill_tagged(
+    tasks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Ensure every G3-design task has "design" in its skills list.
+
+    Per v0.2 audit §6.7 — the orchestrator emits a G3 sub-task with the
+    design skill attached so `_validate_design` runs post-write. This
+    normalizer is the safety net: it adds the tag to any task that
+    looks like a G3 design task (by gate field or output-path
+    heuristic) but is missing it. Idempotent — re-running over an
+    already-tagged task is a no-op.
+
+    Tasks that don't look like design tasks are returned unchanged.
+    """
+    out: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            out.append(task)
+            continue
+        if not _looks_like_design_task(task):
+            out.append(task)
+            continue
+        existing = task.get("skills") or []
+        existing_list = list(existing) if isinstance(existing, list) else []
+        already_tagged = any(
+            isinstance(s, str) and s.strip().lower() == "design"
+            for s in existing_list
+        )
+        if already_tagged:
+            out.append(task)
+            continue
+        merged = {**task, "skills": existing_list + ["design"]}
+        out.append(merged)
+    return out
 
 
 # ---------------------------------------------------------------------------
