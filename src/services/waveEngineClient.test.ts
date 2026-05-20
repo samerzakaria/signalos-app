@@ -18,7 +18,6 @@ import {
   g5Handoff,
   tryBegin,
 } from './waveEngineClient';
-// @ts-expect-error — ipc.js has no .d.ts; we only need the mocked shape.
 import * as ipc from '../js/ipc.js';
 
 const runAndWait = ipc.signal.runAndWait as ReturnType<typeof vi.fn>;

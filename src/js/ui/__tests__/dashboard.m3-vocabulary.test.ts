@@ -159,7 +159,7 @@ describe('loadDashboard: M3 vocabulary translation', () => {
       },
     ]);
     await loadDashboard();
-    expect(gateActivities.value.map((a: { status: string }) => a.status)).toEqual([
+    expect(gateActivities.value.map((a) => a.status)).toEqual([
       'completed',
       'in_progress',
       'pending',

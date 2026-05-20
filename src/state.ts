@@ -168,11 +168,17 @@ export const recentlyChangedFiles = signal<Set<string>>(new Set());
 
 export interface GateActivity {
   name: string;
+  title?: string;
   status?: string;
 }
 export interface GateCriterion {
   name: string;
   status?: string;
+  // M3 (gate emissions) — the IPC payload from build_status_json's
+  // `gate_details` array includes these per-criterion fields. They're
+  // optional in the type because older payloads may omit them.
+  description?: string;
+  evidence?: string;
 }
 export interface GateInfo {
   id?: string;

@@ -20,13 +20,16 @@ vi.mock('../js/ipc.js', () => ({
 const ipc = await import('../js/ipc.js');
 const { TestDebtPanel, __resetTestDebtPanelForTests } = await import('./TestDebtPanel');
 
-function emptySummary() {
+type DebtEntry = {
+  ts: string; kind: string; area: string; title: string; detail: string; resolved: boolean;
+};
+type DebtSummary = { entries: DebtEntry[]; open_count: number; resolved_count: number };
+
+function emptySummary(): DebtSummary {
   return { entries: [], open_count: 0, resolved_count: 0 };
 }
 
-function entry(overrides: Partial<{
-  ts: string; kind: string; area: string; title: string; detail: string; resolved: boolean;
-}> = {}) {
+function entry(overrides: Partial<DebtEntry> = {}): DebtEntry {
   return {
     ts: '2026-05-20T10:00:00Z',
     kind: 'missing-test',

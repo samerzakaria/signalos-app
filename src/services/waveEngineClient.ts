@@ -12,8 +12,6 @@
 // wrap in try/catch and fall back to "no engine context" so the chat
 // flow keeps working when the engine is unavailable.
 
-// @ts-expect-error — ../js/ipc.js is plain JS with no .d.ts; runtime shape
-// is `{ signal: { runAndWait(command, args, timeoutMs) } }`.
 import * as ipc from '../js/ipc.js';
 
 export type GateId = 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5';
