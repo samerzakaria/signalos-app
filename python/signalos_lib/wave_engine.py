@@ -28,6 +28,7 @@ Design ties:
 
 from __future__ import annotations
 
+import json
 import re
 from enum import Enum
 from pathlib import Path
@@ -43,6 +44,9 @@ __all__ = [
     "classify_user_reply",
     "AFFIRMATION_ALLOWLIST",
     "build_system_bubble",
+    "load_persisted_state",
+    "save_persisted_state",
+    "STATE_FILE_PATH",
 ]
 
 
@@ -65,6 +69,63 @@ _GATE_ARTIFACT_PATHS: dict[str, list[tuple[str, ...]]] = {
     "G4": [("core", "execution", "TRUST_TIER.md")],
     "G5": [("core", "governance", "QUALITY_CHECK.md")],
 }
+
+
+# Per-project persistence file. The chat layer reconstructs an engine
+# fresh per IPC turn from inspect(); for chats that span process restarts
+# the engine may also rehydrate `current_gate` + `last_user_request` from
+# this file. Read on construction, written on transition.
+STATE_FILE_PATH: tuple[str, ...] = (".signalos", "wave-engine-state.json")
+
+
+def _state_file_path(repo_root: Path, project_id: str = "default") -> Path:
+    """Resolve the on-disk state file. project_id is the namespace per §3.2."""
+    if project_id == "default":
+        return repo_root.joinpath(*STATE_FILE_PATH)
+    return repo_root / ".signalos" / "projects" / project_id / "wave-engine-state.json"
+
+
+def load_persisted_state(
+    repo_root: Path,
+    project_id: str = "default",
+) -> dict[str, Any] | None:
+    """Read the saved engine state for *project_id* or return None.
+
+    Returns None for missing/empty/corrupt files — the engine falls
+    back to its default ENTRY state in those cases.
+    """
+    p = _state_file_path(repo_root, project_id)
+    if not p.is_file():
+        return None
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def save_persisted_state(
+    repo_root: Path,
+    state: dict[str, Any],
+    project_id: str = "default",
+) -> None:
+    """Write *state* to the project's wave-engine-state.json. Silent on failure."""
+    p = _state_file_path(repo_root, project_id)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state, sort_keys=True, indent=2), encoding="utf-8")
+    except OSError:
+        # Persistence is best-effort — the engine still works in memory
+        # even when the disk write fails (read-only mount, full disk).
+        pass
 
 
 class WaveState(str, Enum):
@@ -549,6 +610,7 @@ class WaveEngine:
         project_id: str = "default",
         session_id: str | None = None,
         llm_judge: Callable[[str, str], dict[str, Any]] | None = None,
+        rehydrate: bool = True,
     ):
         self.repo_root = repo_root
         self.project_id = project_id
@@ -561,6 +623,42 @@ class WaveEngine:
         self.last_drift: dict[str, Any] | None = None
         self.last_user_request: str | None = None
         self.history: list[tuple[WaveState, WaveState]] = []
+
+        if rehydrate:
+            persisted = load_persisted_state(repo_root, project_id)
+            if persisted:
+                self._hydrate_from(persisted)
+
+    def _hydrate_from(self, persisted: dict[str, Any]) -> None:
+        """Apply a previously-saved snapshot onto a fresh engine. Best-effort:
+        unknown fields are ignored, malformed enums fall back to ENTRY."""
+        raw_state = persisted.get("state")
+        if isinstance(raw_state, str):
+            try:
+                self.state = WaveState(raw_state)
+            except ValueError:
+                self.state = WaveState.ENTRY
+        raw_gate = persisted.get("current_gate")
+        if isinstance(raw_gate, str) and raw_gate in GATE_ORDER:
+            self.current_gate = raw_gate
+        raw_request = persisted.get("last_user_request")
+        if isinstance(raw_request, str):
+            self.last_user_request = raw_request
+
+    def to_persisted(self) -> dict[str, Any]:
+        """Return the JSON-serializable snapshot persistence writes to disk."""
+        return {
+            "version": 1,
+            "project_id": self.project_id,
+            "session_id": self.session_id,
+            "state": self.state.value,
+            "current_gate": self.current_gate,
+            "last_user_request": self.last_user_request,
+        }
+
+    def persist(self) -> None:
+        """Write the current snapshot to .signalos/wave-engine-state.json."""
+        save_persisted_state(self.repo_root, self.to_persisted(), self.project_id)
 
     # -- state-machine primitive -------------------------------------------
 

@@ -935,16 +935,29 @@ def _serialize_engine_result(result: dict) -> dict:
 
 def wave_begin(user_request: str, project_id: str = "default") -> dict:
     eng = _build_engine(project_id)
-    return _serialize_engine_result(eng.begin(user_request))
+    result = eng.begin(user_request)
+    eng.persist()
+    return _serialize_engine_result(result)
 
 
 def wave_reply(user_reply: str, current_gate: str, project_id: str = "default") -> dict:
+    from signalos_lib.wave_engine import WaveState as _WaveState
+
     eng = _build_engine(project_id)
-    try:
-        eng.resume_at_dispatch(current_gate)
-    except (RuntimeError, ValueError) as exc:
-        return {"action": "error", "error": f"resume_at_dispatch: {exc}"}
-    return _serialize_engine_result(eng.handle_user_reply(user_reply))
+    # Fresh engines start in ENTRY state. If persistence has already moved
+    # the engine past ENTRY (e.g., DISPATCH from a prior wave:begin), the
+    # explicit resume_at_dispatch is redundant; honor the caller's
+    # current_gate directly so the IPC contract stays explicit.
+    if eng.state is _WaveState.ENTRY:
+        try:
+            eng.resume_at_dispatch(current_gate)
+        except (RuntimeError, ValueError) as exc:
+            return {"action": "error", "error": f"resume_at_dispatch: {exc}"}
+    else:
+        eng.current_gate = current_gate
+    result = eng.handle_user_reply(user_reply)
+    eng.persist()
+    return _serialize_engine_result(result)
 
 
 def wave_scope_drift_resolve(
