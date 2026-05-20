@@ -747,6 +747,68 @@ class WaveEngine:
             "system_bubble": sign_bubble,
         }
 
+    # -- translator-mode (M-W6) -------------------------------------------
+
+    def translate_external(
+        self,
+        artifact: str,
+        *,
+        gate: str | None = None,
+        max_chars: int = 20_000,
+    ) -> dict[str, Any]:
+        """Ingest an external artifact for translator-mode (§7).
+
+        When the user supplies an artifact in non-SignalOS format
+        (markdown belief doc, Figma URL, PDF brief, .docx requirements
+        doc), the engine extracts plain text and returns it alongside
+        a system bubble so the chat layer can show "translating your
+        external doc into the SignalOS format".
+
+        The wave-engine caller then passes the returned `translation`
+        into the gate-agent invocation as additional context, marked
+        `mode=translator`. The agent emits a SignalOS-format artifact;
+        the user confirms; `handle_user_reply("yes")` auto-signs.
+
+        Returns:
+            {
+                "translation": <translator.translate() result>,
+                "gate": gate or self.current_gate,
+                "system_bubble": <system bubble describing the action>,
+            }
+        """
+        # Defer import — translator is a sibling module; keep wave_engine
+        # importable even when the package layout reshuffles.
+        from .translator import translate
+
+        translation = translate(artifact, max_chars=max_chars)
+        target_gate = gate or self.current_gate
+        fmt = translation.get("format", "unknown")
+
+        if translation.get("supported"):
+            detail = (
+                f"Translating {fmt!r} input into the SignalOS format "
+                f"for {target_gate or 'the next gate'}."
+            )
+            bubble = build_system_bubble(
+                kind="reroute", gate=target_gate, detail=detail,
+            )
+        else:
+            hint = translation.get("install_hint") or translation.get("error") or "see translator error"
+            detail = (
+                f"Cannot translate {fmt!r} input automatically: {hint}. "
+                "Either install the missing dependency or paste the "
+                "content directly into chat."
+            )
+            bubble = build_system_bubble(
+                kind="reroute", gate=target_gate, detail=detail,
+            )
+
+        return {
+            "translation": translation,
+            "gate": target_gate,
+            "system_bubble": bubble,
+        }
+
     # -- G5 handoff (M-W5) -------------------------------------------------
 
     def run_g5_handoff(
