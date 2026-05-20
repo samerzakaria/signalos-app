@@ -285,11 +285,13 @@ v0.1 errors corrected:
 
 ### 2.3 Slash commands
 
-**Inventory (verified by Glob 2026-05-20):**
+**Inventory (verified by Glob 2026-05-20; recount 2026-05-20 independent pass = 49):**
 
 | Location | Count |
 |---|---|
-| `_bundle/core/execution/commands/*.md` | 48 |
+| `_bundle/core/execution/commands/*.md` | 49 |
+
+Of these 49, **35 are `/signal-*` user-facing commands** (the names this section enumerates). The remaining 14 — `context-expand.md`, `diagnose.md`, `harness-call.md`, `health.md`, `intent.md`, `plan-schema.md`, `validate-cmd.md`, plus the `signalos-*` namespace (`signalos-brain`, `signalos-install`, `signalos-orchestrate`, `signalos-publish`, `signalos-session`, `signalos-status`, `signalos-verify`) — are reference docs / internal CLI surfaces, not slash commands the user types in chat.
 
 #### 2.3.1 The two dispatch paths
 
@@ -1135,5 +1137,204 @@ This v0.2 document was built from direct grep + read verification on 2026-05-20.
 - **Batch 7:** Every `src/js/*.js` (legacy) file — imported from somewhere or orphaned.
 - **Batch 8:** Every doc in `_bundle/core/governance/` — read at decision time or display-only.
 - **Batch 9:** Every `emit.sh` / `register-hooks.sh` in `_bundle/core/tool-adapters/` against runtime invocation.
+
+---
+
+## 6. Independent verification pass (2026-05-20, evening)
+
+Separate from the original v0.2 batches, a fresh code-only verification pass spot-checked the most damaging claims by direct grep + file read (no doc reuse). Results:
+
+### 6.1 Counts spot-checked
+
+| Item | v0.2 claim | Recount | Verdict |
+|---|---:|---:|---|
+| `python/signalos_lib/*.py` (top-level) | 40 | 40 | ✅ |
+| `python/signalos_lib/commands/*.py` | 32 | 32 | ✅ |
+| `src-tauri/src/**/*.rs` `#[tauri::command]` | 64 | 64 | ✅ |
+| `_bundle/**/SKILL.md` | 35 | 35 | ✅ |
+| `_bundle/core/execution/hooks/**/*.sh` | (varied) | 11 `.sh` + 1 `redact.py` + 1 `session-start` no-ext | ✅ matches §2.4 inventory |
+| `_bundle/core/execution/commands/*.md` | **48** | **49** | ❌ corrected above in §2.3 |
+
+### 6.2 Orphan claims spot-checked
+
+| Claim | Verification | Verdict |
+|---|---|---|
+| `wired-commands.js` orphaned | Grep across `src/` for the 5 export names returns matches only inside the file itself; [chat.js:50-64](src/js/ui/chat.js#L50-L64) routes every `/` command through `ipc.signal.runAndWait` with no `isWired()` branch | ✅ confirmed |
+| `pre-tool-use-guard.sh` not in SignalOS's own runtime | 8 hits across repo: declarative `claude-hooks.json:23`, registry `hooks.json:120-129`, comment in `redact.py:192`, the file itself, audit docs. **Zero `subprocess.run` / `bash …` invocations from any Python or Rust source** | ✅ confirmed |
+| `regression.py` orphan | Zero `import regression` / `from signalos_lib.regression` / `signalos qa regression` in `python/` or `src/` outside the module's own docstring and bundle README docs | ✅ confirmed |
+| `get_cost_summary` orphan | Zero matches for `get_cost_summary` / `getCostSummary` / `cost-summary` across `src/` | ✅ confirmed |
+| BuildView 8 buttons, 4 broken | [BuildView.tsx:244-283](src/components/views/BuildView.tsx#L244-L283) renders status/build/review/design/debrief/ship/freeze/brain. Cross-checked against [map_slash_command:265-359](python/signalos_ipc_server.py#L265-L359): review/design/debrief/ship are NOT in the dispatch table — they fall through to the spec-dump fallback at [signalos_ipc_server.py:254-260](python/signalos_ipc_server.py#L254-L260) | ✅ confirmed |
+| `/signal-freeze` Python vs Rust divergence | Grep `freeze_wave|wave_frozen|wave-frozen` across `python/signalos_lib/`: **zero matches**. So Python's `signalos signal-freeze` (which `/signal-freeze` routes to) has no path that touches the Rust `enforcement.wave_frozen` mutex at [enforcement.rs:268-285](src-tauri/src/enforcement.rs#L268-L285) | ✅ confirmed |
+| SOUL/CONSTITUTION/DECISION-DNA injected into prompts | [protocolContext.ts:44-61](src/services/protocolContext.ts#L44-L61) reads all three from the workspace, trims (4000/4000/2500 chars), exposes via `buildContextBlock()` which `signalosPrompt.ts:wrapWithSignalosContext` calls. So §2.8.2 row 1-3 stand: these are real runtime constraints, not files-on-disk | ✅ confirmed |
+
+**Net:** every spot-checked v0.2 claim survived. Only the one count drift (48 → 49 bundle commands).
+
+### 6.3 Vision-progress estimate (new — not in original v0.2)
+
+Translating the verified §3 orphan list into "how close are we to the product the README + protocol describe":
+
+- **Foundation layer: ~70-75% to vision.** Tauri + sidecar + UI boot; Soul/Constitution/Decision-DNA truly inject into every chat prompt; 35/35 skills route; 63/64 Rust commands wired; orchestrator file-extraction works end-to-end after `538d596`; CI green across 3 OSes + real Docker.
+- **User-perceived completeness: lower** — because four of eight visible BuildView buttons return markdown text instead of doing the action they're labeled with, the UX impression undersells the underlying state.
+
+### 6.4 Highest-leverage two items (re-prioritization from §4)
+
+§4 already lists these; flagging them here because the impact/effort ratio dwarfs everything else. **Both reframed per §6.6 — the completion is not "let the user click" but "let the system enforce."**
+
+1. **Drive the 13 unwired commands from the wave executor at gate transitions.** `wired-commands.js` has the implementations. Wire them into the orchestrator so `runDocCommand('/signal-design')` auto-fires on G2→G3 entry, `runDocCommand('/signal-debrief')` auto-fires on wave end, `runDocCommand('/signal-review')` auto-fires post-G4, etc. The corresponding BuildView tiles become "regenerate this artifact" buttons (manual regen of system-generated output) rather than "run this command" buttons. Only `/signal-build` and `/signal-freeze` tiles get deleted — they duplicate existing legitimate user actions (G2 sign and Toolbar Freeze respectively). ~2-3 days including the auto-trigger hooks. (§3 item #3 + #4.)
+2. **Wire `pre-tool-use-guard.sh` into the orchestrator's pre-write path** — 3-5 days. Closes the "governed agent" credibility gap. Without it, LLM-generated code lands on disk with no pre-write check in SignalOS's own runtime, undermining the central protocol promise. (§3 item #5.) **Like TDD, this is non-skippable: every write through the orchestrator must pass the guard.**
+
+After these two: ~85% to vision. The remaining 15% is the IDE adapter emitters, gate activities/criteria emission, git automation, retracting the stalled legacy JS migrations — all of which §4 sequences correctly.
+
+### 6.5 Credibility risk worth naming
+
+The vision sells SignalOS as a **governed** agent. The single biggest gap between vision and code today is **#6.4 item 2**: there is no security guard on SignalOS's own write/exec paths. The protocol promises one (`pre-tool-use-guard.sh` exists with deny rules); the protocol wires it into Claude Code lifecycle when SignalOS is installed as a plugin; but SignalOS's own Tauri runtime — where most users will actually run the app — does not invoke it.
+
+This is not a v0.1-style speculative finding. It is verified by exhaustive grep: zero invocations from any Python or Rust source in the project.
+
+Closing this gap should be the next merged PR.
+
+---
+
+### 6.6 Principle: Enforcement universality (proposed AMD-CORE-110)
+
+> **If SignalOS produces any output through any path that bypasses its own gates, validators, or hooks, SignalOS is not an operating system — it is a CLI wrapper.**
+>
+> Every output channel — chat replies, file writes, subprocess execution, gate transitions, design artifacts, deploy actions — must pass through the same enforcement framework as user-written code. Enforcement is not opt-in per channel; it is the framework.
+
+This is the principle that should retroactively classify the §3 orphan list. An orphan is not just "code with no caller" — it is **an output channel that exists outside the enforcement framework**. By that definition:
+
+| Orphan | Real diagnosis |
+|---|---|
+| `pre-tool-use-guard.sh` not invoked by Tauri runtime | The Tauri runtime is an *output channel bypassing the framework*. The guard exists; the channel doesn't go through it. |
+| BuildView's 8 command buttons | Each button is a *user-initiated entry point into the framework*. The framework is supposed to be system-initiated. The buttons advertise opt-in semantics that contradict enforcement. |
+| `/signal-freeze` writes a Python record but Rust state doesn't flip | Two output channels expressing the same fact, neither authoritative. The framework must have a single source of truth. |
+| 14 spec-dump slash commands | When the framework can't execute a command, the fallback is *plain markdown output* — a channel that's neither gated nor validated. The right fallback is "wave cannot proceed; the operator must complete the missing implementation," not "here is some markdown." |
+
+**Operational consequence:** the completion model in §4 must include, for each item, the answer to *"what is the system-initiated trigger?"* — not just *"how does the user click it?"*
+
+| Output | Wrong completion (user-driven) | Right completion (system-enforced) |
+|---|---|---|
+| Design artifact | Click `/signal-design` | On G3 entry, orchestrator auto-runs `runDocCommand('/signal-design')` and `runUIPrototype(...)` (§6.7) |
+| Test execution | Click "run tests" | TDD-tagged tasks invoke `tdd_runner` automatically inside the wave loop (already the case) |
+| Pre-write guard | (none today) | Orchestrator invokes guard on every file write, no opt-out (§6.4 item 2) |
+| Freeze wave | Click `/signal-freeze` in BuildView | A guard-detected violation, an unsigned G-gate after timeout, or a wave-policy breach all auto-call the freeze (single Rust mutex is the only freeze state) |
+| Deploy | Click `/signal-land-deploy` | G5 sign IS the deploy trigger; nothing else fires it |
+
+**Action:** add this as AMD-CORE-110 in `DECISION-DNA.md` alongside the existing AMD-CORE-100..109. §4's completion phases re-sequence with this principle in mind: anything that requires a user button to enforce a protocol guarantee is not actually enforced.
+
+#### 6.6.1 Enforcement ≠ always block — the override-with-audit extension
+
+Enforcement is **block by default + allow override-with-logged-violation for authorized roles**. The audit trail is the integrity layer; the gate is the recommendation.
+
+| Role | Default gate behavior | Override available? |
+|---|---|---|
+| Anonymous / unauthenticated | Sign required, no override | No |
+| Operator | Sign required; override available via Toolbar Override button, every use logged | Yes (per-gate, audited) |
+| **Solo owner / proven sole stakeholder** | Sign required by default; can opt to skip with each skip recorded as a violation in audit trail | Yes (per-gate, audited as violation, not as override) |
+| Service account / CI | Sign required; override available only with valid OIDC token + matching role policy | Yes (per-gate, OIDC-bound) |
+
+**Key distinction:** the override and the violation BOTH leave audit-trail evidence. The difference is semantic — an override is "I am authorized to make this call"; a violation is "I am skipping a protection I'm supposed to honor, and accept that this is recorded as such." A user who repeatedly skips signs will see the violations stack up in audit; a reviewer can decide what that means.
+
+**Why this matters for the button inventory in §6.8:** buttons like `/signal-ship` are not "delete entirely." They become "skip G5 sign and ship now (logged violation)" for solo-owner role, and "unauthorized — sign required" for everyone else. The button stays; the semantics change; the audit-trail integrity is preserved.
+
+**Implication for `_validate_*` skill validators:** every validator that returns "violation" must also emit an audit-trail entry that names the violation, the role at the time, and the artifact context. The validator's verdict is enforceable; the response to a violation is role-dependent.
+
+### 6.7 Implication: G3 design produces doc AND UI prototype
+
+A design gate that produces only markdown is not a design gate. It is a wishlist. To be reviewable for the things design exists to catch — layout, information density, accessibility, navigation, state transitions, error states — G3 must produce a **visually inspectable prototype** alongside the doc.
+
+| G3 artifact | What it is | Where it lives |
+|---|---|---|
+| `design-doc.md` | The decisions: information architecture, constraints, alternatives considered, chosen approach | `.signalos/designs/<wave>/design-doc.md` |
+| UI prototype | The rendering: minimum-viable visual proof. One of: Storybook stories, a static HTML mock, or a React component behind a feature flag in the live build | `.signalos/designs/<wave>/prototype/` (the orchestrator picks the format per task type) |
+| Prototype audit-trail entry | Record of which prototype shape was chosen and why | Audit trail, plus appended to design-doc.md |
+
+**Validator (matching the §2.5.2 enforcement pattern):** `_validate_design` (new) accepts any one of three valid shapes for the prototype half:
+
+| Acceptable shape | When this is the right answer |
+|---|---|
+| `doc + prototype/` directory | Normal case — task has a UI surface and the agent renders it |
+| `doc + external-design-ref` (Figma URL, attached image, mockup file) | User supplied the design externally; the validator records the reference rather than regenerating |
+| `doc + no-UI-attestation` | Task is backend-only / schema migration / CLI command / observability tweak. The attestation is a one-line statement in design-doc.md (`UI surface: none — see attestation`) plus a validator check that the task's file list contains no `.tsx` / `.html` / `.css` writes |
+
+Failure of all three shapes feeds back into `previous_failure` for smart retry — same loop as `_validate_security_audit` and `_validate_test_generation`. Per §6.6.1, a solo-owner role can still skip the gate sign with the skip logged as a violation; the validator's verdict and the user's response to it are separate concerns.
+
+**Trigger (matching §6.6):** the orchestrator emits a G3 sub-task into the plan whenever the wave's `phase` transitions from G2 → G3. The user signs G3 after reviewing the chosen artifact shape. The user does not initiate G3.
+
+**Effort impact on §4:** add a new Phase 1.5 item "Build G3 design+prototype enforcement loop" — ~5-7 days because the prototype renderer is the new piece. The doc-generation half is what `wired-commands.js:runDocCommand` already does for `/signal-design`. The external-ref and no-UI-attestation shapes are validator-only additions (~0.5 day each).
+
+---
+
+### 6.8 Refined violator inventory (post-feedback 2026-05-20)
+
+Combining §6.6 (universality), §6.6.1 (override-with-audit), §6.7 (G3 prototype shapes), and the direct UI scan in [BuildView.tsx:244-283](src/components/views/BuildView.tsx#L244-L283) + [Toolbar.tsx](src/components/Toolbar.tsx). Final classification of all click surfaces against the principle:
+
+#### 6.8.1 True violations — fix required
+
+**UI surface (2 — these are real deletions):**
+
+| # | Button | File | Why it violates | Fix |
+|---|---|---|---|---|
+| 1 | BuildView `/signal-build` tile | [BuildView.tsx:249](src/components/views/BuildView.tsx#L249) | Duplicates G2 sign (Approve & run on plan card) — the tile lets the user trigger orchestrate without signing G2 | Delete tile |
+| 2 | BuildView `/signal-freeze` tile | [BuildView.tsx:274](src/components/views/BuildView.tsx#L274) | Duplicates Toolbar Freeze, AND hits the Python record path while Toolbar hits the Rust mutex → state divergence | Delete tile + fix dual-state bug (#13 below) |
+
+**Silent runtime violations (6 — no button, output bypasses framework):**
+
+| # | Path | File | Why it violates | Fix |
+|---|---|---|---|---|
+| 3 | Orchestrator file writes skip `pre-tool-use-guard.sh` | [orchestrator.py](python/signalos_lib/orchestrator.py) `_write_extracted_files` | LLM output lands on disk with no pre-write check in SignalOS's own runtime | Wire guard into the write path |
+| 4 | Skill validators run **post**-write | [orchestrator.py:998](python/signalos_lib/orchestrator.py#L998) | Framework can flag but can't prevent. Malicious/broken file is already on disk when validation runs | Move content-based validators to pre-write where possible |
+| 5 | Chat replies have no post-response guard | [chat.js](src/js/ui/chat.js) | LLM-generated chat output renders unfiltered: hallucinated paths, secret-shaped strings, dangerous bash snippets | Add chat-response validator (secret-redact already exists for IPC, not chat) |
+| 6 | No git commit/push at wave end | (no code today) | "Agent ships your work" promise stops short; user must shell out | Auto-commit at wave end; push gated on G5 sign |
+| 7 | `signalos status --json` omits gate activities/criteria | [status.py](python/signalos_lib/status.py) | DashboardView reads empty arrays — UI silently lies | Make `status.py` derive activities from PLAN tasks and criteria from skill validators |
+| 8 | `/signal-freeze` (Python record) and `freeze_wave` (Rust mutex) are two separate states | [enforcement.rs:268](src-tauri/src/enforcement.rs#L268) + [commands/safety.py](python/signalos_lib/commands/safety.py) | Same fact, two answers — framework-integrity bug | Per AMD-CORE-107: pick one store, route the other path to it |
+
+#### 6.8.2 Reframed — buttons stay, semantics change (5)
+
+Per §6.6.1 + §6.7. These buttons survive but their **meaning** changes from "run this command on demand" to "regenerate the system-generated artifact" or "skip the gate sign with logged violation."
+
+| # | Button | New semantics |
+|---|---|---|
+| 9 | BuildView `/signal-status` tile | Force-refresh of an always-displayed status indicator. The status itself must be continuously rendered somewhere in the UI (not pulled by click). |
+| 10 | BuildView `/signal-review` tile | "Regenerate review" — the comprehensive-code-review skill validator already runs post-G4 automatically; this button lets the user request another pass |
+| 11 | BuildView `/signal-design` tile | "Regenerate design" — auto-fires on G2→G3 transition per §6.7; this button lets the user request a fresh take if the auto-generated design is unsatisfying |
+| 12 | BuildView `/signal-debrief` tile | "Regenerate debrief" — auto-fires on wave end; manual button is for re-running with different scope |
+| 13 | BuildView `/signal-ship` tile | "Skip G5 sign and ship now (logged violation)" — gated by role per §6.6.1. Solo-owner: skip+audit. Operator without authorization: button is disabled with "G5 sign required" tooltip |
+
+#### 6.8.3 Already legitimate (no change)
+
+Per the user feedback that soft + safe items are accepted:
+
+- **Soft violators** retained: BuildView Retry task, PreviewView Run preview, Settings Check for updates, BuildView `/signal-brain` — all legitimate user actions with system-triggered counterparts already in place or planned
+- **All other 🟢 items** in §6.7 (above) and the original button table: gate signs (Approve & run, Sign gate, Confirm), human stops (Cancel wave, Rollback wave, Stop preview), Toolbar Freeze/Unfreeze (per §6.6 carve-out — control inputs, not outputs), Override (per §6.6.1), user-owned data (Vault, Brain, identity, secrets, API key, settings), navigation (tabs, sidebar, modals), Onboarding wizard, exports, chat send
+
+#### 6.8.4 Planning-risk register (items in §4 that could become violations if built wrong)
+
+For each, the failure mode and the correct shape:
+
+| Planned item | Failure mode | Correct shape |
+|---|---|---|
+| Test debt UI (Phase 2, §4 item #16) | Built as "user clicks 'defer test' to create entries" → debt becomes opt-in | Validator detects failing/missing tests and auto-creates entries; UI lets user **review/dismiss with audit**, not **create** |
+| `signalos qa regression --generate` (Phase 3, §4 item #1) | Manual `--generate` invocation → regressions become opt-in | Failing QA scenario auto-generates the regression entry; `--run` is part of the wave loop, not a separate command |
+| Plugin registry (`registry.py`) | Install skips cosign trust-tier check on user request → registry becomes "trust me" | Signature check is non-skippable except via override-with-audit per §6.6.1 |
+| G3 prototype enforcement (§6.7) | Validator allows doc-only as soft pass → design becomes doc-only again | Three shapes accepted (doc+prototype, doc+external-ref, doc+no-UI-attestation); no soft-pass for "missing entirely" |
+| Per-IDE `emit.sh` (Phase 2, §4 item #18) | None — invoked from `_register_ide_hooks` automatically | Safe by spec |
+| Anti-regression CI (Phase 5) | None — CI is system-enforced by definition | Safe by spec |
+
+#### 6.8.5 Summary scorecard (refined)
+
+| Category | Count |
+|---|---:|
+| True violations to fix (UI + runtime) | **8** (2 deletions + 6 runtime) |
+| Buttons reframed (kept with new semantics) | **5** |
+| Soft + safe already legitimate | **~52** |
+| Planning-risk items to watch | **4** (test debt, regression, registry, prototype validator) |
+
+**Effort impact on §4 (refined from §6.4):**
+- Original §6.4 item 1 (~2-3 days) stands — auto-trigger hooks + tile reframing
+- 2 tile deletions are trivial (~30 min) — collapsed into item 1
+- The 6 silent runtime violations are the substantial work: pre-write guard (3-5 days per §4.1), chat-response guard (~2 days, new), git automation (per §3.3 in v0.1 plan ~5-7 days), status emission (~2 days), validation timing migration (~3-5 days), freeze-state consolidation per AMD-CORE-107 (~1-2 days)
+
+**Updated total estimate:** ~30-35 days of focused engineering for the OS-grade outcome (vs §4.6's 19-25 days which assumed the v0.2 orphan list only).
 
 When all batches are complete, §3 consolidates the truly orphaned set and §4 gives the per-item completion plan.
