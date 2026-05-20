@@ -221,6 +221,76 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             return err(req_id, f"Unknown phase contract: {name}")
         return ok(req_id, data={"name": name, "phases": contract})
 
+    # ── Wave engine handlers (M-W3..M-W7) ─────────────────────────────────
+    # The engine is reconstructed per-request from disk inspection (the
+    # design's persistence model for v1 — see WAVE-ENGINE-DESIGN §3.1).
+    # Each handler builds a fresh WaveEngine, runs the requested action,
+    # and returns the structured result for the chat layer to render.
+
+    if command == "wave:begin":
+        if not args:
+            return err(req_id, "wave:begin requires [user_request]")
+        return ok(req_id, data=wave_begin(args[0], project_id=project_id))
+
+    if command == "wave:reply":
+        if len(args) < 2:
+            return err(req_id, "wave:reply requires [user_reply, current_gate]")
+        return ok(req_id, data=wave_reply(
+            user_reply=args[0],
+            current_gate=args[1],
+            project_id=project_id,
+        ))
+
+    if command == "wave:scope-drift-resolve":
+        if len(args) < 2:
+            return err(req_id, "wave:scope-drift-resolve requires [user_request, choice]")
+        return ok(req_id, data=wave_scope_drift_resolve(
+            user_request=args[0],
+            choice=args[1],
+            project_id=project_id,
+        ))
+
+    if command == "wave:translate-external":
+        if not args:
+            return err(req_id, "wave:translate-external requires [artifact_path_or_url, optional gate]")
+        gate = args[1] if len(args) > 1 else None
+        return ok(req_id, data=wave_translate_external(
+            artifact=args[0],
+            gate=gate,
+            project_id=project_id,
+        ))
+
+    if command == "wave:violation-request":
+        if not args:
+            return err(req_id, "wave:violation-request requires [violation_payload_json]")
+        try:
+            payload = json.loads(args[0])
+        except (TypeError, ValueError) as exc:
+            return err(req_id, f"wave:violation-request payload was not valid JSON: {exc}")
+        return ok(req_id, data=wave_violation_request(payload, project_id=project_id))
+
+    if command == "wave:violation-confirm":
+        if not args:
+            return err(req_id, "wave:violation-confirm requires [confirm_payload_json]")
+        try:
+            payload = json.loads(args[0])
+        except (TypeError, ValueError) as exc:
+            return err(req_id, f"wave:violation-confirm payload was not valid JSON: {exc}")
+        return ok(req_id, data=wave_violation_confirm(payload, project_id=project_id))
+
+    if command == "wave:g5-handoff":
+        if not args:
+            return err(req_id, "wave:g5-handoff requires [wave_id, optional summary_json]")
+        summary: dict = {}
+        if len(args) > 1:
+            try:
+                summary = json.loads(args[1])
+            except (TypeError, ValueError) as exc:
+                return err(req_id, f"wave:g5-handoff summary was not valid JSON: {exc}")
+        return ok(req_id, data=wave_g5_handoff(
+            wave_id=args[0], summary=summary, project_id=project_id,
+        ))
+
     return err(req_id, f"Unknown command: {command}")
 
 
@@ -806,6 +876,161 @@ def audit_list(limit: int) -> list[dict]:
             except json.JSONDecodeError:
                 continue
     return list(reversed(entries))[:limit]
+
+
+# ── Wave engine handlers (M-W3..M-W7) ───────────────────────────────────────
+# Each handler reconstructs a fresh WaveEngine from the workspace root and
+# returns a JSON-serializable result. The engine is stateless across
+# requests in v1 — state lives in .signalos/ (read by inspect()) and in
+# the request payload (current_gate, user_request, etc).
+#
+# IPC contract per command:
+#   wave:begin                args=[user_request]
+#                             → {action, current_gate, agent, inspection,
+#                                drift, system_bubble}
+#   wave:reply                args=[user_reply, current_gate]
+#                             → {action, signed_gate?, current_gate,
+#                                system_bubble, auto_signed?, ...}
+#   wave:scope-drift-resolve  args=[user_request, choice(a|b|c|d)]
+#                             → {action, mode?, current_gate}
+#   wave:translate-external   args=[artifact_path_or_url, optional gate]
+#                             → {translation, gate, system_bubble}
+#   wave:violation-request    args=[{violation_kind, findings, gate?}]
+#                             → {prompt, system_bubble}
+#   wave:violation-confirm    args=[{violation_kind, choice, user_reply,
+#                                    findings, gate?}]
+#                             → {audit_entry, system_bubble}
+#   wave:g5-handoff           args=[wave_id, optional summary_dict]
+#                             → {commit_outcome, system_bubble}
+
+
+def _build_engine(project_id: str = "default"):
+    """Construct a WaveEngine rooted at the current working directory.
+
+    Deferred import — keeps signalos_ipc_server cheap to import for the
+    non-wave-engine code paths (status, sign, brain, etc.).
+    """
+    from pathlib import Path as _Path
+    from signalos_lib.wave_engine import WaveEngine
+
+    return WaveEngine(_Path(os.getcwd()).resolve(), project_id=project_id)
+
+
+def _serialize_engine_result(result: dict) -> dict:
+    """Drop non-JSON-serializable fields (e.g., Path objects) so the
+    structured engine result survives the IPC json.dumps step."""
+    # Paths inside inspection/artifacts already come back as strings via
+    # wave_engine.inspect — but if a future change leaks a Path through,
+    # this layer is a safety net.
+    def _walk(obj):
+        if isinstance(obj, dict):
+            return {k: _walk(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_walk(v) for v in obj]
+        if hasattr(obj, "__fspath__"):
+            return str(obj)
+        return obj
+    return _walk(result)
+
+
+def wave_begin(user_request: str, project_id: str = "default") -> dict:
+    eng = _build_engine(project_id)
+    return _serialize_engine_result(eng.begin(user_request))
+
+
+def wave_reply(user_reply: str, current_gate: str, project_id: str = "default") -> dict:
+    eng = _build_engine(project_id)
+    try:
+        eng.resume_at_dispatch(current_gate)
+    except (RuntimeError, ValueError) as exc:
+        return {"action": "error", "error": f"resume_at_dispatch: {exc}"}
+    return _serialize_engine_result(eng.handle_user_reply(user_reply))
+
+
+def wave_scope_drift_resolve(
+    user_request: str,
+    choice: str,
+    project_id: str = "default",
+) -> dict:
+    """Resolve a scope-drift prompt. Re-runs begin() to land in
+    SCOPE_DRIFT state, then applies the choice."""
+    eng = _build_engine(project_id)
+    begin_result = eng.begin(user_request)
+    # Verify we actually landed in scope-drift; otherwise the request is
+    # stale (engine no longer thinks there's drift).
+    from signalos_lib.wave_engine import WaveState as _WaveState
+    if eng.state is not _WaveState.SCOPE_DRIFT:
+        return {
+            "action": "no-longer-drifted",
+            "begin_result": _serialize_engine_result(begin_result),
+        }
+    try:
+        result = eng.resolve_scope_drift(choice)
+    except ValueError as exc:
+        return {"action": "error", "error": str(exc)}
+    return _serialize_engine_result(result)
+
+
+def wave_translate_external(
+    artifact: str,
+    gate: str | None = None,
+    project_id: str = "default",
+) -> dict:
+    eng = _build_engine(project_id)
+    return _serialize_engine_result(eng.translate_external(artifact, gate=gate))
+
+
+def wave_violation_request(payload: dict, project_id: str = "default") -> dict:
+    eng = _build_engine(project_id)
+    kind = str(payload.get("violation_kind") or "").strip()
+    if not kind:
+        return {"action": "error", "error": "missing violation_kind"}
+    findings = payload.get("findings") or []
+    gate = payload.get("gate")
+    return _serialize_engine_result(eng.request_violation_confirmation(
+        violation_kind=kind, findings=findings, gate=gate,
+    ))
+
+
+def wave_violation_confirm(payload: dict, project_id: str = "default") -> dict:
+    eng = _build_engine(project_id)
+    kind = str(payload.get("violation_kind") or "").strip()
+    choice = str(payload.get("choice") or "").strip()
+    user_reply = str(payload.get("user_reply") or "")
+    findings = payload.get("findings") or []
+    gate = payload.get("gate")
+    if gate:
+        eng.current_gate = gate
+    if not kind or not choice:
+        return {"action": "error", "error": "missing violation_kind or choice"}
+    try:
+        result = eng.confirm_violation(
+            violation_kind=kind, choice=choice,
+            user_reply=user_reply, findings=findings,
+        )
+    except ValueError as exc:
+        return {"action": "error", "error": str(exc)}
+
+    # Caller asked the engine to confirm a violation; the engine returns
+    # the audit entry but doesn't write it (separation of concerns).
+    # The IPC handler appends it to .signalos/AUDIT_TRAIL.jsonl here so
+    # the trail file is the single source of truth from the chat layer's
+    # perspective. _append_audit prepends the ts itself.
+    audit_entry = result.get("audit_entry") or {}
+    if audit_entry:
+        _append_audit(os.getcwd(), audit_entry)
+    return _serialize_engine_result(result)
+
+
+def wave_g5_handoff(
+    wave_id: str,
+    summary: dict | None = None,
+    project_id: str = "default",
+) -> dict:
+    eng = _build_engine(project_id)
+    return _serialize_engine_result(eng.run_g5_handoff(
+        wave_id=wave_id, summary=summary or {},
+    ))
 
 
 def get_status_json(project_id: str = "default") -> dict:

@@ -5,6 +5,7 @@ import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from '../co
 import { loadEnforcement, updateCostDisplay } from '../app-v2.js';
 import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/signalosPrompt.ts';
 import { scanChatResponse, summariseRedactions } from '../../services/chatResponseGuard.ts';
+import { tryBegin as waveEngineTryBegin } from '../../services/waveEngineClient.ts';
 
 function nowId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
@@ -93,6 +94,27 @@ async function sendMsg() {
       state.busy = false;
     }
     return;
+  }
+
+  // WAVE-ENGINE-DESIGN §5 — pre-LLM engine pre-check. Surfaces a
+  // transparent system bubble naming the current gate (or a scope-drift
+  // / complete bubble) before the LLM stream starts. tryBegin swallows
+  // sidecar failures; the LLM path runs unchanged when the engine is
+  // unavailable, so this hook is non-destructive.
+  try {
+    const wave = await waveEngineTryBegin(val);
+    if (wave && wave.system_bubble && wave.system_bubble.text) {
+      state.chatBubbles = [...state.chatBubbles, {
+        id: nowId(),
+        kind: 'system',
+        text: wave.system_bubble.text,
+        gate: wave.current_gate || null,
+        waveAction: wave.action,
+      }];
+    }
+  } catch (waveErr) {
+    // Non-fatal — log and proceed to the LLM stream.
+    console.warn('[wave-engine] pre-LLM check failed:', waveErr && waveErr.message ? waveErr.message : waveErr);
   }
 
   const streamId = nowId();

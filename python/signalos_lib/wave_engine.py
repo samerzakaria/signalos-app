@@ -747,6 +747,30 @@ class WaveEngine:
             "system_bubble": sign_bubble,
         }
 
+    # -- IPC helper: resume at DISPATCH ------------------------------------
+
+    def resume_at_dispatch(self, gate: str) -> None:
+        """Fast-forward state to DISPATCH at *gate* without re-inspecting.
+
+        The IPC layer constructs a fresh engine per request (per-turn
+        reconstruction is the design's persistence model for v1). When
+        servicing a wave:reply turn, the user has already seen the
+        prior agent output — we just need the engine in DISPATCH state
+        so handle_user_reply / sign_current_gate work without
+        re-running inspect() + scope-drift on every keystroke.
+        """
+        if self.state is not WaveState.ENTRY:
+            raise RuntimeError(
+                f"resume_at_dispatch only valid from ENTRY, "
+                f"current: {self.state.value}"
+            )
+        if gate not in GATE_ORDER:
+            raise ValueError(f"Unknown gate: {gate!r}")
+        self.transition(WaveState.INSPECT)
+        self.transition(WaveState.DECIDE)
+        self.current_gate = gate
+        self.transition(WaveState.DISPATCH)
+
     # -- violation-confirmation flow (M-W7) -------------------------------
 
     def request_violation_confirmation(
