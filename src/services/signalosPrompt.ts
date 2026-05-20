@@ -20,7 +20,43 @@ export function isBuildIntent(message: string): boolean {
   return BUILD_INTENT_RE.test(message);
 }
 
-export function wrapWithSignalosContext(userMessage: string): string {
+/**
+ * Build the "## Active gate agent" preamble block. The agent .md is the
+ * gate's contract (purpose / activates at / prerequisites / inputs /
+ * outputs / refusal conditions / handoff). We trim oversized agent
+ * bodies to keep the prompt within the LLM's context budget — the
+ * agent_loader returns the full file, but a single turn doesn't need
+ * the full agent definition.
+ */
+const AGENT_BLOCK_BUDGET = 3200;
+
+export function buildAgentBlock(agentContent: string, gate?: string): string {
+  if (!agentContent || !agentContent.trim()) return '';
+  let body = agentContent.trim();
+  if (body.length > AGENT_BLOCK_BUDGET) {
+    body = body.slice(0, AGENT_BLOCK_BUDGET) + '\n\n[...agent definition trimmed for prompt budget...]\n';
+  }
+  const heading = gate ? `## Active gate agent (${gate})` : '## Active gate agent';
+  return `\n${heading}\n\nFor this turn the wave engine has loaded the following gate-agent contract. Honour its prerequisites, output paths, and refusal conditions when deciding how to respond.\n\n${body}\n`;
+}
+
+export interface WrapOptions {
+  /** WAVE-ENGINE-DESIGN §4 — the active gate's agent .md content
+   *  (returned by agent_loader.load_agent). When provided, it's
+   *  prepended to the preamble as an "## Active gate agent" block so
+   *  the LLM honours that agent's contract (purpose / prerequisites /
+   *  outputs / refusal conditions) for this turn. chat.js passes this
+   *  through from the wave:begin result when wave.action is
+   *  fire-agent-Gn. */
+  agentSystemContext?: string;
+  /** Optional gate label (G0..G5) for the header. */
+  gate?: string;
+}
+
+export function wrapWithSignalosContext(
+  userMessage: string,
+  options: WrapOptions = {},
+): string {
   // AMD-CORE-102: every non-slash chat message is wrapped with the SignalOS
   // protocol context. The LLM decides whether to respond conversationally or
   // emit a `signalos-plan` block. No regex gate determines this — the user
@@ -37,6 +73,9 @@ export function wrapWithSignalosContext(userMessage: string): string {
   const planHint = isBuildIntent(userMessage);
 
   const ctx = buildContextBlock();
+  const agentBlock = options.agentSystemContext
+    ? buildAgentBlock(options.agentSystemContext, options.gate)
+    : '';
 
   const planHintLine = planHint
     ? `The phrasing suggests the user wants something built — emitting a \`signalos-plan\` block is likely the right response.`
@@ -47,7 +86,7 @@ export function wrapWithSignalosContext(userMessage: string): string {
 Project workspace: ${ws}
 Current wave: ${wave}
 Signer role: ${role}
-${ctx}
+${ctx}${agentBlock}
 ## How to respond
 
 You always have two response shapes available. Decide based on what the user actually wants:

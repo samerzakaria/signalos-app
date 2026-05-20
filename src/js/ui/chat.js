@@ -102,6 +102,8 @@ async function sendMsg() {
   // sidecar failures; the LLM path runs unchanged when the engine is
   // unavailable, so this hook is non-destructive.
   let scopeDriftFired = false;
+  let waveAgentContent = '';
+  let waveAgentGate = '';
   try {
     const wave = await waveEngineTryBegin(val);
     if (wave && wave.system_bubble && wave.system_bubble.text) {
@@ -119,6 +121,14 @@ async function sendMsg() {
         scopeDriftFired = true;
       }
       state.chatBubbles = [...state.chatBubbles, bubble];
+    }
+    // WAVE-ENGINE-DESIGN §4 — when the engine fires a gate agent,
+    // capture its .md content so wrapWithSignalosContext can inject it
+    // as the LLM's system prompt for this turn. Honours the gate's
+    // prerequisites / outputs / refusal conditions per the agent contract.
+    if (wave && wave.agent && wave.agent.exists && wave.agent.content) {
+      waveAgentContent = wave.agent.content;
+      waveAgentGate = wave.current_gate || '';
     }
     // When the engine returns scope-drift, the user needs to pick an
     // option before the LLM stream is meaningful — skip the stream and
@@ -144,7 +154,14 @@ async function sendMsg() {
   // wrapped prompt tells the LLM it may either respond conversationally
   // or emit a `signalos-plan` block — the LLM decides, no regex gate.
   // The user always sees their original message in the user bubble.
-  const wrapped = wrapWithSignalosContext(val);
+  //
+  // WAVE-ENGINE-DESIGN §4: when the engine has dispatched a gate-agent,
+  // pass its .md content so the wrap injects an "## Active gate agent"
+  // preamble block — the LLM honours the agent's contract for this turn.
+  const wrapOptions = waveAgentContent
+    ? { agentSystemContext: waveAgentContent, gate: waveAgentGate }
+    : {};
+  const wrapped = wrapWithSignalosContext(val, wrapOptions);
 
   try {
     await ipc.provider.chatStream(streamId, state.ai, state.aiModel, wrapped);

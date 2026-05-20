@@ -7,6 +7,7 @@ import {
   planToMarkdownTaskList,
   wrapWithSignalosContext,
   inferMissingSkills,
+  buildAgentBlock,
 } from './signalosPrompt';
 
 // --------------------------------------------------------------------------
@@ -483,5 +484,81 @@ describe('inferMissingSkills (heuristic backfill)', () => {
     expect(result.tasks[0].skills).toEqual(['security-audit']);
     // Innocuous task got nothing added.
     expect(result.tasks[2].skills).toBeUndefined();
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// buildAgentBlock — WAVE-ENGINE-DESIGN §4 per-gate agent injection
+// --------------------------------------------------------------------------
+
+describe('buildAgentBlock', () => {
+  it('returns empty string for empty/whitespace agent content', () => {
+    expect(buildAgentBlock('')).toBe('');
+    expect(buildAgentBlock('   \n   ')).toBe('');
+  });
+
+  it('emits the agent body inside an "## Active gate agent" header', () => {
+    const block = buildAgentBlock('# Agent — Onboarding\n\nMap a product…');
+    expect(block).toContain('## Active gate agent');
+    expect(block).toContain('# Agent — Onboarding');
+    expect(block).toContain('Map a product');
+  });
+
+  it('includes the gate label in the header when provided', () => {
+    const block = buildAgentBlock('body', 'G0');
+    expect(block).toContain('## Active gate agent (G0)');
+  });
+
+  it('trims oversized agent bodies to the prompt budget', () => {
+    const huge = 'x'.repeat(8000);
+    const block = buildAgentBlock(huge);
+    expect(block).toContain('trimmed for prompt budget');
+    // The body in the block is bounded by the budget + the trim marker.
+    expect(block.length).toBeLessThan(huge.length);
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// wrapWithSignalosContext — options.agentSystemContext integration
+// --------------------------------------------------------------------------
+
+describe('wrapWithSignalosContext with agent system context', () => {
+  it('injects the agent block into the preamble when content is provided', () => {
+    const wrapped = wrapWithSignalosContext('build a thing', {
+      agentSystemContext: '# Agent — Onboarding\n\nMap a product…',
+      gate: 'G0',
+    });
+    expect(wrapped).toContain('## Active gate agent (G0)');
+    expect(wrapped).toContain('# Agent — Onboarding');
+  });
+
+  it('omits the agent block when no agent content provided', () => {
+    const wrapped = wrapWithSignalosContext('build a thing');
+    expect(wrapped).not.toContain('## Active gate agent');
+  });
+
+  it('omits the agent block when content is empty string', () => {
+    const wrapped = wrapWithSignalosContext('build a thing', { agentSystemContext: '' });
+    expect(wrapped).not.toContain('## Active gate agent');
+  });
+
+  it('passes through slash commands without wrapping (agent context ignored)', () => {
+    const wrapped = wrapWithSignalosContext('/signal-status', {
+      agentSystemContext: '# Agent body',
+    });
+    expect(wrapped).toBe('/signal-status');
+  });
+
+  it('keeps the "## How to respond" section after the agent block', () => {
+    const wrapped = wrapWithSignalosContext('build a thing', {
+      agentSystemContext: 'Agent guidance',
+      gate: 'G2',
+    });
+    const agentIdx = wrapped.indexOf('## Active gate agent');
+    const howIdx = wrapped.indexOf('## How to respond');
+    expect(agentIdx).toBeGreaterThan(0);
+    expect(howIdx).toBeGreaterThan(agentIdx);
   });
 });
