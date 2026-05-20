@@ -3,7 +3,7 @@ import { state } from '../state.js';
 import { showError } from '../util.js';
 import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from '../conversation.js';
 import { loadEnforcement, updateCostDisplay } from '../app-v2.js';
-import { wrapWithSignalosContext, extractPlanWithErrors, isBuildIntent } from '../../services/signalosPrompt.ts';
+import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/signalosPrompt.ts';
 import { scanChatResponse, summariseRedactions } from '../../services/chatResponseGuard.ts';
 
 function nowId() {
@@ -102,11 +102,12 @@ async function sendMsg() {
   // model's reply triggers a redaction.
   streamPrompts.set(streamId, val);
 
-  // For build-intent messages, wrap with the SignalOS protocol preamble so the
-  // model emits a structured plan instead of free-form text. The user sees
-  // their original message in the bubble; the AI sees the wrapped version.
+  // AMD-CORE-102: every non-slash message is wrapped with the SignalOS
+  // protocol context (SOUL/CONSTITUTION/DECISION-DNA + plan schema). The
+  // wrapped prompt tells the LLM it may either respond conversationally
+  // or emit a `signalos-plan` block — the LLM decides, no regex gate.
+  // The user always sees their original message in the user bubble.
   const wrapped = wrapWithSignalosContext(val);
-  const intent = isBuildIntent(val);
 
   try {
     await ipc.provider.chatStream(streamId, state.ai, state.aiModel, wrapped);
@@ -116,55 +117,52 @@ async function sendMsg() {
     if (buildId) {
       await appendTurn(buildId, { user_idea: val, ai_summary: '(streaming)' }).catch(() => {});
     }
-    // If this was a build-intent message, try to extract the plan from the
-    // finalised bubble and upgrade its kind to 'plan'. If extraction fails
-    // schema validation, surface the issues to the user instead of silently
-    // dropping back to a regular AI text bubble.
-    if (intent) {
-      const last = state.chatBubbles.find((b) => b.id === streamId);
-      if (last) {
-        const result = extractPlanWithErrors(last.text || '');
-        if ('tasks' in result) {
-          state.chatBubbles = state.chatBubbles.map((b) =>
-            b.id === streamId
-              ? { ...b, kind: 'plan', plan: result.tasks, planStatus: 'pending' }
-              : b
-          );
-          // Surface heuristic skill backfills so the user can see the
-          // server-side defense in action. Also feeds the audit-trail-by-eye
-          // mental model of "how often does the AI miss a tag?"
-          if (result.backfills && result.backfills.length > 0) {
-            const lines = result.backfills.map((bf) => {
-              const adds = bf.added.map((a) => `${a.key} (${a.reason})`).join('; ');
-              return `• ${bf.taskId}: ${adds}`;
-            });
-            state.chatBubbles = [
-              ...state.chatBubbles,
-              {
-                id: nowId(),
-                kind: 'system',
-                text: 'Auto-tagged the following tasks with skills the AI didn\'t mark:\n' + lines.join('\n'),
-              },
-            ];
-          }
-        } else if (result.error.kind !== 'no_block') {
-          // The model emitted a signalos-plan block but it didn't pass schema.
-          // Push a system bubble explaining so the user can ask the model to
-          // fix and retry, instead of staring at a raw JSON block.
-          const detail = result.error.perTaskIssues?.length
-            ? result.error.perTaskIssues.slice(0, 6).join('\n• ')
-            : result.error.details;
+    // ALWAYS try to extract a plan from the finalised bubble — the LLM
+    // decided whether to emit one, and the parser is cheap. Three outcomes:
+    //  - The response contains a valid `signalos-plan` block → upgrade
+    //    the bubble to a plan card.
+    //  - The response contains a `signalos-plan` block that fails schema
+    //    validation → surface the schema issues so the user can ask for
+    //    a revision.
+    //  - The response has no plan block → leave the bubble as plain AI
+    //    text (the conversational path).
+    const last = state.chatBubbles.find((b) => b.id === streamId);
+    if (last) {
+      const result = extractPlanWithErrors(last.text || '');
+      if ('tasks' in result) {
+        state.chatBubbles = state.chatBubbles.map((b) =>
+          b.id === streamId
+            ? { ...b, kind: 'plan', plan: result.tasks, planStatus: 'pending' }
+            : b
+        );
+        if (result.backfills && result.backfills.length > 0) {
+          const lines = result.backfills.map((bf) => {
+            const adds = bf.added.map((a) => `${a.key} (${a.reason})`).join('; ');
+            return `• ${bf.taskId}: ${adds}`;
+          });
           state.chatBubbles = [
             ...state.chatBubbles,
             {
               id: nowId(),
               kind: 'system',
-              text: 'Plan didn\'t pass schema validation. Issues:\n• ' + detail + '\n\nAsk SignalOS to revise (e.g. "rewrite that plan with valid tiers").',
+              text: 'Auto-tagged the following tasks with skills the AI didn\'t mark:\n' + lines.join('\n'),
             },
           ];
         }
-        // no_block case: leave the bubble as a regular AI message
+      } else if (result.error.kind !== 'no_block') {
+        const detail = result.error.perTaskIssues?.length
+          ? result.error.perTaskIssues.slice(0, 6).join('\n• ')
+          : result.error.details;
+        state.chatBubbles = [
+          ...state.chatBubbles,
+          {
+            id: nowId(),
+            kind: 'system',
+            text: 'Plan didn\'t pass schema validation. Issues:\n• ' + detail + '\n\nAsk SignalOS to revise (e.g. "rewrite that plan with valid tiers").',
+          },
+        ];
       }
+      // no_block: conversational path — leave bubble as plain AI text
     }
   } catch (e) {
     showStreamError(streamId, e.message);

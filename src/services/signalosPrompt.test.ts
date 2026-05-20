@@ -209,17 +209,42 @@ describe('planToYaml', () => {
 // wrapWithSignalosContext
 // --------------------------------------------------------------------------
 
-describe('wrapWithSignalosContext', () => {
-  it('returns the message unchanged when no build intent is detected', () => {
-    const msg = 'hi there';
+describe('wrapWithSignalosContext (AMD-CORE-102: always-wrap)', () => {
+  it('passes slash commands through unchanged (they route elsewhere)', () => {
+    const msg = '/signal-status';
     expect(wrapWithSignalosContext(msg)).toBe(msg);
   });
 
-  it('wraps build-intent messages with the SignalOS protocol preamble', () => {
+  it('wraps conversational/non-build messages WITH the protocol preamble', () => {
+    // The whole point of AMD-CORE-102: no regex gate. Even "hi there" is
+    // wrapped so the LLM gets the SignalOS protocol context and decides
+    // for itself whether to chat or emit a plan.
+    const msg = 'hi there';
+    const wrapped = wrapWithSignalosContext(msg);
+    expect(wrapped).not.toBe(msg);
+    expect(wrapped).toMatch(/You are SignalOS/);
+    expect(wrapped).toMatch(/signalos-plan/);
+    expect(wrapped).toMatch(/hi there/);
+  });
+
+  it('wraps build-intent messages and signals the plan path is likely', () => {
     const wrapped = wrapWithSignalosContext('build me a todo app');
     expect(wrapped).toMatch(/You are SignalOS/);
     expect(wrapped).toMatch(/signalos-plan/);
     expect(wrapped).toMatch(/build me a todo app/);
+    expect(wrapped).toMatch(/emitting a `signalos-plan` block is likely the right response/);
+  });
+
+  it('wraps a non-regex natural-language build request (the v0.1 #6 case)', () => {
+    // "I want to do a financial dashboard" had no regex match before
+    // AMD-CORE-102 — would have been sent unwrapped. Now it wraps with
+    // the conversational-default hint; the LLM can still emit a plan
+    // if it judges that to be the right shape.
+    const wrapped = wrapWithSignalosContext('I want to do a financial dashboard');
+    expect(wrapped).toMatch(/You are SignalOS/);
+    expect(wrapped).toMatch(/signalos-plan/);
+    expect(wrapped).toMatch(/I want to do a financial dashboard/);
+    expect(wrapped).toMatch(/Default to a conversational reply.*decide the user is asking/s);
   });
 
   it('the wrapped message ends with the original user request', () => {

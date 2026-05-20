@@ -4,12 +4,16 @@ import { buildContextBlock } from './protocolContext';
 const BUILD_INTENT_RE = /\b(build|create|make|implement|design|add|generate|scaffold|write|set up|set-up|start|develop)\b/i;
 const QUESTION_PREFIX_RE = /^(what|why|how|when|where|who|which|explain|tell me|describe|show me|can you tell)\b/i;
 
+/**
+ * Heuristic flag — used ONLY as a hint to the LLM in the protocol preamble,
+ * never as a gate. Per AMD-CORE-102, every non-slash message is wrapped with
+ * the SignalOS protocol and the LLM decides whether to emit a plan or chat.
+ * Keeping the function so existing call sites + tests are stable; semantics
+ * narrowed to "the LLM may prefer to emit a plan here."
+ */
 export function isBuildIntent(message: string): boolean {
-  // Slash commands are routed elsewhere; this is for natural-language messages.
   if (message.startsWith('/')) return false;
   if (message.length < 6) return false;
-  // Questions are not intent -- "what is signal-build?", "how does build work?"
-  // would otherwise match the regex on the word inside the compound.
   const trimmed = message.trim();
   if (QUESTION_PREFIX_RE.test(trimmed)) return false;
   if (trimmed.endsWith('?')) return false;
@@ -17,17 +21,26 @@ export function isBuildIntent(message: string): boolean {
 }
 
 export function wrapWithSignalosContext(userMessage: string): string {
+  // AMD-CORE-102: every non-slash chat message is wrapped with the SignalOS
+  // protocol context. The LLM decides whether to respond conversationally or
+  // emit a `signalos-plan` block. No regex gate determines this — the user
+  // can say "I want to do a financial dashboard" or "explain X" or just "hi"
+  // and the same wrapping logic applies. Slash commands are routed elsewhere.
+  if (userMessage.startsWith('/')) {
+    return userMessage;
+  }
+
   const ws = workspacePath.value || '(workspace not set)';
   const who = userName.value || 'the user';
   const role = userRole.value || 'PO';
   const wave = currentWave.value || '1';
-  const buildIntent = isBuildIntent(userMessage);
-
-  if (!buildIntent) {
-    return userMessage;
-  }
+  const planHint = isBuildIntent(userMessage);
 
   const ctx = buildContextBlock();
+
+  const planHintLine = planHint
+    ? `The phrasing suggests the user wants something built — emitting a \`signalos-plan\` block is likely the right response.`
+    : `The phrasing does not obviously request a build. Default to a conversational reply. Emit a \`signalos-plan\` block ONLY if, after reading the message in context, you decide the user is asking for code/files/designs to be produced.`;
 
   const preamble = `You are SignalOS, a guided AI build orchestrator running locally on ${who}'s machine.
 
@@ -35,7 +48,16 @@ Project workspace: ${ws}
 Current wave: ${wave}
 Signer role: ${role}
 ${ctx}
-The user is asking you to build something. Follow this protocol:
+## How to respond
+
+You always have two response shapes available. Decide based on what the user actually wants:
+
+- **Conversational reply**: plain text. Use this for questions, explanations, clarifications, chit-chat, debugging discussions, or any message that does not ask you to produce code or files.
+- **Plan emission**: respond with a single fenced block tagged \`signalos-plan\` containing a JSON array of tasks (schema below). Use this when the user is asking for code, files, designs, or a feature to be created. The orchestrator will dispatch the plan; do not write the code itself.
+
+${planHintLine}
+
+When you do emit a plan, follow this protocol:
 
 1. Respond with one short sentence acknowledging what you'll build.
 
