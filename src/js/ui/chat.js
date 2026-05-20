@@ -5,7 +5,7 @@ import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from '../co
 import { loadEnforcement, updateCostDisplay } from '../app-v2.js';
 import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/signalosPrompt.ts';
 import { scanChatResponse, summariseRedactions } from '../../services/chatResponseGuard.ts';
-import { tryBegin as waveEngineTryBegin } from '../../services/waveEngineClient.ts';
+import { tryBegin as waveEngineTryBegin, translateExternal as waveEngineTranslateExternal } from '../../services/waveEngineClient.ts';
 
 function nowId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
@@ -225,6 +225,81 @@ async function sendMsg() {
   }
 }
 window.sendMsg = sendMsg;
+
+// WAVE-ENGINE-DESIGN §7 — translator-mode UI hook. Lets the user paste
+// a local file path or external URL (Figma, markdown, PDF, .docx) so
+// the engine ingests it and surfaces the SignalOS-format version for
+// the gate agent to consume. Bound to the composer's paperclip button.
+//
+// In v1 we prompt for the path/URL inline (no file picker yet — Tauri's
+// dialog plugin would add a dependency). Drag-drop is the natural
+// follow-on once this path/URL flow is exercised in practice.
+export async function attachExternalDoc() {
+  const input = typeof window !== 'undefined' && typeof window.prompt === 'function'
+    ? window.prompt(
+        'Translator-mode (WAVE-ENGINE-DESIGN §7)\n\n'
+        + 'Paste a local file path (.md / .pdf / .docx) or a URL '
+        + '(Figma / generic):'
+      )
+    : null;
+  const artifact = (input || '').trim();
+  if (!artifact) return;
+
+  // Show the user what we're ingesting so the next system bubble has
+  // visible provenance.
+  state.chatBubbles = [...state.chatBubbles, {
+    id: nowId(),
+    kind: 'user',
+    text: `[Translator-mode] ${artifact}`,
+    ts: 'just now',
+  }];
+
+  let result = null;
+  try {
+    result = await waveEngineTranslateExternal(artifact);
+  } catch (err) {
+    state.chatBubbles = [...state.chatBubbles, {
+      id: nowId(),
+      kind: 'error',
+      text: 'Translator-mode failed: ' + (err && err.message ? err.message : String(err)),
+    }];
+    return;
+  }
+
+  // Engine bubble (re-route style, names the gate + format).
+  if (result && result.system_bubble && result.system_bubble.text) {
+    state.chatBubbles = [...state.chatBubbles, {
+      id: nowId(),
+      kind: 'system',
+      text: result.system_bubble.text,
+      gate: result.gate || null,
+      waveAction: 'translator-result',
+    }];
+  }
+
+  // Body bubble — for markdown/pdf/docx the extracted text goes into
+  // an AI bubble (so the user can copy it / refine). For URL/Figma
+  // shapes the body is empty by design (recorded as reference); we
+  // just confirm the reference was captured.
+  const t = result && result.translation;
+  if (t && t.supported && t.text) {
+    const preview = t.text.length > 4000 ? t.text.slice(0, 4000) + '\n\n[…trimmed]' : t.text;
+    addAIBubble(preview);
+  } else if (t && t.supported && (t.source_url || t.source_path)) {
+    const where = t.source_url || t.source_path;
+    addAIBubble(`Recorded ${t.format} reference: ${where}`);
+  } else if (t && !t.supported) {
+    const hint = t.install_hint
+      ? `Install hint: ${t.install_hint}`
+      : (t.error ? `Error: ${t.error}` : 'See translator output for details.');
+    state.chatBubbles = [...state.chatBubbles, {
+      id: nowId(),
+      kind: 'error',
+      text: `Translator-mode could not ingest ${t.format || 'this artifact'}. ${hint}`,
+    }];
+  }
+}
+window.attachFile = attachExternalDoc;
 
 export function addUserBubble(text) {
   state.chatBubbles = [...state.chatBubbles, { id: nowId(), kind: 'user', text, ts: 'just now' }];

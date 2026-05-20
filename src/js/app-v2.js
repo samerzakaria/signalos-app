@@ -1272,15 +1272,9 @@ function shareProject() {
 }
 window.shareProject = shareProject;
 
-function attachFile() {
-  addUserBubble("[File attached]");
-  const streamId = crypto.randomUUID();
-  startStream(streamId);
-  ipc.provider
-    .chatStream(streamId, state.ai, state.aiModel, "I have attached a file for your reference.")
-    .catch((e) => showStreamError(streamId, e.message));
-}
-window.attachFile = attachFile;
+// Note: `window.attachFile` is now owned by chat.js's `attachExternalDoc()`
+// (WAVE-ENGINE-DESIGN §7 translator-mode). The old stub here just emitted a
+// canned chat message; the engine wiring is the right home for it.
 
 function voiceInput() {
   addUserBubble("[Voice input]");
