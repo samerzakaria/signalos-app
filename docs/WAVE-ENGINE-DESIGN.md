@@ -299,17 +299,25 @@ Each milestone is independently shippable. M-W1 is mostly the Layer 3 reshape + 
 
 ---
 
-## 13. Open questions to validate before M-W1
+## 13. Open questions — RESOLVED 2026-05-20
 
-These are questions the design intentionally does NOT decide; they need user input before implementation begins:
+1. **Sign-evidence storage** — **RESOLVED: both.** Engine continues writing the `## Signatures` block in the gate's artifact markdown (human-readable + greppable in the workspace) AND appends to `AUDIT_TRAIL.jsonl` (machine-parseable integrity record). On conflict the audit trail is the authoritative source.
 
-1. **Sign-evidence storage**: today's `signalos sign` writes a `## Signatures` block to the gate's artifact markdown. Should the wave engine continue using that AND append to audit trail, or move to audit-trail-only (single source of truth) and treat the markdown signature blocks as advisory? *(Recommend: both, for grep-ability + audit integrity.)*
+2. **Scope-drift LLM cost** — **RESOLVED: accepted, with caching.** The cheap heuristic check (regex + signal lookup) runs first. When unsure, fall back to a small LLM-judged call. Cache the verdict for the duration of the wave so we don't re-pay per turn. ~1 small LLM call (a few cents) per "is this still the same project?" check. Worth it — a wrong answer here builds the wrong thing and damages trust.
 
-2. **Scope-drift LLM cost**: the heuristic scope-drift check is cheap (regex + signal lookup). The LLM-judged fallback (when the heuristic is unsure) costs a small LLM call per wave entry. Acceptable? *(Recommend: yes — it's the cost of speed-variation; cache result for the duration of the wave.)*
+3. **What counts as "affirmation"** for auto-sign — **RESOLVED: strict for v1, LLM-judged for v2.** v1 accepts an allowlist (`yes`, `confirm`, `approve`, `looks good`, `proceed`, `sign`, `ok`, button click). v2 (after the affirmation classifier has earned trust) lets the LLM judge from richer replies. v1's failure mode is false-negative ("is that a yes?") — one extra turn. False-positives would silently sign on ambiguity — integrity loss; not acceptable.
 
-3. **What counts as "affirmation"** for auto-sign? Strict ("yes", "confirm", "approve") or LLM-judged from user reply? *(Recommend: strict for v1, LLM-judged for v2 — keeps integrity tight while we build trust in the affirmation classifier.)*
+4. **Translator-mode supported external formats at launch** — **RESOLVED: six formats.**
+   - (a) plain markdown files in the workspace (any structure)
+   - (b) Figma URLs (read via Figma's public API if a token is set; otherwise record the URL as evidence)
+   - (c) text pasted in the chat ("here's my belief: ...")
+   - (d) **PDF files** in the workspace (text-extracted via `pypdf` or equivalent stdlib-adjacent option)
+   - (e) **`.md` files** explicitly (covered by (a), called out separately for clarity)
+   - (f) **`.docx` / `.doc` files** (parsed via `python-docx` or equivalent)
 
-4. **Translator-mode supported external formats** at launch? *(Recommend: start with plain markdown belief docs and Figma URLs; add more as user demand surfaces.)*
+   Other formats (Notion, Linear, Jira, Confluence, etc.) get added when a real user surfaces the need. Avoid speculative integrations.
+
+   **Dependency note:** PDF + docx parsing introduces 2 new Python deps (`pypdf`, `python-docx`). Both are pure-Python, ~few hundred KB each, no native compilation. Acceptable per the "stdlib-only by default, justified additions OK" pattern in DECISION-DNA AMD-CORE-030.
 
 ---
 

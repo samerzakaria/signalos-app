@@ -1406,6 +1406,134 @@ def _topological_sort(
 # Main orchestration entry point
 # ---------------------------------------------------------------------------
 
+def _route_next_gate_action(
+    root: Path,
+    wave_id: str,
+    session_id: str | None,
+    project_id: str = "default",
+) -> dict[str, Any]:
+    """Wave-engine router — decides what the engine should do next.
+
+    Per WAVE-ENGINE-DESIGN §10. Replaces the earlier refuse-by-default
+    `_check_orchestrate_gates`. The router never says "no" for normal
+    flow — it tells the caller which gate-agent to fire next. Hard
+    refusals are reserved for pathological cases.
+
+    Return shape:
+        {
+          "action":  "build"
+                   | "fire-agent-G0"
+                   | "fire-agent-G1"
+                   | "fire-agent-G2"
+                   | "fire-agent-G3"
+                   | "fire-agent-G5"
+                   | "refuse-pathological"
+                   | "override-with-audit",
+          "current_gate": "G0" | "G1" | ... | None,
+          "evidence": "<reason / context for the caller>",
+        }
+
+    Routing logic:
+        - status read fails → refuse-pathological + log enforcement error
+        - SIGNALOS_GATE_OVERRIDE=1 → override-with-audit + log violation
+        - some prior gate unsigned → fire-agent-<that-gate>
+        - all prior gates (G0..G3) signed → build (proceed to G4)
+
+    The G4 build path is gated on G0..G3 because per the design G3 (design)
+    auto-fires before build. Once G3-agent machinery exists, the router
+    naturally re-routes through it.
+
+    The `project_id` parameter is plumbing for future multi-project support
+    per design §3.2. Today only "default" is used; future milestones expose
+    a Sidebar picker that drives this.
+    """
+    try:
+        from .status import get_wave_status
+    except Exception as exc:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "enforcement-error-orchestrate-gate-check",
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "project_id": project_id,
+            "reason": f"status module unavailable: {exc}",
+            "source": "orchestrator._route_next_gate_action",
+        })
+        return {
+            "action": "refuse-pathological",
+            "current_gate": None,
+            "evidence": "Gate-state check failed (status module unavailable). Failing closed for safety.",
+        }
+
+    try:
+        status = get_wave_status(root)
+    except Exception as exc:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "enforcement-error-orchestrate-gate-check",
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "project_id": project_id,
+            "reason": f"get_wave_status raised: {exc}",
+            "source": "orchestrator._route_next_gate_action",
+        })
+        return {
+            "action": "refuse-pathological",
+            "current_gate": None,
+            "evidence": "Could not read gate state. Failing closed for safety.",
+        }
+
+    gates = status.get("gates") or {}
+
+    # The build gate (G4) is what this orchestrator dispatches. G0..G3 must
+    # all be signed for the build to proceed. G5 (ship) is the post-build
+    # gate and is not a precondition.
+    required_prior = ["G0", "G1", "G2", "G3"]
+    next_unsigned = next((g for g in required_prior if not gates.get(g)), None)
+
+    if next_unsigned is None:
+        # Everything that must be signed before build is signed → proceed.
+        return {
+            "action": "build",
+            "current_gate": "G4",
+            "evidence": "G0..G3 signed; proceeding to G4 build dispatch.",
+        }
+
+    # Some prior gate unsigned. Check the headless-override env var (per
+    # AMD-CORE-111 + design §8 — the env var is the CI/headless-only path;
+    # interactive sessions get per-violation user confirmation, not silent
+    # bypass).
+    override = os.environ.get("SIGNALOS_GATE_OVERRIDE") == "1"
+    if override:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "violation:orchestrate-gate-skip",
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "project_id": project_id,
+            "missing_gate": next_unsigned,
+            "reason": "SIGNALOS_GATE_OVERRIDE=1 — headless-mode skip-with-audit per AMD-CORE-111",
+            "source": "orchestrator._route_next_gate_action",
+        })
+        return {
+            "action": "override-with-audit",
+            "current_gate": next_unsigned,
+            "evidence": (
+                f"Headless override active: skipping required gate {next_unsigned}. "
+                "Skip logged as violation in audit trail."
+            ),
+        }
+
+    # Normal routing: tell the caller which agent to fire.
+    return {
+        "action": f"fire-agent-{next_unsigned}",
+        "current_gate": next_unsigned,
+        "evidence": (
+            f"{next_unsigned} not signed. Fire the {next_unsigned} agent before build can proceed."
+        ),
+    }
+
+
 def run_wave(
     wave_id: str,
     plan_path: str,
@@ -1430,6 +1558,44 @@ def run_wave(
         elapsed_ms, status ("all_completed"|"some_failed"|"empty")
     """
     root = _repo_root(cwd)
+
+    # AMD-CORE-110 Layer 3 — wave-engine router (per WAVE-ENGINE-DESIGN §10).
+    # Replaces the earlier refuse-by-default check. Decides whether to:
+    #   - proceed with G4 build (all prior gates signed)
+    #   - signal that an earlier gate-agent must fire first (re-route)
+    #   - proceed under headless override (logged as violation)
+    #   - refuse for pathological cases (status read failure / gate corruption)
+    route = _route_next_gate_action(root, wave_id, session_id)
+    if route["action"] == "refuse-pathological":
+        return {
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "status": "blocked_by_status_error",
+            "tasks": [],
+            "completed": 0,
+            "failed": 0,
+            "paused": 0,
+            "elapsed_ms": 0,
+            "route": route,
+        }
+    if route["action"].startswith("fire-agent-"):
+        # Earlier gate not signed. Until the wave-engine fully wires per-gate
+        # agents (M-W2..M-W5), this orchestrator can't fire them itself —
+        # the caller (chat layer) must surface the re-route to the user.
+        # Returning a structured `needs_gate` status keeps the contract
+        # honest: the orchestrator didn't refuse, it pointed at what's next.
+        return {
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "status": "needs_gate",
+            "tasks": [],
+            "completed": 0,
+            "failed": 0,
+            "paused": 0,
+            "elapsed_ms": 0,
+            "route": route,
+        }
+    # action == "build" or "override-with-audit" → proceed.
 
     # Resolve provider
     provider = _resolve_provider(provider_name)
