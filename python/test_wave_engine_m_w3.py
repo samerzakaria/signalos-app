@@ -61,14 +61,12 @@ class AgentLoaderTests(unittest.TestCase):
         self.assertEqual(result["filename"], "brainstorm.md")
         self.assertIn("Brainstorm", result["content"])
 
-    def test_g3_design_agent_returns_not_exists_until_m_w4(self):
-        """G3 design.md is created in M-W4. Until then load returns
-        exists=False with empty content rather than raising — the engine
-        can fall back to a TODO bubble."""
+    def test_g3_design_agent_now_loads_after_m_w4(self):
+        """M-W4 shipped design.md. The agent loader returns it with content."""
         result = load_agent("G3")
         self.assertEqual(result["filename"], "design.md")
-        self.assertFalse(result["exists"])
-        self.assertEqual(result["content"], "")
+        self.assertTrue(result["exists"])
+        self.assertIn("Design", result["content"])
 
     def test_unknown_gate_raises_key_error(self):
         with self.assertRaises(KeyError):
@@ -77,13 +75,9 @@ class AgentLoaderTests(unittest.TestCase):
     def test_list_available_reports_per_gate_existence(self):
         available = list_available_agents()
         self.assertEqual(set(available.keys()), set(GATE_AGENT_FILES.keys()))
-        # G0, G1, G2, G4, G5 ship today; G3 is M-W4.
-        self.assertTrue(available["G0"])
-        self.assertTrue(available["G1"])
-        self.assertTrue(available["G2"])
-        self.assertFalse(available["G3"])  # design.md not yet created
-        self.assertTrue(available["G4"])
-        self.assertTrue(available["G5"])
+        # M-W4 shipped design.md; all six gates now have an agent file.
+        for gate in ("G0", "G1", "G2", "G3", "G4", "G5"):
+            self.assertTrue(available[gate], f"{gate} agent file missing")
 
 
 # ---------------------------------------------------------------------------
