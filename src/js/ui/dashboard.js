@@ -29,12 +29,32 @@ export async function loadDashboard() {
       };
     }
 
-    const activeGate = gateList.find((g) => g.status === 'active' || g.is_current);
+    // get_gate_states() in signalos_ipc_server.py emits status='current' for
+    // the active gate (and 'signed'/'locked' for the others). Accept both
+    // 'current' and the legacy 'active'/is_current for forward compat.
+    const activeGate = gateList.find(
+      (g) => g.status === 'current' || g.status === 'active' || g.is_current,
+    );
     if (activeGate) {
       state.currentGateInfo = activeGate;
       state.currentGateId = activeGate.id || activeGate.gate_id || null;
+      // M3 emits criterion status as 'passing|failing|pending'. DashboardView
+      // renders 'passed|failed|checking|waiting'. Translate at the boundary
+      // so the view stays stable. Activities already use DashboardView's
+      // vocabulary (completed|in_progress|pending|failed).
+      const translateCriterion = (c) => {
+        const s = c && c.status;
+        const mapped =
+          s === 'passing' ? 'passed' :
+          s === 'failing' ? 'failed' :
+          s === 'pending' ? 'waiting' :
+          s;
+        return { ...c, status: mapped };
+      };
       state.gateActivities = Array.isArray(activeGate.activities) ? activeGate.activities : [];
-      state.gateCriteria = Array.isArray(activeGate.criteria) ? activeGate.criteria : [];
+      state.gateCriteria = Array.isArray(activeGate.criteria)
+        ? activeGate.criteria.map(translateCriterion)
+        : [];
     } else {
       state.currentGateInfo = null;
       state.currentGateId = null;

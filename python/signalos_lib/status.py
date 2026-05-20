@@ -16,7 +16,17 @@
 
 from __future__ import annotations
 
-__all__ = ["get_wave_status", "print_status_card", "watch_status", "_format_elapsed"]  # W-2/W3.2
+__all__ = [
+    "get_wave_status",
+    "print_status_card",
+    "watch_status",
+    "_format_elapsed",
+    "build_status_json",
+    "_collect_gate_activities",
+    "_collect_gate_criteria",
+    "_load_plan_doc",
+    "_load_plan_tasks",
+]  # W-2/W3.2 + M3 (gate emissions)
 
 import json
 import os
@@ -285,6 +295,323 @@ def _detect_wave_id(root: Path, tasks: list[dict[str, Any]]) -> str:
         except Exception:
             pass
     return "—"
+
+
+# ---------------------------------------------------------------------------
+# Milestone 3 — per-gate activities + criteria emissions
+#
+# DashboardView reads `gateActivities` and `gateCriteria` signals which are
+# populated from each gate's `activities` / `criteria` arrays in the JSON
+# emitted by `signalos status --json`. Previously these arrays did not exist
+# and the dashboard rendered "No activities yet" placeholders. The helpers
+# below derive both:
+#
+#   - Activities: PLAN.tasks.yaml entries mapped to a phase / gate by the
+#     task's `gate` field (when present) or by the task's `skills` (e.g. a
+#     `writing-plans` task belongs to G2). One activity per task; status is
+#     translated from PLAN vocabulary (pending/in_progress/done/blocked) into
+#     the UI vocabulary the DashboardView understands.
+#
+#   - Criteria: a check is emitted for every skill_validators._validate_*
+#     function that has at least one task tagged with that skill in the
+#     current plan. Status comes from .signalos/skill-validation/<wave>/<skill>.json
+#     if the orchestrator persisted it (it currently does not, so the
+#     fallback is "pending"). This keeps the contract forward-compatible
+#     with a future orchestrator change that writes validator output to disk.
+# ---------------------------------------------------------------------------
+
+# Map a skill name to the gate where validating it makes sense. Skills that
+# don't appear here are still surfaced as a criterion on whatever gate hosts
+# the task that uses them — see _criterion_gate().
+_SKILL_TO_GATE: dict[str, int] = {
+    # G2 — Planning
+    "writing-plans": 2,
+    # G3 — Design
+    # (design skills go on G3 by default via _criterion_gate fallback)
+    # G4 — Build / Trust Tier
+    "executing-plans": 4,
+    "using-git-worktrees": 4,
+    "finishing-a-development-branch": 4,
+    "systematic-debugging": 4,
+    "test-generation": 4,
+    "security-audit": 4,
+    # G5 — Quality / Review
+    "comprehensive-code-review": 5,
+    "requesting-code-review": 5,
+    "receiving-code-review": 5,
+    "verification-before-completion": 5,
+    "retro-run": 5,
+    "retrospective-analyze": 5,
+}
+
+# Default gate when a task's gate isn't declared and no skill hints exist.
+# G4 (Build) is the workhorse phase where most plan tasks live.
+_DEFAULT_TASK_GATE = 4
+
+# Human-readable descriptions for each criterion. The validator function
+# name is the canonical key; this map gives the dashboard a one-liner.
+_CRITERION_DESCRIPTIONS: dict[str, str] = {
+    "security-audit": "No obvious security foot-guns in written files",
+    "test-generation": "At least one test file produced for the change",
+    "comprehensive-code-review": "Review notes emitted with severity sections",
+    "systematic-debugging": "Debug trace recorded (Reproduce/Hypothesis/Test/Fix)",
+    "writing-plans": "PLAN.tasks.yaml present after planner task",
+    "executing-plans": "Audit trail shows execution events",
+    "using-git-worktrees": "Worktree state recorded when worktrees are used",
+    "finishing-a-development-branch": "Worktrees marked merged/retired/done",
+    "receiving-code-review": "Review response file maps each comment to a verdict",
+    "requesting-code-review": "Review request has Summary / Changes / Test plan",
+    "verification-before-completion": "Verification artifact or section emitted",
+    "retro-run": "Wave retrospective WAVE_REVIEW.md written",
+    "retrospective-analyze": "Cross-wave analysis artifact written",
+}
+
+
+def _ui_activity_status(plan_status: str) -> str:
+    """Translate PLAN.tasks.yaml status to the UI vocabulary DashboardView reads.
+
+    DashboardView treats: 'completed' → done pill, 'in_progress' → ongoing,
+    anything else → pending. We keep 'failed' explicit so a future UI tweak
+    can render it differently without rebuilding the data layer.
+    """
+    s = (plan_status or "").lower()
+    if s == "done":
+        return "completed"
+    if s == "in_progress":
+        return "in_progress"
+    if s in {"blocked", "failed"}:
+        return "failed"
+    # pending, skipped, or unknown → pending
+    return "pending"
+
+
+def _task_gate(task: dict[str, Any]) -> int:
+    """Return the gate (0-5) a PLAN task belongs to.
+
+    Priority:
+      1. explicit `gate: G<n>` or `gate: <n>` field on the task
+      2. first skill in `skills:` that maps to a known gate
+      3. _DEFAULT_TASK_GATE (G4 — Build)
+    """
+    raw = task.get("gate")
+    if raw is not None:
+        # Accept "G3", "g3", "3", 3
+        s = str(raw).strip().upper().lstrip("G")
+        try:
+            n = int(s)
+            if 0 <= n <= 5:
+                return n
+        except ValueError:
+            pass
+    for skill in task.get("skills", []) or []:
+        gate = _SKILL_TO_GATE.get(str(skill))
+        if gate is not None:
+            return gate
+    return _DEFAULT_TASK_GATE
+
+
+def _criterion_gate(skill: str) -> int:
+    """Return the gate a skill-derived criterion belongs to.
+
+    Falls back to G3 (Design) for skills not in the map so they at least
+    surface somewhere — better than dropping them silently.
+    """
+    return _SKILL_TO_GATE.get(skill, 3)
+
+
+def _load_plan_doc(repo_root: Path) -> tuple[list[dict[str, Any]], str]:
+    """Load PLAN.tasks.yaml and return (tasks, wave_id).
+
+    Tries the canonical locations in order:
+      1. <root>/PLAN.tasks.yaml
+      2. <root>/core/execution/PLAN.tasks.yaml
+      3. <root>/core/execution/plan/PLAN.tasks.yaml
+
+    Returns ([], "") on any failure (parse error, file missing,
+    yaml not installed). This is best-effort — status output must never
+    crash because the plan file is malformed.
+    """
+    candidates = [
+        repo_root / "PLAN.tasks.yaml",
+        repo_root / "core" / "execution" / "PLAN.tasks.yaml",
+        repo_root / "core" / "execution" / "plan" / "PLAN.tasks.yaml",
+    ]
+    plan_path: Path | None = None
+    for c in candidates:
+        if c.is_file():
+            plan_path = c
+            break
+    if plan_path is None:
+        return ([], "")
+    try:
+        from signalos_lib.plan import load_tasks
+        doc = load_tasks(plan_path)
+        return ([t.to_dict() for t in doc.tasks], str(doc.wave or ""))
+    except Exception:
+        return ([], "")
+
+
+def _load_plan_tasks(repo_root: Path) -> list[dict[str, Any]]:
+    """Backwards-compat wrapper returning only the task list."""
+    tasks, _wave = _load_plan_doc(repo_root)
+    return tasks
+
+
+def _read_validator_evidence(
+    repo_root: Path, wave_id: str, skill: str
+) -> tuple[str, str | None]:
+    """Return (status, evidence_path) for a skill's validator output.
+
+    Looks for `.signalos/skill-validation/<wave>/<skill>.json`. If present
+    and parseable, status is 'passing' when violations==0 else 'failing';
+    evidence_path is the relative file path. If absent, returns ('pending',
+    None) — the orchestrator does not currently persist validator output,
+    so this is the expected fallback today. The schema is forward-compatible
+    with a future orchestrator change that writes:
+        { "violations": [...], "ok": bool, "ts": "..." }
+    """
+    if not wave_id or wave_id == "-":
+        wave_id = "current"
+    rel = Path(".signalos") / "skill-validation" / str(wave_id) / f"{skill}.json"
+    abs_path = repo_root / rel
+    if not abs_path.is_file():
+        return ("pending", None)
+    try:
+        data = json.loads(abs_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ("pending", None)
+    # Schema: explicit `ok` wins; else infer from violations[]
+    if isinstance(data, dict):
+        if "ok" in data:
+            return ("passing" if bool(data["ok"]) else "failing", str(rel).replace("\\", "/"))
+        violations = data.get("violations")
+        if isinstance(violations, list):
+            return ("passing" if len(violations) == 0 else "failing", str(rel).replace("\\", "/"))
+    return ("pending", str(rel).replace("\\", "/"))
+
+
+def _collect_gate_activities(
+    repo_root: Path, plan_tasks: list[dict[str, Any]]
+) -> dict[int, list[dict[str, Any]]]:
+    """Group plan tasks into per-gate activity lists.
+
+    Returns a dict keyed by gate id (0..5) → list of activity dicts. Each
+    activity has the spec shape (task_id, title, status, skills) PLUS a
+    `name` alias for the title (the DashboardView reads `a.name`).
+    """
+    by_gate: dict[int, list[dict[str, Any]]] = {i: [] for i in range(6)}
+    for t in plan_tasks:
+        gate = _task_gate(t)
+        title = str(t.get("title") or t.get("id") or "")
+        plan_status = str(t.get("status") or "pending")
+        skills = [str(s) for s in (t.get("skills") or [])]
+        by_gate[gate].append({
+            "task_id": str(t.get("id") or ""),
+            "title": title,
+            "name": title,  # DashboardView reads `a.name`
+            "status": _ui_activity_status(plan_status),
+            "plan_status": plan_status,  # raw value for callers that want it
+            "skills": skills,
+        })
+    return by_gate
+
+
+def _collect_gate_criteria(
+    repo_root: Path,
+    wave_id: str,
+    plan_tasks: list[dict[str, Any]],
+) -> dict[int, list[dict[str, Any]]]:
+    """Build per-gate criteria from skill_validators registry × plan tasks.
+
+    For every skill tagged on at least one task, emit a criterion on the
+    gate that skill maps to. Status is read from any persisted validator
+    output under .signalos/skill-validation/<wave>/<skill>.json; otherwise
+    "pending".
+    """
+    by_gate: dict[int, list[dict[str, Any]]] = {i: [] for i in range(6)}
+
+    # Lazy import: skill_validators is heavy and may not import in minimal
+    # installs. Fall back to empty criteria if it can't load.
+    try:
+        from signalos_lib.skill_validators import VALIDATORS as _VALIDATORS
+        known_validators = set(_VALIDATORS.keys())
+    except Exception:
+        known_validators = set()
+
+    # Collect the union of skills referenced by any task.
+    skills_in_use: set[str] = set()
+    for t in plan_tasks:
+        for s in (t.get("skills") or []):
+            skills_in_use.add(str(s))
+
+    # Only emit criteria for skills that (a) appear on a task AND (b) have
+    # a registered validator function. Skills without a validator are pure
+    # advisories — surfacing them as criteria would be noise.
+    for skill in sorted(skills_in_use & known_validators):
+        gate = _criterion_gate(skill)
+        status, evidence = _read_validator_evidence(repo_root, wave_id, skill)
+        by_gate[gate].append({
+            "name": skill,
+            "description": _CRITERION_DESCRIPTIONS.get(
+                skill, f"Validator {skill!r} must pass."
+            ),
+            "status": status,
+            "evidence": evidence,
+        })
+    return by_gate
+
+
+def _enrich_gates_with_details(
+    repo_root: Path,
+    gates: dict[str, bool],
+    wave_id: str,
+) -> list[dict[str, Any]]:
+    """Return a list of gate detail dicts, one per gate G0..G5.
+
+    Each dict has: id (int), key ('G<n>'), signed (bool), activities (list),
+    criteria (list). The top-level `gates` dict (G<n> → bool) is preserved
+    separately for backwards compatibility.
+    """
+    plan_tasks, plan_wave = _load_plan_doc(repo_root)
+    # Prefer the wave id declared in PLAN.tasks.yaml; fall back to the
+    # caller-supplied id (from worktree-state.json). This matters for
+    # locating persisted validator evidence under
+    # .signalos/skill-validation/<wave>/<skill>.json.
+    effective_wave = plan_wave or wave_id
+    activities_by_gate = _collect_gate_activities(repo_root, plan_tasks)
+    criteria_by_gate = _collect_gate_criteria(repo_root, effective_wave, plan_tasks)
+    out: list[dict[str, Any]] = []
+    for i in range(6):
+        key = f"G{i}"
+        out.append({
+            "id": i,
+            "key": key,
+            "signed": bool(gates.get(key)),
+            "activities": activities_by_gate.get(i, []),
+            "criteria": criteria_by_gate.get(i, []),
+        })
+    return out
+
+
+def build_status_json(
+    repo_root: str | Path,
+    product_id: str | None = None,
+) -> dict[str, Any]:
+    """Return the full status payload that `signalos status --json` emits.
+
+    Wraps :func:`get_wave_status` and attaches the M3 per-gate `activities`
+    and `criteria` arrays alongside the legacy `gates` boolean map. This
+    is the function the verification command in the audit plan invokes:
+
+        python -c "from signalos_lib.status import build_status_json; \\
+                   import json; print(json.dumps(build_status_json('.')))"
+    """
+    root = Path(repo_root).resolve() if not isinstance(repo_root, Path) else repo_root.resolve()
+    data = get_wave_status(root, product_id=product_id)
+    data["gate_details"] = _enrich_gates_with_details(
+        root, data.get("gates", {}), str(data.get("wave_id") or "-"),
+    )
+    return data
 
 
 def get_wave_status(

@@ -39,6 +39,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Track whether we've already warned about missing bash for emit.sh, so we
+# don't spam stderr if the user has multiple emitters or runs init twice.
+_BASH_WARNED = False
+
 from signalos_lib.ide import detect_ide
 
 __all__ = ["main"]
@@ -288,29 +292,111 @@ def _git_init(target: Path) -> None:
         )
 
 
+def _bash_available() -> bool:
+    """Return True if `bash` resolves to a working shell on this machine.
+
+    Mirrors the helper in orchestrator.py — on Windows this typically
+    resolves to Git Bash (C:/Program Files/Git/bin/bash.exe). When bash
+    is unavailable we silently skip shell-out steps in init rather than
+    failing, so headless / Windows-without-Git-Bash installs still work.
+    """
+    if shutil.which("bash") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", "echo ok"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return proc.returncode == 0 and "ok" in (proc.stdout or "")
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _register_ide_hooks(target: Path, ide: str) -> None:
-    """Run the active IDE's register-hooks.sh, if any.
+    """Run the active IDE's register-hooks.sh AND emit.sh, if any.
+
+    Two shell-outs in order:
+      1. `register-hooks.sh` — wires session-hook-dispatch into the IDE's
+         hook config (e.g. .claude/settings.json).
+      2. `emit.sh` — reads the canonical _shared/{commands,skills,hooks}.json
+         registries and the rendered session-preamble.md, then writes
+         IDE-native config files under the supplied --output-dir
+         (conventionally `.signalos/<ide>/`).
+
+    Both are best-effort: a missing script for a given IDE is silently
+    skipped, and a missing/broken bash short-circuits the entire step
+    with a one-time stderr warning (matches the orchestrator's
+    `_bash_available` lenient policy).
 
     No-op when no IDE was detected (headless install) — the bundle still
     contains all 8 emitters, so the user can re-run init or any signalos
-    command from inside an IDE later and the right register-hooks.sh
-    will fire on first invocation.
+    command from inside an IDE later and the right register-hooks.sh +
+    emit.sh will fire on first invocation.
     """
+    global _BASH_WARNED
     if not ide:
         return
-    script = (target / "core" / "tool-adapters" / "emitters"
-              / ide / "register-hooks.sh")
-    if not script.is_file():
+
+    register_script = (target / "core" / "tool-adapters" / "emitters"
+                       / ide / "register-hooks.sh")
+    emit_script = (target / "core" / "tool-adapters" / "emitters"
+                   / ide / "emit.sh")
+
+    # If neither script exists for this IDE, nothing to do.
+    if not register_script.is_file() and not emit_script.is_file():
         return
-    try:
-        subprocess.run(
-            ["bash", script.relative_to(target).as_posix()],
-            cwd=str(target), check=False,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except (OSError, FileNotFoundError):  # pragma: no cover
-        # bash missing — non-fatal; the user can rerun manually
-        pass
+
+    if not _bash_available():
+        if not _BASH_WARNED:
+            sys.stderr.write(
+                "  warn: `bash` not available; skipping IDE hook "
+                "registration + emit.sh. Install Git Bash (Windows) or "
+                "bash to populate `.signalos/" + ide + "/` automatically. "
+                "You can rerun `signalos init` once bash is on PATH.\n"
+            )
+            _BASH_WARNED = True
+        return
+
+    # 1) register-hooks.sh
+    if register_script.is_file():
+        try:
+            subprocess.run(
+                ["bash", register_script.relative_to(target).as_posix()],
+                cwd=str(target), check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except (OSError, FileNotFoundError):  # pragma: no cover
+            # bash disappeared between the check and the call — non-fatal
+            pass
+
+    # 2) emit.sh — write IDE-native config files at the workspace root.
+    # IMPORTANT: --output-dir is the workspace root ("."), not a subdir under
+    # `.signalos/`. Every emitter creates its own IDE-native subdirectory
+    # inside output_dir (claude-code → `.claude/`, cursor → `.cursor/`,
+    # windsurf → `.windsurfrules`, harness → `.signalos/harness/`, etc.) so
+    # IDE auto-discovery finds them at the conventional locations. Pointing
+    # this at `.signalos/<ide>` would produce e.g. `.signalos/claude-code/.claude/commands/`
+    # which Claude Code does not scan.
+    if emit_script.is_file():
+        try:
+            subprocess.run(
+                [
+                    "bash",
+                    emit_script.relative_to(target).as_posix(),
+                    "--commands-json", "core/tool-adapters/_shared/commands.json",
+                    "--skills-json",   "core/tool-adapters/_shared/skills.json",
+                    "--hooks-json",    "core/tool-adapters/_shared/hooks.json",
+                    "--preamble",      "core/tool-adapters/_shared/session-preamble.md",
+                    "--output-dir",    ".",
+                ],
+                cwd=str(target),
+                check=False,
+                capture_output=True,
+                timeout=15,
+            )
+        except (OSError, FileNotFoundError, subprocess.TimeoutExpired):  # pragma: no cover
+            # Non-fatal — the user can rerun manually
+            pass
 
 
 # ---------------------------------------------------------------------------

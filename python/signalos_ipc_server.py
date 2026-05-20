@@ -174,6 +174,26 @@ def route(req_id: str, command: str, args: list[str]) -> dict:
         limit = int(args[0]) if args else 50
         return ok(req_id, data=audit_list(limit))
 
+    # Milestone 2-a: frontend chat-response guard records a redaction event.
+    # Args is a single JSON-encoded object: {action, kind_counts, prompt_head,
+    # redactions[]}. We append it to .signalos/AUDIT_TRAIL.jsonl via the same
+    # helper used by the build-write path. Unknown extra fields are preserved
+    # verbatim (we don't filter the schema -- the chat guard owns its event
+    # shape and the audit trail is append-only journal, not a typed log).
+    if command == "audit:append":
+        if not args:
+            return err(req_id, "audit:append requires a JSON payload arg")
+        try:
+            payload = json.loads(args[0])
+        except (TypeError, ValueError) as exc:
+            return err(req_id, f"audit:append payload was not valid JSON: {exc}")
+        if not isinstance(payload, dict):
+            return err(req_id, "audit:append payload must be a JSON object")
+        if "action" not in payload:
+            payload["action"] = "chat-response-filtered"
+        _append_audit(os.getcwd(), payload)
+        return ok(req_id, data={"ok": True})
+
     if command == "cost:summary":
         return ok(req_id, data={"note": "cost tracked in Rust provider layer"})
 
@@ -419,6 +439,14 @@ def get_wave_state() -> dict:
 def get_gate_states() -> list[dict]:
     status = get_status_json()
     gate_status = status.get("gates") or {}
+    # M3: status.py::build_status_json now emits a `gate_details` array with
+    # per-gate `activities` and `criteria`. Index by gate key so we can attach
+    # them onto the per-gate entries the UI consumes.
+    details_by_key = {
+        d.get("key"): d
+        for d in (status.get("gate_details") or [])
+        if isinstance(d, dict) and d.get("key")
+    }
     first_open_seen = False
     gates: list[dict] = []
     for gate_id in range(6):
@@ -431,6 +459,7 @@ def get_gate_states() -> list[dict]:
             first_open_seen = True
         else:
             state = "locked"
+        detail = details_by_key.get(key, {})
         gates.append(
             {
                 "id": gate_id,
@@ -439,6 +468,8 @@ def get_gate_states() -> list[dict]:
                 "status": state,
                 "signer": None,
                 "signed_at": None,
+                "activities": detail.get("activities") or [],
+                "criteria": detail.get("criteria") or [],
             }
         )
     return gates

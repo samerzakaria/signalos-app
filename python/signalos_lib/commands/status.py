@@ -102,10 +102,12 @@ def main(argv: list[str]) -> int:
         return 0
 
     if args.as_json:
-        # JSON mode (AMD-CORE-010)
+        # JSON mode (AMD-CORE-010 + M3 gate emissions).
+        # Use build_status_json so the payload includes per-gate
+        # `activities` and `criteria` arrays the DashboardView reads.
         try:
             root = repo_root if repo_root is not None else status_lib._repo_root()
-            data = status_lib.get_wave_status(root, product_id=product_id)
+            data = status_lib.build_status_json(root, product_id=product_id)
             sys.stdout.write(json.dumps(data, default=str) + "\n")
             # Exit 1 if Gate 5 signed, else 0
             gates = data.get("gates", {})

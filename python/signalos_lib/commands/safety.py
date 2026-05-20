@@ -83,7 +83,19 @@ def cmd_signal_careful(args: list[str]) -> int:
 
 
 def cmd_signal_freeze(args: list[str]) -> int:
-    """CLI wrapper for freeze_dir."""
+    """CLI wrapper for freeze_dir.
+
+    Dual-write note (Milestone 2-b / AMD-CORE-107):
+    This handler writes the durable freeze record under
+    ``.signalos/safety/freeze/<hash>.json``. That record is the audit-trail
+    source of truth. In parallel, the JS chat layer (see
+    ``src/js/ui/chat.js``) calls ``ipc.enforcement.freeze()`` immediately
+    after this CLI returns, which flips the Rust in-memory mutex
+    (``EnforcementStore.wave_frozen``) read by the Toolbar's "Frozen"
+    indicator. Both stores must converge — do NOT add freeze-flip logic
+    to the Rust mutex here, and do NOT remove the JS-side hook in chat.js
+    without also adding a direct Python→Rust bridge.
+    """
     if not args:
         print("usage: signal-freeze <target> --wave W [options]")
         return 1
@@ -138,7 +150,16 @@ def cmd_signal_guard(args: list[str]) -> int:
 
 
 def cmd_signal_unfreeze(args: list[str]) -> int:
-    """CLI wrapper for unfreeze_dir."""
+    """CLI wrapper for unfreeze_dir.
+
+    Dual-write note (Milestone 2-b / AMD-CORE-107):
+    This handler updates the durable freeze record's ``status`` field to
+    ``"unfrozen"`` (the audit-trail truth). The JS chat layer (see
+    ``src/js/ui/chat.js``) then calls ``ipc.enforcement.unfreeze()``,
+    which clears the Rust in-memory mutex so the Toolbar's indicator
+    reflects the new state. See ``cmd_signal_freeze`` above for the
+    full convergence contract.
+    """
     if not args:
         print("usage: signal-unfreeze <target> [options]")
         return 1
