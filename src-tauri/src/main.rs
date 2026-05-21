@@ -11,7 +11,7 @@ use signalos_desktop_lib::runtime;
 use signalos_desktop_lib::sidecar;
 use signalos_desktop_lib::test_automation;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, LogicalSize, Manager};
 
 fn main() {
     // â”€â”€ Startup timer (T5-6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -51,6 +51,13 @@ fn main() {
 
             // â”€â”€ Native menu (T1-1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             build_menu(app)?;
+
+            // tauri.conf.json's minWidth/minHeight weren't being honored on
+            // macOS in the v2.0.0-internal build (window shattered below
+            // 900px wide). Programmatic set_min_size is the backstop.
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_min_size(Some(LogicalSize::new(900.0, 600.0)));
+            }
 
             // â”€â”€ Open devtools in debug builds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             #[cfg(debug_assertions)]
