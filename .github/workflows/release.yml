@@ -219,16 +219,19 @@ jobs:
             sleep 20
           done
         env:
-          TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD:             ${{ secrets.TAURI_KEY_PASSWORD }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          # Tauri 2 renamed: TAURI_PRIVATE_KEY → TAURI_SIGNING_PRIVATE_KEY,
+          # TAURI_KEY_PASSWORD → TAURI_SIGNING_PRIVATE_KEY_PASSWORD. The
+          # secrets are still stored under the old names in GitHub Actions.
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT:     ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
 
       - name: Build Tauri app (Windows/Linux)
         if: matrix.platform == 'windows' || matrix.platform == 'linux'
         run: cargo tauri build ${{ matrix.args }}
         env:
-          TAURI_PRIVATE_KEY:              ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD:             ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           # Apple vars (APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_TEAM_ID,
           # APPLE_PASSWORD) are injected by the step above via GITHUB_ENV.
           # They are NOT set here so that empty-string secrets never reach Tauri.
