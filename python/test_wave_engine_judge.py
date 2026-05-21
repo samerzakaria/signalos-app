@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 from signalos_lib.wave_engine_judge import (
     _extract_first_json_object,
     build_llm_judge,
+    clear_judge_cache,
     llm_judge_enabled,
 )
 
@@ -67,6 +68,11 @@ class ExtractFirstJsonObjectTests(unittest.TestCase):
 
 
 class JudgeContractTests(unittest.TestCase):
+    def setUp(self):
+        # Cache is module-level; clear so tests don't leak verdicts
+        # between each other.
+        clear_judge_cache()
+
     def test_bare_json_response_yields_drifted_true(self):
         provider = _FakeProvider(
             '{"drifted": true, "confidence": 0.9, "reasoning": "domain shift"}'
@@ -152,23 +158,96 @@ class JudgeContractTests(unittest.TestCase):
 
 
 class FeatureFlagTests(unittest.TestCase):
-    def test_disabled_by_default(self):
+    """Per WAVE-ENGINE-DESIGN §13.Q2 — RESOLVED: accepted, with caching.
+    The judge is on by default; SIGNALOS_LLM_JUDGE_DRIFT=0 (or false/no/off)
+    disables it."""
+
+    def test_enabled_by_default(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SIGNALOS_LLM_JUDGE_DRIFT", None)
-            self.assertFalse(llm_judge_enabled())
+            self.assertTrue(llm_judge_enabled())
 
     def test_enabled_when_env_set_to_1(self):
         with mock.patch.dict(os.environ, {"SIGNALOS_LLM_JUDGE_DRIFT": "1"}):
             self.assertTrue(llm_judge_enabled())
 
-    def test_other_values_disabled(self):
-        for v in ("0", "false", "no", "yes", "true", ""):
+    def test_disabled_when_env_set_to_disable_values(self):
+        for v in ("0", "false", "no", "off", ""):
             with mock.patch.dict(os.environ, {"SIGNALOS_LLM_JUDGE_DRIFT": v}):
-                self.assertFalse(llm_judge_enabled(), f"value {v!r} should not enable")
+                self.assertFalse(llm_judge_enabled(), f"value {v!r} should disable")
+
+    def test_enabled_for_arbitrary_truthy_values(self):
+        for v in ("yes", "true", "on", "ENABLE"):
+            with mock.patch.dict(os.environ, {"SIGNALOS_LLM_JUDGE_DRIFT": v}):
+                self.assertTrue(llm_judge_enabled(), f"value {v!r} should enable")
+
+
+class CacheTests(unittest.TestCase):
+    """§13.Q2 — verdict cached per (soul, request) pair so we don't
+    re-pay per turn."""
+
+    def setUp(self):
+        clear_judge_cache()
+
+    def test_repeated_call_with_same_inputs_hits_cache(self):
+        provider = _FakeProvider('{"drifted": true, "confidence": 0.9}')
+        judge = build_llm_judge(provider=provider, model="x")
+        r1 = judge("same soul body", "same request body")
+        r2 = judge("same soul body", "same request body")
+        # Provider was called exactly once for the two judge() calls.
+        self.assertEqual(len(provider.calls), 1)
+        # Second call's verdict is flagged as cached.
+        self.assertTrue(r2.get("cached"))
+        self.assertFalse(r1.get("cached"))
+        # Verdict shape preserved.
+        self.assertEqual(r1["drifted"], r2["drifted"])
+        self.assertEqual(r1["confidence"], r2["confidence"])
+
+    def test_different_inputs_each_hit_provider(self):
+        provider = _FakeProvider('{"drifted": false, "confidence": 0.5}')
+        judge = build_llm_judge(provider=provider, model="x")
+        judge("soul A", "request A")
+        judge("soul A", "request B")  # different request
+        judge("soul B", "request A")  # different soul
+        self.assertEqual(len(provider.calls), 3)
+
+    def test_failed_calls_not_cached(self):
+        """A provider exception must not poison the cache — the next
+        call gets a fresh attempt at the provider."""
+        good = _FakeProvider('{"drifted": true, "confidence": 0.9}')
+        bad = _RaisingProvider()
+        bad_judge = build_llm_judge(provider=bad, model="x")
+        bad_judge("s", "r")  # returns the llm-call-failed fallback
+        good_judge = build_llm_judge(provider=good, model="x")
+        good_result = good_judge("s", "r")
+        # The good judge gets to call the provider — the failed
+        # earlier verdict was not cached.
+        self.assertEqual(len(good.calls), 1)
+        self.assertTrue(good_result["drifted"])
+        self.assertFalse(good_result.get("cached"))
+
+    def test_unparseable_responses_not_cached(self):
+        provider = _FakeProvider("nonsense not json")
+        judge = build_llm_judge(provider=provider, model="x")
+        judge("s", "r")
+        judge("s", "r")  # same inputs — but the first call's
+        # response was unparseable, so nothing was cached.
+        self.assertEqual(len(provider.calls), 2)
+
+    def test_clear_judge_cache_drops_entries(self):
+        provider = _FakeProvider('{"drifted": false}')
+        judge = build_llm_judge(provider=provider, model="x")
+        judge("s", "r")
+        clear_judge_cache()
+        judge("s", "r")
+        self.assertEqual(len(provider.calls), 2)
 
 
 class IntegrationWithDetectScopeDriftTests(unittest.TestCase):
     """End-to-end: detect_scope_drift uses the judge for ambiguous-zone."""
+
+    def setUp(self):
+        clear_judge_cache()
 
     def test_judge_resolves_ambiguous_zone(self):
         import tempfile

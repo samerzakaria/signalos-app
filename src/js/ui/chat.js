@@ -226,23 +226,68 @@ async function sendMsg() {
 }
 window.sendMsg = sendMsg;
 
-// WAVE-ENGINE-DESIGN §7 — translator-mode UI hook. Lets the user paste
-// a local file path or external URL (Figma, markdown, PDF, .docx) so
-// the engine ingests it and surfaces the SignalOS-format version for
-// the gate agent to consume. Bound to the composer's paperclip button.
+// WAVE-ENGINE-DESIGN §7 — translator-mode UI hook. Lets the user pick
+// (or drag-drop) a local file or paste an external URL (Figma,
+// markdown, PDF, .docx) so the engine ingests it and surfaces the
+// SignalOS-format version for the gate agent to consume.
 //
-// In v1 we prompt for the path/URL inline (no file picker yet — Tauri's
-// dialog plugin would add a dependency). Drag-drop is the natural
-// follow-on once this path/URL flow is exercised in practice.
+// Three entry paths (richest first; graceful fallback):
+//   1. Tauri native file picker via @tauri-apps/plugin-dialog
+//   2. Tauri webview drag-drop event (registered on module load below)
+//   3. window.prompt() — last resort for non-Tauri dev / browser
+//
+// All three call into runTranslatorOn() which is the single render
+// path so the chat output is identical regardless of entry method.
+
+async function pickArtifactPath() {
+  // Try Tauri native file picker first — works in the desktop shell.
+  try {
+    const dialog = await import('@tauri-apps/plugin-dialog');
+    if (dialog && typeof dialog.open === 'function') {
+      const selected = await dialog.open({
+        multiple: false,
+        directory: false,
+        title: 'Translator-mode — pick external artifact',
+        filters: [
+          { name: 'Supported docs', extensions: ['md', 'markdown', 'pdf', 'docx'] },
+          { name: 'All files', extensions: ['*'] },
+        ],
+      });
+      if (typeof selected === 'string' && selected.trim()) {
+        return selected.trim();
+      }
+      // User dismissed the dialog — don't fall through to prompt;
+      // that would feel like nagging.
+      if (selected === null) return null;
+    }
+  } catch (err) {
+    // Plugin unavailable (non-Tauri browser dev) or runtime error —
+    // log + fall through to prompt() so the path still ships.
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[translator] Tauri dialog unavailable, falling back to prompt():', err && err.message ? err.message : err);
+    }
+  }
+
+  // Fallback: window.prompt for URL entry (Figma / generic URL — no
+  // file picker UI handles those) and for non-Tauri dev environments.
+  if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+    return window.prompt(
+      'Translator-mode (WAVE-ENGINE-DESIGN §7)\n\n'
+      + 'Paste a local file path (.md / .pdf / .docx) or a URL '
+      + '(Figma / generic):'
+    );
+  }
+  return null;
+}
+
 export async function attachExternalDoc() {
-  const input = typeof window !== 'undefined' && typeof window.prompt === 'function'
-    ? window.prompt(
-        'Translator-mode (WAVE-ENGINE-DESIGN §7)\n\n'
-        + 'Paste a local file path (.md / .pdf / .docx) or a URL '
-        + '(Figma / generic):'
-      )
-    : null;
+  const input = await pickArtifactPath();
   const artifact = (input || '').trim();
+  if (!artifact) return;
+  await runTranslatorOn(artifact);
+}
+
+async function runTranslatorOn(artifact) {
   if (!artifact) return;
 
   // Show the user what we're ingesting so the next system bubble has
@@ -300,6 +345,33 @@ export async function attachExternalDoc() {
   }
 }
 window.attachFile = attachExternalDoc;
+
+// WAVE-ENGINE-DESIGN §7 — Tauri webview drag-drop registration.
+// When the user drops a file onto the SignalOS window, route the first
+// path through the same translator pipeline as the paperclip button.
+// Registered once at module load; non-Tauri dev environments silently
+// no-op because the @tauri-apps/api import resolves to a stub.
+(async function registerWebviewDragDrop() {
+  try {
+    const webviewMod = await import('@tauri-apps/api/webview');
+    if (!webviewMod || typeof webviewMod.getCurrentWebview !== 'function') return;
+    const webview = webviewMod.getCurrentWebview();
+    if (!webview || typeof webview.onDragDropEvent !== 'function') return;
+    await webview.onDragDropEvent(async (event) => {
+      const payload = event && event.payload;
+      if (!payload || payload.type !== 'drop') return;
+      const paths = Array.isArray(payload.paths) ? payload.paths : [];
+      if (paths.length === 0) return;
+      // Multi-file drop: take the first (engine processes one artifact
+      // per turn). The user can drop more in subsequent turns.
+      await runTranslatorOn(paths[0]);
+    });
+  } catch (err) {
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[translator] webview drag-drop unavailable (non-Tauri dev?):', err && err.message ? err.message : err);
+    }
+  }
+})();
 
 export function addUserBubble(text) {
   state.chatBubbles = [...state.chatBubbles, { id: nowId(), kind: 'user', text, ts: 'just now' }];

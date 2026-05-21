@@ -32,6 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -41,7 +42,30 @@ from typing import Any, Callable
 __all__ = [
     "build_llm_judge",
     "default_llm_judge",
+    "clear_judge_cache",
+    "llm_judge_enabled",
 ]
+
+
+# Per WAVE-ENGINE-DESIGN §13.Q2 — cache the verdict for the duration of
+# the wave so we don't re-pay per turn. Keyed by content hash (sha256
+# of soul + request) so identical (soul, request) pairs hit the cache
+# regardless of which wave_id surfaces them. Module-level cache: lives
+# for the IPC process lifetime, which matches "duration of the wave"
+# closely enough in practice — wave turns are seconds apart, IPC server
+# typically lives for hours.
+_JUDGE_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _cache_key(soul_text: str, user_request: str) -> str:
+    raw = (soul_text or "").strip() + "\x00" + (user_request or "").strip()
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def clear_judge_cache() -> None:
+    """Drop all cached verdicts. Used by tests; not part of the
+    runtime path."""
+    _JUDGE_CACHE.clear()
 
 
 _JUDGE_PROMPT_TEMPLATE = """You judge whether two short product descriptions are about the same project, or have drifted to a different project.
@@ -116,6 +140,12 @@ def build_llm_judge(
             model = DEFAULT_MODEL
 
     def judge(soul_text: str, user_request: str) -> dict[str, Any]:
+        # §13.Q2 — cache the verdict to avoid re-paying per turn.
+        cache_key = _cache_key(soul_text, user_request)
+        cached = _JUDGE_CACHE.get(cache_key)
+        if cached is not None:
+            return {**cached, "cached": True}
+
         prompt = _JUDGE_PROMPT_TEMPLATE.format(
             soul=soul_text.strip(), request=user_request.strip(),
         )
@@ -157,11 +187,13 @@ def build_llm_judge(
         if not isinstance(reasoning, str):
             reasoning = ""
 
-        return {
+        verdict = {
             "drifted": drifted,
             "confidence": confidence,
             "reasoning": reasoning[:200],
         }
+        _JUDGE_CACHE[cache_key] = verdict
+        return verdict
 
     return judge
 
@@ -176,7 +208,12 @@ def default_llm_judge(soul_text: str, user_request: str) -> dict[str, Any]:
 
 
 # Used by the IPC layer to decide whether to attach an llm_judge when
-# constructing a WaveEngine. Default off; the design (§13.Q2) accepts
-# the cost when SIGNALOS_LLM_JUDGE_DRIFT=1 is set.
+# constructing a WaveEngine. Default **on** per design §13.Q2
+# (RESOLVED: accepted, with caching) — the heuristic still runs first
+# and only the ambiguous-zone (0.1 < overlap < 0.4) reaches the LLM,
+# and the verdict is cached per (soul, request) pair so we don't
+# re-pay across turns. Set SIGNALOS_LLM_JUDGE_DRIFT=0 to disable
+# (e.g., CI/proof-scenario runs that shouldn't burn provider tokens).
 def llm_judge_enabled() -> bool:
-    return os.environ.get("SIGNALOS_LLM_JUDGE_DRIFT", "0") == "1"
+    val = os.environ.get("SIGNALOS_LLM_JUDGE_DRIFT", "1").strip().lower()
+    return val not in {"0", "false", "no", "off", ""}

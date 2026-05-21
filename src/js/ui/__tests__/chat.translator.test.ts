@@ -30,6 +30,29 @@ vi.mock('../../../services/waveEngineClient.ts', () => ({
   tryBegin,
 }));
 
+// Mock the Tauri dialog plugin so tests can control its return value
+// (selected path / null on cancel / throw to force prompt fallback).
+const dialogOpen = vi.fn();
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: dialogOpen }));
+
+// Mock the Tauri webview API for drag-drop registration + manual trigger.
+let dragDropHandler: ((event: { payload: { type: string; paths?: string[] } }) => unknown) | null = null;
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: async (cb: (event: { payload: { type: string; paths?: string[] } }) => unknown) => {
+      dragDropHandler = cb;
+      return () => { dragDropHandler = null; };
+    },
+  }),
+}));
+
+// Console silence — chat.js logs "[translator] Tauri dialog unavailable…"
+// on every fallback. The mocked dialog avoids that, but keep this here
+// for when a test forces an exception path.
+beforeEach(() => {
+  vi.spyOn(console, 'debug').mockImplementation(() => {});
+});
+
 vi.mock('../../app-v2.js', () => ({
   loadEnforcement: vi.fn(async () => undefined),
   updateCostDisplay: vi.fn(),
@@ -54,6 +77,11 @@ function setPrompt(answer: string | null): void {
 
 beforeEach(() => {
   translateExternal.mockReset();
+  // Default: dialog throws so the existing prompt-based tests still
+  // exercise the fallback. Tests that want to drive the dialog
+  // success/cancel path override before calling attachExternalDoc.
+  dialogOpen.mockReset();
+  dialogOpen.mockRejectedValue(new Error('dialog unavailable (test default)'));
   chatBubbles.value = [];
   chatInputValue.value = '';
   busy.value = false;
@@ -175,5 +203,94 @@ describe('attachExternalDoc — translator-mode UI hook', () => {
     expect(
       (window as unknown as { attachFile: () => Promise<void> }).attachFile,
     ).toBe(attachExternalDoc);
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// Tauri-dialog success path (skips window.prompt entirely)
+// --------------------------------------------------------------------------
+
+describe('attachExternalDoc — Tauri dialog path', () => {
+  it('uses the dialog-returned path without falling back to prompt', async () => {
+    setPrompt('SHOULD-NOT-BE-USED');
+    dialogOpen.mockReset();
+    dialogOpen.mockResolvedValue('/Users/me/brief.md');
+    translateExternal.mockResolvedValue({
+      translation: { supported: true, format: 'markdown', text: 'body' },
+      gate: 'G1',
+      system_bubble: { kind: 'reroute', gate: 'G1', text: 'Translating markdown' },
+    });
+    await attachExternalDoc();
+    expect(translateExternal).toHaveBeenCalledWith('/Users/me/brief.md');
+  });
+
+  it('respects dialog cancel (null return) by not running translator', async () => {
+    setPrompt('SHOULD-NOT-BE-USED');
+    dialogOpen.mockReset();
+    dialogOpen.mockResolvedValue(null);   // user dismissed the dialog
+    await attachExternalDoc();
+    expect(translateExternal).not.toHaveBeenCalled();
+  });
+
+  it('falls through to prompt() when the dialog plugin throws', async () => {
+    setPrompt('docs/typed-by-hand.md');
+    dialogOpen.mockReset();
+    dialogOpen.mockRejectedValue(new Error('plugin runtime error'));
+    translateExternal.mockResolvedValue({
+      translation: { supported: true, format: 'markdown', text: 'body' },
+      gate: null,
+      system_bubble: { kind: 'reroute', text: 'Translating markdown' },
+    });
+    await attachExternalDoc();
+    expect(translateExternal).toHaveBeenCalledWith('docs/typed-by-hand.md');
+  });
+});
+
+
+// --------------------------------------------------------------------------
+// Tauri webview drag-drop path (handler registered at module load)
+// --------------------------------------------------------------------------
+
+describe('attachExternalDoc — Tauri drag-drop path', () => {
+  it('registers a drag-drop handler at module load', () => {
+    expect(dragDropHandler).not.toBeNull();
+  });
+
+  it('routes a drop event through the translator pipeline', async () => {
+    translateExternal.mockResolvedValue({
+      translation: { supported: true, format: 'pdf', text: 'pdf body' },
+      gate: 'G1',
+      system_bubble: { kind: 'reroute', gate: 'G1', text: 'Translating pdf' },
+    });
+    await dragDropHandler!({
+      payload: { type: 'drop', paths: ['/Users/me/brief.pdf'] },
+    });
+    expect(translateExternal).toHaveBeenCalledWith('/Users/me/brief.pdf');
+    // user-bubble surfaces what was dropped (provenance).
+    expect(chatBubbles.value.some((b) => b.text.includes('/Users/me/brief.pdf'))).toBe(true);
+  });
+
+  it('takes the first path when multiple files are dropped', async () => {
+    translateExternal.mockResolvedValue({
+      translation: { supported: true, format: 'markdown', text: 'body' },
+      gate: null,
+      system_bubble: { kind: 'reroute', text: 'Translating markdown' },
+    });
+    await dragDropHandler!({
+      payload: { type: 'drop', paths: ['/Users/me/a.md', '/Users/me/b.md', '/Users/me/c.pdf'] },
+    });
+    expect(translateExternal).toHaveBeenCalledTimes(1);
+    expect(translateExternal).toHaveBeenCalledWith('/Users/me/a.md');
+  });
+
+  it('ignores drag-over (type !== "drop")', async () => {
+    await dragDropHandler!({ payload: { type: 'over' } });
+    expect(translateExternal).not.toHaveBeenCalled();
+  });
+
+  it('ignores empty path list', async () => {
+    await dragDropHandler!({ payload: { type: 'drop', paths: [] } });
+    expect(translateExternal).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@
 **Repo HEAD:** `538d596` (main, post sandbox + P0-fix merge)
 **Supersedes:** `SYSTEM-AUDIT-AND-COMPLETION-PLAN-2026-05-20.md` (v0.1 — unverified)
 
+**Wave-engine cross-reference (2026-05-21):** The wave-engine work described in §6.7 (G3 design three-shape contract) and the broader §6 universality discussion is now codified in [`WAVE-ENGINE-DESIGN.md`](WAVE-ENGINE-DESIGN.md). That doc is the source of truth for the engine's state machine, per-gate agent contracts, scope-drift detection, refusal taxonomy (§9), and the §13 resolved open questions. The audit doc here remains the source of truth for the file-by-file inventory + the verification status. The two are paired: this doc says *what* needs to exist; the engine doc says *how* it executes. See also [`MEMORY.md`](../MEMORY.md) for the project-level index of both.
+
 This document is built **batch by batch**. Each batch is a verification pass over one subsystem, and each section below is added only after every line in it has been confirmed by direct read. If a section is not yet written, that batch has not yet been verified.
 
 ---
