@@ -1,22 +1,22 @@
 {
-  "version": "2.0.0-internal",
-  "notes":   "SignalOS v2.0.0-internal ",
-  "pub_date": "2026-05-21T18:05:31Z",
+  "version": "1.1.1",
+  "notes":   " ### Hotfix — v1.1.0 shipped non-interactive on Windows  ",
+  "pub_date": "2026-05-18T03:58:23Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_aarch64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.1/SignalOS_1.1.1_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64.dmg",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.1/SignalOS_1.1.1_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64-setup.exe",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.1/SignalOS_1.1.1_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_amd64.AppImage",
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v1.1.1/SignalOS_1.1.1_amd64.AppImage",
       "signature": ""
     }
   }
