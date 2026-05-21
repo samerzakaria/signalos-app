@@ -69,6 +69,16 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
 
+      # tauri.conf.json beforeBuildCommand = "npm run build" (Vite). Without
+      # Node + deps on PATH, `cargo tauri build` exits 127 before producing
+      # any artifacts.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
       - name: Generate app icons
         working-directory: src-tauri
         run: cargo tauri icon icons/icon.svg
