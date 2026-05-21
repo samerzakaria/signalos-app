@@ -37,11 +37,19 @@ $RepoRoot = Resolve-Path "$PSScriptRoot\.."
 Set-Location $RepoRoot
 
 # --- 1. Identity (who is attesting?) ----------------------------------------
+# Name comes from git config — testers see who built it.
+# Email defaults to project noreply so personal email never ships in
+# the attestation file. Override with SIGNALOS_BUILDER_EMAIL when you
+# want a specific address (e.g., a per-tester distribution alias).
 $BuilderName  = git config user.name
-$BuilderEmail = git config user.email
-if (-not $BuilderName -or -not $BuilderEmail) {
-    Write-Error "git config user.name / user.email must be set to attest a build."
+if (-not $BuilderName) {
+    Write-Error "git config user.name must be set to attest a build."
     exit 1
+}
+$BuilderEmail = if ($env:SIGNALOS_BUILDER_EMAIL) {
+    $env:SIGNALOS_BUILDER_EMAIL
+} else {
+    "noreply@signalos.app"
 }
 Write-Host "-- Builder identity -----------------------------------------"
 Write-Host "  Name:    $BuilderName"

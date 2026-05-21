@@ -170,5 +170,100 @@ class SandboxRealDocker(unittest.TestCase):
             self.assertEqual(wrapped, ["echo", "host-side"])
 
 
+@unittest.skipUnless(_DOCKER_OK, "Docker daemon not reachable; skipping integration suite")
+class TddInDockerEndToEnd(unittest.TestCase):
+    """Closes v0.1 audit §5.2 — TDD-in-Docker verification.
+
+    The deferred item: "enable sandbox toggle; run a wave with TDD-tagged
+    task; verify tests execute in container." The orchestrator routes
+    every test execution through `tdd_runner.run_tests_for_files`,
+    which calls `maybe_wrap_for_sandbox`. The tests below pin that
+    contract end-to-end: a TDD-tagged task's test command runs inside
+    a container, the container's hostname differs from the host's, and
+    when sandbox is off the same command runs on the host directly.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not _pull_image_once():
+            raise unittest.SkipTest(f"could not pull {_IMAGE}; network issue?")
+
+    def test_is_tdd_task_recognises_skill_tag(self) -> None:
+        from signalos_lib.tdd_runner import is_tdd_task
+        self.assertTrue(is_tdd_task({"skills": ["test-driven-development"]}))
+        self.assertTrue(is_tdd_task({"skills": ["security-audit", "test-driven-development"]}))
+        self.assertFalse(is_tdd_task({"skills": ["security-audit"]}))
+        self.assertFalse(is_tdd_task({}))
+
+    def test_tdd_runner_routes_through_docker_when_sandbox_enabled(self) -> None:
+        """The TDD runner's public seam is `run_tests_for_files`. With
+        sandbox.json enabled, it must wrap the test command in
+        `docker run` — proven by container-vs-host hostname diff."""
+        from signalos_lib.tdd_runner import run_tests_for_files
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, enabled=True, image_js=_IMAGE)
+            # Synthetic TestRunner: prints the in-container hostname.
+            # We use hostname diff (host vs container) as the proof of
+            # containment, matching the pattern in
+            # test_maybe_wrap_when_enabled_actually_runs.
+            fake_runner = (
+                "shell",
+                ["sh", "-c", "hostname; echo SANDBOX_TDD_OK"],
+            )
+            passed, output = run_tests_for_files(
+                root, fake_runner, test_file_paths=[],
+            )
+            self.assertTrue(passed, f"TDD-in-Docker run failed: {output}")
+            self.assertIn("SANDBOX_TDD_OK", output)
+            # Hostname check — the container's hostname is a short ID,
+            # never matches the host's.
+            host_hostname = (
+                os.uname().nodename if hasattr(os, "uname")
+                else os.environ.get("COMPUTERNAME", "")
+            )
+            container_hostname = output.splitlines()[0].strip()
+            if host_hostname and container_hostname:
+                self.assertNotEqual(
+                    container_hostname.lower(),
+                    host_hostname.lower(),
+                    "hostname matches host — TDD test did not run isolated",
+                )
+
+    def test_tdd_runner_runs_on_host_when_sandbox_disabled(self) -> None:
+        """Sandbox toggle is authoritative: with sandbox.json disabled,
+        the TDD test command runs directly on host (no Docker wrap)
+        even when Docker is available."""
+        from signalos_lib.tdd_runner import run_tests_for_files
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            set_sandbox_config(root, enabled=False)
+            fake_runner = (
+                "shell",
+                ["sh", "-c", "echo HOST_TDD_OK; hostname"],
+            )
+            passed, output = run_tests_for_files(
+                root, fake_runner, test_file_paths=[],
+            )
+            self.assertTrue(passed, output)
+            self.assertIn("HOST_TDD_OK", output)
+            # Hostname is the host's, not a container ID.
+            host_hostname = (
+                os.uname().nodename if hasattr(os, "uname")
+                else os.environ.get("COMPUTERNAME", "")
+            )
+            in_runner_hostname = output.splitlines()[1].strip()
+            if host_hostname and in_runner_hostname:
+                # On Linux CI the test runner sees the host's nodename.
+                # We tolerate both lower/upper for runner naming quirks.
+                self.assertEqual(
+                    in_runner_hostname.lower(),
+                    host_hostname.lower(),
+                    "expected host execution; got something else",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

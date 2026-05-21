@@ -30,7 +30,12 @@ through. Public users would (rightly) be alarmed.
 
 When you run `scripts/build-internal.ps1`, the script:
 
-1. Reads your identity from `git config user.name` and `user.email`.
+1. Reads your name from `git config user.name`. **Email is set to a
+   project-level noreply address** (`noreply@signalos.app`) rather
+   than the maintainer's personal Gmail — testers report bugs via the
+   distribution-channel link in `distribution_notes`, not by emailing
+   the builder. Set `SIGNALOS_BUILDER_EMAIL` if you want a different
+   address in the attestation.
 2. Captures the git commit SHA, branch, clean/dirty state, and timestamp.
 3. Builds the unsigned installer via `cargo tauri build --bundles nsis,msi`.
 4. Computes SHA-256 of every installer file produced.
@@ -45,7 +50,7 @@ When you run `scripts/build-internal.ps1`, the script:
      "version": "0.0.9",
      "builder": {
        "name": "Samer Zakaria",
-       "email": "samer.zakaria@gmail.com"
+       "email": "noreply@signalos.app"
      },
      "built_at": "2026-05-15T18:30:00Z",
      "git": {

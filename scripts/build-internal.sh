@@ -15,12 +15,16 @@ for arg in "$@"; do
   esac
 done
 
+# Name comes from git config — testers see who built it.
+# Email defaults to project noreply so personal email never ships in
+# the attestation file. Override with SIGNALOS_BUILDER_EMAIL when you
+# want a specific address (e.g., a per-tester distribution alias).
 BUILDER_NAME="$(git config user.name)"
-BUILDER_EMAIL="$(git config user.email)"
-if [[ -z "$BUILDER_NAME" || -z "$BUILDER_EMAIL" ]]; then
-  echo "git config user.name / user.email must be set to attest a build." >&2
+if [[ -z "$BUILDER_NAME" ]]; then
+  echo "git config user.name must be set to attest a build." >&2
   exit 1
 fi
+BUILDER_EMAIL="${SIGNALOS_BUILDER_EMAIL:-noreply@signalos.app}"
 echo "── Builder identity ─────────────────────────────────────────"
 echo "  Name:    $BUILDER_NAME"
 echo "  Email:   $BUILDER_EMAIL"
