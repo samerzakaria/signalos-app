@@ -73,8 +73,8 @@ a{color:inherit}
 
 
 /* ── Onboarding ── */
-#onboarding{display:grid;grid-template-columns:0.92fr 1fr}
-.ob-panel{background:var(--panel);color:#F3F1EC;padding:44px 42px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;}
+#onboarding{display:grid;grid-template-columns:minmax(0,0.92fr) minmax(0,1fr)}
+.ob-panel{background:var(--panel);color:#F3F1EC;padding:clamp(24px,4vw,44px) clamp(20px,4vw,42px);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;min-width:0;}
 .ob-panel::before{content:"";position:absolute;width:520px;height:520px;border-radius:50%;border:1px solid rgba(255,255,255,0.06);top:-160px;right:-220px;}
 .ob-panel::after{content:"";position:absolute;width:340px;height:340px;border-radius:50%;border:1px solid rgba(255,255,255,0.05);bottom:-120px;left:-150px;}
 .ob-brand{display:flex;align-items:center;gap:11px;position:relative;z-index:1}
@@ -86,26 +86,25 @@ a{color:inherit}
 .ob-dots{display:flex;gap:6px;margin-bottom:18px}
 .ob-dots .pd{height:4px;border-radius:2px;background:rgba(243,241,236,0.18);flex:1;transition:all 0.45s var(--ease)}
 .ob-dots .pd.active{background:#F3F1EC}
-.ob-tag{font-family:var(--f-display);font-weight:500;font-size:23px;line-height:1.28;letter-spacing:-0.01em;color:rgba(243,241,236,0.92);}
+.ob-tag{font-family:var(--f-display);font-weight:500;font-size:clamp(15px,2.5vw,23px);line-height:1.28;letter-spacing:-0.01em;color:rgba(243,241,236,0.92);overflow-wrap:break-word;}
 
-.ob-form{padding:54px 52px;display:flex;flex-direction:column;overflow-y:auto}
+.ob-form{padding:clamp(28px,5vw,54px) clamp(22px,5vw,52px);display:flex;flex-direction:column;overflow-y:auto;min-width:0;}
 .ob-step{display:none;flex-direction:column;flex:1}
 .ob-step.active{display:flex;animation:rise 0.55s var(--ease)}
 .ob-kicker{font-family:var(--f-mono);font-size:10.5px;text-transform:uppercase;letter-spacing:0.13em;color:var(--ink-3);margin-bottom:14px;}
-.ob-step h1{font-family:var(--f-display);font-weight:500;font-size:35px;line-height:1.12;letter-spacing:-0.02em;margin-bottom:11px;}
+.ob-step h1{font-family:var(--f-display);font-weight:500;font-size:clamp(22px,4.5vw,35px);line-height:1.12;letter-spacing:-0.02em;margin-bottom:11px;overflow-wrap:break-word;}
 .ob-step h1 em{font-style:normal;color:var(--accent)}
 .ob-sub{color:var(--ink-2);font-size:14.5px;line-height:1.6;margin-bottom:30px}
 .ob-body{flex:1;overflow-y:auto}
 .ob-actions{display:flex;align-items:center;gap:10px;margin-top:24px;flex-shrink:0}
 
-/* Below the configured minWidth, collapse the dark intro panel and let the
-   form take the full width with smaller padding + fluid headline. Without
-   this, the h1 wraps one syllable per line at narrow widths. */
-@media (max-width:720px){
+/* Single-column collapse triggers at the configured minWidth (900px) so the
+   dark intro panel is gone long before content has to wrap awkwardly. The
+   per-element clamp()s above keep typography readable even if the panel
+   stays visible (e.g. user drags below the configured min on macOS). */
+@media (max-width:900px){
   #onboarding{grid-template-columns:1fr}
   .ob-panel{display:none}
-  .ob-form{padding:32px 22px}
-  .ob-step h1{font-size:clamp(22px,7vw,35px)}
 }
 
 /* Buttons */
