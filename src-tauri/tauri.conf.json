@@ -59,6 +59,9 @@
       "timestampUrl": "http://timestamp.digicert.com",
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "version": "2.0.0.0"
       }
     },
     "linux": {
