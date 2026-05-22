@@ -1,23 +1,23 @@
 {
   "version": "2.0.0-internal",
-  "notes":   "SignalOS v2.0.0-internal ",
+  "notes": "SignalOS v2.0.0-internal \u2014 internal release with full updater signatures",
   "pub_date": "2026-05-22T11:17:48Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_aarch64.dmg",
-      "signature": ""
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2ovK292YlNFSWYxUWJodE8yQU9aMUl5YnZTY1R1MUVoSlhMT0hLcEFXZnFHdUx3SkE4TEplQmNibVJsVmx5MnFPOTVBOTU3V1ZmSDczY1M1S0tKRHdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NDQ4MjkyCWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpVanlxQnlyNktIaUhJRGQ0WGpGOFlvQ2JNK1Q2L0hCQTNvYWorenRMVGpQTk8zT1dmbkx4aldWUHlKa2VEU2lxOFZ4YlpGck1CUjMxejNCTEQxdlhBUT09Cg=="
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64.dmg",
-      "signature": ""
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3J6S3pkZEtRb1MxS1FWM1JURjNyUlJBRm5JRW1pMXpiakQ3R2dRQ2hTNnRKT09wdnRVbXMvL0pWSDFBdllSVEJjMmdmTjdtUEprbHRtV2JhS0gzNEFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NDQ4NjU0CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negp2ZWo2UlNOdHpIVEJONms2bGg5cDJjTG1NVUFZV0UxSkxlc3RVWFE0QUpkOUk2VE5sSWhCUEJsYWdsNGVDL3NzTHdIRGljL2EwS2MyQjk4UHNOTmpEZz09Cg=="
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64-setup.exe",
-      "signature": ""
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3J5L0ZWbEZENkZsRXJudGZRSEpkOG41WHRQTHluMlJ4b21YUU5SRjI0OTlGYTduVlV3Qjkwb1dwelZ4anZRcUN6VTJldU1lUktZZTBUUzJOS1YwVXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NDQ4NDYxCWZpbGU6U2lnbmFsT1NfMi4wLjAtaW50ZXJuYWxfeDY0LXNldHVwLmV4ZQp2bTJVQU4wanF5NG5ib0xZUTd0SklReFJXdnZlOFpPZVRoQnFseHRiUlBPaW9hZlkvT0dEUW54MEZwa0ZwMFJXS1hwWGpZRGliR25lU1ovaHBVRXFCZz09Cg=="
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_amd64.AppImage",
-      "signature": ""
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v2.0.0-internal/SignalOS_2.0.0-internal_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2dRUThEd0xpZit4WXVEOHk2NzM1blpkMzNIbXkvbUlaUWJYNDVZckhUcERIeHZvaGFKYzJuY1RzamlOZStGUjdpbHJkaDNDcXNGcUlWaDdGeFNvQ0FzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5NDQ4NDQ5CWZpbGU6U2lnbmFsT1NfMi4wLjAtaW50ZXJuYWxfYW1kNjQuQXBwSW1hZ2UKTkNLN1A3YWhKSjY3L3VSaE5MamdMMUtDRHNwd2NsS0QydGJiQmdFNXlaZTBMakQwTUlZZjZ2Unp0aWNCTmFVN25NWVZDS0tsRXcrVC9vcFhTRjc4RFE9PQo="
     }
   }
 }

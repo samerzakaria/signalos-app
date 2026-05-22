@@ -383,46 +383,40 @@ jobs:
           fi
 
       # ── Fetch .sig files from the GitHub Release assets ──────────────────
+      # Previous implementation hit a non-existent /releases/tags/$TAG/assets
+      # endpoint and had a Python-in-bash-heredoc indentation bug, so every
+      # signature came back empty. Using `gh release download` instead.
       - name: Fetch release signatures
         id: sigs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          V="${{ steps.meta.outputs.version }}"
-          TAG="v$V"
-          REPO="${GITHUB_REPOSITORY}"
-          BASE="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+          set -e
+          TAG="v${{ steps.meta.outputs.version }}"
+          mkdir -p sigs
+          # Download all .sig assets from the release. --clobber overwrites
+          # if a previous step staged anything.
+          gh release download "$TAG" --pattern '*.sig' --dir sigs --clobber
 
-          ASSETS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "$BASE/assets" 2>/dev/null || echo "[]")
-
-          fetch_sig() {
-            local pattern="$1"
-            local url
-            url=$(echo "$ASSETS" | python3 -c "
-          import sys, json, re
-          assets = json.load(sys.stdin)
-          for a in assets:
-              if re.search(r'$pattern', a['name']):
-                  print(a['browser_download_url'])
-                  break
-          " 2>/dev/null || true)
-            if [ -n "$url" ]; then
-              curl -s -L -H "Authorization: Bearer $GITHUB_TOKEN" "$url" || echo ""
-            fi
+          read_sig() {
+            local file="$1"
+            if [ -f "$file" ]; then cat "$file"; fi
           }
 
-          SIG_MAC_ARM=$(fetch_sig "aarch64.*\.sig$")
-          SIG_MAC_X64=$(fetch_sig "x64.*\.dmg\.sig$|x86_64.*darwin.*\.sig$")
-          SIG_WIN=$(fetch_sig "x64-setup.*\.sig$|windows.*\.sig$")
-          SIG_LIN=$(fetch_sig "amd64.*\.AppImage\.sig$")
+          # Match against produced filenames (after the macOS arch-rename step).
+          SIG_MAC_ARM=$(read_sig "sigs/SignalOS_${{ steps.meta.outputs.version }}_aarch64.app.tar.gz.sig")
+          SIG_MAC_X64=$(read_sig "sigs/SignalOS_${{ steps.meta.outputs.version }}_x64.app.tar.gz.sig")
+          SIG_WIN=$(read_sig    "sigs/SignalOS_${{ steps.meta.outputs.version }}_x64-setup.exe.sig")
+          SIG_LIN=$(read_sig    "sigs/SignalOS_${{ steps.meta.outputs.version }}_amd64.AppImage.sig")
 
-          echo "mac_arm=${SIG_MAC_ARM}"  >> $GITHUB_OUTPUT
-          echo "mac_x64=${SIG_MAC_X64}" >> $GITHUB_OUTPUT
-          echo "win=${SIG_WIN}"         >> $GITHUB_OUTPUT
-          echo "lin=${SIG_LIN}"         >> $GITHUB_OUTPUT
+          # Sig contents may be multi-line; use heredoc form for $GITHUB_OUTPUT.
+          {
+            echo "mac_arm<<__SIG_EOF__"; echo "$SIG_MAC_ARM"; echo "__SIG_EOF__"
+            echo "mac_x64<<__SIG_EOF__"; echo "$SIG_MAC_X64"; echo "__SIG_EOF__"
+            echo "win<<__SIG_EOF__";     echo "$SIG_WIN";     echo "__SIG_EOF__"
+            echo "lin<<__SIG_EOF__";     echo "$SIG_LIN";     echo "__SIG_EOF__"
+          } >> "$GITHUB_OUTPUT"
 
       # ── Extract release notes for manifest ───────────────────────────────
       - name: Extract notes snippet
@@ -449,11 +443,11 @@ jobs:
             "pub_date": "$DATE",
             "platforms": {
               "darwin-aarch64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.dmg",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_arm }}"
               },
               "darwin-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.dmg",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_x64 }}"
               },
               "windows-x86_64": {
@@ -482,11 +476,11 @@ jobs:
             "pub_date": "$DATE",
             "platforms": {
               "darwin-aarch64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.dmg",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_arm }}"
               },
               "darwin-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.dmg",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_x64 }}"
               },
               "windows-x86_64": {
