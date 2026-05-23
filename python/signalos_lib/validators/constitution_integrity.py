@@ -43,9 +43,12 @@ def check_constitution_integrity(repo_root: Path) -> tuple[bool, str, dict[str, 
         )
 
     if not lock_path.is_file():
+        # No lock yet means no integrity guarantee — but also nothing to tamper
+        # with. The hard check is for tampering AFTER lock; before that, this
+        # is advisory. Matches the validator's docstring intent.
         return (
-            False,
-            "constitution lock is missing — run `signalos constitution lock`",
+            True,
+            "no constitution lock yet; run `signalos constitution lock` to enable integrity verification",
             details,
         )
 

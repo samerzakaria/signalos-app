@@ -395,6 +395,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Create and verify tamper-evident integrity seals")
     p_seal.add_argument("seal_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    # Phase 13 hardening — wave velocity metrics
+    p_velocity = sub.add_parser("signal-velocity",
+        help="Wave-velocity metrics for dashboard sidebar")
+    p_velocity.add_argument("velocity_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1140,6 +1145,11 @@ def main(argv: list[str]) -> int:
     if cmd == "seal":
         from signalos_lib.commands import seal as m
         return m.main(list(getattr(args, "seal_args", None) or []))
+
+    # Phase 13 hardening — wave velocity metrics
+    if cmd == "signal-velocity":
+        from signalos_lib.commands.velocity import cmd_signal_velocity
+        return cmd_signal_velocity(list(getattr(args, "velocity_args", None) or []))
 
     return 1
 

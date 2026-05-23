@@ -17,6 +17,13 @@ __all__ = [
     "CheckpointEntry", "checkpoint_save", "checkpoint_list", "checkpoint_restore",
     "detect_doc_drift", "DocDriftEntry", "check_velocity_wired",
     "CHECKPOINT_INDEX_RELATIVE",
+    # Phase 13 — wave-velocity metrics (sessions/day, scope burndown, ETA)
+    "WAVE_SESSION_START_ACTIONS",
+    "compute_wave_velocity",
+    "compute_sessions_per_day",
+    "compute_scope_card_burndown",
+    "compute_eta_days",
+    "iter_audit_entries",
 ]
 
 CHECKPOINT_INDEX_RELATIVE = ".signalos/checkpoints/index.jsonl"
@@ -330,3 +337,246 @@ def check_velocity_wired(repo_root: Path) -> tuple[bool, str]:
     if missing:
         return False, f"missing W11 command specs: {', '.join(missing)}"
     return True, "velocity primitives wired"
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — Wave-velocity metrics (sessions/day, burndown, ETA prediction)
+# ---------------------------------------------------------------------------
+#
+# Derived view over existing state. No new persistence is written by these
+# helpers — they read .signalos/AUDIT_TRAIL.jsonl + the existing
+# wave_engine state file(s) + the existing autoplan tasks (scope cards) and
+# return a plain dict suitable for JSON emission to the desktop sidebar.
+#
+# Per Phase 13 of docs/SIGNALOS_FACTORY_GOVERNANCE_IMPLEMENTATION_PLAN.md:
+#   sessions_per_day      — float, count of session-start events / 14 days
+#   scope_card_burndown   — list[{wave, total, completed}] per autoplan wave
+#   eta_days              — float | None, predicted days to clear remaining
+#   last_session_at       — ISO timestamp | null
+#
+# Everything fails closed: missing audit trail / missing wave-state /
+# malformed audit line all return zero / null values rather than raising.
+
+import datetime as _datetime
+
+# Audit-trail action strings that mark the start of a new working session
+# on a wave. The wave engine emits "wave:begin" from begin(); historical
+# audit lines may also use these synonymous markers when older versions
+# of the engine wrote them. Treat any of them as a session-start signal.
+WAVE_SESSION_START_ACTIONS: frozenset[str] = frozenset({
+    "wave:begin",
+    "wave-begin",
+    "wave:start",
+    "wave-start",
+    "session:start",
+    "session-start",
+})
+
+
+def iter_audit_entries(repo_root: Path):
+    """Yield parsed JSON dicts from `.signalos/AUDIT_TRAIL.jsonl`.
+
+    Silently skips:
+      - missing trail file
+      - blank lines
+      - lines that are not valid JSON
+      - lines that decode to non-dict values
+
+    The audit trail is append-only and may contain partially-written tail
+    bytes during a crash; we never raise on a bad line so the dashboard
+    keeps rendering.
+    """
+    trail = repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    if not trail.is_file():
+        return
+    try:
+        text = trail.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            yield parsed
+
+
+def _parse_audit_timestamp(value) -> Optional[_datetime.datetime]:
+    """Return a UTC-aware datetime for an audit-trail `ts` field, or None.
+
+    Accepts:
+      - ISO-8601 strings (with or without trailing 'Z')
+      - integer / float epoch seconds (sign.py older entries)
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return _datetime.datetime.fromtimestamp(float(value), tz=_datetime.timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    # fromisoformat() in stdlib doesn't accept the literal 'Z' until 3.11+.
+    # Normalise to '+00:00' which works everywhere we support.
+    if text.endswith("Z") or text.endswith("z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = _datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_datetime.timezone.utc)
+    return parsed
+
+
+def compute_sessions_per_day(
+    repo_root: Path,
+    *,
+    window_days: int = 14,
+    now: Optional[_datetime.datetime] = None,
+) -> tuple[float, Optional[str]]:
+    """Return (sessions_per_day, last_session_iso) over the last *window_days*.
+
+    Counts audit-trail entries whose `action` is in
+    `WAVE_SESSION_START_ACTIONS` and whose timestamp falls inside the
+    rolling window ending at *now* (UTC). Returns (0.0, None) when there
+    are no qualifying entries.
+    """
+    if window_days <= 0:
+        window_days = 1
+    if now is None:
+        now = _datetime.datetime.now(tz=_datetime.timezone.utc)
+    cutoff = now - _datetime.timedelta(days=window_days)
+
+    count = 0
+    last_seen: Optional[_datetime.datetime] = None
+    for entry in iter_audit_entries(repo_root):
+        action = entry.get("action")
+        if action not in WAVE_SESSION_START_ACTIONS:
+            continue
+        ts = _parse_audit_timestamp(entry.get("ts"))
+        if ts is None:
+            continue
+        if last_seen is None or ts > last_seen:
+            last_seen = ts
+        if ts >= cutoff and ts <= now:
+            count += 1
+
+    per_day = count / float(window_days) if count else 0.0
+    last_iso = last_seen.astimezone(_datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if last_seen else None
+    return per_day, last_iso
+
+
+def _enumerate_autoplan_waves(repo_root: Path) -> list[str]:
+    """Return the wave labels we have autoplan data for, sorted."""
+    plans_dir = repo_root / ".signalos" / "plans"
+    if not plans_dir.is_dir():
+        return []
+    waves: list[str] = []
+    for child in plans_dir.iterdir():
+        name = child.name
+        if not name.startswith("autoplan-") or not name.endswith(".yaml"):
+            continue
+        label = name[len("autoplan-"):-len(".yaml")]
+        if label:
+            waves.append(label)
+    waves.sort()
+    return waves
+
+
+def compute_scope_card_burndown(repo_root: Path) -> list[dict]:
+    """Return per-wave scope-card totals + completion counts.
+
+    Each entry is ``{"wave": str, "total": int, "completed": int}``.
+    A task counts as completed when its `status` field is one of
+    {"done", "completed", "signed", "shipped"} — matching the
+    common autoplan vocabulary.
+    """
+    completed_states = {"done", "completed", "signed", "shipped"}
+    burndown: list[dict] = []
+    for wave in _enumerate_autoplan_waves(repo_root):
+        try:
+            tasks = autoplan_load(wave, repo_root)
+        except Exception:
+            continue
+        total = len(tasks)
+        if total == 0:
+            continue
+        completed = sum(1 for t in tasks if (t.status or "").lower() in completed_states)
+        burndown.append({
+            "wave": wave,
+            "total": total,
+            "completed": completed,
+        })
+    return burndown
+
+
+def compute_eta_days(
+    *,
+    sessions_per_day: float,
+    burndown: list[dict],
+) -> Optional[float]:
+    """Predict days to clear remaining scope cards given recent velocity.
+
+    Returns None when there is not enough data to compute a meaningful
+    estimate (zero velocity, no open cards, or negative inputs).
+    Velocity is approximated as ``sessions_per_day`` cards burned per day
+    — a single working session typically retires one scope card in the
+    SignalOS wave model.
+    """
+    if sessions_per_day <= 0:
+        return None
+    remaining = 0
+    for row in burndown:
+        try:
+            total = int(row.get("total", 0))
+            completed = int(row.get("completed", 0))
+        except (TypeError, ValueError):
+            continue
+        if total <= 0:
+            continue
+        remaining += max(0, total - completed)
+    if remaining <= 0:
+        return None
+    return round(remaining / sessions_per_day, 2)
+
+
+def compute_wave_velocity(
+    repo_root: Path,
+    *,
+    window_days: int = 14,
+    now: Optional[_datetime.datetime] = None,
+) -> dict:
+    """Top-level metrics payload for the dashboard sidebar.
+
+    Returns a JSON-serialisable dict with:
+      sessions_per_day      float
+      scope_card_burndown   list[{wave, total, completed}]
+      eta_days              float | None
+      last_session_at       str | None  (ISO-8601 UTC, trailing 'Z')
+      window_days           int  (echo the input — frontend tooltip)
+      generated_at          str  (ISO-8601 UTC)
+    """
+    if now is None:
+        now = _datetime.datetime.now(tz=_datetime.timezone.utc)
+    sessions_per_day, last_session = compute_sessions_per_day(
+        repo_root, window_days=window_days, now=now,
+    )
+    burndown = compute_scope_card_burndown(repo_root)
+    eta = compute_eta_days(sessions_per_day=sessions_per_day, burndown=burndown)
+    return {
+        "sessions_per_day": round(sessions_per_day, 4),
+        "scope_card_burndown": burndown,
+        "eta_days": eta,
+        "last_session_at": last_session,
+        "window_days": window_days,
+        "generated_at": now.astimezone(_datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }

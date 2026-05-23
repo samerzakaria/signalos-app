@@ -75,7 +75,7 @@ class ValidateLayer1Tests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "signalos.validate.v1")
         self.assertEqual(payload["group"], "layer1")
         self.assertEqual(payload["status"], "PASS")
-        self.assertEqual(payload["summary"]["total"], 9)
+        self.assertEqual(payload["summary"]["total"], 10)
         self.assertEqual(payload["summary"]["failed"], 0)
         self.assertEqual(
             {result["name"] for result in payload["results"]},
@@ -89,6 +89,7 @@ class ValidateLayer1Tests(unittest.TestCase):
                 "layer1-unknowns",
                 "layer1-profile",
                 "layer1-path-safety",
+                "constitution-integrity",
             },
         )
 

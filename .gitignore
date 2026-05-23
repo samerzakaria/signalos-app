@@ -50,6 +50,7 @@ src-tauri/bin/
 
 # Claude Code — per-developer permission allow-list (machine-specific)
 .claude/settings.local.json
+.claude/worktrees/
 
 # Internal build attestations — per-builder pipeline metadata, not for repo
 distribution/internal/

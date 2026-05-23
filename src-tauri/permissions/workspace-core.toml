@@ -1,7 +1,11 @@
 [[set]]
 identifier = "workspace-core"
 description = "Workspace core commands for active workspace lifecycle state."
-permissions = ["allow-clear-workspace", "allow-get-workspace-status"]
+permissions = [
+    "allow-clear-workspace",
+    "allow-get-workspace-status",
+    "allow-get-velocity-metrics",
+]
 
 [[permission]]
 identifier = "allow-clear-workspace"
@@ -12,3 +16,13 @@ commands.allow = ["clear_workspace"]
 identifier = "allow-get-workspace-status"
 description = "Allows reading composed active workspace status."
 commands.allow = ["get_workspace_status"]
+
+# Phase 13 — wave-velocity metrics surfaced on the dashboard sidebar.
+# Read-only: dispatches `signal-velocity --json` against the sidecar and
+# returns the request id. The sidecar spawn itself is governed by the
+# existing shell:allow-spawn grant in capabilities/default.json; this
+# permission gates the Tauri-side invoke handler.
+[[permission]]
+identifier = "allow-get-velocity-metrics"
+description = "Allows reading wave-velocity metrics for the dashboard sidebar."
+commands.allow = ["get_velocity_metrics"]

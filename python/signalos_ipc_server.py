@@ -454,6 +454,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         "signal-second-opinion",
         "signal-second-opinion-record",
         "signal-investigate",
+        "signal-velocity",
     }
     if command in direct:
         return [command, *cleaned_args]

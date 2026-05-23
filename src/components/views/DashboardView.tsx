@@ -15,6 +15,7 @@ import {
   gateCode,
   isGateSigned,
 } from '../GateTimeline';
+import { VelocityPanel } from './VelocityPanel';
 
 export function DashboardView() {
   const gates = govGatesList.value;
@@ -160,6 +161,8 @@ export function DashboardView() {
               </div>
             ) : null}
           </div>
+
+          <VelocityPanel />
 
           {activeGate || activities.length > 0 || criteria.length > 0 ? (
           <div className="card" id="gateCard">
