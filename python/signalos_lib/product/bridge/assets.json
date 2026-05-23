@@ -1,0 +1,2011 @@
+{
+  "$schema": "asset-inventory-v1",
+  "version": "0.1.0",
+  "generated": "2026-05-24",
+  "assets": [
+    {
+      "id": "cli-session",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/session.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Session journal: list, show, resume, archive"
+    },
+    {
+      "id": "cli-pause",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/pause.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Step-pause controller: list, resume, abort"
+    },
+    {
+      "id": "cli-harness",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/harness.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_skills.py",
+      "notes": "Headless harness execution: call, status, abort"
+    },
+    {
+      "id": "cli-install",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/registry.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin registry install command"
+    },
+    {
+      "id": "cli-verify",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/registry.py",
+      "bridge_status": "optional",
+      "bridge_phase": "validation",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin registry verify command"
+    },
+    {
+      "id": "cli-list",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/registry.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin registry list command"
+    },
+    {
+      "id": "cli-uninstall",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/registry.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin registry uninstall command"
+    },
+    {
+      "id": "cli-publish",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/registry.py",
+      "bridge_status": "optional",
+      "bridge_phase": "deploy",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin registry publish command"
+    },
+    {
+      "id": "cli-context",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/context.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Context compress/expand for agent sessions"
+    },
+    {
+      "id": "cli-orchestrate",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/orchestrate.py",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Parallel wave orchestration entry point"
+    },
+    {
+      "id": "cli-status",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/status.py",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_status_gate_emissions.py",
+      "notes": "Wave status card with gate progress"
+    },
+    {
+      "id": "cli-sign",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/sign.py",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Guided gate signing wizard (G0-G5)"
+    },
+    {
+      "id": "cli-plan",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/plan.py",
+      "bridge_status": "required",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Machine-readable task schema: render, validate, list"
+    },
+    {
+      "id": "cli-intent",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/intent.py",
+      "bridge_status": "required",
+      "bridge_phase": "intent",
+      "proof": "python/test_intent_sources.py",
+      "notes": "Natural language intent routing with source persistence"
+    },
+    {
+      "id": "cli-daemon",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/cli.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Delivery daemon control: start, status, stop, resume"
+    },
+    {
+      "id": "cli-worktree",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/cli.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Worktree lifecycle: create, status, reconcile, retire, list"
+    },
+    {
+      "id": "cli-health",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/health.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "System health check"
+    },
+    {
+      "id": "cli-diagnose",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/diagnose.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Runtime diagnostic snapshot"
+    },
+    {
+      "id": "cli-validate",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/validate_cmd.py",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "python/test_validate_layer1.py",
+      "notes": "Run validator suite (core and layer1 groups)"
+    },
+    {
+      "id": "cli-verify-product",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/verify_product.py",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "python/test_verify_product.py",
+      "notes": "Product build/test verification with evidence capture"
+    },
+    {
+      "id": "cli-release-readiness",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/release_readiness.py",
+      "bridge_status": "required",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_readiness.py",
+      "notes": "Release readiness evaluation and publish relationship"
+    },
+    {
+      "id": "cli-hooks",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/hooks.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Hook lifecycle management (test)"
+    },
+    {
+      "id": "cli-recover",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/recover.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Checkpoint recovery with resume"
+    },
+    {
+      "id": "cli-completion",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/cli.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Shell tab-completion (bash/zsh)"
+    },
+    {
+      "id": "cli-serve",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/serve.py",
+      "bridge_status": "used",
+      "bridge_phase": "handoff",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Browser-based gate signing server"
+    },
+    {
+      "id": "cli-tenant",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/tenant.py",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Product namespace management: list, init, status"
+    },
+    {
+      "id": "cli-campaign",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/campaign.py",
+      "bridge_status": "optional",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Multi-repo campaign orchestration: init, status, orchestrate"
+    },
+    {
+      "id": "cli-data",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/data_privacy.py",
+      "bridge_status": "optional",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "GDPR data-subject access and erasure"
+    },
+    {
+      "id": "cli-search",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/catalog.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin catalog search"
+    },
+    {
+      "id": "cli-info",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/catalog.py",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_profiles.py",
+      "notes": "Plugin provenance info from catalog"
+    },
+    {
+      "id": "cli-pre-design",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/design.py",
+      "bridge_status": "used",
+      "bridge_phase": "intent",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "PO Brief scoping ceremony"
+    },
+    {
+      "id": "cli-design",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/design.py",
+      "bridge_status": "used",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "Variant generation, approval, taste iteration"
+    },
+    {
+      "id": "cli-design-review",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/design.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "8-dimension variant rubric scoring"
+    },
+    {
+      "id": "cli-design-html",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/design.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "Promote variant to production HTML"
+    },
+    {
+      "id": "cli-brain",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/brain.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Knowledge Brain: put, search, list, prune, export, upgrade"
+    },
+    {
+      "id": "cli-signal-learn",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/brain.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Human-facing brain review/search/prune/export"
+    },
+    {
+      "id": "cli-signal-cso",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/security.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Security Chief Officer: OWASP+STRIDE, canary, injection scan"
+    },
+    {
+      "id": "cli-signal-autoplan",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/velocity.py",
+      "bridge_status": "used",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Auto-generate PLAN tasks from a feature description"
+    },
+    {
+      "id": "cli-signal-context-restore",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/velocity.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Checkpoint save/restore and doc drift detection"
+    },
+    {
+      "id": "cli-signal-setup-deploy",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/deploy.py",
+      "bridge_status": "required",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Set up a deployment record"
+    },
+    {
+      "id": "cli-signal-land-deploy",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/deploy.py",
+      "bridge_status": "required",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Mark a deployment as landed"
+    },
+    {
+      "id": "cli-signal-canary-deploy",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/deploy.py",
+      "bridge_status": "required",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Post-deploy canary check"
+    },
+    {
+      "id": "cli-signal-benchmark",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/deploy.py",
+      "bridge_status": "used",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Record Core Web Vitals benchmark"
+    },
+    {
+      "id": "cli-signal-devex-plan",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/devex.py",
+      "bridge_status": "optional",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Plan DevEx work in EXPANSION/POLISH/TRIAGE modes"
+    },
+    {
+      "id": "cli-signal-devex",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/devex.py",
+      "bridge_status": "optional",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Record a DevEx metric"
+    },
+    {
+      "id": "cli-signal-retro-global",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/devex.py",
+      "bridge_status": "optional",
+      "bridge_phase": "handoff",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Cross-product retrospective brain query"
+    },
+    {
+      "id": "cli-signal-careful",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/safety.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Enable/disable/check careful mode"
+    },
+    {
+      "id": "cli-signal-freeze",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/safety.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Lock a directory against writes"
+    },
+    {
+      "id": "cli-signal-guard",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/safety.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Check if a directory is frozen"
+    },
+    {
+      "id": "cli-signal-unfreeze",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/safety.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Remove a directory freeze"
+    },
+    {
+      "id": "cli-signal-second-opinion",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/second_opinion.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Request independent cross-model review"
+    },
+    {
+      "id": "cli-signal-second-opinion-record",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/second_opinion.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Record verdict on a second-opinion request"
+    },
+    {
+      "id": "cli-signal-investigate",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/investigate.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Iron-law systematic debugging protocol"
+    },
+    {
+      "id": "cli-session-preamble",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/preamble.py",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Resolve preamble vars and write session-preamble.md"
+    },
+    {
+      "id": "cli-init",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/init.py",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_adoption_init.py",
+      "notes": "Bootstrap a new SignalOS project"
+    },
+    {
+      "id": "cli-signal-qa",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/qa_runner.py",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "python/test_e2e_runner.py",
+      "notes": "Run gating QA scenario suite (Gate 5 entry)"
+    },
+    {
+      "id": "cli-qa-regression",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/cli.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_regression_autogen.py",
+      "notes": "QA regression generation and replay"
+    },
+    {
+      "id": "cli-signal-qa-only",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/qa_runner.py",
+      "bridge_status": "optional",
+      "bridge_phase": "proof",
+      "proof": "python/test_e2e_runner.py",
+      "notes": "Run non-gating QA scenarios without updating QUALITY_CHECK.md"
+    },
+
+    {
+      "id": "ipc-set-workspace",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/services/workspace.test.ts",
+      "notes": "Set the active workspace directory"
+    },
+    {
+      "id": "ipc-clear-workspace",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/services/workspace.test.ts",
+      "notes": "Clear the active workspace selection"
+    },
+    {
+      "id": "ipc-get-workspace",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/services/workspace.test.ts",
+      "notes": "Get current active workspace path"
+    },
+    {
+      "id": "ipc-get-workspace-status",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/services/workspace.test.ts",
+      "notes": "Composed workspace status with gate info"
+    },
+    {
+      "id": "ipc-validate-workspace-write",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Sandbox-validate a file write path"
+    },
+    {
+      "id": "ipc-get-project-artifacts",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Read project artifact metadata"
+    },
+    {
+      "id": "ipc-open-workspace-path",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "handoff",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Open a workspace file in native file manager"
+    },
+    {
+      "id": "ipc-write-workspace-export",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "handoff",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Write handoff/export archive"
+    },
+    {
+      "id": "ipc-write-workspace-files",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Write multiple files into workspace (sandbox-checked)"
+    },
+    {
+      "id": "ipc-preview-workspace-files",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Preview file diff before writing"
+    },
+    {
+      "id": "ipc-read-workspace-file",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Read a single file from workspace"
+    },
+    {
+      "id": "ipc-list-workspace-dir",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "List directory contents in workspace"
+    },
+    {
+      "id": "ipc-upsert-workspace-secret",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Create or update a workspace secret"
+    },
+    {
+      "id": "ipc-list-workspace-secrets",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "List all workspace secret names"
+    },
+    {
+      "id": "ipc-reveal-workspace-secret",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Reveal a workspace secret value"
+    },
+    {
+      "id": "ipc-delete-workspace-secret",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Delete a workspace secret"
+    },
+    {
+      "id": "ipc-apply-workspace-env-diff",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Apply env variable diff to workspace"
+    },
+    {
+      "id": "ipc-set-identity",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Set user identity and role"
+    },
+    {
+      "id": "ipc-get-identity",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Get current user identity"
+    },
+    {
+      "id": "ipc-check-role-for-gate",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Check if current role can sign a gate"
+    },
+    {
+      "id": "ipc-get-git-status",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Live branch and worktree info"
+    },
+    {
+      "id": "ipc-start-workspace-watch",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "File watcher that emits workspace:changed events"
+    },
+    {
+      "id": "ipc-check-for-updates",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "optional",
+      "bridge_phase": "deploy",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Auto-updater check"
+    },
+    {
+      "id": "ipc-run-signal-command",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Bridge to Python sidecar CLI commands"
+    },
+    {
+      "id": "ipc-get-sidecar-status",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/sidecar.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Get Python sidecar process status"
+    },
+    {
+      "id": "ipc-restart-python-sidecar",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/sidecar.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Restart the Python sidecar process"
+    },
+    {
+      "id": "ipc-get-wave-state",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Read current wave state"
+    },
+    {
+      "id": "ipc-get-gate-status",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Read gate status for a specific gate"
+    },
+    {
+      "id": "ipc-sign-gate",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Sign a gate from the UI"
+    },
+    {
+      "id": "ipc-get-brain-entries",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Retrieve knowledge brain entries"
+    },
+    {
+      "id": "ipc-add-brain-entry",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Add an entry to the knowledge brain"
+    },
+    {
+      "id": "ipc-get-audit-trail",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "handoff",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Read the audit trail JSONL"
+    },
+    {
+      "id": "ipc-get-cost-summary",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Aggregate cost summary for session"
+    },
+    {
+      "id": "ipc-store-api-key",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/keychain.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Store API key in OS keychain"
+    },
+    {
+      "id": "ipc-delete-api-key",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/keychain.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Delete API key from OS keychain"
+    },
+    {
+      "id": "ipc-has-api-key",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/keychain.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Check if an API key exists in keychain"
+    },
+    {
+      "id": "ipc-list-providers",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "List all configured AI providers"
+    },
+    {
+      "id": "ipc-get-active-provider",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Get the currently active AI provider"
+    },
+    {
+      "id": "ipc-set-active-provider",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Set the active AI provider"
+    },
+    {
+      "id": "ipc-set-provider-model",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Update model for a provider"
+    },
+    {
+      "id": "ipc-set-provider-pricing",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "optional",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Correct pricing for a provider"
+    },
+    {
+      "id": "ipc-get-cost-state",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Get cost tracking state"
+    },
+    {
+      "id": "ipc-record-token-usage",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Record token usage for cost tracking"
+    },
+    {
+      "id": "ipc-reset-session-cost",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "optional",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Reset session cost counters"
+    },
+    {
+      "id": "ipc-set-monthly-budget",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "optional",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Set monthly budget cap"
+    },
+    {
+      "id": "ipc-fetch-provider-models",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Live model list from provider API"
+    },
+    {
+      "id": "ipc-test-provider-connection",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Test provider API connection"
+    },
+    {
+      "id": "ipc-send-provider-message",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Send a message to the AI provider"
+    },
+    {
+      "id": "ipc-send-provider-message-stream",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/provider.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Stream a message from the AI provider"
+    },
+    {
+      "id": "ipc-probe-node",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Probe for Node.js runtime availability"
+    },
+    {
+      "id": "ipc-start-preview",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Start a live preview dev server"
+    },
+    {
+      "id": "ipc-stop-preview",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Stop a running preview"
+    },
+    {
+      "id": "ipc-list-previews",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "List all active previews"
+    },
+    {
+      "id": "ipc-get-preview",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Get details of a specific preview"
+    },
+    {
+      "id": "ipc-get-enforcement-state",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Get runtime enforcement state for rules"
+    },
+    {
+      "id": "ipc-build-precheck",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Run build precheck enforcement"
+    },
+    {
+      "id": "ipc-override-rule",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Override an enforcement rule with audit"
+    },
+    {
+      "id": "ipc-set-rule-mode",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Set enforcement rule mode"
+    },
+    {
+      "id": "ipc-freeze-wave",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Freeze a wave to prevent changes"
+    },
+    {
+      "id": "ipc-unfreeze-wave",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Unfreeze a frozen wave"
+    },
+    {
+      "id": "ipc-list-test-debt",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "List test debt entries"
+    },
+    {
+      "id": "ipc-add-test-debt",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Add a test debt entry"
+    },
+    {
+      "id": "ipc-resolve-test-debt",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Resolve a test debt entry"
+    },
+    {
+      "id": "ipc-check-mutation-threshold",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Check if mutation score meets threshold"
+    },
+    {
+      "id": "ipc-check-test-first",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Check test-first (TDD) compliance"
+    },
+    {
+      "id": "ipc-read-mutation-score",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/test_automation.rs",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Read the current mutation score"
+    },
+
+    {
+      "id": "perm-default-capability",
+      "kind": "tauri-permission",
+      "path": "src-tauri/capabilities/default.json",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Default capabilities for SignalOS desktop (core, shell, fs, dialog, etc.)"
+    },
+    {
+      "id": "perm-workspace-core",
+      "kind": "tauri-permission",
+      "path": "src-tauri/permissions/workspace-core.toml",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Workspace core permissions: allow-clear-workspace, allow-get-workspace-status"
+    },
+
+    {
+      "id": "profile-generic",
+      "kind": "profile-manifest",
+      "path": "python/signalos_lib/profiles/fixtures/generic.json",
+      "bridge_status": "required",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_profile_validation.py",
+      "notes": "Generic project profile manifest"
+    },
+    {
+      "id": "profile-react-vite",
+      "kind": "profile-manifest",
+      "path": "python/signalos_lib/profiles/fixtures/react-vite.json",
+      "bridge_status": "required",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_profile_validation.py",
+      "notes": "React + Vite project profile manifest"
+    },
+    {
+      "id": "profile-schema",
+      "kind": "profile-manifest",
+      "path": "python/signalos_lib/profiles/profile.schema.json",
+      "bridge_status": "required",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_profile_validation.py",
+      "notes": "JSON Schema for profile manifest validation"
+    },
+    {
+      "id": "profile-loader",
+      "kind": "profile-manifest",
+      "path": "python/signalos_lib/profiles/loader.py",
+      "bridge_status": "required",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_profiles.py",
+      "notes": "Profile loader and resolution logic"
+    },
+    {
+      "id": "profile-validation",
+      "kind": "profile-manifest",
+      "path": "python/signalos_lib/profiles/validation.py",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "python/test_profile_validation.py",
+      "notes": "Profile validation against JSON Schema"
+    },
+
+    {
+      "id": "validator-constitution-integrity",
+      "kind": "validator",
+      "path": "python/signalos_lib/validators/constitution_integrity.py",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "python/test_validate_layer1.py",
+      "notes": "Constitution hash-lock integrity validator"
+    },
+    {
+      "id": "validator-skill-validators",
+      "kind": "validator",
+      "path": "python/signalos_lib/skill_validators.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_skill_validators.py",
+      "notes": "Skill-level validation checks"
+    },
+    {
+      "id": "validator-validate-cmd",
+      "kind": "validator",
+      "path": "python/signalos_lib/validate_cmd.py",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "python/test_validate_layer1.py",
+      "notes": "Validator suite orchestration command module"
+    },
+
+    {
+      "id": "orchestrator",
+      "kind": "orchestrator",
+      "path": "python/signalos_lib/orchestrator.py",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Parallel wave orchestration engine"
+    },
+
+    {
+      "id": "runner-qa",
+      "kind": "runner",
+      "path": "python/signalos_lib/qa_runner.py",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "python/test_e2e_runner.py",
+      "notes": "QA scenario suite runner with evidence capture"
+    },
+    {
+      "id": "runner-e2e",
+      "kind": "runner",
+      "path": "python/signalos_lib/e2e_runner.py",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "python/test_e2e_runner.py",
+      "notes": "End-to-end test runner"
+    },
+    {
+      "id": "runner-tdd",
+      "kind": "runner",
+      "path": "python/signalos_lib/tdd_runner.py",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "python/test_tdd_runner.py",
+      "notes": "TDD (test-driven development) runner"
+    },
+
+    {
+      "id": "signing-engine",
+      "kind": "signing",
+      "path": "python/signalos_lib/sign.py",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Gate signing logic and signature verification"
+    },
+
+    {
+      "id": "wave-engine",
+      "kind": "wave-engine",
+      "path": "python/signalos_lib/wave_engine.py",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Core wave engine: state machine, transitions, gate logic"
+    },
+    {
+      "id": "wave-engine-judge",
+      "kind": "wave-engine",
+      "path": "python/signalos_lib/wave_engine_judge.py",
+      "bridge_status": "required",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine_judge.py",
+      "notes": "Wave engine judge for automated quality assessment"
+    },
+
+    {
+      "id": "intent-router",
+      "kind": "prompt",
+      "path": "python/signalos_lib/intent.py",
+      "bridge_status": "required",
+      "bridge_phase": "intent",
+      "proof": "python/test_intent_sources.py",
+      "notes": "Intent routing and NLP matching engine"
+    },
+    {
+      "id": "signalos-prompt",
+      "kind": "prompt",
+      "path": "src/services/signalosPrompt.ts",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/services/signalosPrompt.test.ts",
+      "notes": "System prompt assembly for AI provider messages"
+    },
+    {
+      "id": "chat-response-guard",
+      "kind": "prompt",
+      "path": "src/services/chatResponseGuard.ts",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "src/services/chatResponseGuard.test.ts",
+      "notes": "Response guard that filters AI output for safety"
+    },
+
+    {
+      "id": "preview-runtime",
+      "kind": "preview-runtime",
+      "path": "src-tauri/src/runtime.rs",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "LocalProcessSupervisor: Node.js preview dev server management"
+    },
+    {
+      "id": "preview-service",
+      "kind": "preview-runtime",
+      "path": "src/services/preview.ts",
+      "bridge_status": "required",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Frontend preview service for dev server control"
+    },
+
+    {
+      "id": "deploy-module",
+      "kind": "deploy-command",
+      "path": "python/signalos_lib/deploy.py",
+      "bridge_status": "required",
+      "bridge_phase": "deploy",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Deployment record management and canary checks"
+    },
+
+    {
+      "id": "handoff-export",
+      "kind": "handoff-surface",
+      "path": "src-tauri/src/ipc.rs",
+      "bridge_status": "required",
+      "bridge_phase": "handoff",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Workspace export and handoff archive writer"
+    },
+
+    {
+      "id": "audit-governance",
+      "kind": "audit",
+      "path": "src-tauri/src/governance.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Audit trail JSONL append and governance state"
+    },
+    {
+      "id": "audit-enforcement",
+      "kind": "audit",
+      "path": "src-tauri/src/enforcement.rs",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Runtime enforcement rules and override audit"
+    },
+
+    {
+      "id": "adoption-module",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/adoption.py",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_adoption_init.py",
+      "notes": "Adoption and onboarding helpers"
+    },
+    {
+      "id": "sandbox-module",
+      "kind": "validator",
+      "path": "python/signalos_lib/sandbox.py",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_sandbox.py",
+      "notes": "Workspace sandbox boundary enforcement"
+    },
+    {
+      "id": "sandbox-rust",
+      "kind": "validator",
+      "path": "src-tauri/src/sandbox.rs",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_sandbox_integration.py",
+      "notes": "Rust-side sandbox path validation"
+    },
+    {
+      "id": "artifacts-module",
+      "kind": "audit",
+      "path": "python/signalos_lib/artifacts.py",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_artifacts.py",
+      "notes": "Gate artifact manifest and evidence tracking"
+    },
+    {
+      "id": "gate-artifacts-schema",
+      "kind": "audit",
+      "path": "python/signalos_lib/gate_artifacts.json",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_artifacts.py",
+      "notes": "Gate artifacts JSON schema definition"
+    },
+    {
+      "id": "brain-module",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/brain.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Knowledge brain storage and retrieval engine"
+    },
+    {
+      "id": "campaign-module",
+      "kind": "orchestrator",
+      "path": "python/signalos_lib/campaign.py",
+      "bridge_status": "optional",
+      "bridge_phase": "generation",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Multi-repo campaign orchestration"
+    },
+    {
+      "id": "design-module",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/design.py",
+      "bridge_status": "used",
+      "bridge_phase": "scaffold",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "Design pipeline: variant generation, approval, taste iteration"
+    },
+    {
+      "id": "velocity-module",
+      "kind": "wave-engine",
+      "path": "python/signalos_lib/velocity.py",
+      "bridge_status": "used",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Velocity metrics and auto-plan primitives"
+    },
+    {
+      "id": "preamble-module",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/preamble.py",
+      "bridge_status": "used",
+      "bridge_phase": "bootstrap",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Session preamble resolver engine"
+    },
+    {
+      "id": "regression-module",
+      "kind": "runner",
+      "path": "python/signalos_lib/regression.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_regression_autogen.py",
+      "notes": "Regression scenario auto-generation from bug reports"
+    },
+    {
+      "id": "security-module",
+      "kind": "validator",
+      "path": "python/signalos_lib/security.py",
+      "bridge_status": "used",
+      "bridge_phase": "validation",
+      "proof": "python/test_wave_engine.py",
+      "notes": "OWASP+STRIDE security scanning engine"
+    },
+    {
+      "id": "safety-module",
+      "kind": "validator",
+      "path": "python/signalos_lib/safety.py",
+      "bridge_status": "used",
+      "bridge_phase": "governance",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Careful mode and directory freeze/guard/unfreeze"
+    },
+    {
+      "id": "ipc-server",
+      "kind": "ipc-route",
+      "path": "python/signalos_ipc_server.py",
+      "bridge_status": "required",
+      "bridge_phase": "generation",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Python IPC server handling sidecar protocol"
+    },
+    {
+      "id": "sidecar-module",
+      "kind": "ipc-route",
+      "path": "src-tauri/src/sidecar.rs",
+      "bridge_status": "required",
+      "bridge_phase": "bootstrap",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Python sidecar process lifecycle management"
+    },
+    {
+      "id": "wave-engine-client",
+      "kind": "wave-engine",
+      "path": "src/services/waveEngineClient.ts",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "src/services/waveEngineClient.test.ts",
+      "notes": "Frontend client for wave engine IPC"
+    },
+
+    {
+      "id": "test-adoption-init",
+      "kind": "proof-test",
+      "path": "python/test_adoption_init.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_adoption_init.py",
+      "notes": "Tests for adoption/init bootstrap flow"
+    },
+    {
+      "id": "test-artifacts",
+      "kind": "proof-test",
+      "path": "python/test_artifacts.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_artifacts.py",
+      "notes": "Tests for gate artifact manifest"
+    },
+    {
+      "id": "test-design-auto-tag",
+      "kind": "proof-test",
+      "path": "python/test_design_auto_tag.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_design_auto_tag.py",
+      "notes": "Tests for design pipeline auto-tagging"
+    },
+    {
+      "id": "test-e2e-runner",
+      "kind": "proof-test",
+      "path": "python/test_e2e_runner.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_e2e_runner.py",
+      "notes": "Tests for e2e and QA runner"
+    },
+    {
+      "id": "test-emit-invocation",
+      "kind": "proof-test",
+      "path": "python/test_emit_invocation.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_emit_invocation.py",
+      "notes": "Tests for emit invocation protocol"
+    },
+    {
+      "id": "test-factory-release-scenarios",
+      "kind": "proof-test",
+      "path": "python/test_factory_release_scenarios.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_factory_release_scenarios.py",
+      "notes": "Tests for factory release scenario flows"
+    },
+    {
+      "id": "test-freeze-consolidation",
+      "kind": "proof-test",
+      "path": "python/test_freeze_consolidation.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_freeze_consolidation.py",
+      "notes": "Tests for freeze/unfreeze consolidation"
+    },
+    {
+      "id": "test-intent-sources",
+      "kind": "proof-test",
+      "path": "python/test_intent_sources.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_intent_sources.py",
+      "notes": "Tests for intent source persistence"
+    },
+    {
+      "id": "test-onboarding",
+      "kind": "proof-test",
+      "path": "python/test_onboarding.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_onboarding.py",
+      "notes": "Tests for onboarding flow"
+    },
+    {
+      "id": "test-orchestrator-core",
+      "kind": "proof-test",
+      "path": "python/test_orchestrator_core.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_orchestrator_core.py",
+      "notes": "Tests for core orchestrator logic"
+    },
+    {
+      "id": "test-orchestrator-gate-floor",
+      "kind": "proof-test",
+      "path": "python/test_orchestrator_gate_floor.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_orchestrator_gate_floor.py",
+      "notes": "Tests for orchestrator gate floor enforcement"
+    },
+    {
+      "id": "test-orchestrator-skills",
+      "kind": "proof-test",
+      "path": "python/test_orchestrator_skills.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_orchestrator_skills.py",
+      "notes": "Tests for orchestrator skill dispatch"
+    },
+    {
+      "id": "test-profile-validation",
+      "kind": "proof-test",
+      "path": "python/test_profile_validation.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_profile_validation.py",
+      "notes": "Tests for profile schema validation"
+    },
+    {
+      "id": "test-profiles",
+      "kind": "proof-test",
+      "path": "python/test_profiles.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_profiles.py",
+      "notes": "Tests for profile loading"
+    },
+    {
+      "id": "test-regression-autogen",
+      "kind": "proof-test",
+      "path": "python/test_regression_autogen.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_regression_autogen.py",
+      "notes": "Tests for regression scenario auto-generation"
+    },
+    {
+      "id": "test-release-readiness",
+      "kind": "proof-test",
+      "path": "python/test_release_readiness.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_release_readiness.py",
+      "notes": "Tests for release readiness evaluation"
+    },
+    {
+      "id": "test-release-scripts",
+      "kind": "proof-test",
+      "path": "python/test_release_scripts.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_release_scripts.py",
+      "notes": "Tests for deploy setup/land/canary/benchmark"
+    },
+    {
+      "id": "test-sandbox",
+      "kind": "proof-test",
+      "path": "python/test_sandbox.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_sandbox.py",
+      "notes": "Tests for sandbox boundary enforcement"
+    },
+    {
+      "id": "test-sandbox-integration",
+      "kind": "proof-test",
+      "path": "python/test_sandbox_integration.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_sandbox_integration.py",
+      "notes": "Tests for cross-language sandbox integration"
+    },
+    {
+      "id": "test-signalos-attachments",
+      "kind": "proof-test",
+      "path": "python/test_signalos_attachments.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_signalos_attachments.py",
+      "notes": "Tests for attachment handling"
+    },
+    {
+      "id": "test-signalos-secret-guard",
+      "kind": "proof-test",
+      "path": "python/test_signalos_secret_guard.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_signalos_secret_guard.py",
+      "notes": "Tests for secret guard redaction"
+    },
+    {
+      "id": "test-skill-validators",
+      "kind": "proof-test",
+      "path": "python/test_skill_validators.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_skill_validators.py",
+      "notes": "Tests for skill-level validators"
+    },
+    {
+      "id": "test-status-gate-emissions",
+      "kind": "proof-test",
+      "path": "python/test_status_gate_emissions.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_status_gate_emissions.py",
+      "notes": "Tests for status card gate emissions"
+    },
+    {
+      "id": "test-tdd-runner",
+      "kind": "proof-test",
+      "path": "python/test_tdd_runner.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_tdd_runner.py",
+      "notes": "Tests for TDD runner"
+    },
+    {
+      "id": "test-validate-layer1",
+      "kind": "proof-test",
+      "path": "python/test_validate_layer1.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_validate_layer1.py",
+      "notes": "Tests for layer1 validator suite"
+    },
+    {
+      "id": "test-verify-product",
+      "kind": "proof-test",
+      "path": "python/test_verify_product.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_verify_product.py",
+      "notes": "Tests for product verification"
+    },
+    {
+      "id": "test-wave-end-git",
+      "kind": "proof-test",
+      "path": "python/test_wave_end_git.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_end_git.py",
+      "notes": "Tests for wave-end git operations"
+    },
+    {
+      "id": "test-wave-engine",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine.py",
+      "notes": "Tests for core wave engine state machine"
+    },
+    {
+      "id": "test-wave-engine-judge",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_judge.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_judge.py",
+      "notes": "Tests for wave engine judge"
+    },
+    {
+      "id": "test-wave-engine-m-w3",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_m_w3.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_m_w3.py",
+      "notes": "Tests for wave engine wave 3 milestones"
+    },
+    {
+      "id": "test-wave-engine-m-w4",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_m_w4.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_m_w4.py",
+      "notes": "Tests for wave engine wave 4 milestones"
+    },
+    {
+      "id": "test-wave-engine-m-w5",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_m_w5.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_m_w5.py",
+      "notes": "Tests for wave engine wave 5 milestones"
+    },
+    {
+      "id": "test-wave-engine-m-w6",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_m_w6.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_m_w6.py",
+      "notes": "Tests for wave engine wave 6 milestones"
+    },
+    {
+      "id": "test-wave-engine-m-w7",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_m_w7.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_m_w7.py",
+      "notes": "Tests for wave engine wave 7 milestones"
+    },
+    {
+      "id": "test-wave-engine-persistence",
+      "kind": "proof-test",
+      "path": "python/test_wave_engine_persistence.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_engine_persistence.py",
+      "notes": "Tests for wave engine state persistence"
+    },
+    {
+      "id": "test-wave-ipc-handlers",
+      "kind": "proof-test",
+      "path": "python/test_wave_ipc_handlers.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_ipc_handlers.py",
+      "notes": "Tests for wave/gate IPC handlers"
+    },
+    {
+      "id": "test-wave-rollback",
+      "kind": "proof-test",
+      "path": "python/test_wave_rollback.py",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "python/test_wave_rollback.py",
+      "notes": "Tests for wave rollback mechanism"
+    },
+    {
+      "id": "test-app",
+      "kind": "proof-test",
+      "path": "src/app.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/app.test.tsx",
+      "notes": "Tests for main app component"
+    },
+    {
+      "id": "test-chat-bubble-system",
+      "kind": "proof-test",
+      "path": "src/components/ChatBubbleSystem.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/ChatBubbleSystem.test.tsx",
+      "notes": "Tests for chat bubble system component"
+    },
+    {
+      "id": "test-gate-timeline",
+      "kind": "proof-test",
+      "path": "src/components/GateTimeline.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/GateTimeline.test.tsx",
+      "notes": "Tests for gate timeline component"
+    },
+    {
+      "id": "test-new-project-modal",
+      "kind": "proof-test",
+      "path": "src/components/NewProjectModal.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/NewProjectModal.test.tsx",
+      "notes": "Tests for new project modal"
+    },
+    {
+      "id": "test-test-debt-panel",
+      "kind": "proof-test",
+      "path": "src/components/TestDebtPanel.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/TestDebtPanel.test.tsx",
+      "notes": "Tests for test debt panel component"
+    },
+    {
+      "id": "test-build-view",
+      "kind": "proof-test",
+      "path": "src/components/views/BuildView.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/BuildView.test.tsx",
+      "notes": "Tests for build view component"
+    },
+    {
+      "id": "test-dashboard-view",
+      "kind": "proof-test",
+      "path": "src/components/views/DashboardView.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/DashboardView.test.tsx",
+      "notes": "Tests for dashboard view component"
+    },
+    {
+      "id": "test-help-view",
+      "kind": "proof-test",
+      "path": "src/components/views/HelpView.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/HelpView.test.tsx",
+      "notes": "Tests for help view component"
+    },
+    {
+      "id": "test-preview-view",
+      "kind": "proof-test",
+      "path": "src/components/views/PreviewView.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/PreviewView.test.tsx",
+      "notes": "Tests for preview view component"
+    },
+    {
+      "id": "test-settings-view",
+      "kind": "proof-test",
+      "path": "src/components/views/SettingsView.test.tsx",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/components/views/SettingsView.test.tsx",
+      "notes": "Tests for settings view component"
+    },
+    {
+      "id": "test-ipc",
+      "kind": "proof-test",
+      "path": "src/js/ipc.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/js/ipc.test.ts",
+      "notes": "Tests for IPC layer"
+    },
+    {
+      "id": "test-chat-freeze-consolidation",
+      "kind": "proof-test",
+      "path": "src/js/ui/__tests__/chat.freeze-consolidation.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/js/ui/__tests__/chat.freeze-consolidation.test.ts",
+      "notes": "Tests for chat freeze consolidation"
+    },
+    {
+      "id": "test-chat-translator",
+      "kind": "proof-test",
+      "path": "src/js/ui/__tests__/chat.translator.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/js/ui/__tests__/chat.translator.test.ts",
+      "notes": "Tests for chat translator"
+    },
+    {
+      "id": "test-dashboard-vocabulary",
+      "kind": "proof-test",
+      "path": "src/js/ui/__tests__/dashboard.m3-vocabulary.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/js/ui/__tests__/dashboard.m3-vocabulary.test.ts",
+      "notes": "Tests for dashboard vocabulary compliance"
+    },
+    {
+      "id": "test-chat-response-guard",
+      "kind": "proof-test",
+      "path": "src/services/chatResponseGuard.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/services/chatResponseGuard.test.ts",
+      "notes": "Tests for chat response guard"
+    },
+    {
+      "id": "test-signalos-prompt",
+      "kind": "proof-test",
+      "path": "src/services/signalosPrompt.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/services/signalosPrompt.test.ts",
+      "notes": "Tests for signalos prompt assembly"
+    },
+    {
+      "id": "test-wave-engine-client",
+      "kind": "proof-test",
+      "path": "src/services/waveEngineClient.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/services/waveEngineClient.test.ts",
+      "notes": "Tests for wave engine client"
+    },
+    {
+      "id": "test-workspace",
+      "kind": "proof-test",
+      "path": "src/services/workspace.test.ts",
+      "bridge_status": "used",
+      "bridge_phase": "proof",
+      "proof": "src/services/workspace.test.ts",
+      "notes": "Tests for workspace service"
+    }
+  ]
+}
