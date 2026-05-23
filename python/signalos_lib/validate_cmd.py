@@ -241,7 +241,13 @@ def _layer1_checks() -> list[Layer1Check]:
         ("layer1-unknowns", "BLOCK_MERGE", _check_unknowns),
         ("layer1-profile", "BLOCK_MERGE", _check_profile),
         ("layer1-path-safety", "HALT", _check_path_safety),
+        ("constitution-integrity", "BLOCK_MERGE", _check_constitution_integrity),
     ]
+
+
+def _check_constitution_integrity(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    from signalos_lib.validators.constitution_integrity import check_constitution_integrity
+    return check_constitution_integrity(repo_root)
 
 
 def _check_workspace_root(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:

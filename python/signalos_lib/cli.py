@@ -385,6 +385,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Count or harvest // DEFER: markers into the wave backlog")
     p_defer.add_argument("defer_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    # Phase 13 hardening — constitution hash-lock and verify
+    p_const = sub.add_parser("constitution",
+        help="Hash-lock and verify the governance constitution")
+    p_const.add_argument("constitution_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1120,6 +1125,11 @@ def main(argv: list[str]) -> int:
     if cmd == "defer":
         from signalos_lib.commands import defer as m
         return m.main(list(getattr(args, "defer_args", None) or []))
+
+    # Phase 13 hardening — constitution lock/verify
+    if cmd == "constitution":
+        from signalos_lib.commands import constitution as m
+        return m.main(list(getattr(args, "constitution_args", None) or []))
 
     return 1
 
