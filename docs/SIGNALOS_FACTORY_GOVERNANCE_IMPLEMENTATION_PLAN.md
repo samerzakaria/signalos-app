@@ -618,6 +618,7 @@ Agent numbers identify ownership lanes across waves, not simultaneous headcount.
 - Every IPC-adding agent must update `src-tauri/capabilities/default.json` in the same change.
 - Every agent must update this document's status table and phase DoD before handoff.
 - The integration owner merges frequently, runs conflict checks, and keeps the implementation aligned with the "Existing Code To Extend" table.
+- The integration owner merges agent handoffs within 24 hours; no agent branch may live longer than 5 working days without a rebase against `main` and the latest contract-pack changes.
 
 ### Contract-First Wave
 
