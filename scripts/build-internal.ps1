@@ -77,21 +77,18 @@ Write-Host "  Version: $Version"
 # --- 4. Build the installer (unsigned) -------------------------------------
 if (-not $SkipBuild) {
     Write-Host "-- Building installer (unsigned) ----------------------------"
-    # Ensure the Windows sidecar binary exists before cargo runs. We do this
-    # check in PowerShell rather than invoking bash scripts/ensure-sidecar.sh,
-    # because on Windows-with-WSL the bash script detects WSL's Linux triple
-    # and tries to build the wrong sidecar.
+    # Rebuild the Windows sidecar before cargo runs. The binary is ignored by
+    # git, so an existing file can be stale even when the Python source is
+    # current. Use PowerShell rather than scripts/ensure-sidecar.sh because on
+    # Windows-with-WSL the bash script detects WSL's Linux triple.
     $SidecarPath = "src-tauri\bin\signalos-python-x86_64-pc-windows-msvc.exe"
-    if (-not (Test-Path $SidecarPath)) {
-        Write-Host "  Windows sidecar missing at $SidecarPath; bundling now..."
-        powershell -NoProfile -ExecutionPolicy Bypass -File scripts\bundle-sidecar.ps1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "bundle-sidecar.ps1 failed - cannot continue."
-            exit 1
-        }
-    } else {
-        Write-Host "  Windows sidecar: $SidecarPath (exists)"
+    Write-Host "  Rebuilding Windows sidecar from current Python source..."
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\bundle-sidecar.ps1
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $SidecarPath)) {
+        Write-Error "bundle-sidecar.ps1 failed - cannot continue."
+        exit 1
     }
+    Write-Host "  Windows sidecar: $SidecarPath (rebuilt)"
     # Use cargo-tauri to produce the bundle. NOT calling tauri-cli's signing
     # path; --bundles nsis is the unsigned Windows installer path.
     # MSI omitted: rejects non-numeric pre-release tags like "internal1".
