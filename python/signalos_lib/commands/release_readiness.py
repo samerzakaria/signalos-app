@@ -436,7 +436,7 @@ def _load_latest_verify_product(root: Path) -> tuple[dict[str, Any] | None, str 
         return None, None
     candidates = sorted(
         base.glob("*/verify-product.json"),
-        key=lambda path: path.stat().st_mtime,
+        key=lambda path: (path.stat().st_mtime_ns, path.as_posix()),
         reverse=True,
     )
     for path in candidates:

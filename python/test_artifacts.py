@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,16 @@ sys.path.insert(0, str(HERE))
 
 from signalos_lib import artifacts
 from signalos_lib import sign
+
+
+def _create_windows_junction(link: Path, target: Path) -> bool:
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    return proc.returncode == 0
 
 
 class ArtifactMapTests(unittest.TestCase):
@@ -62,20 +74,27 @@ class ArtifactMapTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         artifacts.resolve_workspace_path(root, rel_path)
 
-    def test_resolve_workspace_path_rejects_symlink_escape_when_supported(self) -> None:
+    def test_resolve_workspace_path_rejects_link_escape(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
             root = Path(tmp) / "root"
             outside = Path(tmp) / "outside"
             root.mkdir()
             outside.mkdir()
             link = root / "link"
+            created_junction = False
             try:
                 link.symlink_to(outside, target_is_directory=True)
             except OSError:
-                self.skipTest("symlink creation is unavailable in this environment")
+                if os.name != "nt" or not _create_windows_junction(link, outside):
+                    self.skipTest("filesystem link creation is unavailable in this environment")
+                created_junction = True
 
-            with self.assertRaises(ValueError):
-                artifacts.resolve_workspace_path(root, "link/escape.md")
+            try:
+                with self.assertRaises(ValueError):
+                    artifacts.resolve_workspace_path(root, "link/escape.md")
+            finally:
+                if created_junction and link.exists():
+                    link.rmdir()
 
     def test_check_gate_uses_shared_resolved_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:

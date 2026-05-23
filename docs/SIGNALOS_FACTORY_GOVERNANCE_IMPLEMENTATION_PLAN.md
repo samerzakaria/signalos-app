@@ -31,21 +31,24 @@ Every implementation PR or wave must update the status table below before comple
 
 | Area | Status | Evidence | Blockers |
 |---|---|---|---|
-| Workspace switching | Verified | Agent 1 IPC contract implemented persisted active workspace, recent workspace storage, `clear_workspace`, and `get_workspace_status`; Agent 6 switches the app into the newly created product repo after factory creation; cleanup wave added Settings recent product switcher UI, `window.switchWorkspace(path)`, status hydration for `recent_workspaces`, active workspace profile fallback, and focused UI coverage. Verified by latest gates: `npm test` = 161 passed; `npm run build` passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed | None recorded |
+| Workspace switching | Verified | Agent 1 IPC contract implemented persisted active workspace, recent workspace storage, `clear_workspace`, and `get_workspace_status`; Agent 6 switches the app into the newly created product repo after factory creation; cleanup wave added Settings recent product switcher UI, `window.switchWorkspace(path)`, status hydration for `recent_workspaces`, active workspace profile fallback, and focused UI coverage. Verified by latest gates: `npm test` = 161 passed; `npm run build` passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed | None recorded |
 | Tauri capability grants | Verified | Added `workspace-core` permission set for `clear_workspace` and `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml` | None recorded |
 | Legacy `src_old/` cleanup | Verified | Confirmed no active build imports, removed `src_old/`, verified by `npm run build` | None recorded |
 | Parallel execution coordination | Verified | Contract-first, full parallel, and final release-readiness/test-release lanes landed cleanly: `9bb46d2`, `890fc44`, `3298313`, `2c50a01`, `85aefa2`, `546307b`, `02e5be7`, `a533d1d`, `937d2ae`, `d755305`, `520e41d`, `6496f3e`, `c47bb7e`, `d42d031`; combined source gates and installed-build smoke passed after integration | None recorded |
 | New product repo creation | Verified | Agent 6 wired Browse to existing `pickWorkspaceFolder()`, new project creation to `createSignalosProject()`, folder creation, existing `initWorkspace()`, `instantiateGovernanceAndSignG0()`, workspace status refresh, and user-visible failure state; cleanup wave added New Project profile selector and `createSignalosProject(path, name, profile)` to `signal-init --profile`. Verified by latest gates: `npm test` = 161 passed; `npm run build` passed; focused `python/test_adoption_init.py` profile init coverage passed | None recorded |
 | Existing repo adoption | Implemented | Agent 7 added `init --keep-existing` adoption scanner output: `.signalos/adoption/surface-inventory.json`, `.signalos/adoption/unknowns.json`, `.signalos/adoption/onboarding-draft.md`, `.signalos/adoption/next-steps.md`, and `.signalos/sources/initial-intent.json`; verified by focused tests and combined source gates | Adoption report UI remains downstream |
 | Layer 1 factory inputs | Implemented | Agent 8 added intent/PRD source capture on the existing `signalos intent` path: prompt sources persist to `.signalos/sources/initial-intent.json`, PRD/spec/document files are copied and fingerprinted under `.signalos/sources/`; verified by focused tests and combined source gates | Unified factory/new-project/adoption flows still need to call this source-ingestion path |
-| Stack/profile system | Verified | Agent 3 added `python/signalos_lib/profiles/` loader/schema plus `generic` and `react-vite` fixtures; cleanup wave added New Project and Settings profile selectors, `signalos init --profile`, `.signalos/profile.json`, `.signalos/profile-validation.json`, profile CI/template emission, `validate --group layer1` profile check, and profile-driven preview defaults. Verified by latest gates: focused profile tests = 30 passed, 1 skipped, 5 subtests passed; `npm test` = 161 passed; `npm run build` passed; `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed | None recorded |
-| Layer 1 structural validator | Verified | Agent 2: `signalos validate --group layer1 --json`; cleanup wave added the `layer1-profile` validator so Layer 1 now checks selected profile metadata and generated profile/CI outputs. Verified by focused profile/layer1 tests = 30 passed, 1 skipped, 5 subtests passed; `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed | None recorded |
-| CI/template validation | Verified | Agent 9 added profile CI/template validation helpers and focused tests; cleanup wave wired those helpers into `signalos init --profile` and `signalos validate --group layer1`. Verified by focused profile tests and full Python gate: `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed | None recorded |
+| Stack/profile system | Verified | Agent 3 added `python/signalos_lib/profiles/` loader/schema plus `generic` and `react-vite` fixtures; cleanup wave added New Project and Settings profile selectors, `signalos init --profile`, `.signalos/profile.json`, `.signalos/profile-validation.json`, profile CI/template emission, `validate --group layer1` profile check, and profile-driven preview defaults. Verified by latest gates: focused profile tests = 31 passed, 0 skipped, 5 subtests passed; `npm test` = 161 passed; `npm run build` passed; `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed | None recorded |
+| Layer 1 structural validator | Verified | Agent 2: `signalos validate --group layer1 --json`; cleanup wave added the `layer1-profile` validator so Layer 1 now checks selected profile metadata and generated profile/CI outputs. Verified by focused profile/layer1 tests = 31 passed, 0 skipped, 5 subtests passed; `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed | None recorded |
+| CI/template validation | Verified | Agent 9 added profile CI/template validation helpers and focused tests; cleanup wave wired those helpers into `signalos init --profile` and `signalos validate --group layer1`. Verified by focused profile tests and full Python gate: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed | None recorded |
 | Layer 2 gate flow | Implemented | Agent 10 added shared G0-G5 gate timeline UI, normalized `current` gate status handling, dashboard/sidebar gate rendering, and `wave:begin` inspection publishing into existing gate signals; verified by `npm test`, `npm run build`, and combined source gates | Reject/request-changes verdict actions remain disabled until backend verdict support is exposed |
-| Product artifact generation | Verified | Agent 4 added shared artifact helper and compatibility export; cleanup wave added `python/signalos_lib/gate_artifacts.json` as the shared G0-G5 artifact manifest, loaded it from Python artifact helpers, and consumed the same manifest from Rust `get_project_artifacts()`. Verified by `python/test_artifacts.py`, `src-tauri` artifact manifest coverage, `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed, and `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed | None recorded |
+| Product artifact generation | Verified | Agent 4 added shared artifact helper and compatibility export; cleanup wave added `python/signalos_lib/gate_artifacts.json` as the shared G0-G5 artifact manifest, loaded it from Python artifact helpers, and consumed the same manifest from Rust `get_project_artifacts()`. Verified by `python/test_artifacts.py`, `src-tauri` artifact manifest coverage, `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed, and `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed | None recorded |
 | Build/test evidence | Implemented | Agent 11 added `signalos verify-product --json` command surface, normalized `.signalos/evidence/<wave>/verify-product.json` output, profile command execution, QA/E2E runner composition, TDD runner detection metadata; verified by focused tests and combined source gates | IPC route, Tauri ACL grant, UI display, and full generated-product E2E remain downstream |
-| Release readiness gate | Verified | Agent 12 added `signalos release-readiness --json`, Layer 1 validation evidence at `.signalos/evidence/layer1/validate-layer1.json`, release evidence at `.signalos/evidence/<wave>/release-readiness.json`, sidecar route `signal-release-readiness`, dashboard readiness card, and focused pass/fail/blocker UI tests; verified by focused readiness/UI tests plus combined source gates: `python -m pytest -q` = 484 passed, 4 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed; `npm test` = 158 passed; `npm run build` passed | Publish itself remains the existing explicit `signalos publish` action; readiness gates relationship as `blocked`, `ready-to-publish`, or `published` but does not auto-publish |
-| Release test suite | Verified | Agent 13 added Phase 12 release-scenario tests for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract, and installed-artifact preflight. Integration gates passed: `python -m pytest -q` = 484 passed, 4 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed; `npm test` = 158 passed; `npm run build` passed; `powershell -File scripts/check-installed-artifact-preconditions.ps1 -Json -RequireInstallers` = READY_FOR_SMOKE; `powershell -File scripts/smoke-installed-build.ps1 -CloseRunning` passed release executable launch, bundled sidecar product validation, and MSI administrative extraction; `scripts/build-internal.ps1` now rebuilds the sidecar before bundling to avoid stale packaged Python routes | `npm run tauri build` produced the release executable, MSI, and NSIS installer but exited 1 because updater signing requires `TAURI_SIGNING_PRIVATE_KEY`; WebView2 DevTools interactivity canary skipped in this environment because port 9223 was unreachable |
+| Release readiness gate | Verified | Agent 12 added `signalos release-readiness --json`, Layer 1 validation evidence at `.signalos/evidence/layer1/validate-layer1.json`, release evidence at `.signalos/evidence/<wave>/release-readiness.json`, sidecar route `signal-release-readiness`, dashboard readiness card, and focused pass/fail/blocker UI tests; latest source gates: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed | Publish itself remains the existing explicit `signalos publish` action; readiness gates relationship as `blocked`, `ready-to-publish`, or `published` but does not auto-publish |
+| Release test suite | Verified | Agent 13 added Phase 12 release-scenario tests for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract, and installed-artifact preflight. Latest source gates passed: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed. Installed checks passed: `powershell -File scripts/check-installed-artifact-preconditions.ps1 -Json -RequireInstallers` = READY_FOR_SMOKE; `powershell -File scripts/smoke-installed-build.ps1 -CloseRunning` passed release executable launch, bundled sidecar product validation, and MSI administrative extraction; `scripts/build-internal.ps1` now rebuilds the sidecar before bundling to avoid stale packaged Python routes | `npm run tauri build` produced the release executable, MSI, and NSIS installer but exited 1 because updater signing requires `TAURI_SIGNING_PRIVATE_KEY`; WebView2 DevTools interactivity canary skipped in this environment because port 9223 was unreachable |
+| TDD enforcement | Not started | None | None recorded |
+| Design+UX enforcement | Not started | None | None recorded |
+| Hardening borrows (Phase 13) | Not started | None | None recorded |
 
 Allowed status values:
 
@@ -264,18 +267,20 @@ Factory output must be tailored to the product stack instead of assuming one gen
 
 ### Required Changes
 
-| Task | Implementation | Acceptance |
-|---|---|---|
+| Task | Implementation | Likely Files | Acceptance |
+|---|---|---|---|
 | Profile manifest | Add machine-readable profile manifests listing required templates, CI, scripts, validators, and preview behavior | `python/signalos_lib/profiles/` | Validator can inspect selected profile |
 | UI selector | Add profile selector during create/adopt flow | New Project/Factory UI | User can choose or accept detected profile |
 | Backend support | Add only missing `--profile` support to existing init/factory surfaces; reuse existing init flags | Python commands and IPC | Profile is stored in product metadata |
 | Detection | Infer likely profile from files for existing repos | Adoption scanner | Existing repo gets suggested profile |
 | Preview compatibility | Preview service reads profile before trying npm commands | Preview service | Generic repos do not fail because npm is absent |
+| Enforcement defaults | Extend profile manifest schema with `design_required` (bool), `ux_required` (bool), and `tdd_threshold` (0.0-1.0) so Phase 6/8/11 validators read enforcement strictness from the profile instead of hard-coding it | `python/signalos_lib/profiles/profile.schema.json`, `generic.yaml`, `react-vite.yaml`, profile loader | Each shipped profile declares enforcement defaults; backend profiles set `ux_required: false`, frontend profiles set `ux_required: true` |
 
 ### Tests
 
 - Python test: each profile manifest loads.
 - Python test: validator fails on missing required profile files unless explicitly disabled.
+- Python test: profile manifest schema rejects missing `design_required` / `ux_required` / `tdd_threshold` fields.
 - UI test: selecting a profile changes init options.
 - E2E test: generic profile avoids Node preview assumptions.
 
@@ -284,6 +289,7 @@ Factory output must be tailored to the product stack instead of assuming one gen
 - [ ] Supported profiles have manifests.
 - [ ] Create/adopt UI can select or accept a detected profile.
 - [ ] Preview and validation behavior is profile-aware.
+- [ ] Profile manifest declares `design_required`, `ux_required`, `tdd_threshold` and these values drive Phase 6/8/11 validators.
 
 ## Phase 6: Layer 1 Structural Validator
 
@@ -389,12 +395,18 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 | Scope drift actions | Use existing wave engine scope-drift detection and typed client results to continue current repo or create a new product repo | Wave UI + factory flow | Scope drift can actually create/switch repos |
 | Gate evidence | Use `sign.py` `GATE_MAP` as the source of truth for required gate artifacts | Sign command/UI | Gate cannot pass without required evidence |
 | CSP-safe UI implementation | Build gate UI with framework event handlers and CSS classes; avoid raw inline handlers/styles in hand-written HTML unless using the CSP bootstrap pattern | Gate timeline UI files | Production CSP remains intact |
+| G3 TDD coverage prerequisite | Add `validate_tdd_coverage(wave, profile)` Layer 2 validator. Reads task plan, counts `is_tdd_task(task)` matches, fails when ratio < profile's `tdd_threshold`. Wire into G3 sign as a blocking prerequisite. Override path: `signal-sign G3 --waive-tdd "<reason, min 20 chars>"` records `action=tdd-waiver` in `AUDIT_TRAIL.jsonl` with the failing task IDs named in the entry | `python/signalos_lib/sign.py`, new `python/signalos_lib/validators/tdd_coverage.py`, `validate_cmd.py` registry | G3 cannot be signed without TDD coverage at profile threshold unless an audited waiver is recorded |
+| G3 design+UX prerequisite | Add `validate_design_reviewed(wave, profile)` Layer 2 validator. When profile has `design_required: true`, requires `.signalos/design/variants/wave-<n>/review.json` with `verdict=approved`. When profile has `ux_required: true`, the review must also include the UX rubric. Wire into G3 sign as a blocking prerequisite. UX-specific override path: `signal-sign G3 --no-ux-changes "<reason>"` records `action=ux-skip` (does not skip design-review — design is still required even when UX is waived). The skip is scoped to the current wave; the next wave that touches UI files must re-add the UX-reviewed design | `python/signalos_lib/sign.py`, new `python/signalos_lib/validators/design_reviewed.py`, `validate_cmd.py` registry, `design.py` `check_design_reviewed` | G3 cannot be signed without an approved design review (with UX rubric when profile requires it) unless an audited UX-skip is recorded |
 
 ### Tests
 
 - Python test: wave engine gate state transitions.
+- Python test: `validate_tdd_coverage` fails the wave when below threshold and passes when a waiver entry exists.
+- Python test: `validate_design_reviewed` fails when the review file is missing, fails when UX rubric is missing on a `ux_required` profile, and passes when an audited ux-skip is recorded.
+- Python test: `--waive-tdd` and `--no-ux-changes` require non-empty reasons and write the expected audit-trail entries.
 - JS unit test: wave events update gate timeline.
 - UI test: sign/reject/request-changes actions render and call backend.
+- UI test: G3 sign shows the waive-tdd and no-ux-changes affordances when the corresponding prerequisite fails, with reason capture.
 - E2E test: scope drift creates a new product repo and switches active workspace.
 
 ### Phase Definition Of Done
@@ -402,6 +414,7 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 - [ ] G0-G5 status is visible in the app.
 - [ ] Gate actions use existing sign/gate IPC surfaces and are auditable.
 - [ ] Gate UI is CSP-safe and scope drift can create or switch product repos.
+- [ ] G3 sign blocks on TDD coverage and design-review prerequisites unless an audited waiver (`--waive-tdd`) or UX skip (`--no-ux-changes`) is recorded.
 
 ## Phase 9: Product Artifact Generation
 
@@ -517,6 +530,8 @@ signalos release-readiness --json
 | Deployment path known | Yes, even if deployment is not executed |
 | Required templates present | Yes |
 | Required evidence captured | Yes |
+| TDD coverage meets profile threshold | Yes, unless every shortfall is covered by an audited `tdd-waiver` audit entry |
+| Design reviewed for every UI-touching wave | Yes, unless an audited `ux-skip` audit entry exists for that wave |
 | No unresolved release blockers | Yes |
 
 ### Required UI
@@ -525,6 +540,7 @@ signalos release-readiness --json
 - Pass/fail state.
 - Blocking checks.
 - Evidence links.
+- Waiver/skip surfacing: `tdd-waived: N of M waves` and `ux-skipped: N of M waves` shown as visible (not blocking) signals on the readiness card so the operator sees the audited overrides at release time.
 - Next action.
 - Last run timestamp.
 - Publish relationship: blocked, ready-to-publish, or published state when integrated with `signalos-publish`.
@@ -600,7 +616,7 @@ Agent 13 added `scripts/check-installed-artifact-preconditions.ps1` as a determi
 ### Phase Definition Of Done
 
 - [x] Rust and Python test harness configuration exists before those commands become required release gates.
-- [x] Source tests and build checks passed after final integration: `python -m pytest -q` = 489 passed, 1 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed.
+- [x] Source tests and build checks passed after final integration: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed.
 - [x] Phase 12 release-scenario coverage exists for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract, installed-artifact preflight, and installed-build smoke.
 - [x] Built artifact launches successfully: `npm run tauri build` produced release executable, MSI, and NSIS artifacts; installed-artifact preflight returned READY_FOR_SMOKE; `scripts/smoke-installed-build.ps1 -CloseRunning` passed release executable launch and MSI administrative extraction.
 - [x] Installed app can run the sidecar and validate a product repo: installed-build smoke passed bundled sidecar readiness, `signal-init`, `signal-release-readiness --json`, and evidence generation against a temp smoke product.
