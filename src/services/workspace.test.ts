@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { workspacePath } from '../state';
-import { createSignalosProject, initWorkspace } from './workspace';
+import { createSignalosProject, initWorkspace, pickWorkspaceFolder } from './workspace';
 
 describe('workspace factory helpers', () => {
   let invoke: ReturnType<typeof vi.fn>;
@@ -40,6 +40,33 @@ describe('workspace factory helpers', () => {
     expect(invoke).toHaveBeenCalledWith('get_workspace_status', undefined);
     expect(workspacePath.value).toBe('C:/Products/Task App');
     expect(result.status).toEqual({ status: 'initialized' });
+  });
+
+  it('switches between product repos by setting the active workspace each time', async () => {
+    await initWorkspace('C:/Products/One');
+    await initWorkspace('C:/Products/Two');
+
+    expect(invoke).toHaveBeenCalledWith('set_workspace', { path: 'C:/Products/One' });
+    expect(invoke).toHaveBeenCalledWith('set_workspace', { path: 'C:/Products/Two' });
+    expect(workspacePath.value).toBe('C:/Products/Two');
+  });
+
+  it('uses the Tauri folder dialog for workspace picking when available', async () => {
+    const open = vi.fn(async () => 'C:/Products/Picked');
+    window.__TAURI__ = {
+      core: { invoke },
+      fs: { mkdir },
+      dialog: { open },
+    };
+
+    await pickWorkspaceFolder();
+
+    expect(open).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: 'Choose project folder',
+    });
+    expect(workspacePath.value).toBe('C:/Products/Picked');
   });
 
   it('rethrows init failures when strict mode is enabled', async () => {

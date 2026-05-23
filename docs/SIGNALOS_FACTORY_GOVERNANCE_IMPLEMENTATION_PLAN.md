@@ -34,7 +34,7 @@ Every implementation PR or wave must update the status table below before comple
 | Workspace switching | In progress | Agent 1 IPC contract implemented persisted active workspace, recent workspace storage, `clear_workspace`, and `get_workspace_status`; Agent 6 now switches the app into the newly created product repo after factory creation; verified by combined source gates | Recent product switcher/UI remains for downstream agents |
 | Tauri capability grants | Verified | Added `workspace-core` permission set for `clear_workspace` and `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml` | None recorded |
 | Legacy `src_old/` cleanup | Verified | Confirmed no active build imports, removed `src_old/`, verified by `npm run build` | None recorded |
-| Parallel execution coordination | In progress | Contract-first and full parallel waves landed cleanly: `9bb46d2`, `890fc44`, `3298313`, `2c50a01`, `85aefa2`, `546307b`, `02e5be7`, `a533d1d`, `937d2ae`, `d755305`, `520e41d`, `6496f3e`; combined source gates passed | Final release-readiness/test-release wave still pending |
+| Parallel execution coordination | Verified | Contract-first, full parallel, and final release-readiness/test-release lanes landed cleanly: `9bb46d2`, `890fc44`, `3298313`, `2c50a01`, `85aefa2`, `546307b`, `02e5be7`, `a533d1d`, `937d2ae`, `d755305`, `520e41d`, `6496f3e`; Agent 12 release-readiness lane passed focused gates; Agent 13 release-test lane added scenario coverage | None recorded |
 | New product repo creation | Implemented | Agent 6 wired Browse to existing `pickWorkspaceFolder()`, new project creation to `createSignalosProject()`, folder creation, existing `initWorkspace()`, `instantiateGovernanceAndSignG0()`, workspace status refresh, and user-visible failure state; verified by `npm test`, `npm run build`, and combined source gates | Profile selector and init `--profile` wiring remain under stack/profile follow-up |
 | Existing repo adoption | Implemented | Agent 7 added `init --keep-existing` adoption scanner output: `.signalos/adoption/surface-inventory.json`, `.signalos/adoption/unknowns.json`, `.signalos/adoption/onboarding-draft.md`, `.signalos/adoption/next-steps.md`, and `.signalos/sources/initial-intent.json`; verified by focused tests and combined source gates | Adoption report UI remains downstream |
 | Layer 1 factory inputs | Implemented | Agent 8 added intent/PRD source capture on the existing `signalos intent` path: prompt sources persist to `.signalos/sources/initial-intent.json`, PRD/spec/document files are copied and fingerprinted under `.signalos/sources/`; verified by focused tests and combined source gates | Unified factory/new-project/adoption flows still need to call this source-ingestion path |
@@ -44,8 +44,8 @@ Every implementation PR or wave must update the status table below before comple
 | Layer 2 gate flow | Implemented | Agent 10 added shared G0-G5 gate timeline UI, normalized `current` gate status handling, dashboard/sidebar gate rendering, and `wave:begin` inspection publishing into existing gate signals; verified by `npm test`, `npm run build`, and combined source gates | Reject/request-changes verdict actions remain disabled until backend verdict support is exposed |
 | Product artifact generation | In progress | Agent 4 added shared artifact helper and compatibility export; `python -m unittest python.test_artifacts` and contract-pack tests pass | Rust `get_project_artifacts()` still needs downstream consolidation |
 | Build/test evidence | Implemented | Agent 11 added `signalos verify-product --json` command surface, normalized `.signalos/evidence/<wave>/verify-product.json` output, profile command execution, QA/E2E runner composition, TDD runner detection metadata; verified by focused tests and combined source gates | IPC route, Tauri ACL grant, UI display, and full generated-product E2E remain downstream |
-| Release readiness gate | Not started | None | None recorded |
-| Release test suite | In progress | Agent 5 added deterministic pytest config; full-wave combined gates passed: `python -m pytest -q` = 466 passed, 10 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed; `npm test` = 151 passed; `npm run build` passed | Installed-app smoke, release-readiness coverage, and generated-product E2E scenarios remain downstream |
+| Release readiness gate | Implemented | Agent 12 added `signalos release-readiness --json`, Layer 1 validation evidence at `.signalos/evidence/layer1/validate-layer1.json`, release evidence at `.signalos/evidence/<wave>/release-readiness.json`, sidecar route `signal-release-readiness`, dashboard readiness card, and focused pass/fail/blocker UI tests; verified by `python -m unittest python.test_release_readiness -v`, focused validator/verify/IPC tests, `npm test -- DashboardView`, `npm test -- ipc`, and `npm run build` | Publish itself remains the existing explicit `signalos publish` action; readiness gates relationship as `blocked`, `ready-to-publish`, or `published` but does not auto-publish |
+| Release test suite | In progress | Agent 5 added deterministic pytest config; full-wave combined gates passed: `python -m pytest -q` = 466 passed, 10 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed; `npm test` = 151 passed; `npm run build` passed. Agent 13 added Phase 12 release-scenario tests for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract skip/block, and installed-artifact preflight. Agent 13 verification: focused Python = 6 passed; focused Vitest = 7 passed; full `npm test` = 156 passed; `npm run build` passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed. Agent 12 focused release-readiness and dashboard gates pass | Full Python gate in the shared worktree is currently blocked by Agent 12's untracked `python/test_release_readiness.py` fixture failing Layer 1 unknowns validation; installed-app launch smoke still requires `npm run tauri build` followed by `scripts/smoke-installed-build.ps1` |
 
 Allowed status values:
 
@@ -537,13 +537,13 @@ signalos release-readiness --json
 - UI test: readiness card renders pass/fail/blockers.
 - E2E test: create product, run Layer 2, verify readiness.
 - Integration test: publish flow is blocked until release-readiness passes or an explicit audited override is used.
-- Static or integration check: release-readiness IPC route has a Tauri capability grant.
+- Static or integration check: release-readiness route uses existing sidecar `run_signal_command`; add a Tauri capability grant only if a dedicated Rust IPC route is introduced.
 
 ### Phase Definition Of Done
 
-- [ ] `signalos release-readiness --json` exists and gates publish.
-- [ ] UI shows pass/fail, blockers, evidence, next action, and publish relationship.
-- [ ] Release-readiness IPC route is granted in Tauri capabilities.
+- [x] `signalos release-readiness --json` exists and gates publish relationship without replacing `signalos publish`.
+- [x] UI shows pass/fail, blockers, evidence, next action, and publish relationship.
+- [x] Release-readiness uses existing sidecar `run_signal_command`; no new Rust IPC route or Tauri capability grant was added.
 
 ## Phase 12: Release Test Suite
 
@@ -577,6 +577,8 @@ Use the existing release scripts where applicable, but do not treat a script as 
 
 Installed-app validation means installing or launching the built artifact, then proving the packaged app can start, reach the sidecar, initialize a product repo, and run the required validation commands.
 
+Agent 13 added `scripts/check-installed-artifact-preconditions.ps1` as a deterministic preflight. It only checks artifact presence and records the manual/smoke command; it does not claim installed-app success. Installed-app success still requires running `scripts/smoke-installed-build.ps1` against a real `npm run tauri build` artifact.
+
 ### Required E2E Scenarios
 
 | Scenario | Required Proof |
@@ -597,10 +599,11 @@ Installed-app validation means installing or launching the built artifact, then 
 
 ### Phase Definition Of Done
 
-- [ ] Rust and Python test harness configuration exists before those commands become required release gates.
-- [ ] Source tests and build checks pass.
-- [ ] Built artifact installs or launches successfully.
-- [ ] Installed app can run the sidecar and validate a product repo.
+- [x] Rust and Python test harness configuration exists before those commands become required release gates.
+- [x] Source tests and build checks passed at the full-wave boundary: `python -m pytest -q` = 466 passed, 10 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 47 passed; `npm test` = 151 passed; `npm run build` passed.
+- [x] Phase 12 release-scenario coverage exists for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract skip/block, and installed-artifact preflight. Agent 13 focused verification: `python -m pytest python/test_factory_release_scenarios.py python/test_release_scripts.py -q` = 6 passed; focused Vitest = 7 passed.
+- [ ] Built artifact installs or launches successfully. Evidence not claimed by Agent 13 because this lane did not run `npm run tauri build` plus installed-app launch smoke.
+- [ ] Installed app can run the sidecar and validate a product repo. This remains a real installed-app smoke requirement after the artifact build.
 
 ## Maximum Reliable Parallel Execution Plan
 
