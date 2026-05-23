@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signalos.local/schemas/profile-manifest.v1.json",
+  "title": "SignalOS factory profile manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "description",
+    "required_templates",
+    "ci",
+    "commands",
+    "preview"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 1 },
+    "required_templates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/template" }
+    },
+    "ci": {
+      "type": "object",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "templates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/template" }
+        },
+        "disabled_reason": { "type": ["string", "null"] }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "required": ["install", "build", "test", "lint", "preview"],
+      "additionalProperties": false,
+      "properties": {
+        "install": { "$ref": "#/$defs/nullableCommand" },
+        "build": { "$ref": "#/$defs/nullableCommand" },
+        "test": { "$ref": "#/$defs/nullableCommand" },
+        "lint": { "$ref": "#/$defs/nullableCommand" },
+        "preview": { "$ref": "#/$defs/nullableCommand" }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["none", "command", "npm-script", "static"] },
+        "command": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "requires_install": { "type": "boolean" },
+        "disabled_reason": { "type": ["string", "null"] }
+      }
+    },
+    "validator_groups": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "nullableCommand": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/command" }
+      ]
+    },
+    "command": {
+      "type": "object",
+      "required": ["name", "argv"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "required": { "type": "boolean" }
+      }
+    },
+    "template": {
+      "type": "object",
+      "required": ["source", "destination"],
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "group": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

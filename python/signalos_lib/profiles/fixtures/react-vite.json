@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "react-vite",
+  "name": "React + Vite",
+  "description": "Browser product profile for React applications built and previewed through Vite npm scripts.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": true,
+    "files": [".github/workflows/signalos-ci.yml"],
+    "templates": [
+      {
+        "source": "core/governance/Validators/ci/github-actions.yml",
+        "destination": ".github/workflows/signalos-ci.yml",
+        "required": false,
+        "group": "ci"
+      }
+    ],
+    "disabled_reason": null
+  },
+  "commands": {
+    "install": {
+      "name": "npm install",
+      "argv": ["npm", "install"],
+      "required": true
+    },
+    "build": {
+      "name": "npm run build",
+      "argv": ["npm", "run", "build"],
+      "required": true
+    },
+    "test": {
+      "name": "npm test",
+      "argv": ["npm", "test"],
+      "required": false
+    },
+    "lint": {
+      "name": "npm run lint",
+      "argv": ["npm", "run", "lint"],
+      "required": false
+    },
+    "preview": {
+      "name": "npm run dev",
+      "argv": ["npm", "run", "dev"],
+      "required": true
+    }
+  },
+  "preview": {
+    "mode": "npm-script",
+    "command": "preview",
+    "url": "http://127.0.0.1:5173",
+    "requires_install": true,
+    "disabled_reason": null
+  },
+  "validator_groups": ["layer1", "governance", "artifacts", "node", "ci"]
+}

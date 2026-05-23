@@ -38,7 +38,7 @@ Every implementation PR or wave must update the status table below before comple
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |
 | Layer 1 factory inputs | Not started | None | None recorded |
-| Stack/profile system | Not started | None | None recorded |
+| Stack/profile system | In progress | Agent 3 added `python/signalos_lib/profiles/` loader/schema plus `generic` and `react-vite` fixtures; `python -m unittest python.test_profiles -v` passes | UI selector, init `--profile` wiring, validator integration, and preview integration remain for later agents |
 | Layer 1 structural validator | Not started | None | None recorded |
 | CI/template validation | Not started | None | None recorded |
 | Layer 2 gate flow | Not started | None | None recorded |

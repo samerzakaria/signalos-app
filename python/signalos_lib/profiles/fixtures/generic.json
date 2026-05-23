@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "generic",
+  "name": "Generic Product Repo",
+  "description": "Conservative profile for repos without a known build or preview runtime.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": "Generic repos do not assume a runnable CI stack until a concrete profile is selected."
+  },
+  "commands": {
+    "install": null,
+    "build": null,
+    "test": null,
+    "lint": null,
+    "preview": null
+  },
+  "preview": {
+    "mode": "none",
+    "command": null,
+    "url": null,
+    "requires_install": false,
+    "disabled_reason": "No preview command is assumed for the generic profile."
+  },
+  "validator_groups": ["layer1", "governance", "artifacts"]
+}
