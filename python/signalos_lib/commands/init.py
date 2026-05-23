@@ -43,6 +43,7 @@ from pathlib import Path
 # don't spam stderr if the user has multiple emitters or runs init twice.
 _BASH_WARNED = False
 
+from signalos_lib.adoption import scan_existing_repo, write_adoption_artifacts
 from signalos_lib.ide import detect_ide
 
 __all__ = ["main"]
@@ -441,6 +442,17 @@ def main(argv: list[str]) -> int:
     args = _build_parser().parse_args(argv)
     target = Path(args.path).expanduser().resolve()
     project_name = args.name or target.name or "signalos-project"
+    should_adopt_existing = (
+        target.exists()
+        and target.is_dir()
+        and args.keep_existing
+        and not _is_target_empty(target)
+    )
+    adoption_report = (
+        scan_existing_repo(target, project_name)
+        if should_adopt_existing
+        else None
+    )
 
     # 1. Path-existence handling
     if not target.exists():
@@ -494,6 +506,8 @@ def main(argv: list[str]) -> int:
 
     # 3. Create runtime state + per-project templates
     _create_runtime_state(target)
+    if adoption_report is not None:
+        write_adoption_artifacts(target, adoption_report)
     _render_plan_template(target, project_name)
     ide = detect_ide()
     _render_readme(target, project_name, ide)
