@@ -34,6 +34,7 @@ Every implementation PR or wave must update the status table below before comple
 | Workspace switching | Not started | None | None recorded |
 | Tauri capability grants | Not started | None | None recorded |
 | Legacy `src_old/` cleanup | Not started | None | None recorded |
+| Parallel execution coordination | Not started | None | None recorded |
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |
 | Layer 1 factory inputs | Not started | None | None recorded |
@@ -599,6 +600,85 @@ Installed-app validation means installing or launching the built artifact, then 
 - [ ] Built artifact installs or launches successfully.
 - [ ] Installed app can run the sidecar and validate a product repo.
 
+## Maximum Reliable Parallel Execution Plan
+
+Maximum reliable parallelism: 10 implementation agents plus 1 integration owner.
+
+Do not exceed 10 active code-writing agents at once. More than that creates too much contention around shared files such as `ipc.rs`, `app-v2.js`, `workspace.ts`, `validate_cmd.py`, `init.py`, `sign.py`, and the status/validator schemas.
+
+### Parallelism Rules
+
+- Shared contracts land first: product metadata, workspace status JSON, profile manifest schema, validator JSON, artifact map, release-readiness JSON, audit event names, and Tauri capability grants.
+- Each agent owns a narrow file set. Any file outside that set requires integrator approval before editing.
+- No agent may introduce a duplicate command surface when an existing command can be extended.
+- Every IPC-adding agent must update `src-tauri/capabilities/default.json` in the same change.
+- Every agent must update this document's status table and phase DoD before handoff.
+- The integration owner merges frequently, runs conflict checks, and keeps the implementation aligned with the "Existing Code To Extend" table.
+
+### Contract-First Wave
+
+These agents run first because they define shared shapes used by the rest of the work.
+
+| Agent | Owns | Primary Files | Output |
+|---|---|---|---|
+| Integration owner | Shared schemas, branch discipline, merge order, status table, final commits | This plan, shared type/schema files | Contract pack merged before broad work starts |
+| Agent 1: Workspace core | `src_old/` cleanup, workspace persistence, `clear_workspace`, workspace status composition, ACL grants | `src-tauri/src/ipc.rs`, `src-tauri/capabilities/default.json`, workspace state files | Durable workspace state and clear/switch contract |
+| Agent 2: Validator core | Existing `signalos validate` Layer 1 group/scope and validator JSON schema | `validate_cmd.py`, validator registry/modules | Stable Layer 1 validator result |
+| Agent 3: Profiles core | Profile manifest schema and first profile fixtures | `python/signalos_lib/profiles/`, profile tests | Shared profile contract for factory, validation, preview, CI |
+| Agent 4: Artifact core | Consolidated artifact map from `GATE_MAP` and `get_project_artifacts()` | `sign.py`, artifact/status modules, IPC artifact probe | One source of truth for gate/artifact paths |
+
+Contract-first exit criteria:
+
+- Workspace status JSON shape is documented and test-covered.
+- Layer 1 validator JSON shape is documented and test-covered.
+- Profile manifest schema has at least `generic` and `react-vite` fixtures.
+- Artifact map is single-source or clearly wrapped from existing sources.
+- Tauri ACL changes for new IPC are present.
+- This document's status table is updated.
+
+### Full Parallel Wave
+
+After the contract-first wave lands, run these agents in parallel.
+
+| Agent | Owns | Depends On | Output |
+|---|---|---|---|
+| Agent 5: New Project factory | Create folder, wire Browse to `pickWorkspaceFolder()`, call existing `initWorkspace()` and `instantiateGovernanceAndSignG0()` | Workspace core, profiles core | New product repo creation works end to end |
+| Agent 6: Existing repo adoption | Extend `init --keep-existing` with scanner, surface inventory, unknowns, onboarding drafts | Profiles core, validator core | Existing repo adoption is non-destructive and visible |
+| Agent 7: Intent/PRD ingestion | Extend `intent.py` for prompt and PRD/spec source capture and traceability | Profiles core, artifact core | Prompt and PRD sources are persisted and traceable |
+| Agent 8: CI/template validation | Profile CI manifests, placeholder scan using existing substitution rules, dry-run validation | Profiles core, validator core | Broken templates/CI are blocked |
+| Agent 9: Gate UI/wave wiring | Gate timeline UI, sign/reject/request-changes verdict wiring, wave/scope drift UI | Workspace core, artifact core | G0-G5 state and actions are visible and auditable |
+| Agent 10: Product verification | `verify-product` command that composes existing QA/E2E/TDD runners and captures evidence | Profiles core, artifact core | Build/test evidence is normalized and linked |
+
+### Final Parallel Wave
+
+These should start after the full parallel wave APIs stabilize.
+
+| Agent | Owns | Depends On | Output |
+|---|---|---|---|
+| Agent 11: Release readiness | `release-readiness` command, publish gating, readiness UI card | Validator core, product verification, artifact core | Machine-readable release readiness and UI blockers |
+| Agent 12: Test/release harness | Rust/Python test harness config, E2E scenarios, installed-app smoke path | All implementation APIs | Release suite proves factory/governance flows |
+
+Agent 11 and Agent 12 may run in parallel, but Agent 12 should treat unstable APIs as blocked rather than inventing mocks that hide integration failures.
+
+### Merge Order
+
+1. Contract pack: workspace status, validator schema, profile schema, artifact map, ACL pattern.
+2. New Project factory and intent ingestion.
+3. Existing repo adoption and CI/template validation.
+4. Gate UI/wave wiring and product verification.
+5. Release readiness and publish gating.
+6. Test/release harness and installed-app smoke.
+7. Final status-table update, full verification, and commit.
+
+### Reliability Guardrails
+
+- Avoid same-file collisions by assigning `ipc.rs`, `app-v2.js`, `workspace.ts`, `init.py`, `validate_cmd.py`, and `sign.py` to one primary agent each.
+- If two agents need the same shared file, the integration owner makes the edit or extracts a smaller shared helper first.
+- Agents must prefer additive wrappers around existing code until tests prove behavior, then consolidate.
+- No agent may delete or rewrite bundle templates unless the validator proves the replacement is compatible.
+- All generated or adopted product-repo writes must remain inside the active workspace.
+- A phase cannot be marked Verified unless its tests and status-table evidence are recorded in this document.
+
 ## Implementation Order
 
 1. Delete or archive `src_old/` after confirming it is not imported by the active build.
@@ -637,6 +717,7 @@ The implementation is done only when all of the following are true:
 - Existing repo adoption extends init preserve mode and produces surface inventory, unknowns, onboarding drafts, and validation output.
 - Prompt, PRD/spec, empty repo, and existing repo inputs all flow through the same factory pipeline.
 - Every supported stack/profile has a manifest, required templates, validator rules, and release-test coverage.
+- Parallel execution followed the contract-first model, stayed within the 10 active implementation-agent cap, and recorded coordination evidence in the status table.
 - Layer 1 cannot be marked complete unless `signalos validate --group layer1 --json` passes through the existing validator command.
 - CI/templates cannot be emitted in a broken or placeholder-only state.
 - Layer 2 shows G0-G5 gate state in the UI.
