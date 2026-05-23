@@ -1,0 +1,34 @@
+{
+  "templates": [
+    {
+      "id": "sample-revenue",
+      "entity": "Revenue",
+      "data": [
+        {"amount": 15000, "currency": "USD", "source": "subscription", "date": "2026-01-15", "recurring": true},
+        {"amount": 18000, "currency": "USD", "source": "subscription", "date": "2026-02-15", "recurring": true},
+        {"amount": 2500, "currency": "USD", "source": "one-time", "date": "2026-02-20", "recurring": false},
+        {"amount": 20000, "currency": "USD", "source": "subscription", "date": "2026-03-15", "recurring": true}
+      ]
+    },
+    {
+      "id": "sample-subscriptions",
+      "entity": "Subscription",
+      "data": [
+        {"customer_id": "cust-001", "plan": "pro", "mrr": 500, "started_at": "2025-06-01", "status": "active"},
+        {"customer_id": "cust-002", "plan": "enterprise", "mrr": 2000, "started_at": "2025-03-15", "status": "active"},
+        {"customer_id": "cust-003", "plan": "pro", "mrr": 500, "started_at": "2025-09-01", "status": "churned"},
+        {"customer_id": "cust-004", "plan": "starter", "mrr": 100, "started_at": "2025-11-10", "status": "active"}
+      ]
+    },
+    {
+      "id": "historical-metrics",
+      "entity": "Metric",
+      "data": [
+        {"name": "MRR", "value": 15000, "unit": "USD", "timestamp": "2026-01-31", "category": "revenue"},
+        {"name": "MRR", "value": 18000, "unit": "USD", "timestamp": "2026-02-28", "category": "revenue"},
+        {"name": "Churn Rate", "value": 3.2, "unit": "percent", "timestamp": "2026-02-28", "category": "retention"},
+        {"name": "Cash Runway", "value": 14, "unit": "months", "timestamp": "2026-03-01", "category": "finance"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "surfaces": [
+    {
+      "id": "revenue-chart",
+      "component": "RevenueChart",
+      "description": "Time-series chart showing revenue trend over months",
+      "data_bindings": ["GET /revenue"],
+      "layout": "main-content"
+    },
+    {
+      "id": "churn-chart",
+      "component": "ChurnChart",
+      "description": "Line or bar chart showing churn rate over time",
+      "data_bindings": ["GET /churn"],
+      "layout": "main-content"
+    },
+    {
+      "id": "runway-gauge",
+      "component": "RunwayGauge",
+      "description": "Visual gauge showing months of remaining cash runway",
+      "data_bindings": ["GET /runway"],
+      "layout": "sidebar"
+    },
+    {
+      "id": "metrics-table",
+      "component": "MetricsTable",
+      "description": "Tabular view of all tracked metrics with sorting",
+      "data_bindings": ["GET /metrics"],
+      "layout": "main-content"
+    },
+    {
+      "id": "dashboard-summary",
+      "component": "DashboardSummary",
+      "description": "Top-level summary cards showing MRR, ARR, churn rate, and runway",
+      "data_bindings": ["GET /metrics/summary"],
+      "layout": "header"
+    }
+  ]
+}

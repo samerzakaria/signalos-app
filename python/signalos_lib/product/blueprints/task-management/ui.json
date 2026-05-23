@@ -1,0 +1,32 @@
+{
+  "surfaces": [
+    {
+      "id": "task-list",
+      "component": "TaskList",
+      "description": "Filterable list of tasks with status indicators",
+      "data_bindings": ["GET /tasks"],
+      "layout": "main-content"
+    },
+    {
+      "id": "task-detail",
+      "component": "TaskDetail",
+      "description": "Single task view with edit capability",
+      "data_bindings": ["GET /tasks/:id", "PATCH /tasks/:id"],
+      "layout": "detail-panel"
+    },
+    {
+      "id": "project-board",
+      "component": "ProjectBoard",
+      "description": "Kanban-style board with task columns by status",
+      "data_bindings": ["GET /tasks", "PATCH /tasks/:id"],
+      "layout": "full-width"
+    },
+    {
+      "id": "dashboard",
+      "component": "Dashboard",
+      "description": "Overview with task counts, recent activity, and project summary",
+      "data_bindings": ["GET /tasks", "GET /projects"],
+      "layout": "main-content"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "blueprints": [
+    {"id": "task-management", "path": "task-management/blueprint.json"},
+    {"id": "financial-dashboard", "path": "financial-dashboard/blueprint.json"}
+  ]
+}

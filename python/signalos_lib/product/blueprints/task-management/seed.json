@@ -1,0 +1,32 @@
+{
+  "templates": [
+    {
+      "id": "sample-project",
+      "entity": "Project",
+      "data": [
+        {"name": "Website Redesign", "description": "Redesign the company website"},
+        {"name": "Mobile App", "description": "Build the mobile companion app"}
+      ]
+    },
+    {
+      "id": "sample-tasks",
+      "entity": "Task",
+      "data": [
+        {"title": "Design homepage mockup", "status": "open", "project": "Website Redesign"},
+        {"title": "Set up CI pipeline", "status": "open", "project": "Website Redesign"},
+        {"title": "Write API docs", "status": "done", "project": "Website Redesign"},
+        {"title": "Create login screen", "status": "open", "project": "Mobile App"},
+        {"title": "Implement push notifications", "status": "open", "project": "Mobile App"}
+      ]
+    },
+    {
+      "id": "sample-users",
+      "entity": "User",
+      "data": [
+        {"name": "Alice Chen", "email": "alice@example.com", "role": "admin"},
+        {"name": "Bob Martinez", "email": "bob@example.com", "role": "member"},
+        {"name": "Carol Kim", "email": "carol@example.com", "role": "member"}
+      ]
+    }
+  ]
+}

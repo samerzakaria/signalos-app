@@ -1,0 +1,24 @@
+{
+  "scenarios": [
+    {
+      "id": "create-task",
+      "description": "Creating a task persists it and returns the new task with an id",
+      "acceptance": "POST /tasks returns 201 with a valid task object containing an id"
+    },
+    {
+      "id": "complete-task",
+      "description": "Marking a task complete changes its status to done",
+      "acceptance": "PATCH /tasks/:id with status=done returns the updated task"
+    },
+    {
+      "id": "list-filter",
+      "description": "Listing tasks supports filtering by project, status, and assignee",
+      "acceptance": "GET /tasks?status=open returns only open tasks"
+    },
+    {
+      "id": "project-crud",
+      "description": "Projects can be created and listed",
+      "acceptance": "POST /projects creates a project; GET /projects includes the new project"
+    }
+  ]
+}

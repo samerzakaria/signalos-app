@@ -1,0 +1,44 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/tasks",
+      "description": "Create a new task",
+      "request": {"title": "string", "description": "string", "project_id": "string", "assignee": "string?", "due_date": "string?"},
+      "response": {"id": "string", "title": "string", "status": "open"}
+    },
+    {
+      "method": "GET",
+      "path": "/tasks",
+      "description": "List tasks with optional filters",
+      "query": {"project_id": "string?", "status": "string?", "assignee": "string?"},
+      "response": {"tasks": "Task[]", "total": "number"}
+    },
+    {
+      "method": "PATCH",
+      "path": "/tasks/:id",
+      "description": "Update a task",
+      "request": {"title": "string?", "description": "string?", "status": "string?", "assignee": "string?", "due_date": "string?"},
+      "response": {"id": "string", "title": "string", "status": "string"}
+    },
+    {
+      "method": "DELETE",
+      "path": "/tasks/:id",
+      "description": "Delete a task",
+      "response": {"deleted": "boolean"}
+    },
+    {
+      "method": "POST",
+      "path": "/projects",
+      "description": "Create a new project",
+      "request": {"name": "string", "description": "string"},
+      "response": {"id": "string", "name": "string"}
+    },
+    {
+      "method": "GET",
+      "path": "/projects",
+      "description": "List all projects",
+      "response": {"projects": "Project[]", "total": "number"}
+    }
+  ]
+}

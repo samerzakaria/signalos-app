@@ -1,0 +1,29 @@
+{
+  "id": "task-management",
+  "display_name": "Task Management",
+  "intent_match": {
+    "product_type": ["task-management"],
+    "entities": ["task", "project"],
+    "keywords": ["todo", "kanban", "board", "assign"]
+  },
+  "required_intent_fields": ["product_name", "entities"],
+  "entities": [
+    {"name": "Task", "fields": ["id", "title", "description", "status", "assignee", "due_date", "project_id"]},
+    {"name": "Project", "fields": ["id", "name", "description", "owner"]},
+    {"name": "User", "fields": ["id", "name", "email", "role"]}
+  ],
+  "workflows": [
+    {"name": "create_task", "description": "Create a new task in a project"},
+    {"name": "complete_task", "description": "Mark a task as done"},
+    {"name": "list_tasks", "description": "List tasks with filters"},
+    {"name": "assign_task", "description": "Assign a task to a team member"}
+  ],
+  "api": ["POST /tasks", "GET /tasks", "PATCH /tasks/:id", "DELETE /tasks/:id", "POST /projects", "GET /projects"],
+  "ui": ["task-list", "task-detail", "project-board", "dashboard"],
+  "tests": ["create-task", "complete-task", "list-filter", "project-crud"],
+  "seed_data": ["sample-project", "sample-tasks", "sample-users"],
+  "security": ["auth-required", "role-based-access"],
+  "quality_profile": "standard",
+  "default_deferrals": ["real-time-sync", "file-attachments", "notifications"],
+  "profile_support": ["react-vite", "generic"]
+}

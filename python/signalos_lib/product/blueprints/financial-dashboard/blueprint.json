@@ -1,0 +1,31 @@
+{
+  "id": "financial-dashboard",
+  "display_name": "Financial Dashboard",
+  "intent_match": {
+    "product_type": ["financial-dashboard"],
+    "entities": ["revenue", "churn", "metric", "subscription"],
+    "keywords": ["revenue", "churn", "runway", "finance", "saas", "metrics", "dashboard"]
+  },
+  "required_intent_fields": ["product_name", "entities"],
+  "entities": [
+    {"name": "Metric", "fields": ["id", "name", "value", "unit", "timestamp", "category"]},
+    {"name": "Revenue", "fields": ["id", "amount", "currency", "source", "date", "recurring"]},
+    {"name": "Churn", "fields": ["id", "customer_id", "churned_at", "reason", "mrr_lost"]},
+    {"name": "CashRunway", "fields": ["id", "balance", "burn_rate", "runway_months", "as_of"]},
+    {"name": "Subscription", "fields": ["id", "customer_id", "plan", "mrr", "started_at", "status"]}
+  ],
+  "workflows": [
+    {"name": "record_revenue", "description": "Record a revenue entry from a payment or invoice"},
+    {"name": "compute_churn", "description": "Calculate churn rate over a period"},
+    {"name": "compute_runway", "description": "Calculate remaining cash runway from balance and burn rate"},
+    {"name": "refresh_dashboard", "description": "Aggregate latest metrics for the dashboard summary"}
+  ],
+  "api": ["POST /revenue", "GET /revenue", "GET /metrics", "GET /metrics/summary", "GET /churn", "GET /runway"],
+  "ui": ["revenue-chart", "churn-chart", "runway-gauge", "metrics-table", "dashboard-summary"],
+  "tests": ["seed-metrics", "compute-churn", "revenue-trend", "dashboard-render"],
+  "seed_data": ["sample-revenue", "sample-subscriptions", "historical-metrics"],
+  "security": ["auth-required", "read-only-default"],
+  "quality_profile": "standard",
+  "default_deferrals": ["real-time-streaming", "export-pdf", "email-alerts"],
+  "profile_support": ["react-vite", "generic"]
+}

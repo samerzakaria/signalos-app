@@ -1,0 +1,24 @@
+{
+  "scenarios": [
+    {
+      "id": "seed-metrics",
+      "description": "Seeding historical metrics populates the metrics endpoint",
+      "acceptance": "GET /metrics returns seeded metric entries"
+    },
+    {
+      "id": "compute-churn",
+      "description": "Churn computation returns correct rate from subscription data",
+      "acceptance": "GET /churn returns a churn_rate consistent with churned vs total subscriptions"
+    },
+    {
+      "id": "revenue-trend",
+      "description": "Revenue endpoint returns entries sorted by date with correct totals",
+      "acceptance": "GET /revenue with date range returns matching entries and total_amount"
+    },
+    {
+      "id": "dashboard-render",
+      "description": "Dashboard summary aggregates MRR, ARR, churn, and runway correctly",
+      "acceptance": "GET /metrics/summary returns non-null values for mrr, arr, churn_rate, runway_months"
+    }
+  ]
+}

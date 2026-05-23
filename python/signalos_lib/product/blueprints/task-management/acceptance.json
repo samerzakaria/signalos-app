@@ -1,0 +1,20 @@
+{
+  "criteria": [
+    {
+      "test_id": "create-task",
+      "outcome": "A user can create a task with a title and see it appear in the task list"
+    },
+    {
+      "test_id": "complete-task",
+      "outcome": "A user can mark a task as complete and it moves to the done column"
+    },
+    {
+      "test_id": "list-filter",
+      "outcome": "A user can filter the task list by status and only matching tasks are shown"
+    },
+    {
+      "test_id": "project-crud",
+      "outcome": "A user can create a project and see it in the project list"
+    }
+  ]
+}

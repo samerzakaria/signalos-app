@@ -1,0 +1,20 @@
+{
+  "criteria": [
+    {
+      "test_id": "seed-metrics",
+      "outcome": "Historical metrics are available in the metrics view after seeding"
+    },
+    {
+      "test_id": "compute-churn",
+      "outcome": "The churn rate reflects the ratio of churned to total subscriptions"
+    },
+    {
+      "test_id": "revenue-trend",
+      "outcome": "Revenue chart shows an accurate trend line matching recorded entries"
+    },
+    {
+      "test_id": "dashboard-render",
+      "outcome": "The dashboard summary displays current MRR, ARR, churn rate, and runway months"
+    }
+  ]
+}

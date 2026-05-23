@@ -1,0 +1,44 @@
+{
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/revenue",
+      "description": "Record a revenue entry",
+      "request": {"amount": "number", "currency": "string", "source": "string", "date": "string", "recurring": "boolean"},
+      "response": {"id": "string", "amount": "number", "currency": "string"}
+    },
+    {
+      "method": "GET",
+      "path": "/revenue",
+      "description": "List revenue entries with date range filter",
+      "query": {"from": "string?", "to": "string?", "source": "string?"},
+      "response": {"entries": "Revenue[]", "total_amount": "number"}
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "description": "List all tracked metrics",
+      "query": {"category": "string?"},
+      "response": {"metrics": "Metric[]"}
+    },
+    {
+      "method": "GET",
+      "path": "/metrics/summary",
+      "description": "Aggregated dashboard summary with key indicators",
+      "response": {"mrr": "number", "arr": "number", "churn_rate": "number", "runway_months": "number"}
+    },
+    {
+      "method": "GET",
+      "path": "/churn",
+      "description": "Churn data over a time period",
+      "query": {"from": "string?", "to": "string?"},
+      "response": {"churn_rate": "number", "churned_customers": "number", "mrr_lost": "number"}
+    },
+    {
+      "method": "GET",
+      "path": "/runway",
+      "description": "Current cash runway calculation",
+      "response": {"balance": "number", "burn_rate": "number", "runway_months": "number", "as_of": "string"}
+    }
+  ]
+}
