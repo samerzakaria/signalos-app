@@ -1,4 +1,5 @@
 import { userName, userRole, govGatesList, auditList, fileTreeEntries, recentlyChangedFiles, workspacePath } from '../state';
+import { gateCode, gateUiState } from './GateTimeline';
 
 export function Sidebar() {
   const tree = fileTreeEntries.value;
@@ -79,8 +80,10 @@ export function Sidebar() {
         <div className="gov-wave-name">{govGatesList.value.length > 0 ? 'Active' : 'No wave loaded'}</div>
         <div className="gate-nodes">
           {govGatesList.value.map((g, i) => {
-            const cls = g.status === "signed" || g.signed ? "done" : g.status === "active" || g.is_current ? "active" : "locked";
-            return <div key={i} className={`gate-node ${cls}`} title={g.name || "Gate " + (i + 1)}>G{i + 1}</div>;
+            const state = gateUiState(g);
+            const cls = state === "signed" ? "done" : state === "current" ? "active" : "locked";
+            const code = gateCode(g, i);
+            return <div key={code} className={`gate-node ${cls}`} title={g.name || code}>{code}</div>;
           })}
         </div>
         {govGatesList.value.length > 0 && (() => {

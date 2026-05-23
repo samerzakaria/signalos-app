@@ -88,6 +88,33 @@ describe('DashboardView', () => {
     expect(screen.getByText('Locked')).toBeInTheDocument();
   });
 
+  it('treats backend status=current as the active visible gate', () => {
+    govGatesList.value = [
+      { id: 0, name: 'Soul', status: 'signed', signed: true },
+      { id: 1, name: 'Belief', status: 'current', is_current: true },
+      { id: 2, name: 'Plan', status: 'locked' },
+    ];
+    render(<DashboardView />);
+    const current = screen.getByTestId('gate-timeline-G1');
+    expect(current).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText(/G1 of 3.*Belief/)).toBeInTheDocument();
+  });
+
+  it('shows backend-limited sign, request-changes, and reject gate actions', () => {
+    govGatesList.value = [{ id: 2, name: 'Plan', status: 'current', is_current: true }];
+    gateActivities.value = [{ name: 'Activity 1', status: 'completed' }];
+    gateCriteria.value = [{ name: 'Check 1', status: 'passed' }];
+    render(<DashboardView />);
+
+    expect(screen.getByRole('button', { name: /Sign gate/i })).toBeEnabled();
+    const requestChanges = screen.getByRole('button', { name: /Request changes/i });
+    const reject = screen.getByRole('button', { name: /Reject/i });
+    expect(requestChanges).toBeDisabled();
+    expect(requestChanges).toHaveAttribute('title', expect.stringMatching(/not exposed/i));
+    expect(reject).toBeDisabled();
+    expect(reject).toHaveAttribute('title', expect.stringMatching(/not exposed/i));
+  });
+
   it('shows the active gate hero title with the gate index', () => {
     govGatesList.value = [
       { id: 'G0', name: 'Soul', status: 'signed', signed: true },
@@ -96,6 +123,6 @@ describe('DashboardView', () => {
     currentWaveSummary.value = { total_gates: 2 };
     render(<DashboardView />);
     // Active gate is the second entry (index 1), so "Gate 2 of 2 — Plan".
-    expect(screen.getByText(/Gate 2 of 2.*Plan/)).toBeInTheDocument();
+    expect(screen.getByText(/G1 of 2.*Plan/)).toBeInTheDocument();
   });
 });

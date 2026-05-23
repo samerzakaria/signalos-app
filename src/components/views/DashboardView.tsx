@@ -7,6 +7,12 @@ import {
   gateCriteria,
   signFormOpen,
 } from '../../state';
+import {
+  GateTimeline,
+  activeGateIndex,
+  gateCode,
+  isGateSigned,
+} from '../GateTimeline';
 
 export function DashboardView() {
   const gates = govGatesList.value;
@@ -16,14 +22,14 @@ export function DashboardView() {
   const criteria = gateCriteria.value;
 
   const total = wave?.total_gates ?? (gates.length || 0);
-  const signedCount = gates.filter((g) => g.status === 'signed' || g.signed).length;
+  const signedCount = gates.filter(isGateSigned).length;
   const pct = total > 0 ? Math.round((signedCount / total) * 100) : 0;
   const dashOffset = 276.46 * (1 - pct / 100);
 
-  const activeGate = gates.find((g) => g.status === 'active' || g.is_current);
-  const activeIdx = activeGate ? gates.indexOf(activeGate) : -1;
+  const activeIdx = activeGateIndex(gates);
+  const activeGate = activeIdx >= 0 ? gates[activeIdx] : null;
   const heroTitle = activeGate
-    ? `Gate ${activeIdx + 1} of ${total || gates.length} — ${activeGate.name || 'Current gate'}`
+    ? `${gateCode(activeGate, activeIdx)} of ${total || gates.length} — ${activeGate.name || 'Current gate'}`
     : gates.length === 0
       ? 'No wave loaded'
       : 'All gates signed';
@@ -84,28 +90,7 @@ export function DashboardView() {
           {gates.length > 0 ? (
             <div className="card card-pad">
               <div className="sec-cap">Gates</div>
-              <div className="stepper">
-                {gates.map((g, i) => {
-                  const signed = g.status === 'signed' || g.signed;
-                  const active = g.status === 'active' || g.is_current;
-                  const cls = signed ? 'scell done' : active ? 'scell active' : 'scell';
-                  const circ = signed
-                    ? <i className="ti ti-check"></i>
-                    : active
-                      ? <>{i + 1}</>
-                      : <i className="ti ti-lock"></i>;
-                  const status = signed ? 'Signed' : active ? 'Current' : 'Locked';
-                  const isLast = i === gates.length - 1;
-                  return (
-                    <div className={cls} key={g.id || i}>
-                      <div className="scirc">{circ}</div>
-                      <div className="slbl">{g.name || `Gate ${i + 1}`}</div>
-                      <div className="sstatus">{status}</div>
-                      {!isLast ? <div className="conn"></div> : null}
-                    </div>
-                  );
-                })}
-              </div>
+              <GateTimeline gates={gates} />
             </div>
           ) : null}
 
@@ -114,7 +99,7 @@ export function DashboardView() {
             <div className="gate-head">
               <div className="gate-ic"><i className="ti ti-flame"></i></div>
               <div className="gate-tx">
-                <h3>{activeGate ? `Gate ${activeIdx + 1} — ${activeGate.name || ''}` : (gate?.name || 'Current gate')}</h3>
+                <h3>{activeGate ? `${gateCode(activeGate, activeIdx)} — ${activeGate.name || ''}` : (gate?.name || 'Current gate')}</h3>
                 <p>{gate?.description || 'Tap activities to move them along, tap a check to run it. Sign the gate when everything is green.'}</p>
               </div>
               <div className="gate-badge" id="gateBadge">
@@ -192,7 +177,11 @@ export function DashboardView() {
             <div className={verdictCls} id="verdict">
               <div className="verdict-ic"><i className={`ti ${verdictIcon}`}></i></div>
               <div className="verdict-tx" id="verdictTx">{verdictText}</div>
-              <button className="btn btn-primary" id="openBtn" onClick={() => { signFormOpen.value = true; }} disabled={!ready}>Sign gate <i className="ti ti-pencil"></i></button>
+              <div className="gate-actions">
+                <button className="btn btn-primary" id="openBtn" onClick={() => { signFormOpen.value = true; }} disabled={!ready}>Sign gate <i className="ti ti-pencil"></i></button>
+                <button className="btn btn-soft" type="button" disabled title="Request-changes verdict is not exposed by the current gate-sign backend.">Request changes <i className="ti ti-message-x"></i></button>
+                <button className="btn btn-danger" type="button" disabled title="Reject verdict is not exposed by the current gate-sign backend.">Reject <i className="ti ti-circle-x"></i></button>
+              </div>
               {signFormOpen.value ? (
                 <div className="sign-form" id="signForm">
                   <span className="sign-label"><i className="ti ti-user-check"></i> Sign as:</span>
@@ -203,7 +192,7 @@ export function DashboardView() {
                     <option value="QA">QA — Quality</option>
                     <option value="DevOps">DevOps</option>
                   </select>
-                  <button className="btn btn-primary" style={{ 'padding': '8px 14px', 'fontSize': '12.5px' }} onClick={() => window.openGate()}>Confirm <i className="ti ti-check"></i></button>
+                  <button className="btn btn-primary btn-compact" onClick={() => window.openGate()}>Confirm <i className="ti ti-check"></i></button>
                 </div>
               ) : null}
             </div>

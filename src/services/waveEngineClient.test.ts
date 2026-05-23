@@ -19,12 +19,22 @@ import {
   tryBegin,
 } from './waveEngineClient';
 import * as ipc from '../js/ipc.js';
+import {
+  currentGateId,
+  currentGateInfo,
+  currentWaveSummary,
+  govGatesList,
+} from '../state';
 
 const runAndWait = ipc.signal.runAndWait as ReturnType<typeof vi.fn>;
 
 describe('waveEngineClient', () => {
   beforeEach(() => {
     runAndWait.mockReset();
+    currentGateId.value = null;
+    currentGateInfo.value = null;
+    currentWaveSummary.value = null;
+    govGatesList.value = [];
   });
 
   describe('begin', () => {
@@ -174,6 +184,52 @@ describe('waveEngineClient', () => {
       const result = await tryBegin('build a todo');
       expect(result).not.toBeNull();
       expect(result?.action).toBe('fire-agent-G0');
+    });
+
+    it('publishes wave inspection into dashboard gate signals', async () => {
+      runAndWait.mockResolvedValue({
+        action: 'fire-agent-G2',
+        current_gate: 'G2',
+        system_bubble: { kind: 'reroute', gate: 'G2', text: 'Plan gate is active.' },
+        inspection: {
+          project_id: 'default',
+          gates: {
+            G0: true,
+            G1: true,
+            G2: false,
+            G3: false,
+            G4: false,
+            G5: false,
+          },
+          artifacts: {
+            G0: { path: 'core/governance/Governance/SOUL-DOCUMENT.md', exists: true, signed: true, snippet: '' },
+            G1: { path: 'core/strategy/BELIEF.md', exists: true, signed: true, snippet: '' },
+            G2: { path: 'core/strategy/PLAN.md', exists: true, signed: false, snippet: '' },
+            G3: { path: 'core/execution/DESIGN_NOTE.md', exists: false, signed: false, snippet: '' },
+            G4: { path: 'core/execution/TRUST_TIER.md', exists: false, signed: false, snippet: '' },
+            G5: { path: 'core/governance/QUALITY_CHECK.md', exists: false, signed: false, snippet: '' },
+          },
+          next_gate: 'G2',
+          all_signed: false,
+        },
+      });
+
+      await tryBegin('build a todo');
+
+      expect(govGatesList.value).toHaveLength(6);
+      expect(govGatesList.value[0]).toMatchObject({ id: 'G0', status: 'signed', signed: true });
+      expect(govGatesList.value[2]).toMatchObject({ id: 'G2', status: 'current', is_current: true });
+      expect(currentGateId.value).toBe('G2');
+      expect(currentGateInfo.value).toMatchObject({
+        id: 'G2',
+        name: 'Plan',
+        status: 'current',
+        description: 'Plan gate is active.',
+      });
+      expect(currentWaveSummary.value).toMatchObject({
+        current_gate_name: 'Plan',
+        total_gates: 6,
+      });
     });
 
     it('returns null when the IPC call rejects', async () => {

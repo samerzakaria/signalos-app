@@ -118,6 +118,7 @@ a{color:inherit}
 .btn-soft:hover{background:var(--surface-deep)}
 .btn-danger{background:var(--danger-soft);color:var(--danger-deep);border-color:var(--danger-soft)}
 .btn-danger:hover{background:var(--danger);color:#fff}
+.btn-compact{padding:8px 14px;font-size:12.5px}
 
 /* Feature rows */
 .feat-list{display:flex;flex-direction:column;gap:2px}
@@ -408,7 +409,8 @@ a{color:inherit}
 .verdict-tx{flex:1;font-size:13px;font-weight:500}
 .verdict.held .verdict-tx{color:var(--ink-2)}.verdict.ready .verdict-tx,.verdict.opened .verdict-tx{color:var(--success-deep)}
 .verdict .btn[disabled]{opacity:0.45;cursor:not-allowed}
-.verdict .btn[disabled]:hover{background:var(--ink);transform:none;box-shadow:none}
+.verdict .btn[disabled]:hover{transform:none;box-shadow:none}
+.gate-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .sign-form{display:flex;align-items:center;gap:7px;flex-wrap:wrap;width:100%;padding-top:10px;border-top:0.5px solid rgba(55,134,92,0.2);margin-top:4px}
 .sign-input{padding:8px 11px;border:1px solid rgba(55,134,92,0.3);border-radius:var(--r-sm);font-size:12.5px;background:rgba(255,255,255,0.7);font-family:var(--f-body);width:160px;transition:all 0.15s}
 .sign-input:focus{outline:none;border-color:var(--success);box-shadow:0 0 0 3px var(--success-soft)}

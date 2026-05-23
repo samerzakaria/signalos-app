@@ -13,6 +13,14 @@
 // flow keeps working when the engine is unavailable.
 
 import * as ipc from '../js/ipc.js';
+import {
+  currentGateId,
+  currentGateInfo,
+  currentWaveSummary,
+  govGatesList,
+  type Gate,
+  type GateInfo,
+} from '../state';
 
 export type GateId = 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5';
 
@@ -121,6 +129,15 @@ export interface ViolationConfirmResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 8000;
+const GATE_SEQUENCE: GateId[] = ['G0', 'G1', 'G2', 'G3', 'G4', 'G5'];
+const GATE_NAMES: Record<GateId, string> = {
+  G0: 'Soul',
+  G1: 'Belief',
+  G2: 'Plan',
+  G3: 'Design',
+  G4: 'Build',
+  G5: 'Quality',
+};
 
 async function call<T>(command: string, args: unknown[]): Promise<T> {
   const result = await ipc.signal.runAndWait(command, args, DEFAULT_TIMEOUT_MS);
@@ -195,11 +212,73 @@ export function g5Handoff(
  */
 export async function tryBegin(userRequest: string): Promise<BeginResult | null> {
   try {
-    return await begin(userRequest);
+    const result = await begin(userRequest);
+    publishBeginResult(result);
+    return result;
   } catch (err) {
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('[waveEngine] tryBegin failed:', err);
     }
     return null;
   }
+}
+
+export function publishBeginResult(result: BeginResult): void {
+  const current = result.current_gate || result.inspection?.next_gate || result.system_bubble?.gate || null;
+  if (result.inspection) {
+    const gates = GATE_SEQUENCE.map((gateId): Gate => {
+      const artifact = result.inspection.artifacts?.[gateId];
+      const signed = Boolean(result.inspection.gates?.[gateId]);
+      return {
+        id: gateId,
+        gate_id: gateId,
+        name: GATE_NAMES[gateId],
+        status: signed ? 'signed' : current === gateId ? 'current' : 'locked',
+        signed,
+        is_current: current === gateId && !signed,
+        criteria: artifact
+          ? [{
+              name: artifact.path || `${gateId} required artifact`,
+              status: artifact.exists && artifact.signed ? 'passed' : 'waiting',
+              evidence: artifact.path || undefined,
+            }]
+          : [],
+      };
+    });
+    govGatesList.value = gates;
+    const currentGate = gates.find((gate) => gate.is_current) || null;
+    currentGateInfo.value = currentGate
+      ? beginGateInfo(currentGate, result.system_bubble?.text)
+      : null;
+    currentGateId.value = currentGate?.id ? String(currentGate.id) : current;
+    currentWaveSummary.value = {
+      current_gate_name: currentGate?.name || '',
+      total_gates: gates.length,
+    };
+    return;
+  }
+
+  if (current) {
+    currentGateId.value = current;
+    currentGateInfo.value = {
+      id: current,
+      name: GATE_NAMES[current],
+      status: 'current',
+      is_current: true,
+      description: result.system_bubble?.text,
+    };
+  }
+}
+
+function beginGateInfo(gate: Gate, description?: string): GateInfo {
+  return {
+    id: gate.id,
+    name: gate.name,
+    status: gate.status,
+    signed: gate.signed,
+    is_current: gate.is_current,
+    description,
+    activities: gate.activities,
+    criteria: gate.criteria,
+  };
 }

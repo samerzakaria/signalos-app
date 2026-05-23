@@ -181,7 +181,7 @@ export interface GateCriterion {
   evidence?: string;
 }
 export interface GateInfo {
-  id?: string;
+  id?: string | number;
   name?: string;
   description?: string;
   status?: string;
@@ -220,8 +220,8 @@ export interface BrainEntry {
 }
 
 export interface Gate {
-  id?: string;
-  gate_id?: string;
+  id?: string | number;
+  gate_id?: string | number;
   name?: string;
   status?: string;
   signed?: boolean;
