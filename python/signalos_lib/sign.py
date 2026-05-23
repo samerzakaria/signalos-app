@@ -28,45 +28,7 @@ from datetime import date, datetime, timezone
 import subprocess
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Gate -> artifact map
-# ---------------------------------------------------------------------------
-
-GATE_MAP: dict[str, list[tuple[str, list[str], str]]] = {
-    "G0": [
-        ("core/governance/Governance/SOUL-DOCUMENT.md",   ["PO", "PE"], "Soul Document"),
-        ("core/governance/Governance/CONSTITUTION.md",    ["PO", "PE"], "Constitution"),
-        ("core/governance/Governance/SURFACE_INVENTORY.md", ["PE"],     "Surface Inventory"),
-        ("core/governance/Governance/PERMANENTLY_T3.md",  ["PE"],       "Permanently T3"),
-    ],
-    "G1": [
-        ("core/strategy/BELIEF.md",              ["PO"], "Belief"),
-        ("core/execution/ROLE_ACTIVATION_CARD.md", ["PO"], "Role Activation Card"),
-    ],
-    "G2": [
-        ("core/strategy/EXPECTATION_MAP.md", ["PO"], "Expectation Map"),
-    ],
-    "G3": [
-        ("core/strategy/DESIGN_NOTE.md",          ["PO"], "Design Note"),
-        ("core/execution/PLAN.md",                ["PE"], "Plan"),
-        ("core/execution/ACCEPTANCE_CRITERIA.md", ["PE"], "Acceptance Criteria"),
-    ],
-    "G4": [
-        ("core/execution/TRUST_TIER.md", ["PE", "PO"], "Trust Tier"),
-    ],
-    "G5": [
-        ("core/governance/QUALITY_CHECK.md", ["QA"], "Quality Check"),
-    ],
-}
-
-GATE_LABELS: dict[str, str] = {
-    "G0": "Gate 0",
-    "G1": "Gate 1",
-    "G2": "Gate 2",
-    "G3": "Gate 3",
-    "G4": "Gate 4",
-    "G5": "Gate 5",
-}
+from .artifacts import GATE_LABELS, GATE_MAP, list_gates, resolve_gate_artifacts
 
 VALID_ROLES = ("PO", "PE", "QA", "DevOps")
 VALID_VERDICTS = ("APPROVED", "APPROVED-WITH-CONDITIONS", "WAIVED")
@@ -142,15 +104,14 @@ def _parse_signers(path: Path) -> tuple[list[str], bool, bool | None]:
 
 def check_gate(root: Path, gate: str) -> list[ArtifactStatus]:
     """Return signature status of every artifact required for *gate*."""
-    entries = GATE_MAP.get(gate.upper(), [])
     result: list[ArtifactStatus] = []
-    for rel, roles, label in entries:
-        p = root / rel
+    for artifact in resolve_gate_artifacts(root, gate):
+        p = artifact.path
         status = ArtifactStatus(
             path=p,
-            rel_path=rel,
-            label=label,
-            required_roles=list(roles),
+            rel_path=artifact.rel_path,
+            label=artifact.label,
+            required_roles=list(artifact.required_roles),
             exists=p.exists(),
         )
         if status.exists:
@@ -276,13 +237,13 @@ def sign_gate(
     if role not in VALID_ROLES:
         raise ValueError(f"role must be one of {VALID_ROLES}, got {role!r}")
 
-    gate_entries = GATE_MAP.get(gate.upper(), [])
+    gate_entries = resolve_gate_artifacts(root, gate)
     if not gate_entries:
-        raise ValueError(f"unknown gate {gate!r} -- must be one of {list(GATE_MAP)}")
+        raise ValueError(f"unknown gate {gate!r} -- must be one of {list_gates()}")
 
     all_required: set[str] = set()
-    for _rel, req_roles, _label in gate_entries:
-        all_required.update(req_roles)
+    for artifact in gate_entries:
+        all_required.update(artifact.required_roles)
 
     if role not in all_required:
         raise ValueError(
@@ -291,19 +252,19 @@ def sign_gate(
         )
 
     signed: list[str] = []
-    for rel, req_roles, _label in gate_entries:
-        p = root / rel
+    for artifact in gate_entries:
+        p = artifact.path
         if not p.exists():
             continue
-        if role not in req_roles:
+        if role not in artifact.required_roles:
             raise ValueError(
-                f"role {role!r} is not authorised to sign {rel!r} "
-                f"(required: {req_roles})"
+                f"role {role!r} is not authorised to sign {artifact.rel_path!r} "
+                f"(required: {list(artifact.required_roles)})"
             )
         sign_artifact(p, signer, role, gate, verdict, conditions)
         if audit_log is not None:
-            _append_audit(audit_log, signer, role, gate, rel, p, verdict)
-        signed.append(rel)
+            _append_audit(audit_log, signer, role, gate, artifact.rel_path, p, verdict)
+        signed.append(artifact.rel_path)
 
     # M4: after a successful G5 sign, push the local commits to origin
     # so the user actually ships their work. Best-effort — a push
