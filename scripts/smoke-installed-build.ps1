@@ -257,6 +257,107 @@ function Test-MsiExtraction {
   Write-Host "[PASS] MSI administrative extraction"
 }
 
+function Read-SidecarLine {
+  param(
+    [System.Diagnostics.Process]$Process,
+    [int]$TimeoutSeconds = 60
+  )
+
+  $task = $Process.StandardOutput.ReadLineAsync()
+  if (-not $task.Wait($TimeoutSeconds * 1000)) {
+    throw "Timed out waiting for bundled sidecar output"
+  }
+  return $task.Result
+}
+
+function Invoke-SidecarRequest {
+  param(
+    [System.Diagnostics.Process]$Process,
+    [hashtable]$Payload,
+    [int]$TimeoutSeconds = 90
+  )
+
+  $json = $Payload | ConvertTo-Json -Compress -Depth 10
+  $Process.StandardInput.WriteLine($json)
+  $Process.StandardInput.Flush()
+
+  while ($true) {
+    $line = Read-SidecarLine -Process $Process -TimeoutSeconds $TimeoutSeconds
+    if (-not $line) { continue }
+    $response = $line | ConvertFrom-Json
+    if ($response.kind -eq "progress") { continue }
+    if ($response.id -eq $Payload.id) {
+      return $response
+    }
+  }
+}
+
+function Test-BundledSidecarProductValidation {
+  Write-Host "[RUN ] Bundled sidecar product validation"
+  $target = Join-Path $SmokeRoot "sidecar-product"
+  if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+  New-Item -ItemType Directory -Path $target -Force | Out-Null
+
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $SidecarExe
+  $psi.WorkingDirectory = $target
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $process = [System.Diagnostics.Process]::Start($psi)
+
+  try {
+    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 30
+    $ready = $readyLine | ConvertFrom-Json
+    if (-not $ready.ok -or -not $ready.data.ready) {
+      throw "Bundled sidecar did not report ready: $readyLine"
+    }
+
+    $init = Invoke-SidecarRequest -Process $process -Payload @{
+      id = "smoke-init"
+      command = "signal-init"
+      args = @("--mode", "keep", "--name", "Installed Smoke")
+      cwd = $target
+    }
+    if (-not $init.ok) {
+      throw "Bundled sidecar signal-init failed: $($init | ConvertTo-Json -Compress -Depth 8)"
+    }
+
+    $readiness = Invoke-SidecarRequest -Process $process -Payload @{
+      id = "smoke-release-readiness"
+      command = "signal-release-readiness"
+      args = @("--json")
+      cwd = $target
+    }
+    if (-not $readiness.ok) {
+      throw "Bundled sidecar release-readiness command failed: $($readiness | ConvertTo-Json -Compress -Depth 8)"
+    }
+
+    $payload = $readiness.output | ConvertFrom-Json
+    if ($payload.schema_version -ne "signalos.release_readiness.v1") {
+      throw "Unexpected release-readiness schema from bundled sidecar: $($payload.schema_version)"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos"))) {
+      throw "Bundled sidecar did not initialize .signalos in smoke product"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos\evidence\release-readiness\release-readiness.json"))) {
+      throw "Bundled sidecar did not write release-readiness evidence"
+    }
+  } finally {
+    if ($process -and -not $process.HasExited) {
+      try { $process.StandardInput.Close() } catch { }
+      if (-not $process.WaitForExit(3000)) {
+        $process.Kill()
+      }
+    }
+    if ($process) { $process.Dispose() }
+  }
+
+  Write-Host "[PASS] Bundled sidecar product validation"
+}
+
 function Test-NsisInstall {
   Write-Host "[RUN ] NSIS silent install smoke"
   $target = Join-Path $SmokeRoot "nsis-install"
@@ -306,6 +407,7 @@ if (Test-Path $SmokeRoot) { Remove-Item -LiteralPath $SmokeRoot -Recurse -Force 
 New-Item -ItemType Directory -Path $SmokeRoot -Force | Out-Null
 
 Test-AppLaunch $ReleaseExe "release executable"
+Test-BundledSidecarProductValidation
 Test-MsiExtraction
 if ($InstallNsis) {
   Test-NsisInstall
