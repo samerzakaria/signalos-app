@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { App } from './app';
+import './assets/icons/tabler-icons.min.css';
 import './js/app-v2.js';
 import './services/providerModels';
 import './services/terminal';
@@ -11,4 +12,4 @@ import './services/fileTree';
 import './services/preview';
 import './services/protocolContext';
 
-render(<App />, document.getElementById('app') as HTMLElement);
+render(<App />, document.getElementById('root') as HTMLElement);

@@ -73,7 +73,7 @@ export function Onboarding() {
             <div className="feat-tx"><strong>Just talk</strong><p>No code, no menus. Plain words — I do the rest.</p></div>
           </div>
           <div className="feat">
-            <div className="feat-ic b"><i className="ti ti-gate"></i></div>
+            <div className="feat-ic b"><i className="ti ti-lock-check"></i></div>
             <div className="feat-tx"><strong>Gated progress</strong><p>Every build is broken into signed gates. Nothing ships unreviewed.</p></div>
           </div>
           <div className="feat">
