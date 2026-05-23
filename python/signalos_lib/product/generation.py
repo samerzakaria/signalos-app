@@ -1,0 +1,640 @@
+# signalos_lib/product/generation.py
+# Phase P7 - Generic Product Generation
+#
+# Generates product files from intent, blueprint, stack adapter, and
+# approved wave scope.  Every generated file is tracked in a manifest.
+
+from __future__ import annotations
+
+__all__ = [
+    "build_generation_manifest",
+    "check_file_ownership",
+    "compute_sha256_lf",
+    "generate_file_content",
+    "generate_product",
+    "load_generation_manifest",
+    "write_generation_manifest",
+]
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .stacks import get_adapter
+
+
+# ---------------------------------------------------------------------------
+# Reserved paths - generation must never write inside these
+# ---------------------------------------------------------------------------
+
+_RESERVED_PREFIXES = (
+    ".signalos/",
+    ".signalos\\",
+    "node_modules/",
+    "node_modules\\",
+    ".git/",
+    ".git\\",
+)
+
+
+def _is_reserved(rel_path: str) -> bool:
+    normed = rel_path.replace("\\", "/")
+    for prefix in (".signalos/", "node_modules/", ".git/"):
+        if normed.startswith(prefix):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# SHA-256 helper
+# ---------------------------------------------------------------------------
+
+def compute_sha256_lf(content: str) -> str:
+    """Compute SHA-256 of LF-normalized content."""
+    normalised = content.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# File content generators - react-vite profile
+# ---------------------------------------------------------------------------
+
+def _react_component(name: str, entity: dict | None) -> str:
+    """Generate a minimal React component."""
+    fields_comment = ""
+    if entity and "fields" in entity:
+        fields_comment = f"// Entity fields: {', '.join(entity['fields'])}\n"
+    return (
+        f"import React from 'react';\n"
+        f"\n"
+        f"{fields_comment}"
+        f"interface {name}Props {{\n"
+        f"  title?: string;\n"
+        f"}}\n"
+        f"\n"
+        f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
+        f"  return (\n"
+        f"    <div data-testid=\"{name}\">\n"
+        f"      <h2>{{title}}</h2>\n"
+        f"    </div>\n"
+        f"  );\n"
+        f"}}\n"
+        f"\n"
+        f"export default {name};\n"
+    )
+
+
+def _react_test(name: str) -> str:
+    """Generate a minimal vitest test for a React component."""
+    return (
+        f"import {{ render, screen }} from '@testing-library/react';\n"
+        f"import {{ describe, expect, it }} from 'vitest';\n"
+        f"import {name} from './{name}';\n"
+        f"\n"
+        f"describe('{name}', () => {{\n"
+        f"  it('renders without crashing', () => {{\n"
+        f"    render(<{name} />);\n"
+        f"    expect(screen.getByTestId('{name}')).toBeDefined();\n"
+        f"  }});\n"
+        f"\n"
+        f"  it('displays the title', () => {{\n"
+        f"    render(<{name} title=\"Test\" />);\n"
+        f"    expect(screen.getByText('Test')).toBeDefined();\n"
+        f"  }});\n"
+        f"}});\n"
+    )
+
+
+def _react_types(entities: list[dict]) -> str:
+    """Generate TypeScript type definitions from blueprint entities."""
+    lines = ["// Auto-generated type definitions\n"]
+    for entity in entities:
+        name = entity["name"]
+        lines.append(f"export interface {name} {{")
+        for field in entity.get("fields", []):
+            ts_type = "string"
+            if field == "id":
+                ts_type = "string"
+            elif field.endswith("_id"):
+                ts_type = "string"
+            elif field in ("amount", "value", "mrr", "burn_rate",
+                           "runway_months", "mrr_lost", "balance"):
+                ts_type = "number"
+            elif field in ("recurring"):
+                ts_type = "boolean"
+            lines.append(f"  {field}: {ts_type};")
+        lines.append("}\n")
+    return "\n".join(lines) + "\n"
+
+
+def _react_app_registration(component_names: list[str]) -> str:
+    """Generate an App.tsx that imports and renders components."""
+    imports = "\n".join(
+        f"import {name} from './components/{name}';"
+        for name in component_names
+    )
+    components = "\n      ".join(f"<{name} />" for name in component_names)
+    return (
+        f"import React from 'react';\n"
+        f"{imports}\n"
+        f"\n"
+        f"function App() {{\n"
+        f"  return (\n"
+        f"    <div className=\"app\">\n"
+        f"      <h1>SignalOS Product</h1>\n"
+        f"      {components}\n"
+        f"    </div>\n"
+        f"  );\n"
+        f"}}\n"
+        f"\n"
+        f"export default App;\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# File content generators - generic (Python) profile
+# ---------------------------------------------------------------------------
+
+def _python_module(name: str, entity: dict | None) -> str:
+    """Generate a minimal Python module for an entity."""
+    snake = _to_snake(name)
+    fields_comment = ""
+    if entity and "fields" in entity:
+        fields_comment = f"# Fields: {', '.join(entity['fields'])}\n"
+    return (
+        f'"""{name} module."""\n'
+        f"\n"
+        f"from __future__ import annotations\n"
+        f"\n"
+        f"{fields_comment}"
+        f"\n"
+        f"class {name}:\n"
+        f"    \"\"\"Represents a {name} entity.\"\"\"\n"
+        f"\n"
+        f"    def __init__(self, **kwargs):\n"
+        f"        for key, value in kwargs.items():\n"
+        f"            setattr(self, key, value)\n"
+        f"\n"
+        f"    def to_dict(self):\n"
+        f"        return self.__dict__.copy()\n"
+    )
+
+
+def _python_test(name: str) -> str:
+    """Generate a minimal Python unittest file."""
+    snake = _to_snake(name)
+    return (
+        f"import unittest\n"
+        f"\n"
+        f"from {snake} import {name}\n"
+        f"\n"
+        f"\n"
+        f"class Test{name}(unittest.TestCase):\n"
+        f"    def test_create(self):\n"
+        f"        obj = {name}(id='1')\n"
+        f"        self.assertEqual(obj.id, '1')\n"
+        f"\n"
+        f"    def test_to_dict(self):\n"
+        f"        obj = {name}(id='1', name='test')\n"
+        f"        data = obj.to_dict()\n"
+        f"        self.assertIn('id', data)\n"
+        f"\n"
+        f"\n"
+        f"if __name__ == '__main__':\n"
+        f"    unittest.main()\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _to_snake(name: str) -> str:
+    """Convert CamelCase to snake_case."""
+    result: list[str] = []
+    for i, ch in enumerate(name):
+        if ch.isupper() and i > 0:
+            result.append("_")
+        result.append(ch.lower())
+    return "".join(result)
+
+
+def _to_pascal(name: str) -> str:
+    """Convert snake_case or kebab-case to PascalCase."""
+    return "".join(word.capitalize() for word in name.replace("-", "_").split("_"))
+
+
+# ---------------------------------------------------------------------------
+# Blueprint -> component mapping
+# ---------------------------------------------------------------------------
+
+_TASK_MANAGEMENT_COMPONENTS = [
+    {"component": "TaskList", "entity_name": "Task", "surface": "task-list"},
+    {"component": "TaskForm", "entity_name": "Task", "surface": "task-detail"},
+    {"component": "ProjectBoard", "entity_name": "Project", "surface": "project-board"},
+]
+
+_FINANCIAL_DASHBOARD_COMPONENTS = [
+    {"component": "RevenueChart", "entity_name": "Revenue", "surface": "revenue-chart"},
+    {"component": "ChurnChart", "entity_name": "Churn", "surface": "churn-chart"},
+    {"component": "RunwayGauge", "entity_name": "CashRunway", "surface": "runway-gauge"},
+]
+
+_BLUEPRINT_COMPONENT_MAP: dict[str, list[dict[str, str]]] = {
+    "task-management": _TASK_MANAGEMENT_COMPONENTS,
+    "financial-dashboard": _FINANCIAL_DASHBOARD_COMPONENTS,
+}
+
+
+def _entity_by_name(
+    entities: list[dict], name: str
+) -> dict | None:
+    for e in entities:
+        if e.get("name") == name:
+            return e
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public: generate_file_content
+# ---------------------------------------------------------------------------
+
+def generate_file_content(
+    entity: dict | None,
+    workflow: dict | None,
+    surface: str | None,
+    kind: str,
+    profile: str,
+    blueprint: dict | None,
+) -> str:
+    """Generate file content for a single product file.
+
+    For react-vite profile:
+    - "test" kind  -> vitest test file with describe/it blocks
+    - "source" kind -> React component (.tsx)
+    - "config" kind -> config/types
+    - "registration" kind -> route registration or app wiring
+
+    For generic profile:
+    - "test" kind  -> Python unittest file
+    - "source" kind -> Python module
+
+    Content is real code -- not stubs or empty files.  It is minimal
+    but syntactically valid and runnable.
+    """
+    name = ""
+    if entity:
+        name = entity.get("name", "Entity")
+    elif surface:
+        name = _to_pascal(surface)
+    elif workflow:
+        name = _to_pascal(workflow.get("name", "workflow"))
+    else:
+        name = "Generated"
+
+    if profile == "react-vite":
+        if kind == "test":
+            return _react_test(name)
+        if kind == "source":
+            return _react_component(name, entity)
+        if kind == "config":
+            entities = (blueprint or {}).get("entities", [])
+            if entities:
+                return _react_types(entities)
+            return "// Config\nexport {};\n"
+        if kind == "registration":
+            return ""  # handled specially in generate_product
+        return f"// {kind}\n"
+
+    # generic / python
+    if kind == "test":
+        return _python_test(name)
+    if kind == "source":
+        return _python_module(name, entity)
+    return f"# {kind}\n"
+
+
+# ---------------------------------------------------------------------------
+# Public: build & write manifest
+# ---------------------------------------------------------------------------
+
+def build_generation_manifest(
+    product_name: str,
+    blueprint_id: str | None,
+    profile: str,
+    wave: str,
+    task_ids: list[str],
+    files: list[dict],
+    validation_commands: list[str],
+) -> dict:
+    """Build the generation manifest."""
+    return {
+        "schema_version": "signalos.generation_manifest.v1",
+        "product": product_name,
+        "blueprint": blueprint_id,
+        "profile": profile,
+        "wave": wave,
+        "task_ids": task_ids,
+        "files": files,
+        "validation_commands": validation_commands,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def write_generation_manifest(manifest: dict, signalos_dir: Path) -> Path:
+    """Write to .signalos/product/GENERATION_MANIFEST.json"""
+    product_dir = signalos_dir / "product"
+    product_dir.mkdir(parents=True, exist_ok=True)
+    path = product_dir / "GENERATION_MANIFEST.json"
+    path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def load_generation_manifest(signalos_dir: Path) -> dict | None:
+    """Load generation manifest."""
+    path = signalos_dir / "product" / "GENERATION_MANIFEST.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def check_file_ownership(path: str, manifest: dict) -> bool:
+    """Check if a file is bridge-owned (in the manifest)."""
+    normed = path.replace("\\", "/")
+    for f in manifest.get("files", []):
+        if f.get("path", "").replace("\\", "/") == normed:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Public: generate_product
+# ---------------------------------------------------------------------------
+
+def generate_product(
+    repo_root: Path,
+    intent: dict,
+    blueprint: dict | None,
+    profile: str,
+    wave: str = "1",
+    task_ids: list[str] | None = None,
+) -> dict:
+    """Generate product files from intent, blueprint, and profile.
+
+    Steps:
+    1. Resolve target paths from adapter
+    2. Generate tests first (TDD)
+    3. Generate implementation files
+    4. Generate route/module registration
+    5. Write generation manifest
+
+    Returns generation manifest dict.
+    """
+    if task_ids is None:
+        task_ids = []
+
+    adapter = get_adapter(profile)
+    targets = adapter.resolve_targets(repo_root)
+    val_plan = adapter.validation_plan(repo_root)
+    validation_commands = _flatten_validation(val_plan)
+
+    product_name = intent.get("product_name", "")
+    blueprint_id = blueprint.get("id") if blueprint else None
+
+    file_records: list[dict[str, Any]] = []
+    component_names: list[str] = []
+
+    if profile == "react-vite":
+        file_records, component_names = _generate_react_vite(
+            repo_root, intent, blueprint, blueprint_id, targets,
+        )
+    else:
+        file_records = _generate_generic(
+            repo_root, intent, blueprint, blueprint_id, targets,
+        )
+
+    # Write files to disk respecting overwrite rules
+    for rec in file_records:
+        abs_path = repo_root / rec["path"]
+        if _is_reserved(rec["path"]):
+            continue  # safety - should not happen
+        if rec["overwrite_mode"] == "create" and abs_path.exists():
+            rec["overwrite_mode"] = "skip"
+            continue
+        if rec["overwrite_mode"] == "skip":
+            continue
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(rec["_content"], encoding="utf-8")
+
+    # Strip internal _content before manifest
+    clean_records = [
+        {k: v for k, v in rec.items() if k != "_content"}
+        for rec in file_records
+    ]
+
+    manifest = build_generation_manifest(
+        product_name=product_name,
+        blueprint_id=blueprint_id,
+        profile=profile,
+        wave=wave,
+        task_ids=task_ids,
+        files=clean_records,
+        validation_commands=validation_commands,
+    )
+
+    # Write manifest
+    signalos_dir = repo_root / ".signalos"
+    write_generation_manifest(manifest, signalos_dir)
+
+    return manifest
+
+
+# ---------------------------------------------------------------------------
+# Internal: react-vite generation
+# ---------------------------------------------------------------------------
+
+def _generate_react_vite(
+    repo_root: Path,
+    intent: dict,
+    blueprint: dict | None,
+    blueprint_id: str | None,
+    targets: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Generate file records for a react-vite profile."""
+    file_records: list[dict[str, Any]] = []
+    component_names: list[str] = []
+    source_base = targets.get("source", "src")
+
+    bp_entities = (blueprint or {}).get("entities", [])
+    component_specs = _BLUEPRINT_COMPONENT_MAP.get(blueprint_id or "", [])
+
+    if component_specs:
+        # Known blueprint - use predefined component map
+        for spec in component_specs:
+            comp_name = spec["component"]
+            entity_name = spec["entity_name"]
+            entity = _entity_by_name(bp_entities, entity_name)
+            component_names.append(comp_name)
+
+            test_path = f"{source_base}/components/{comp_name}.test.tsx"
+            source_path = f"{source_base}/components/{comp_name}.tsx"
+
+            if _is_reserved(test_path) or _is_reserved(source_path):
+                continue
+
+            test_content = _react_test(comp_name)
+            source_content = _react_component(comp_name, entity)
+
+            # TDD: test first
+            file_records.append(_file_record(
+                test_path, "test", test_content,
+                task_id=None, acceptance_id=None, mode="create",
+            ))
+            file_records.append(_file_record(
+                source_path, "source", source_content,
+                task_id=None, acceptance_id=None, mode="create",
+            ))
+    else:
+        # Unknown blueprint or no blueprint - generate from intent entities
+        for ent_name in intent.get("entities", []):
+            pascal = _to_pascal(ent_name)
+            component_names.append(pascal)
+
+            test_path = f"{source_base}/components/{pascal}.test.tsx"
+            source_path = f"{source_base}/components/{pascal}.tsx"
+
+            if _is_reserved(test_path) or _is_reserved(source_path):
+                continue
+
+            test_content = _react_test(pascal)
+            source_content = _react_component(pascal, None)
+
+            file_records.append(_file_record(
+                test_path, "test", test_content,
+                task_id=None, acceptance_id=None, mode="create",
+            ))
+            file_records.append(_file_record(
+                source_path, "source", source_content,
+                task_id=None, acceptance_id=None, mode="create",
+            ))
+
+    # Types file (config)
+    if bp_entities:
+        types_path = f"{source_base}/types.ts"
+        if not _is_reserved(types_path):
+            types_content = _react_types(bp_entities)
+            file_records.append(_file_record(
+                types_path, "config", types_content,
+                task_id=None, acceptance_id=None, mode="create",
+            ))
+
+    # App registration (patch - may overwrite)
+    if component_names:
+        app_path = f"{source_base}/App.tsx"
+        if not _is_reserved(app_path):
+            app_content = _react_app_registration(component_names)
+            file_records.append(_file_record(
+                app_path, "registration", app_content,
+                task_id=None, acceptance_id=None, mode="patch",
+            ))
+
+    return file_records, component_names
+
+
+# ---------------------------------------------------------------------------
+# Internal: generic (Python) generation
+# ---------------------------------------------------------------------------
+
+def _generate_generic(
+    repo_root: Path,
+    intent: dict,
+    blueprint: dict | None,
+    blueprint_id: str | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Generate file records for the generic (Python) profile."""
+    file_records: list[dict[str, Any]] = []
+    source_base = targets.get("source", "")
+    test_base = targets.get("tests", "")
+
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    if bp_entities:
+        entities_to_gen = bp_entities
+    else:
+        # Build from intent entities
+        entities_to_gen = [
+            {"name": _to_pascal(e), "fields": []}
+            for e in intent.get("entities", [])
+        ]
+
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+
+        test_rel = f"{test_base}/test_{snake}.py" if test_base else f"test_{snake}.py"
+        source_rel = f"{source_base}/{snake}.py" if source_base else f"{snake}.py"
+
+        # Clean up double slashes
+        test_rel = test_rel.lstrip("/")
+        source_rel = source_rel.lstrip("/")
+
+        if _is_reserved(test_rel) or _is_reserved(source_rel):
+            continue
+
+        test_content = _python_test(name)
+        source_content = _python_module(name, entity)
+
+        # TDD: test first
+        file_records.append(_file_record(
+            test_rel, "test", test_content,
+            task_id=None, acceptance_id=None, mode="create",
+        ))
+        file_records.append(_file_record(
+            source_rel, "source", source_content,
+            task_id=None, acceptance_id=None, mode="create",
+        ))
+
+    return file_records
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _file_record(
+    path: str,
+    kind: str,
+    content: str,
+    *,
+    task_id: str | None,
+    acceptance_id: str | None,
+    mode: str,
+) -> dict[str, Any]:
+    return {
+        "path": path,
+        "kind": kind,
+        "task_id": task_id,
+        "acceptance_id": acceptance_id,
+        "sha256_lf": compute_sha256_lf(content),
+        "overwrite_mode": mode,
+        "_content": content,  # stripped before manifest write
+    }
+
+
+def _flatten_validation(plan: dict[str, list[str]]) -> list[str]:
+    """Flatten a validation plan into a single command list."""
+    result: list[str] = []
+    for key in ("install", "build", "test", "lint", "qa",
+                "e2e", "runtime_smoke", "ux_smoke", "security"):
+        result.extend(plan.get(key, []))
+    return result
