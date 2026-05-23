@@ -119,6 +119,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_intent.add_argument("--json", action="store_true", dest="as_json", help="JSON output.")
     p_intent.add_argument("--threshold", type=float, default=None, metavar="FLOAT",
         help="Confidence threshold override (default 0.70).")
+    p_intent.add_argument("--repo-root", default=None, metavar="PATH",
+        help="Product repo root for persisted source intent (default: cwd).")
+    p_intent.add_argument("--save-source", "--persist-source", action="store_true", dest="save_source",
+        help="Persist the prompt source to .signalos/sources/initial-intent.json.")
+    p_intent.add_argument("--source-file", default=None, metavar="PATH",
+        help="Copy a PRD/spec/document into .signalos/sources and write metadata.")
+    p_intent.add_argument("--source-kind", choices=["prompt", "prd", "spec", "document"], default=None,
+        help="Source kind for imported files (default: document).")
+    p_intent.add_argument("--max-source-bytes", type=int, default=None, metavar="N",
+        help="Maximum prompt/file source size in bytes.")
 
     p_daemon = sub.add_parser("daemon", help="Delivery daemon control (I10)")
     p_daemon.add_argument("action", choices=["start", "status", "stop", "resume"])
@@ -660,6 +670,16 @@ def main(argv: list[str]) -> int:
             extra += ["--json"]
         if args.threshold is not None:
             extra += ["--threshold", str(args.threshold)]
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.save_source:
+            extra += ["--save-source"]
+        if args.source_file:
+            extra += ["--source-file", str(args.source_file)]
+        if args.source_kind:
+            extra += ["--source-kind", str(args.source_kind)]
+        if args.max_source_bytes is not None:
+            extra += ["--max-source-bytes", str(args.max_source_bytes)]
         return m.main(extra)
     if cmd == "plan":
         from signalos_lib.commands import plan as m

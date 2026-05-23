@@ -12,7 +12,14 @@ import sys
 
 def main(argv: list[str]) -> int:
     import argparse
-    from signalos_lib.intent import CONFIDENCE_THRESHOLD, route_or_clarify, classify
+    from signalos_lib.intent import (
+        CONFIDENCE_THRESHOLD,
+        DEFAULT_MAX_SOURCE_BYTES,
+        SourceIntentError,
+        import_source_document,
+        persist_prompt_source,
+        route_or_clarify,
+    )
 
     parser = argparse.ArgumentParser(
         prog="signalos intent",
@@ -50,42 +57,118 @@ def main(argv: list[str]) -> int:
         metavar="FLOAT",
         help=f"Confidence threshold (default {CONFIDENCE_THRESHOLD}).",
     )
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        metavar="PATH",
+        help="Product repo root for persisted source intent (default: cwd).",
+    )
+    parser.add_argument(
+        "--save-source",
+        "--persist-source",
+        action="store_true",
+        dest="save_source",
+        help="Persist the prompt source to .signalos/sources/initial-intent.json.",
+    )
+    parser.add_argument(
+        "--source-file",
+        default=None,
+        metavar="PATH",
+        help="Copy a PRD/spec/document into .signalos/sources and write metadata.",
+    )
+    parser.add_argument(
+        "--source-kind",
+        choices=["prompt", "prd", "spec", "document"],
+        default=None,
+        help="Source kind for imported files (default: document).",
+    )
+    parser.add_argument(
+        "--max-source-bytes",
+        type=int,
+        default=DEFAULT_MAX_SOURCE_BYTES,
+        metavar="N",
+        help=f"Maximum prompt/file source size in bytes (default {DEFAULT_MAX_SOURCE_BYTES}).",
+    )
 
     args = parser.parse_args(argv)
 
-    if not args.phrase:
+    if not args.phrase and not args.source_file:
         parser.print_help(sys.stderr)
         return 2
 
-    phrase = args.phrase.strip()
-    if not phrase:
+    phrase = args.phrase.strip() if args.phrase else ""
+    if args.phrase and not phrase:
         sys.stderr.write("signalos intent: phrase must not be empty\n")
         return 2
 
-    result = route_or_clarify(phrase)
-    # Override threshold if user passed --threshold
-    if args.threshold != CONFIDENCE_THRESHOLD:
-        from signalos_lib.intent import classify
-        ranked = classify(phrase)
-        best = ranked[0]
-        routed = best.confidence >= args.threshold
-        result = dict(result, routed=routed, confidence=round(best.confidence, 3))
-        if not routed:
-            result["clarify"] = best.clarify
+    result: dict | None = None
+    if phrase:
+        result = route_or_clarify(phrase)
+        # Override threshold if user passed --threshold
+        if args.threshold != CONFIDENCE_THRESHOLD:
+            from signalos_lib.intent import classify
+            ranked = classify(phrase)
+            best = ranked[0]
+            routed = best.confidence >= args.threshold
+            result = dict(result, routed=routed, confidence=round(best.confidence, 3))
+            if not routed:
+                result["clarify"] = best.clarify
+
+    sources: list[dict] = []
+    try:
+        if args.save_source and phrase:
+            sources.append(
+                persist_prompt_source(
+                    phrase,
+                    repo_root=args.repo_root,
+                    classification=dict(result) if result is not None else None,
+                    max_bytes=args.max_source_bytes,
+                )
+            )
+        if args.source_file:
+            sources.append(
+                import_source_document(
+                    args.source_file,
+                    repo_root=args.repo_root,
+                    source_kind=args.source_kind or "document",
+                    max_bytes=args.max_source_bytes,
+                )
+            )
+    except SourceIntentError as exc:
+        sys.stderr.write(f"signalos intent: {exc}\n")
+        return 2
+
+    if result is None:
+        result = {
+            "routed": True,
+            "intent": "source-ingest",
+            "command": "signalos intent --source-file",
+            "confidence": 1.0,
+            "clarify": "",
+            "top2": ["source-ingest"],
+        }
+    if sources:
+        result["sources"] = sources
 
     if args.as_json:
         if args.all:
             from signalos_lib.intent import classify
-            all_matches = classify(phrase)
-            result["all"] = [
-                {"intent": m.name, "confidence": round(m.confidence, 3), "command": m.command}
-                for m in all_matches
-            ]
+            if phrase:
+                all_matches = classify(phrase)
+                result["all"] = [
+                    {"intent": m.name, "confidence": round(m.confidence, 3), "command": m.command}
+                    for m in all_matches
+                ]
+            else:
+                result["all"] = []
         sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
         return 0 if result["routed"] else 1
 
     # Human-readable card
-    _render_card(result, phrase, args)
+    if phrase:
+        _render_card(result, phrase, args)
+    else:
+        _render_sources(sources)
     return 0 if result["routed"] else 1
 
 
@@ -119,4 +202,15 @@ def _render_card(result: dict, phrase: str, args) -> None:
             marker = " ← routed" if m.name == result["intent"] else ""
             print(f"     {m.name:<12} [{b}] {m.confidence * 100:4.0f}%{marker}")
 
+    print()
+
+
+def _render_sources(sources: list[dict]) -> None:
+    print()
+    print("  source intent captured")
+    for source in sources:
+        print(f"     kind       {source['kind']}")
+        print(f"     record     {source['record_path']}")
+        if "stored_path" in source:
+            print(f"     stored     {source['stored_path']}")
     print()

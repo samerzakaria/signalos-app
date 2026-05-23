@@ -12,18 +12,197 @@ from __future__ import annotations
 __all__ = [
     "INTENTS",
     "CONFIDENCE_THRESHOLD",
+    "DEFAULT_MAX_PROMPT_BYTES",
+    "DEFAULT_MAX_SOURCE_BYTES",
     "IntentMatch",
+    "SourceIntentError",
     "classify",
+    "import_source_document",
+    "persist_prompt_source",
     "top_match",
     "route_or_clarify",
 ]
 
+import hashlib
+import json
+import mimetypes
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 from typing import Optional
 
 
 CONFIDENCE_THRESHOLD = 0.70  # below this → ask clarifying question
+SOURCE_SCHEMA_VERSION = "signalos.source-intent.v1"
+DEFAULT_MAX_PROMPT_BYTES = 256 * 1024
+DEFAULT_MAX_SOURCE_BYTES = 2 * 1024 * 1024
+SOURCE_KINDS = {"prompt", "prd", "spec", "document"}
+
+
+class SourceIntentError(ValueError):
+    """Raised when source intent capture cannot be completed safely."""
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _normalise_repo_root(repo_root: str | Path | None) -> Path:
+    root = Path(repo_root) if repo_root is not None else Path.cwd()
+    root = root.expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise SourceIntentError(f"repo root is not a directory: {root}")
+    return root
+
+
+def _relative_to_repo(repo_root: Path, path: Path) -> str:
+    try:
+        return path.resolve(strict=False).relative_to(repo_root).as_posix()
+    except ValueError as exc:
+        raise SourceIntentError(f"source output path escapes repo root: {path}") from exc
+
+
+def _sources_dir(repo_root: Path) -> Path:
+    signalos_dir = repo_root / ".signalos"
+    if signalos_dir.exists():
+        _relative_to_repo(repo_root, signalos_dir)
+        if not signalos_dir.is_dir():
+            raise SourceIntentError(f".signalos path is not a directory: {signalos_dir}")
+    else:
+        signalos_dir.mkdir()
+    target = signalos_dir / "sources"
+    if target.exists():
+        _relative_to_repo(repo_root, target)
+        if not target.is_dir():
+            raise SourceIntentError(f"sources path is not a directory: {target}")
+    else:
+        target.mkdir()
+    _relative_to_repo(repo_root, target)
+    return target
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _safe_source_kind(source_kind: str) -> str:
+    kind = source_kind.strip().lower()
+    if kind not in SOURCE_KINDS:
+        raise SourceIntentError(f"unsupported source kind: {source_kind}")
+    return kind
+
+
+def _safe_suffix(source_path: Path) -> str:
+    suffix = source_path.suffix.lower()
+    if not suffix or len(suffix) > 16:
+        return ".source"
+    if not suffix.startswith("."):
+        return ".source"
+    if not all(ch.isalnum() or ch == "." for ch in suffix):
+        return ".source"
+    return suffix
+
+
+def _bounded_positive_limit(max_bytes: int) -> int:
+    if max_bytes <= 0:
+        raise SourceIntentError("max source bytes must be greater than zero")
+    return max_bytes
+
+
+def persist_prompt_source(
+    phrase: str,
+    *,
+    repo_root: str | Path | None = None,
+    classification: dict[str, Any] | None = None,
+    max_bytes: int = DEFAULT_MAX_PROMPT_BYTES,
+) -> dict[str, Any]:
+    """Persist the initial prompt source under `.signalos/sources`."""
+    text = phrase.strip()
+    if not text:
+        raise SourceIntentError("prompt source must not be empty")
+    limit = _bounded_positive_limit(max_bytes)
+    data = text.encode("utf-8")
+    if len(data) > limit:
+        raise SourceIntentError(f"prompt source exceeds {limit} bytes")
+
+    root = _normalise_repo_root(repo_root)
+    sources = _sources_dir(root)
+    record_path = sources / "initial-intent.json"
+    digest = _sha256(data)
+    payload: dict[str, Any] = {
+        "schema_version": SOURCE_SCHEMA_VERSION,
+        "kind": "prompt",
+        "source_type": "prompt",
+        "text": text,
+        "bytes": len(data),
+        "fingerprint": {
+            "algorithm": "sha256",
+            "value": digest,
+        },
+        "record_path": _relative_to_repo(root, record_path),
+    }
+    if classification is not None:
+        payload["classification"] = classification
+    _write_json(record_path, payload)
+    return dict(payload)
+
+
+def import_source_document(
+    source_file: str | Path,
+    *,
+    repo_root: str | Path | None = None,
+    source_kind: str = "document",
+    max_bytes: int = DEFAULT_MAX_SOURCE_BYTES,
+) -> dict[str, Any]:
+    """Copy a PRD/spec/document into `.signalos/sources` with metadata."""
+    kind = _safe_source_kind(source_kind)
+    if kind == "prompt":
+        raise SourceIntentError("file source kind must be prd, spec, or document")
+    limit = _bounded_positive_limit(max_bytes)
+
+    source_path = Path(source_file).expanduser().resolve()
+    if not source_path.exists() or not source_path.is_file():
+        raise SourceIntentError(f"source file is not a file: {source_file}")
+    size = source_path.stat().st_size
+    if size > limit:
+        raise SourceIntentError(f"source file exceeds {limit} bytes")
+
+    data = source_path.read_bytes()
+    if len(data) > limit:
+        raise SourceIntentError(f"source file exceeds {limit} bytes")
+
+    root = _normalise_repo_root(repo_root)
+    sources = _sources_dir(root)
+    digest = _sha256(data)
+    short = digest[:16]
+    suffix = _safe_suffix(source_path)
+    stored_path = sources / f"{kind}-{short}{suffix}"
+    record_path = sources / f"source-{kind}-{short}.json"
+    _relative_to_repo(root, stored_path)
+    _relative_to_repo(root, record_path)
+
+    stored_path.write_bytes(data)
+    media_type, _encoding = mimetypes.guess_type(source_path.name)
+    payload: dict[str, Any] = {
+        "schema_version": SOURCE_SCHEMA_VERSION,
+        "kind": kind,
+        "source_type": kind,
+        "original_name": source_path.name,
+        "stored_path": _relative_to_repo(root, stored_path),
+        "record_path": _relative_to_repo(root, record_path),
+        "bytes": len(data),
+        "media_type": media_type or "application/octet-stream",
+        "fingerprint": {
+            "algorithm": "sha256",
+            "value": digest,
+        },
+    }
+    _write_json(record_path, payload)
+    return dict(payload)
 
 # ---------------------------------------------------------------------------
 # Intent definitions
