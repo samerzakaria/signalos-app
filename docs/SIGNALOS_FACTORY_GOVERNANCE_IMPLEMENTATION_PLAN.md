@@ -32,6 +32,7 @@ Every implementation PR or wave must update the status table below before comple
 | Area | Status | Evidence | Blockers |
 |---|---|---|---|
 | Workspace switching | Not started | None | None recorded |
+| Tauri capability grants | Not started | None | None recorded |
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |
 | Layer 1 factory inputs | Not started | None | None recorded |
@@ -79,6 +80,14 @@ The major gaps are:
 - Layer 2 gates and artifacts are only partially wired.
 - Release readiness is not enforced by one machine-readable command and UI state.
 
+## Existing Repo Conventions To Respect
+
+- Active UI work must target `src/`, not the parallel legacy `src_old/` tree. Do not edit `src_old/` unless a dedicated cleanup decision removes or archives it.
+- Every new Tauri IPC command must be granted in `src-tauri/capabilities/default.json` or the app can pass local development checks and still fail in production builds.
+- The factory should extend the existing `python/signalos_lib/commands/intent.py` command for prompt and source-intent capture instead of creating a disconnected intent module.
+- `signalos release-readiness --json` must gate and compose with the existing `signalos-publish` command surface. It should not silently replace publish behavior.
+- New UI must avoid raw inline `onclick=` and raw inline `style=` in hand-written HTML. React/Preact `onClick` and `style={{...}}` props are acceptable; raw inline handlers require the existing CSP bootstrap approach.
+
 ## Phase 1: Workspace Switching Must Become Durable
 
 ### Goal
@@ -94,6 +103,7 @@ The SignalOS desktop app remains the shell, but every product has its own active
 | Clear workspace safely | Add explicit `clear_workspace` IPC command instead of passing `""` to `set_workspace` | Rust IPC, JS workspace service | Forget workspace clears backend state, UI state, and persisted state |
 | Add recent product switcher | Store and display recently used product repos with name, path, last opened, and validity | App shell/sidebar or workspace modal | User can switch repos without restarting |
 | Add workspace status command | Return active path, exists, is SignalOS repo, product name, phase, gate summary, and missing requirements | Rust IPC plus Python validator call | UI can show valid, invalid, missing, or unavailable workspace states |
+| Add Tauri ACL grants | Grant `clear_workspace`, workspace status, and any new workspace IPC commands in capabilities | `src-tauri/capabilities/default.json` | Commands work in production builds, not only dev |
 
 ### Tests
 
@@ -102,6 +112,13 @@ The SignalOS desktop app remains the shell, but every product has its own active
 - JS unit test: boot rehydrates workspace.
 - UI/E2E test: create/select workspace, restart app, workspace remains active.
 - UI/E2E test: forget workspace leaves app with no active product repo.
+- Static or integration check: every new workspace IPC command has a Tauri capability grant.
+
+### Phase Definition Of Done
+
+- [ ] Workspace persists, restores, switches, and clears correctly.
+- [ ] Workspace status is available to the UI.
+- [ ] Required Tauri capability grants are present and tested.
 
 ## Phase 2: New Product Repo Creation
 
@@ -128,6 +145,12 @@ The New Project flow must create a real dedicated product repo and embed SignalO
 - Python integration test: init with `--name` writes product metadata.
 - E2E test: New Project from empty folder produces a Layer 1 valid repo.
 
+### Phase Definition Of Done
+
+- [ ] New Project creates or selects a real target folder.
+- [ ] Product name, source intent, selected profile, init, G0 signing, and validation are wired.
+- [ ] Browse path behavior is implemented and covered.
+
 ## Phase 3: Existing Product Repo Adoption
 
 ### Goal
@@ -152,6 +175,12 @@ SignalOS can adopt an existing product repo without destroying existing work.
 - E2E test: existing repo adoption embeds `.signalos` and leaves app code unchanged.
 - E2E test: adoption blockers are visible in UI.
 
+### Phase Definition Of Done
+
+- [ ] Existing repo adoption is non-destructive by default.
+- [ ] Surface inventory, unknowns, and onboarding drafts are generated.
+- [ ] Adoption report is visible in the app.
+
 ## Phase 4: Unified Layer 1 Factory Inputs
 
 ### Goal
@@ -175,8 +204,8 @@ Prompt, PRD/spec/document, empty repo, and existing repo all enter one factory p
 
 | Input | Implementation | Acceptance |
 |---|---|---|
-| Plain prompt | Store prompt in `.signalos/sources/initial-intent.json` and use it to seed scope/unknowns | Prompt-only product can reach Layer 1 ready |
-| PRD/spec/document | Import source file into `.signalos/sources/`, fingerprint it, and translate into draft scope/unknowns | PRD source is traceable |
+| Plain prompt | Extend `python/signalos_lib/commands/intent.py` to store prompt in `.signalos/sources/initial-intent.json` and seed scope/unknowns | Prompt-only product can reach Layer 1 ready |
+| PRD/spec/document | Extend `intent.py` and the source import flow to copy, fingerprint, and translate source files into draft scope/unknowns | PRD source is traceable |
 | Empty repo | Create folder, initialize git optionally, embed SignalOS, validate | Empty repo becomes governed product repo |
 | Existing repo | Run adoption, preserve files, embed SignalOS, validate | Existing repo becomes governed without damage |
 
@@ -185,6 +214,12 @@ Prompt, PRD/spec/document, empty repo, and existing repo all enter one factory p
 - E2E test: each input type reaches a validator result.
 - Python test: source intent is saved and fingerprinted.
 - UI test: each input route shows the same final status model.
+
+### Phase Definition Of Done
+
+- [ ] Prompt, PRD/spec, empty repo, and existing repo inputs share one factory pipeline.
+- [ ] Existing `intent.py` owns source-intent persistence.
+- [ ] Every factory path ends in a Layer 1 validator result.
 
 ## Phase 5: Stack And Profile System
 
@@ -219,6 +254,12 @@ Factory output must be tailored to the product stack instead of assuming one gen
 - Python test: validator fails on missing required profile files unless explicitly disabled.
 - UI test: selecting a profile changes init options.
 - E2E test: generic profile avoids Node preview assumptions.
+
+### Phase Definition Of Done
+
+- [ ] Supported profiles have manifests.
+- [ ] Create/adopt UI can select or accept a detected profile.
+- [ ] Preview and validation behavior is profile-aware.
 
 ## Phase 6: Layer 1 Structural Validator
 
@@ -258,6 +299,7 @@ signalos validate-layer1 --json
 - App cannot mark Layer 1 complete unless validator passes.
 - App must show blocking errors with file paths and next actions.
 - App must store latest validation output under `.signalos/evidence/layer1/`.
+- Any IPC route that calls `signalos validate-layer1 --json` must be granted in `src-tauri/capabilities/default.json`.
 
 ### Tests
 
@@ -266,6 +308,13 @@ signalos validate-layer1 --json
 - E2E test: intentionally remove a required file and verify UI blocks completion.
 - E2E test: valid created repo passes.
 - E2E test: valid adopted repo passes.
+- Static or integration check: validator IPC route has a Tauri capability grant.
+
+### Phase Definition Of Done
+
+- [ ] `signalos validate-layer1 --json` exists and returns a stable JSON schema.
+- [ ] UI blocks Layer 1 completion on validator failure.
+- [ ] Validator IPC route is granted in Tauri capabilities.
 
 ## Phase 7: CI And Template Validation
 
@@ -290,6 +339,12 @@ No generated product repo should contain CI or templates that fail because Signa
 - Python test: dry-run succeeds for every supported profile.
 - Release test: validate every profile from an empty temp repo.
 
+### Phase Definition Of Done
+
+- [ ] Profile templates and CI manifests are complete.
+- [ ] Placeholder-only output fails validation.
+- [ ] Dry-run validates every supported profile.
+
 ## Phase 8: Layer 2 Gate Flow
 
 ### Goal
@@ -305,6 +360,7 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 | Structured wave events | Wave engine responses should update app state, not only chat bubbles | `waveEngineClient`, app state | UI state reflects engine state |
 | Scope drift actions | Wire scope drift choices to continue current repo or create a new product repo | Wave UI + factory flow | Scope drift can actually create/switch repos |
 | Gate evidence | Require evidence links for gates that need them | Sign command/UI | Gate cannot pass without required evidence |
+| CSP-safe UI implementation | Build gate UI with framework event handlers and CSS classes; avoid raw inline handlers/styles in hand-written HTML unless using the CSP bootstrap pattern | Gate timeline UI files | Production CSP remains intact |
 
 ### Tests
 
@@ -312,6 +368,12 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 - JS unit test: wave events update gate timeline.
 - UI test: sign/reject/request-changes actions render and call backend.
 - E2E test: scope drift creates a new product repo and switches active workspace.
+
+### Phase Definition Of Done
+
+- [ ] G0-G5 status is visible in the app.
+- [ ] Gate actions are auditable.
+- [ ] Gate UI is CSP-safe and scope drift can create or switch product repos.
 
 ## Phase 9: Product Artifact Generation
 
@@ -351,6 +413,12 @@ Layer 2 must produce real product artifacts, not only chat messages or loose doc
 - E2E test: prompt-based product creates all Layer 2 planning artifacts.
 - E2E test: traceability links original prompt to plan tasks.
 
+### Phase Definition Of Done
+
+- [ ] Required artifacts have schemas or typed structures.
+- [ ] Artifact resolver keeps all paths inside the product workspace.
+- [ ] Missing artifacts produce explicit human-needed blockers.
+
 ## Phase 10: Implementation, Build, And Test Evidence
 
 ### Goal
@@ -372,6 +440,7 @@ signalos verify-product --json
 | Task-to-evidence links | Each completed task links to validation evidence | Quality evidence is traceable |
 | Failure reporting | Failed commands return actionable blockers | UI shows exact failing command and log path |
 | Manual evidence | Allow manual check records when automation is not available | Release readiness can include manual evidence |
+| Add Tauri ACL grant | Grant any IPC route that invokes `signalos verify-product --json` | `src-tauri/capabilities/default.json` | Verification works in production builds |
 
 ### Tests
 
@@ -379,12 +448,21 @@ signalos verify-product --json
 - E2E test: generated React/Vite product runs build/test and captures evidence.
 - UI test: failed verification displays command and evidence path.
 - Regression test: workspace write guards still prevent path escape.
+- Static or integration check: verify-product IPC route has a Tauri capability grant.
+
+### Phase Definition Of Done
+
+- [ ] `signalos verify-product --json` exists and captures build/test results.
+- [ ] Evidence is saved under `.signalos/evidence/`.
+- [ ] Verification IPC route is granted in Tauri capabilities.
 
 ## Phase 11: Release Readiness Gate
 
 ### Goal
 
 The app must provide one machine-readable release readiness result.
+
+Release readiness gates publish. It composes with the existing `signalos-publish` command surface by providing the required pre-publish pass/fail result, blockers, and evidence links. It must not silently replace publish behavior.
 
 ### Required Command
 
@@ -419,6 +497,8 @@ signalos release-readiness --json
 - Evidence links.
 - Next action.
 - Last run timestamp.
+- Publish relationship: blocked, ready-to-publish, or published state when integrated with `signalos-publish`.
+- Tauri capability coverage for any IPC route that invokes `signalos release-readiness --json`.
 
 ### Tests
 
@@ -426,12 +506,20 @@ signalos release-readiness --json
 - Python test: release-readiness passes for a fully valid fixture.
 - UI test: readiness card renders pass/fail/blockers.
 - E2E test: create product, run Layer 2, verify readiness.
+- Integration test: publish flow is blocked until release-readiness passes or an explicit audited override is used.
+- Static or integration check: release-readiness IPC route has a Tauri capability grant.
+
+### Phase Definition Of Done
+
+- [ ] `signalos release-readiness --json` exists and gates publish.
+- [ ] UI shows pass/fail, blockers, evidence, next action, and publish relationship.
+- [ ] Release-readiness IPC route is granted in Tauri capabilities.
 
 ## Phase 12: Release Test Suite
 
 ### Required Commands
 
-Before a release test build, run and record:
+Before a release test build, run source tests and source build checks:
 
 ```bash
 npm test
@@ -440,13 +528,15 @@ cargo test --manifest-path src-tauri/Cargo.toml
 python -m pytest python
 ```
 
-If the release includes installer validation, also run:
+To create the release artifact for installed-app validation, also run:
 
 ```bash
 npm run tauri build
 ```
 
 Use the existing release scripts where applicable, but do not treat a script as sufficient unless it proves the new factory/governance flows.
+
+Installed-app validation means installing or launching the built artifact, then proving the packaged app can start, reach the sidecar, initialize a product repo, and run the required validation commands.
 
 ### Required E2E Scenarios
 
@@ -466,6 +556,12 @@ Use the existing release scripts where applicable, but do not treat a script as 
 | Release readiness | Readiness fails with blockers and passes when complete |
 | Installed app | Installed app can run sidecar and initialize a product repo |
 
+### Phase Definition Of Done
+
+- [ ] Source tests and build checks pass.
+- [ ] Built artifact installs or launches successfully.
+- [ ] Installed app can run the sidecar and validate a product repo.
+
 ## Implementation Order
 
 1. Add persistent workspace settings and `clear_workspace`.
@@ -482,8 +578,8 @@ Use the existing release scripts where applicable, but do not treat a script as 
 12. Add product verification command and evidence capture.
 13. Add release-readiness command and UI card.
 14. Add full automated and E2E test coverage.
-15. Run release test suite from source.
-16. Run installed-app smoke validation.
+15. Run source tests and source build checks.
+16. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
 17. Update this document's status table with evidence.
 18. Commit the implementation with a clear message.
 
@@ -511,7 +607,10 @@ The implementation is done only when all of the following are true:
 - Product implementation writes only inside the active product repo.
 - Product verification captures build/test evidence.
 - `signalos release-readiness --json` exists and blocks release readiness when required evidence is missing.
+- Release readiness composes with `signalos-publish` and blocks publish until ready or explicitly overridden with audit evidence.
 - UI shows release-readiness pass/fail, blockers, evidence links, and next action.
+- Every new Tauri IPC command is granted in `src-tauri/capabilities/default.json`.
+- Implementation edits target the active `src/` tree, not `src_old/`, unless a separate cleanup decision removes or archives `src_old/`.
 - Rust IPC tests pass.
 - Python tests pass.
 - JS/unit tests pass.
