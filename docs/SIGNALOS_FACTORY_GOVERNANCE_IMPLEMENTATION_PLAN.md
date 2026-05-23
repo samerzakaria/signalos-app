@@ -608,6 +608,8 @@ Maximum reliable parallelism: 10 implementation agents plus 1 integration owner.
 
 Do not exceed 10 active code-writing agents at once. More than that creates too much contention around shared files such as `ipc.rs`, `app-v2.js`, `workspace.ts`, `validate_cmd.py`, `init.py`, `sign.py`, and the status/validator schemas.
 
+Agent numbers identify ownership lanes across waves, not simultaneous headcount.
+
 ### Parallelism Rules
 
 - Shared contracts land first: product metadata, workspace status JSON, profile manifest schema, validator JSON, artifact map, release-readiness JSON, audit event names, and Tauri capability grants.
@@ -628,6 +630,7 @@ These agents run first because they define shared shapes used by the rest of the
 | Agent 2: Validator core | Existing `signalos validate` Layer 1 group/scope and validator JSON schema | `validate_cmd.py`, validator registry/modules | Stable Layer 1 validator result |
 | Agent 3: Profiles core | Profile manifest schema and first profile fixtures | `python/signalos_lib/profiles/`, profile tests | Shared profile contract for factory, validation, preview, CI |
 | Agent 4: Artifact core | Consolidated artifact map from `GATE_MAP` and `get_project_artifacts()` | `sign.py`, artifact/status modules, IPC artifact probe | One source of truth for gate/artifact paths |
+| Agent 5: Test harness core | Rust/Python test harness prerequisites and baseline runner documentation | `src-tauri/Cargo.toml`, `pyproject.toml` or `pytest.ini`, release test docs | Later agents have runnable test gates from day 1 |
 
 Contract-first exit criteria:
 
@@ -635,6 +638,7 @@ Contract-first exit criteria:
 - Layer 1 validator JSON shape is documented and test-covered.
 - Profile manifest schema has at least `generic` and `react-vite` fixtures.
 - Artifact map is single-source or clearly wrapped from existing sources.
+- Rust and Python test harness configuration exists before broad implementation starts.
 - Tauri ACL changes for new IPC are present.
 - This document's status table is updated.
 
@@ -644,12 +648,12 @@ After the contract-first wave lands, run these agents in parallel.
 
 | Agent | Owns | Depends On | Output |
 |---|---|---|---|
-| Agent 5: New Project factory | Create folder, wire Browse to `pickWorkspaceFolder()`, call existing `initWorkspace()` and `instantiateGovernanceAndSignG0()` | Workspace core, profiles core | New product repo creation works end to end |
-| Agent 6: Existing repo adoption | Extend `init --keep-existing` with scanner, surface inventory, unknowns, onboarding drafts | Profiles core, validator core | Existing repo adoption is non-destructive and visible |
-| Agent 7: Intent/PRD ingestion | Extend `intent.py` for prompt and PRD/spec source capture and traceability | Profiles core, artifact core | Prompt and PRD sources are persisted and traceable |
-| Agent 8: CI/template validation | Profile CI manifests, placeholder scan using existing substitution rules, dry-run validation | Profiles core, validator core | Broken templates/CI are blocked |
-| Agent 9: Gate UI/wave wiring | Gate timeline UI, sign/reject/request-changes verdict wiring, wave/scope drift UI | Workspace core, artifact core | G0-G5 state and actions are visible and auditable |
-| Agent 10: Product verification | `verify-product` command that composes existing QA/E2E/TDD runners and captures evidence | Profiles core, artifact core | Build/test evidence is normalized and linked |
+| Agent 6: New Project factory | Create folder, wire Browse to `pickWorkspaceFolder()`, call existing `initWorkspace()` and `instantiateGovernanceAndSignG0()` | Workspace core, profiles core, test harness core | New product repo creation works end to end |
+| Agent 7: Existing repo adoption | Extend `init --keep-existing` with scanner, surface inventory, unknowns, onboarding drafts | Profiles core, validator core, test harness core | Existing repo adoption is non-destructive and visible |
+| Agent 8: Intent/PRD ingestion | Extend `intent.py` for prompt and PRD/spec source capture and traceability | Profiles core, artifact core, test harness core | Prompt and PRD sources are persisted and traceable |
+| Agent 9: CI/template validation | Profile CI manifests, placeholder scan using existing substitution rules, dry-run validation | Profiles core, validator core, test harness core | Broken templates/CI are blocked |
+| Agent 10: Gate UI/wave wiring | Gate timeline UI, sign/reject/request-changes verdict wiring, wave/scope drift UI | Workspace core, artifact core, test harness core | G0-G5 state and actions are visible and auditable |
+| Agent 11: Product verification | `verify-product` command that composes existing QA/E2E/TDD runners and captures evidence | Profiles core, artifact core, test harness core | Build/test evidence is normalized and linked |
 
 ### Final Parallel Wave
 
@@ -657,14 +661,14 @@ These should start after the full parallel wave APIs stabilize.
 
 | Agent | Owns | Depends On | Output |
 |---|---|---|---|
-| Agent 11: Release readiness | `release-readiness` command, publish gating, readiness UI card | Validator core, product verification, artifact core | Machine-readable release readiness and UI blockers |
-| Agent 12: Test/release harness | Rust/Python test harness config, E2E scenarios, installed-app smoke path | All implementation APIs | Release suite proves factory/governance flows |
+| Agent 12: Release readiness | `release-readiness` command, publish gating, readiness UI card | Validator core, product verification, artifact core | Machine-readable release readiness and UI blockers |
+| Agent 13: Test/release coverage | E2E scenarios, installed-app smoke path, release evidence collection | All implementation APIs, test harness core | Release suite proves factory/governance flows |
 
-Agent 11 and Agent 12 may run in parallel, but Agent 12 should treat unstable APIs as blocked rather than inventing mocks that hide integration failures.
+Agent 12 and Agent 13 may run in parallel, but Agent 13 should treat unstable APIs as blocked rather than inventing mocks that hide integration failures.
 
 ### Merge Order
 
-1. Contract pack: workspace status, validator schema, profile schema, artifact map, ACL pattern.
+1. Contract pack: workspace status, validator schema, profile schema, artifact map, ACL pattern, and Rust/Python test harness prerequisites.
 2. New Project factory and intent ingestion.
 3. Existing repo adoption and CI/template validation.
 4. Gate UI/wave wiring and product verification.
@@ -675,6 +679,7 @@ Agent 11 and Agent 12 may run in parallel, but Agent 12 should treat unstable AP
 ### Reliability Guardrails
 
 - Avoid same-file collisions by assigning `ipc.rs`, `app-v2.js`, `workspace.ts`, `init.py`, `validate_cmd.py`, and `sign.py` to one primary agent each.
+- The `ipc.rs`, `init.py`, and `workspace.ts` ownership overlaps are watch-closely execution risks, not reasons to redesign the lane structure. Keep the lanes and route cross-lane edits through the integration owner.
 - If two agents need the same shared file, the integration owner makes the edit or extracts a smaller shared helper first.
 - Agents must prefer additive wrappers around existing code until tests prove behavior, then consolidate.
 - No agent may delete or rewrite bundle templates unless the validator proves the replacement is compatible.
@@ -684,20 +689,20 @@ Agent 11 and Agent 12 may run in parallel, but Agent 12 should treat unstable AP
 ## Implementation Order
 
 1. Delete or archive `src_old/` after confirming it is not imported by the active build.
-2. Add persistent workspace settings and `clear_workspace`.
-3. Compose workspace status from existing wave, gate, artifact, and validator surfaces.
-4. Replace New Project modal behavior with real create, existing init, existing G0 sign, validate flow.
-5. Add recent product switcher.
-6. Extend existing `signalos validate` with a Layer 1 group/scope and UI blocking behavior.
-7. Add profile manifests and profile selector.
-8. Add CI/template manifests and placeholder validation.
-9. Extend init preserve mode with adoption scanner and adoption report UI.
-10. Add unified factory pipeline for prompt, PRD/spec, empty repo, and existing repo.
-11. Add gate timeline and gate action UI on existing gate/sign/wave surfaces.
-12. Add artifact schemas, consolidate existing gate/artifact maps, and add completeness validation.
-13. Add product verification command that composes existing runners and evidence capture.
-14. Add release-readiness command and UI card that gate publish.
-15. Configure Rust/Python test harness prerequisites.
+2. Configure Rust/Python test harness prerequisites.
+3. Add persistent workspace settings and `clear_workspace`.
+4. Compose workspace status from existing wave, gate, artifact, and validator surfaces.
+5. Replace New Project modal behavior with real create, existing init, existing G0 sign, validate flow.
+6. Add recent product switcher.
+7. Extend existing `signalos validate` with a Layer 1 group/scope and UI blocking behavior.
+8. Add profile manifests and profile selector.
+9. Add CI/template manifests and placeholder validation.
+10. Extend init preserve mode with adoption scanner and adoption report UI.
+11. Add unified factory pipeline for prompt, PRD/spec, empty repo, and existing repo.
+12. Add gate timeline and gate action UI on existing gate/sign/wave surfaces.
+13. Add artifact schemas, consolidate existing gate/artifact maps, and add completeness validation.
+14. Add product verification command that composes existing runners and evidence capture.
+15. Add release-readiness command and UI card that gate publish.
 16. Add full automated and E2E test coverage.
 17. Run source tests and source build checks.
 18. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
