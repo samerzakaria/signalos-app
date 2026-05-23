@@ -390,6 +390,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Hash-lock and verify the governance constitution")
     p_const.add_argument("constitution_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    # Phase 13 hardening — integrity seal
+    p_seal = sub.add_parser("seal",
+        help="Create and verify tamper-evident integrity seals")
+    p_seal.add_argument("seal_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1130,6 +1135,11 @@ def main(argv: list[str]) -> int:
     if cmd == "constitution":
         from signalos_lib.commands import constitution as m
         return m.main(list(getattr(args, "constitution_args", None) or []))
+
+    # Phase 13 hardening — integrity seal create/verify
+    if cmd == "seal":
+        from signalos_lib.commands import seal as m
+        return m.main(list(getattr(args, "seal_args", None) or []))
 
     return 1
 

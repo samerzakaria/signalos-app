@@ -276,6 +276,13 @@ def sign_gate(
         except Exception as exc:
             _record_g5_push_outcome(root, "failed", f"unhandled: {exc}")
 
+        # Phase 13 hardening: create an integrity seal after a successful
+        # G5 sign. Best-effort — a seal failure must never block the gate.
+        try:
+            _auto_seal_on_g5(root)
+        except Exception as exc:
+            _record_g5_seal_outcome(root, "failed", f"unhandled: {exc}")
+
     return signed
 
 
@@ -313,6 +320,84 @@ def _record_g5_push_outcome(root: Path, status: str, reason: str = "") -> None:
             fh.write(json.dumps(entry) + "\n")
     except OSError:
         pass
+
+
+def _record_g5_seal_outcome(
+    root: Path,
+    status: str,
+    reason: str = "",
+    wave: str = "",
+    sealed: int = 0,
+    total: int = 0,
+) -> None:
+    """Append a g5-seal-result row to AUDIT_TRAIL.jsonl. Silent on failure."""
+    trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    try:
+        trail.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "action": "g5-seal-result",
+            "status": status,
+            "reason": reason,
+            "wave": wave,
+            "sealed": sealed,
+            "total": total,
+        }
+        with trail.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _detect_active_wave(root: Path) -> str:
+    """Best-effort detect of the active wave id from .signalos state.
+
+    Falls back to 'unknown' when no signal can be found. The seal filename
+    needs a wave id; we never block sign on this.
+    """
+    candidates = [
+        root / ".signalos" / "worktree-state.json",
+        root / ".signalos" / "active-wave.json",
+    ]
+    for cand in candidates:
+        if not cand.is_file():
+            continue
+        try:
+            data = json.loads(cand.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key in ("active_wave", "wave", "current_wave"):
+            value = data.get(key) if isinstance(data, dict) else None
+            if value:
+                return str(value)
+    return "unknown"
+
+
+def _auto_seal_on_g5(root: Path) -> None:
+    """Create an integrity seal after a successful G5 sign. Best-effort.
+
+    Records the outcome in AUDIT_TRAIL.jsonl with action=g5-seal-result.
+    Never raises — every failure path records and returns.
+    """
+    try:
+        from .commands.seal import create_seal
+    except Exception as exc:
+        _record_g5_seal_outcome(root, "failed", f"seal-import: {exc}")
+        return
+
+    wave = _detect_active_wave(root)
+    try:
+        bundle = create_seal(root, wave)
+    except Exception as exc:
+        _record_g5_seal_outcome(root, "failed", f"create-error: {exc}", wave=wave)
+        return
+
+    sealed = sum(1 for e in bundle.get("artifacts", []) if e.get("exists"))
+    total = len(bundle.get("artifacts", []))
+    _record_g5_seal_outcome(
+        root, "ok", f"sealed {sealed}/{total} artifacts",
+        wave=wave, sealed=sealed, total=total,
+    )
 
 
 def _looks_like_missing_remote_repo(stderr: str) -> bool:
