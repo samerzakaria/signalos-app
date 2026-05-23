@@ -11,15 +11,26 @@ interface TauriDialog {
   }) => Promise<string | string[] | null>;
 }
 
+interface TauriFs {
+  mkdir?: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+}
+
 declare global {
   interface Window {
     __TAURI__?: {
       core?: { invoke?: TauriInvoke };
       invoke?: TauriInvoke;
       dialog?: TauriDialog;
+      fs?: TauriFs;
       shell?: { open?: (url: string) => Promise<void> };
     };
     pickWorkspaceFolder: () => Promise<void>;
+    ensureWorkspaceFolder: (path: string) => Promise<void>;
+    initWorkspace: (path: string, options?: { name?: string; strict?: boolean }) => Promise<void>;
+    createSignalosProject: (
+      path: string,
+      name: string,
+    ) => Promise<{ governance: { filled: string[]; signed: boolean }; status: unknown | null }>;
     instantiateGovernanceAndSignG0: () => Promise<{ filled: string[]; signed: boolean }>;
     approvePlan: (bubbleId: string) => Promise<void>;
     cancelWave: (bubbleId: string) => void;
@@ -42,7 +53,7 @@ declare global {
     composerKey: (e: KeyboardEvent) => void;
     confirmOverride: () => void;
     copySecret: (name: string) => void;
-    createProject: () => void;
+    createProject: () => Promise<void> | void;
     cycleActivity: (el: EventTarget | null) => void;
     deleteSecret: (name: string) => void;
     exitApp: (save: boolean) => void;

@@ -30,6 +30,7 @@
     "updater:default",
     "notification:default",
     "fs:default",
+    "fs:allow-mkdir",
     "dialog:default",
     "opener:default"
   ]

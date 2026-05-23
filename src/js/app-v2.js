@@ -1027,17 +1027,52 @@ function closeNewProject(e) {
 }
 window.closeNewProject = closeNewProject;
 
+let creatingProject = false;
+
+function setNewProjectStatus(message) {
+  const status = document.getElementById("newProjStatus");
+  if (!status) return;
+  status.textContent = message || "";
+}
+
+function setCreateProjectBusy(busy) {
+  const btn = document.getElementById("createProjectBtn");
+  if (!btn) return;
+  btn.disabled = Boolean(busy);
+}
+
 async function createProject() {
+  if (creatingProject) return;
   const name = document.getElementById("newProjName")?.value.trim();
   const path = document.getElementById("newProjPath")?.value.trim();
   if (!name || !path) { showError("Name and folder path are required"); return; }
+
+  if (typeof window.createSignalosProject !== "function") {
+    showError("Project setup is not ready. Reload SignalOS and try again.");
+    return;
+  }
+
+  creatingProject = true;
+  setCreateProjectBusy(true);
+  setNewProjectStatus("Creating product repo...");
+
   try {
-    await ipc.workspace.set(path);
+    const result = await window.createSignalosProject(path, name);
     state.workspace = path;
+    setNewProjectStatus("Refreshing workspace status...");
+    await ipc.workspace.status().catch(() => null);
     closeModal("newProjectModal");
     await bootApp();
+    if (result?.governance && !result.governance.signed) {
+      showError("Project was created, but Gate 0 was not signed automatically. Check governance status before building.");
+    }
   } catch (e) {
-    showError("Could not create project: " + e.message);
+    const message = e?.message || String(e);
+    setNewProjectStatus("Could not create project: " + message);
+    showError("Could not create project: " + message);
+  } finally {
+    creatingProject = false;
+    setCreateProjectBusy(false);
   }
 }
 window.createProject = createProject;

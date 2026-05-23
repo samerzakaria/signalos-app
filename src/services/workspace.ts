@@ -8,6 +8,19 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
+export interface InitWorkspaceOptions {
+  name?: string;
+  strict?: boolean;
+}
+
+export interface CreateSignalosProjectResult {
+  governance: {
+    filled: string[];
+    signed: boolean;
+  };
+  status: unknown | null;
+}
+
 export async function pickWorkspaceFolder(): Promise<void> {
   const tauri = window.__TAURI__;
   const dialog = tauri?.dialog;
@@ -27,15 +40,64 @@ export async function pickWorkspaceFolder(): Promise<void> {
   }
 }
 
-export async function initWorkspace(path: string): Promise<void> {
-  await tauriInvoke('set_workspace', { path });
-  // Run signalos init --mode keep to scaffold .signalos/ non-destructively.
-  // Errors are logged but not rethrown -- a failed init shouldn't block boot.
+export async function ensureWorkspaceFolder(path: string): Promise<void> {
+  const target = path.trim();
+  if (!target) throw new Error('Folder path is required');
+
+  const tauri = window.__TAURI__;
+  const fsApi = tauri?.fs;
+  if (fsApi?.mkdir) {
+    await fsApi.mkdir(target, { recursive: true });
+    return;
+  }
+
   try {
-    await tauriInvoke('run_signal_command', { command: 'signal-init', args: ['--mode', 'keep'] });
+    await tauriInvoke('plugin:fs|mkdir', {
+      path: target,
+      options: { recursive: true },
+    });
+  } catch (e) {
+    // Older shells may not expose the plugin through global Tauri. In that
+    // case set_workspace below remains the source of truth for existing dirs.
+    console.warn('workspace folder creation not available through Tauri fs:', e);
+  }
+}
+
+export async function initWorkspace(path: string, options: InitWorkspaceOptions = {}): Promise<void> {
+  await tauriInvoke('set_workspace', { path });
+  workspacePath.value = path;
+
+  // Run signalos init --mode keep to scaffold .signalos/ non-destructively.
+  // Existing onboarding keeps this best-effort; new project creation passes
+  // strict=true so setup failures stay visible to the user.
+  const args = ['--mode', 'keep'];
+  const name = options.name?.trim();
+  if (name) args.push('--name', name);
+
+  try {
+    await tauriInvoke('run_signal_command', { command: 'signal-init', args });
   } catch (e) {
     console.warn('signal-init failed:', e);
+    if (options.strict) throw e;
   }
+}
+
+export async function createSignalosProject(
+  path: string,
+  name: string,
+): Promise<CreateSignalosProjectResult> {
+  const target = path.trim();
+  const productName = name.trim();
+  if (!productName || !target) {
+    throw new Error('Name and folder path are required');
+  }
+
+  await ensureWorkspaceFolder(target);
+  await initWorkspace(target, { name: productName, strict: true });
+  const governance = await instantiateGovernanceAndSignG0();
+  const status = await tauriInvoke('get_workspace_status').catch(() => null);
+
+  return { governance, status };
 }
 
 function projectNameFrom(path: string): string {
@@ -149,4 +211,7 @@ export async function instantiateGovernanceAndSignG0(): Promise<{
 }
 
 window.pickWorkspaceFolder = pickWorkspaceFolder;
+window.ensureWorkspaceFolder = ensureWorkspaceFolder;
+window.initWorkspace = initWorkspace;
+window.createSignalosProject = createSignalosProject;
 window.instantiateGovernanceAndSignG0 = instantiateGovernanceAndSignG0;

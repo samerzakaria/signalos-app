@@ -1,4 +1,13 @@
-import { modalOpen } from '../state';
+import { modalOpen, workspacePath } from '../state';
+
+async function browseNewProjectFolder() {
+  const previousWorkspace = workspacePath.value;
+  await window.pickWorkspaceFolder();
+  const selectedPath = workspacePath.value;
+  const input = document.getElementById('newProjPath') as HTMLInputElement | null;
+  if (input && selectedPath) input.value = selectedPath;
+  workspacePath.value = previousWorkspace;
+}
 
 export function NewProjectModal() {
   const cls = modalOpen.value === 'newProjectModal' ? 'modal-overlay open' : 'modal-overlay';
@@ -16,13 +25,14 @@ export function NewProjectModal() {
       <label className="field-label">Folder path</label>
       <div style={{ 'display': 'flex', 'gap': '8px', 'marginBottom': '8px' }}>
         <input type="text" className="plain-input" placeholder="~/projects/my-awesome-app" id="newProjPath" style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '12px' }}/>
-        <button className="btn btn-soft" style={{ 'padding': '10px 13px', 'flexShrink': '0' }}><i className="ti ti-folder-open"></i></button>
+        <button className="btn btn-soft" onClick={() => browseNewProjectFolder()} title="Browse project folder" aria-label="Browse project folder" style={{ 'padding': '10px 13px', 'flexShrink': '0' }}><i className="ti ti-folder-open"></i></button>
       </div>
       <div className="hint"><i className="ti ti-info-circle"></i> SignalOS will create a <code style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '11px' }}>.signalos/</code> folder inside it</div>
+      <div className="hint" id="newProjStatus" role="status" aria-live="polite" style={{ 'marginTop': '10px' }}></div>
     </div>
     <div className="modal-foot">
       <button className="btn btn-ghost" onClick={() => window.closeModal('newProjectModal')}>Cancel</button>
-      <button className="btn btn-primary" onClick={() => window.createProject()}>Create project <i className="ti ti-arrow-right"></i></button>
+      <button className="btn btn-primary" id="createProjectBtn" onClick={() => window.createProject()}>Create project <i className="ti ti-arrow-right"></i></button>
     </div>
   </div>
 </div>
