@@ -160,7 +160,7 @@ The New Project flow must create a real dedicated product repo and embed SignalO
 | Wire existing init flow | Replace modal-only `set_workspace` flow with existing `initWorkspace(path)`; reuse existing init flags instead of creating new ones | `src/services/workspace.ts`, `src/js/app-v2.js`, `init.py` | New product always contains `.signalos` after creation |
 | Invoke existing governance/G0 flow | Call existing `instantiateGovernanceAndSignG0()` after init; do not reimplement placeholder fill or signing | `src/services/workspace.ts` | Soul, Constitution, Decision DNA, and G0 are filled/signed or explicitly blocked |
 | Refresh status | After creation, run Layer 1 validator and update UI | Workspace status service | UI shows ready, blocked, or needs-human-step |
-| Wire browse button | Connect Browse to existing `pickWorkspaceFolder()`; dialog capability already exists | `NewProjectModal.tsx`, `src/services/workspace.ts` | User can browse instead of typing paths |
+| Wire browse button | Connect Browse to existing `window.pickWorkspaceFolder()`; dialog capability and window exposure already exist, so no new module wiring is required | `NewProjectModal.tsx`, `src/services/workspace.ts` | User can browse by clicking a modal button wired as `onClick={() => window.pickWorkspaceFolder()}` |
 
 ### Tests
 
@@ -327,6 +327,8 @@ The implementation must extend the existing `validate_cmd.py` command surface, s
 - App must store latest validation output under `.signalos/evidence/layer1/`.
 - Any IPC route that calls `signalos validate --group layer1 --json` must be granted in `src-tauri/capabilities/default.json`.
 
+Layer 1 validation evidence lives at `.signalos/evidence/layer1/`. Per-wave implementation, build, and test evidence lives at `.signalos/evidence/<wave>/`. Do not introduce a third evidence location without updating the artifact resolver and release-readiness checks.
+
 ### Tests
 
 - Python unit tests for each validator check.
@@ -467,7 +469,7 @@ signalos verify-product --json
 | Task-to-evidence links | Each completed task links to validation evidence | Quality evidence is traceable |
 | Failure reporting | Failed commands return actionable blockers | UI shows exact failing command and log path |
 | Manual evidence | Allow manual check records when automation is not available | Release readiness can include manual evidence |
-| Add Tauri ACL grant | Grant any IPC route that invokes `signalos verify-product --json` | `src-tauri/capabilities/default.json` | Verification works in production builds |
+| Add Tauri ACL grant | Grant any IPC route that invokes `signalos verify-product --json` in `src-tauri/capabilities/default.json` | Verification works in production builds |
 
 ### Tests
 
@@ -722,6 +724,7 @@ The implementation is done only when all of the following are true:
 - CI/templates cannot be emitted in a broken or placeholder-only state.
 - Layer 2 shows G0-G5 gate state in the UI.
 - Gate sign/reject/request-changes actions extend existing sign/gate IPC surfaces and are auditable.
+- New UI panels avoid raw inline handlers/styles and preserve the app's CSP-safe event/style pattern.
 - Scope drift can continue current work or create/switch to a new product repo.
 - Product scope, Soul, Beliefs, traceability, surface inventory, plan, design, trust tier, test strategy, and quality evidence are generated or explicitly blocked by human-needed unknowns.
 - Product implementation writes only inside the active product repo.
