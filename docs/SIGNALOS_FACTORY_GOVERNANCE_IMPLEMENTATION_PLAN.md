@@ -33,6 +33,7 @@ Every implementation PR or wave must update the status table below before comple
 |---|---|---|---|
 | Workspace switching | Not started | None | None recorded |
 | Tauri capability grants | Not started | None | None recorded |
+| Legacy `src_old/` cleanup | Not started | None | None recorded |
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |
 | Layer 1 factory inputs | Not started | None | None recorded |
@@ -82,11 +83,31 @@ The major gaps are:
 
 ## Existing Repo Conventions To Respect
 
-- Active UI work must target `src/`, not the parallel legacy `src_old/` tree. Do not edit `src_old/` unless a dedicated cleanup decision removes or archives it.
+- Phase 1 must delete or archive the parallel legacy `src_old/` tree after confirming it is not imported by the build. Until then, active UI work must target `src/`, not `src_old/`.
 - Every new Tauri IPC command must be granted in `src-tauri/capabilities/default.json` or the app can pass local development checks and still fail in production builds.
 - The factory should extend the existing `python/signalos_lib/commands/intent.py` command for prompt and source-intent capture instead of creating a disconnected intent module.
 - `signalos release-readiness --json` must gate and compose with the existing `signalos-publish` command surface. It should not silently replace publish behavior.
 - New UI must avoid raw inline `onclick=` and raw inline `style=` in hand-written HTML. React/Preact `onClick` and `style={{...}}` props are acceptable; raw inline handlers require the existing CSP bootstrap approach.
+
+## Existing Code To Extend
+
+Do not create parallel implementations for capabilities that already exist. The work below must extend or consolidate these code surfaces.
+
+| Capability | Existing Code | Required Use |
+|---|---|---|
+| Validation CLI | `python/signalos_lib/commands/validate_cmd.py` | Add a Layer 1 validator group/scope to existing `signalos validate`; do not create a separate validate command |
+| Init flags | `python/signalos_lib/commands/init.py` | Reuse existing `--name`, `--keep-existing`, `--force`, `--refresh-bundle`, `--minimal`, and `--no-git`; add only missing profile/factory behavior |
+| Existing repo preservation | `init.py` protected files and `--keep-existing` | Treat adoption as an extension of init preserve mode, not a separate first-class CLI |
+| Governance fill and G0 sign | `src/services/workspace.ts` `instantiateGovernanceAndSignG0()` | Invoke existing flow from product creation; do not rewrite it |
+| Gate model/status | `src-tauri/src/governance.rs`, `src-tauri/src/ipc.rs` `get_gate_status()` | Build gate UI on existing gate status data |
+| Sign verdicts | `python/signalos_lib/commands/sign.py` | Extend verdict values for rejected/requested changes instead of adding a new signing command |
+| Wave/scope drift | `src/services/waveEngineClient.ts`, `python/signalos_lib/wave_engine.py` | Wire UI to existing typed client and engine events |
+| Gate artifact paths | `sign.py` `GATE_MAP`, `ipc.rs` `get_project_artifacts()` | Consolidate into one source of truth instead of adding a third map |
+| Artifact templates | Packaged `_bundle` governance and execution templates | Populate existing templates from intent; do not treat templates as absent |
+| Evidence capture | `qa_runner.py`, `e2e_runner.py`, `tdd_runner.py` | Compose existing runners under product verification |
+| Audit trail | Rust `audit()` helper, `governance.rs` `AuditEntry`, `get_audit_trail` IPC | Use existing audit path for new actions |
+| Intent capture | `python/signalos_lib/commands/intent.py` and intent router code | Extend existing intent capture for prompt and PRD/spec sources |
+| Folder picker | `pickWorkspaceFolder()` and existing `dialog:default` capability | Wire the Browse button to existing picker; no new dialog capability needed |
 
 ## Phase 1: Workspace Switching Must Become Durable
 
@@ -102,8 +123,9 @@ The SignalOS desktop app remains the shell, but every product has its own active
 | Rehydrate backend state | On app boot, load persisted workspace and set Rust `WorkspaceState` before UI status checks | `src-tauri/src/ipc.rs`, `src/js/app-v2.js` | `get_workspace` returns the restored path after restart |
 | Clear workspace safely | Add explicit `clear_workspace` IPC command instead of passing `""` to `set_workspace` | Rust IPC, JS workspace service | Forget workspace clears backend state, UI state, and persisted state |
 | Add recent product switcher | Store and display recently used product repos with name, path, last opened, and validity | App shell/sidebar or workspace modal | User can switch repos without restarting |
-| Add workspace status command | Return active path, exists, is SignalOS repo, product name, phase, gate summary, and missing requirements | Rust IPC plus Python validator call | UI can show valid, invalid, missing, or unavailable workspace states |
+| Compose workspace status | Build one UI status model from existing `get_wave_state`, `get_gate_status`, `get_project_artifacts`, and the Layer 1 validator result instead of adding a fourth state source | Rust IPC, JS workspace service | UI can show valid, invalid, missing, or unavailable workspace states |
 | Add Tauri ACL grants | Grant `clear_workspace`, workspace status, and any new workspace IPC commands in capabilities | `src-tauri/capabilities/default.json` | Commands work in production builds, not only dev |
+| Remove legacy `src_old/` | Delete or archive `src_old/` after confirming it is not imported by `vite.config.ts`, package scripts, or build entrypoints | Repo root, build config | Contributors cannot edit the wrong UI tree |
 
 ### Tests
 
@@ -113,12 +135,14 @@ The SignalOS desktop app remains the shell, but every product has its own active
 - UI/E2E test: create/select workspace, restart app, workspace remains active.
 - UI/E2E test: forget workspace leaves app with no active product repo.
 - Static or integration check: every new workspace IPC command has a Tauri capability grant.
+- Static check: `src_old/` is removed/archived or explicitly excluded with a documented reason.
 
 ### Phase Definition Of Done
 
 - [ ] Workspace persists, restores, switches, and clears correctly.
 - [ ] Workspace status is available to the UI.
 - [ ] Required Tauri capability grants are present and tested.
+- [ ] Legacy `src_old/` ambiguity is removed or formally archived.
 
 ## Phase 2: New Product Repo Creation
 
@@ -131,12 +155,11 @@ The New Project flow must create a real dedicated product repo and embed SignalO
 | Task | Implementation | Likely Files | Acceptance |
 |---|---|---|---|
 | Create folder | New Project must create the selected directory if missing and reject unsafe paths | `src/components/NewProjectModal.tsx`, `src/js/app-v2.js`, Rust IPC | Empty target path becomes a real folder |
-| Use product name | Pass name into backend init and store it in product metadata | JS create flow, Python init/factory command | Product name appears in status and generated governance metadata |
-| Run init | Replace modal-only `set_workspace` flow with shared `initWorkspace(path, options)` | `src/services/workspace.ts`, `src/js/app-v2.js` | New product always contains `.signalos` after creation |
-| Fill governance | Run governance placeholder fill after init | `src/services/workspace.ts` | Soul, Constitution, and Decision DNA are populated or explicitly blocked |
-| Sign G0 | Call signing flow after governance fill | `instantiateGovernanceAndSignG0()` and sign command | New product has an auditable G0 decision |
+| Use product name | Pass name into existing init support and store it in product metadata | `src/js/app-v2.js`, `python/signalos_lib/commands/init.py` | Product name appears in status and generated governance metadata |
+| Wire existing init flow | Replace modal-only `set_workspace` flow with existing `initWorkspace(path)`; reuse existing init flags instead of creating new ones | `src/services/workspace.ts`, `src/js/app-v2.js`, `init.py` | New product always contains `.signalos` after creation |
+| Invoke existing governance/G0 flow | Call existing `instantiateGovernanceAndSignG0()` after init; do not reimplement placeholder fill or signing | `src/services/workspace.ts` | Soul, Constitution, Decision DNA, and G0 are filled/signed or explicitly blocked |
 | Refresh status | After creation, run Layer 1 validator and update UI | Workspace status service | UI shows ready, blocked, or needs-human-step |
-| Wire browse button | Folder picker must populate target path | `NewProjectModal.tsx` | User can browse instead of typing paths |
+| Wire browse button | Connect Browse to existing `pickWorkspaceFolder()`; dialog capability already exists | `NewProjectModal.tsx`, `src/services/workspace.ts` | User can browse instead of typing paths |
 
 ### Tests
 
@@ -148,8 +171,8 @@ The New Project flow must create a real dedicated product repo and embed SignalO
 ### Phase Definition Of Done
 
 - [ ] New Project creates or selects a real target folder.
-- [ ] Product name, source intent, selected profile, init, G0 signing, and validation are wired.
-- [ ] Browse path behavior is implemented and covered.
+- [ ] Product name, source intent, selected profile, existing init flow, existing G0 signing, and validation are wired.
+- [ ] Browse path behavior uses the existing picker and is covered.
 
 ## Phase 3: Existing Product Repo Adoption
 
@@ -161,11 +184,11 @@ SignalOS can adopt an existing product repo without destroying existing work.
 
 | Task | Implementation | Likely Files | Acceptance |
 |---|---|---|---|
-| Add adoption command | Implement `signalos adopt <path> --profile <profile> --json` or a factory command with adoption mode | `python/signalos_lib/commands/`, IPC route | Existing repo can be adopted by one backend command |
-| Preserve existing files | Default to no overwrite; generated files should be namespaced or require explicit confirmation | Python init/adopt logic, Rust write guards | Existing source files remain byte-for-byte unchanged unless user confirms |
-| Surface inventory | Scan routes, package scripts, APIs, tests, CI, docs, env files, deployment files, data stores, and commands | New Python scanner module | `.signalos/adoption/surface-inventory.json` exists |
-| Unknowns list | Record missing or ambiguous adoption facts | Python adoption module | `.signalos/adoption/unknowns.json` exists |
-| Onboarding drafts | Create draft scope, risks, test strategy, governance notes, and next human step | Python adoption module | Draft artifacts exist without pretending they are final |
+| Extend init preserve mode | Extend existing `signalos init --keep-existing` with adoption metadata and scanner output; do not create a separate `signalos adopt` command for the first implementation | `python/signalos_lib/commands/init.py`, scanner module | Existing repo can be adopted through init preserve mode |
+| Preserve existing files | Reuse `_PROTECTED_FILES`, `--keep-existing`, and existing Rust write guards | `init.py`, Rust write guards | Existing source files remain byte-for-byte unchanged unless user confirms |
+| Surface inventory | Add scanner for routes, package scripts, APIs, tests, CI, docs, env files, deployment files, data stores, and commands | New Python scanner module called by init preserve mode | `.signalos/adoption/surface-inventory.json` exists |
+| Unknowns list | Record missing or ambiguous adoption facts from the scanner | Scanner module and init preserve mode | `.signalos/adoption/unknowns.json` exists |
+| Onboarding drafts | Populate existing bundle templates into draft scope, risks, test strategy, governance notes, and next human step | Init preserve mode and template fill logic | Draft artifacts exist without pretending they are final |
 | Adoption report UI | Show what was found, what was embedded, what is unknown, and what needs approval | App UI status/adoption panel | User sees adoption state and blockers |
 
 ### Tests
@@ -177,7 +200,7 @@ SignalOS can adopt an existing product repo without destroying existing work.
 
 ### Phase Definition Of Done
 
-- [ ] Existing repo adoption is non-destructive by default.
+- [ ] Existing repo adoption extends init preserve mode and is non-destructive by default.
 - [ ] Surface inventory, unknowns, and onboarding drafts are generated.
 - [ ] Adoption report is visible in the app.
 
@@ -244,7 +267,7 @@ Factory output must be tailored to the product stack instead of assuming one gen
 |---|---|---|
 | Profile manifest | Add machine-readable profile manifests listing required templates, CI, scripts, validators, and preview behavior | `python/signalos_lib/profiles/` | Validator can inspect selected profile |
 | UI selector | Add profile selector during create/adopt flow | New Project/Factory UI | User can choose or accept detected profile |
-| Backend support | Add `--profile` to init/factory/adopt commands | Python commands and IPC | Profile is stored in product metadata |
+| Backend support | Add only missing `--profile` support to existing init/factory surfaces; reuse existing init flags | Python commands and IPC | Profile is stored in product metadata |
 | Detection | Infer likely profile from files for existing repos | Adoption scanner | Existing repo gets suggested profile |
 | Preview compatibility | Preview service reads profile before trying npm commands | Preview service | Generic repos do not fail because npm is absent |
 
@@ -267,11 +290,13 @@ Factory output must be tailored to the product stack instead of assuming one gen
 
 Layer 1 must not finish with a broken product repo. The validator is the hard gate.
 
-### Required Command
+### Required Command Surface
 
 ```bash
-signalos validate-layer1 --json
+signalos validate --group layer1 --json
 ```
+
+The implementation must extend the existing `validate_cmd.py` command surface, severity model, and validator registry. It should add a Layer 1 group or scope selector and register the checks below. Do not create a parallel `validate-layer1` CLI.
 
 ### Required Validation Checks
 
@@ -285,7 +310,7 @@ signalos validate-layer1 --json
 | Gates | G0-G5 state can be read and current gate is known |
 | Commands | Required command surfaces are resolvable |
 | Agents | Required gate agents are available |
-| Artifact resolver | Expected artifact paths resolve inside workspace |
+| Artifact resolver | Expected artifact paths resolve inside workspace using the consolidated gate/artifact map |
 | Templates | Required profile templates exist |
 | CI | CI files exist or are explicitly disabled by profile |
 | Hooks | Hook registration status is known |
@@ -299,7 +324,7 @@ signalos validate-layer1 --json
 - App cannot mark Layer 1 complete unless validator passes.
 - App must show blocking errors with file paths and next actions.
 - App must store latest validation output under `.signalos/evidence/layer1/`.
-- Any IPC route that calls `signalos validate-layer1 --json` must be granted in `src-tauri/capabilities/default.json`.
+- Any IPC route that calls `signalos validate --group layer1 --json` must be granted in `src-tauri/capabilities/default.json`.
 
 ### Tests
 
@@ -312,7 +337,7 @@ signalos validate-layer1 --json
 
 ### Phase Definition Of Done
 
-- [ ] `signalos validate-layer1 --json` exists and returns a stable JSON schema.
+- [ ] `signalos validate --group layer1 --json` exists through the existing validator command and returns a stable JSON schema.
 - [ ] UI blocks Layer 1 completion on validator failure.
 - [ ] Validator IPC route is granted in Tauri capabilities.
 
@@ -328,7 +353,7 @@ No generated product repo should contain CI or templates that fail because Signa
 |---|---|---|
 | Template manifest | Each profile declares templates and destination paths | Profile manifest | Validator checks every template |
 | CI manifest | Each profile declares CI files and expected commands | Profile manifest | Validator can prove CI is coherent |
-| Placeholder scan | Detect unresolved template placeholders in required files | Validator | Layer 1 blocks unresolved placeholders |
+| Placeholder scan | Reuse existing substitution/token knowledge from `applySubstitutions()` and scan required files for unresolved placeholders | Validator | Layer 1 blocks unresolved placeholders |
 | Dry run | Add factory dry-run command for each profile | Python command | Release test can verify profiles without UI |
 | CI disabled state | Profiles may explicitly disable CI with reason | Profile metadata | Missing CI is visible, not silent |
 
@@ -355,11 +380,11 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 
 | Task | Implementation | Likely Files | Acceptance |
 |---|---|---|---|
-| Gate timeline | Add UI panel for G0-G5 status, current gate, signer, evidence, and blockers | App UI, wave state | User sees governance state at all times |
-| Gate actions | Add sign, reject, request changes, and add evidence actions per gate | UI + sign IPC | Gate state changes are auditable |
-| Structured wave events | Wave engine responses should update app state, not only chat bubbles | `waveEngineClient`, app state | UI state reflects engine state |
-| Scope drift actions | Wire scope drift choices to continue current repo or create a new product repo | Wave UI + factory flow | Scope drift can actually create/switch repos |
-| Gate evidence | Require evidence links for gates that need them | Sign command/UI | Gate cannot pass without required evidence |
+| Gate timeline | Add UI panel on top of existing `Gate` data and `get_gate_status()` for G0-G5 status, current gate, signer, evidence, and blockers | App UI, `governance.rs`, IPC gate status | User sees governance state at all times |
+| Gate actions | Build UI on existing signing IPC and extend `sign.py` verdicts with `REJECTED` and `CHANGES-REQUESTED`; do not create a new signing command | UI + sign IPC + `sign.py` | Gate state changes are auditable |
+| Structured wave events | Wire existing `waveEngineClient.ts` responses into app state, not only chat bubbles | `waveEngineClient.ts`, app state | UI state reflects engine state |
+| Scope drift actions | Use existing wave engine scope-drift detection and typed client results to continue current repo or create a new product repo | Wave UI + factory flow | Scope drift can actually create/switch repos |
+| Gate evidence | Use `sign.py` `GATE_MAP` as the source of truth for required gate artifacts | Sign command/UI | Gate cannot pass without required evidence |
 | CSP-safe UI implementation | Build gate UI with framework event handlers and CSS classes; avoid raw inline handlers/styles in hand-written HTML unless using the CSP bootstrap pattern | Gate timeline UI files | Production CSP remains intact |
 
 ### Tests
@@ -372,7 +397,7 @@ Layer 2 must visibly drive governed product work through gates, waves, artifacts
 ### Phase Definition Of Done
 
 - [ ] G0-G5 status is visible in the app.
-- [ ] Gate actions are auditable.
+- [ ] Gate actions use existing sign/gate IPC surfaces and are auditable.
 - [ ] Gate UI is CSP-safe and scope drift can create or switch product repos.
 
 ## Phase 9: Product Artifact Generation
@@ -401,8 +426,8 @@ Layer 2 must produce real product artifacts, not only chat messages or loose doc
 | Task | Implementation | Acceptance |
 |---|---|---|
 | Artifact schema | Define JSON schema or typed structure for each required artifact | Validator can enforce presence and shape |
-| Artifact resolver | Add central resolver for artifact paths and required phase | Commands use same path map |
-| Artifact generation | Add commands/services to create draft artifacts from source intent | Product repo gets concrete artifacts |
+| Artifact resolver | Consolidate `sign.py` `GATE_MAP` and `get_project_artifacts()` into one shared artifact map instead of creating a third map | Commands use same path map |
+| Artifact generation | Populate existing `_bundle` templates from source intent and record traceability | Product repo gets concrete artifacts |
 | Human-needed markers | Unknowns must be explicit blockers, not silent blanks | Validator reports unknowns with next action |
 | Traceability links | Every generated task references source intent and target artifacts | Release readiness can trace work |
 
@@ -416,7 +441,7 @@ Layer 2 must produce real product artifacts, not only chat messages or loose doc
 ### Phase Definition Of Done
 
 - [ ] Required artifacts have schemas or typed structures.
-- [ ] Artifact resolver keeps all paths inside the product workspace.
+- [ ] Artifact resolver consolidates existing gate/artifact maps and keeps all paths inside the product workspace.
 - [ ] Missing artifacts produce explicit human-needed blockers.
 
 ## Phase 10: Implementation, Build, And Test Evidence
@@ -436,7 +461,8 @@ signalos verify-product --json
 | Task | Implementation | Acceptance |
 |---|---|---|
 | Profile commands | Each profile declares install, build, test, lint, and preview commands where applicable | Product verification knows what to run |
-| Evidence capture | Save command output, exit code, duration, and environment summary | `.signalos/evidence/<wave>/` contains logs |
+| Compose existing runners | Wrap existing `qa_runner.py`, `e2e_runner.py`, and `tdd_runner.py` under one product verification command instead of reimplementing test runners | `.signalos/evidence/<wave>/` contains runner output |
+| Evidence capture | Normalize existing runner output plus command output, exit code, duration, and environment summary | `.signalos/evidence/<wave>/` contains logs |
 | Task-to-evidence links | Each completed task links to validation evidence | Quality evidence is traceable |
 | Failure reporting | Failed commands return actionable blockers | UI shows exact failing command and log path |
 | Manual evidence | Allow manual check records when automation is not available | Release readiness can include manual evidence |
@@ -453,6 +479,7 @@ signalos verify-product --json
 ### Phase Definition Of Done
 
 - [ ] `signalos verify-product --json` exists and captures build/test results.
+- [ ] Product verification composes existing runner modules.
 - [ ] Evidence is saved under `.signalos/evidence/`.
 - [ ] Verification IPC route is granted in Tauri capabilities.
 
@@ -517,6 +544,15 @@ signalos release-readiness --json
 
 ## Phase 12: Release Test Suite
 
+### Test Harness Prerequisites
+
+The listed release commands are release requirements, but the test harness must exist before they can be treated as reliable gates.
+
+| Prerequisite | Implementation | Acceptance |
+|---|---|---|
+| Rust test harness | Add or verify Cargo test configuration for the Tauri crate before relying on `cargo test --manifest-path src-tauri/Cargo.toml` as a release gate | Cargo test command runs predictably in CI/local release validation |
+| Python pytest config | Add `pyproject.toml`, `pytest.ini`, or equivalent pytest configuration before relying on `python -m pytest python` as a release gate | Python tests discover the intended test set consistently |
+
 ### Required Commands
 
 Before a release test build, run source tests and source build checks:
@@ -558,30 +594,33 @@ Installed-app validation means installing or launching the built artifact, then 
 
 ### Phase Definition Of Done
 
+- [ ] Rust and Python test harness configuration exists before those commands become required release gates.
 - [ ] Source tests and build checks pass.
 - [ ] Built artifact installs or launches successfully.
 - [ ] Installed app can run the sidecar and validate a product repo.
 
 ## Implementation Order
 
-1. Add persistent workspace settings and `clear_workspace`.
-2. Add workspace status command and UI status model.
-3. Replace New Project modal behavior with real create, init, G0 sign, validate flow.
-4. Add recent product switcher.
-5. Add Layer 1 validator command and UI blocking behavior.
-6. Add profile manifests and profile selector.
-7. Add CI/template manifests and placeholder validation.
-8. Add existing repo adoption scanner and adoption report UI.
-9. Add unified factory pipeline for prompt, PRD/spec, empty repo, and existing repo.
-10. Add gate timeline and full gate action UI.
-11. Add artifact schemas, artifact resolver, and completeness validation.
-12. Add product verification command and evidence capture.
-13. Add release-readiness command and UI card.
-14. Add full automated and E2E test coverage.
-15. Run source tests and source build checks.
-16. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
-17. Update this document's status table with evidence.
-18. Commit the implementation with a clear message.
+1. Delete or archive `src_old/` after confirming it is not imported by the active build.
+2. Add persistent workspace settings and `clear_workspace`.
+3. Compose workspace status from existing wave, gate, artifact, and validator surfaces.
+4. Replace New Project modal behavior with real create, existing init, existing G0 sign, validate flow.
+5. Add recent product switcher.
+6. Extend existing `signalos validate` with a Layer 1 group/scope and UI blocking behavior.
+7. Add profile manifests and profile selector.
+8. Add CI/template manifests and placeholder validation.
+9. Extend init preserve mode with adoption scanner and adoption report UI.
+10. Add unified factory pipeline for prompt, PRD/spec, empty repo, and existing repo.
+11. Add gate timeline and gate action UI on existing gate/sign/wave surfaces.
+12. Add artifact schemas, consolidate existing gate/artifact maps, and add completeness validation.
+13. Add product verification command that composes existing runners and evidence capture.
+14. Add release-readiness command and UI card that gate publish.
+15. Configure Rust/Python test harness prerequisites.
+16. Add full automated and E2E test coverage.
+17. Run source tests and source build checks.
+18. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
+19. Update this document's status table with evidence.
+20. Commit the implementation with a clear message.
 
 ## Definition Of Done
 
@@ -594,23 +633,24 @@ The implementation is done only when all of the following are true:
 - The user can switch between recent product repos.
 - The user can clear the active product repo.
 - New product creation uses product name, target path, selected profile, and source intent.
-- New product creation runs SignalOS init, governance fill, G0 signing, and Layer 1 validation.
-- Existing repo adoption produces surface inventory, unknowns, onboarding drafts, and validation output.
+- New product creation invokes existing init, governance fill, G0 signing, and Layer 1 validation surfaces.
+- Existing repo adoption extends init preserve mode and produces surface inventory, unknowns, onboarding drafts, and validation output.
 - Prompt, PRD/spec, empty repo, and existing repo inputs all flow through the same factory pipeline.
 - Every supported stack/profile has a manifest, required templates, validator rules, and release-test coverage.
-- Layer 1 cannot be marked complete unless `signalos validate-layer1 --json` passes.
+- Layer 1 cannot be marked complete unless `signalos validate --group layer1 --json` passes through the existing validator command.
 - CI/templates cannot be emitted in a broken or placeholder-only state.
 - Layer 2 shows G0-G5 gate state in the UI.
-- Gate sign/reject/request-changes actions are auditable.
+- Gate sign/reject/request-changes actions extend existing sign/gate IPC surfaces and are auditable.
 - Scope drift can continue current work or create/switch to a new product repo.
 - Product scope, Soul, Beliefs, traceability, surface inventory, plan, design, trust tier, test strategy, and quality evidence are generated or explicitly blocked by human-needed unknowns.
 - Product implementation writes only inside the active product repo.
-- Product verification captures build/test evidence.
+- Product verification composes existing runner modules and captures build/test evidence.
 - `signalos release-readiness --json` exists and blocks release readiness when required evidence is missing.
 - Release readiness composes with `signalos-publish` and blocks publish until ready or explicitly overridden with audit evidence.
 - UI shows release-readiness pass/fail, blockers, evidence links, and next action.
 - Every new Tauri IPC command is granted in `src-tauri/capabilities/default.json`.
-- Implementation edits target the active `src/` tree, not `src_old/`, unless a separate cleanup decision removes or archives `src_old/`.
+- Legacy `src_old/` ambiguity is removed by deleting or archiving the tree after confirming the active build does not import it.
+- Rust and Python test harness configuration exists before `cargo test --manifest-path src-tauri/Cargo.toml` and `python -m pytest python` are treated as release gates.
 - Rust IPC tests pass.
 - Python tests pass.
 - JS/unit tests pass.
