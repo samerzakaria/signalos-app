@@ -380,6 +380,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Bootstrap a new SignalOS project at <PATH>")
     p_init.add_argument("init_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    # Phase 13 hardening — DEFER count/harvest
+    p_defer = sub.add_parser("defer",
+        help="Count or harvest // DEFER: markers into the wave backlog")
+    p_defer.add_argument("defer_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1110,6 +1115,11 @@ def main(argv: list[str]) -> int:
     if cmd == "init":
         from signalos_lib.commands import init as m
         return m.main(list(getattr(args, "init_args", None) or []))
+
+    # Phase 13 hardening — defer count/harvest
+    if cmd == "defer":
+        from signalos_lib.commands import defer as m
+        return m.main(list(getattr(args, "defer_args", None) or []))
 
     return 1
 
