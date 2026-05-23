@@ -147,6 +147,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val = sub.add_parser("validate", help="Run validator suite (W3.5)")
     p_val.add_argument("--repo-root", default=None)
     p_val.add_argument("--validator", default=None)
+    p_val.add_argument("--group", choices=["core", "layer1"], default=None)
     p_val.add_argument("--json", action="store_true", dest="as_json")
 
     p_hooks = sub.add_parser("hooks", help="Hook lifecycle management (W3.5)")
@@ -699,6 +700,8 @@ def main(argv: list[str]) -> int:
             extra += ["--repo-root", args.repo_root]
         if args.validator:
             extra += ["--validator", args.validator]
+        if getattr(args, "group", None):
+            extra += ["--group", args.group]
         if args.as_json:
             extra += ["--json"]
         return m.main(extra)

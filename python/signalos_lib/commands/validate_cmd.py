@@ -34,26 +34,46 @@ def main(argv: list[str]) -> int:
                         help="Repo root (default: cwd).")
     parser.add_argument("--validator", default=None, metavar="NAME",
                         help="Run only this validator by name.")
+    parser.add_argument("--group", choices=["core", "layer1"], default=None,
+                        help="Validator group/scope to run. Use 'layer1' for factory structural checks.")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="Emit JSON instead of table.")
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo_root) if args.repo_root else None
-    results = run_validators(repo_root=repo_root, validator_name=args.validator)
+    group = args.group or "core"
+    results = run_validators(repo_root=repo_root, validator_name=args.validator, group=group)
     code = overall_exit_code(results)
 
     if args.as_json:
+        failed = [r for r in results if not r.passed]
         out = {
+            "schema_version": "signalos.validate.v1",
+            "group": group,
+            "repo_root": str((repo_root or Path.cwd()).resolve()),
+            "status": "PASS" if code == 0 else "FAIL",
             "exit_code": code,
+            "summary": {
+                "total": len(results),
+                "passed": sum(1 for r in results if r.passed and not r.skipped),
+                "failed": len(failed),
+                "skipped": sum(1 for r in results if r.skipped),
+                "halt_failures": sum(1 for r in failed if r.severity == "HALT"),
+                "block_merge_failures": sum(1 for r in failed if r.severity == "BLOCK_MERGE"),
+                "warn_failures": sum(1 for r in failed if r.severity == "WARN"),
+            },
             "results": [
                 {
                     "name": r.name,
+                    "group": r.group,
                     "severity": r.severity,
                     "status": r.status_label,
                     "exit_code": r.exit_code,
                     "duration_ms": r.duration_ms,
                     "skipped": r.skipped,
                     "skip_reason": r.skip_reason,
+                    "message": r.message,
+                    "details": r.details,
                     "stderr": r.stderr[:500] if r.stderr else "",
                 }
                 for r in results
