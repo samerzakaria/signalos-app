@@ -1,0 +1,14 @@
+[[set]]
+identifier = "workspace-core"
+description = "Workspace core commands for active workspace lifecycle state."
+permissions = ["allow-clear-workspace", "allow-get-workspace-status"]
+
+[[permission]]
+identifier = "allow-clear-workspace"
+description = "Allows clearing the active workspace selection."
+commands.allow = ["clear_workspace"]
+
+[[permission]]
+identifier = "allow-get-workspace-status"
+description = "Allows reading composed active workspace status."
+commands.allow = ["get_workspace_status"]

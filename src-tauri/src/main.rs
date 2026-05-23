@@ -35,7 +35,10 @@ fn main() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
             app.manage(provider::ProviderState::new(config_dir.clone()));
-            app.manage(ipc::WorkspaceState::default());
+            let workspace_settings = ipc::WorkspaceSettingsState::new(config_dir.clone());
+            let restored_workspace = workspace_settings.restored_active_workspace();
+            app.manage(ipc::WorkspaceState::new(restored_workspace));
+            app.manage(workspace_settings);
             app.manage(governance::GovernanceState::new());
             // Wave 3 / G2-21: enforcement state for runtime rule checks.
             app.manage(enforcement::EnforcementStore::new());
@@ -73,7 +76,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // â”€â”€ Workspace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ipc::set_workspace,
+            ipc::clear_workspace,
             ipc::get_workspace,
+            ipc::get_workspace_status,
             ipc::validate_workspace_write,
             ipc::get_project_artifacts,
             ipc::open_workspace_path,

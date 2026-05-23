@@ -11,6 +11,7 @@
     "core:window:allow-maximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
+    "workspace-core",
     "shell:default",
     "shell:allow-open",
     {

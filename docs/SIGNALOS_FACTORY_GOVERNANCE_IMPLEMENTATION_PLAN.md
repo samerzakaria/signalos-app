@@ -31,9 +31,9 @@ Every implementation PR or wave must update the status table below before comple
 
 | Area | Status | Evidence | Blockers |
 |---|---|---|---|
-| Workspace switching | Not started | None | None recorded |
-| Tauri capability grants | Not started | None | None recorded |
-| Legacy `src_old/` cleanup | Not started | None | None recorded |
+| Workspace switching | In progress | Agent 1 IPC contract implemented: persisted active workspace, recent workspace storage, `clear_workspace`, partial `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test`, `npm run build` | Recent product switcher/UI remains for downstream agents |
+| Tauri capability grants | Verified | Added `workspace-core` permission set for `clear_workspace` and `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml` | None recorded |
+| Legacy `src_old/` cleanup | Verified | Confirmed no active build imports, removed `src_old/`, verified by `npm run build` | None recorded |
 | Parallel execution coordination | Not started | None | None recorded |
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |

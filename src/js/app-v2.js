@@ -788,8 +788,8 @@ window.replaceApiKey = replaceApiKey;
 async function forgetWorkspace() {
   if (!confirm("Remove this workspace from SignalOS? Your files stay on your computer.")) return;
   try {
-    await ipc.workspace.set("");
-    state.workspacePath = "";
+    await ipc.workspace.clear();
+    state.workspace = "";
   } catch (e) {
     showError("Could not forget workspace: " + e.message);
   }

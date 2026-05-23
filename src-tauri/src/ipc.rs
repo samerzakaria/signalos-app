@@ -100,17 +100,109 @@ fn chrono_iso8601() -> String {
 #[derive(Default)]
 pub struct WorkspaceState(pub Mutex<Option<PathBuf>>);
 
+impl WorkspaceState {
+    pub fn new(active_workspace: Option<PathBuf>) -> Self {
+        Self(Mutex::new(active_workspace))
+    }
+}
+
+const WORKSPACE_SETTINGS_FILE: &str = "workspace-state.json";
+const RECENT_WORKSPACE_LIMIT: usize = 12;
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct WorkspaceSettings {
+    pub active_workspace: Option<String>,
+    pub recent_workspaces: Vec<RecentWorkspace>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RecentWorkspace {
+    pub path: String,
+    pub name: String,
+    pub last_opened: String,
+}
+
+pub struct WorkspaceSettingsState {
+    settings_path: PathBuf,
+    settings: Mutex<WorkspaceSettings>,
+}
+
+impl WorkspaceSettingsState {
+    pub fn new(config_dir: PathBuf) -> Self {
+        let settings_path = config_dir.join(WORKSPACE_SETTINGS_FILE);
+        let settings = load_workspace_settings(&settings_path);
+        Self {
+            settings_path,
+            settings: Mutex::new(settings),
+        }
+    }
+
+    pub fn restored_active_workspace(&self) -> Option<PathBuf> {
+        let settings = self.settings.lock().unwrap();
+        settings
+            .active_workspace
+            .as_deref()
+            .and_then(|path| resolve_workspace_root(path).ok())
+    }
+
+    fn snapshot(&self) -> WorkspaceSettings {
+        self.settings.lock().unwrap().clone()
+    }
+
+    fn set_active_workspace(&self, workspace: &Path) -> Result<(), String> {
+        let workspace = workspace
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
+        let path = workspace.to_string_lossy().to_string();
+        let name = workspace_display_name(&workspace);
+        let now = chrono_iso8601();
+
+        let next_settings = {
+            let mut settings = self.settings.lock().unwrap().clone();
+            settings.active_workspace = Some(path.clone());
+            settings
+                .recent_workspaces
+                .retain(|entry| !paths_equal_for_settings(&entry.path, &path));
+            settings.recent_workspaces.insert(
+                0,
+                RecentWorkspace {
+                    path,
+                    name,
+                    last_opened: now,
+                },
+            );
+            settings.recent_workspaces.truncate(RECENT_WORKSPACE_LIMIT);
+            settings
+        };
+
+        save_workspace_settings(&self.settings_path, &next_settings)?;
+        *self.settings.lock().unwrap() = next_settings;
+        Ok(())
+    }
+
+    fn clear_active_workspace(&self) -> Result<(), String> {
+        let next_settings = {
+            let mut settings = self.settings.lock().unwrap().clone();
+            settings.active_workspace = None;
+            settings
+        };
+        save_workspace_settings(&self.settings_path, &next_settings)?;
+        *self.settings.lock().unwrap() = next_settings;
+        Ok(())
+    }
+}
+
 /// Set the active workspace root. All agent writes are sandboxed to this path.
 #[tauri::command]
-pub fn set_workspace(path: String, state: State<WorkspaceState>) -> Result<(), String> {
-    let p = PathBuf::from(&path);
-    if !p.exists() || !p.is_dir() {
-        return Err(format!(
-            "Path does not exist or is not a directory: {}",
-            path
-        ));
-    }
-    *state.0.lock().unwrap() = Some(p);
+pub fn set_workspace(
+    path: String,
+    state: State<WorkspaceState>,
+    settings: State<WorkspaceSettingsState>,
+) -> Result<(), String> {
+    let workspace = resolve_workspace_root(&path)?;
+    settings.set_active_workspace(&workspace)?;
+    *state.0.lock().unwrap() = Some(workspace);
     // Non-destructive: setting the active workspace is a pure state change.
     // We deliberately do NOT call `audit(...)` here — `audit()` writes to
     // `.signalos/AUDIT_TRAIL.jsonl`, which would force-create that folder
@@ -118,6 +210,17 @@ pub fn set_workspace(path: String, state: State<WorkspaceState>) -> Result<(), S
     // for browsing. The first audit entry lands when the user takes a
     // state-mutating action (init / file write / secret / gate sign / etc.)
     // — i.e. the same moment SignalOS first writes anything else.
+    Ok(())
+}
+
+/// Clear the active workspace without treating an empty string as a path.
+#[tauri::command]
+pub fn clear_workspace(
+    state: State<WorkspaceState>,
+    settings: State<WorkspaceSettingsState>,
+) -> Result<(), String> {
+    settings.clear_active_workspace()?;
+    *state.0.lock().unwrap() = None;
     Ok(())
 }
 
@@ -178,6 +281,38 @@ pub struct ProjectArtifacts {
 }
 
 #[derive(Serialize)]
+pub struct RecentWorkspaceStatus {
+    pub path: String,
+    pub name: String,
+    pub last_opened: String,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub initialized: bool,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceStatusIntegration {
+    pub artifacts: String,
+    pub gates: String,
+    pub wave: String,
+    pub validator: String,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceStatus {
+    pub active_path: Option<String>,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub initialized: bool,
+    pub signalos_runtime: bool,
+    pub plan_present: bool,
+    pub status: String,
+    pub artifacts: Vec<ProjectArtifact>,
+    pub recent_workspaces: Vec<RecentWorkspaceStatus>,
+    pub integration: WorkspaceStatusIntegration,
+}
+
+#[derive(Serialize)]
 pub struct WorkspaceExport {
     pub relative_path: String,
     pub absolute_path: String,
@@ -210,6 +345,74 @@ pub fn get_project_artifacts(state: State<WorkspaceState>) -> Result<ProjectArti
         .clone()
         .ok_or("No workspace selected")?;
 
+    Ok(collect_project_artifacts(&workspace))
+}
+
+#[tauri::command]
+pub fn get_workspace_status(
+    state: State<WorkspaceState>,
+    settings: State<WorkspaceSettingsState>,
+) -> WorkspaceStatus {
+    let active = state.0.lock().unwrap().clone();
+    let settings_snapshot = settings.snapshot();
+    let recent_workspaces = settings_snapshot
+        .recent_workspaces
+        .iter()
+        .map(recent_workspace_status)
+        .collect::<Vec<_>>();
+
+    let Some(workspace) = active else {
+        return WorkspaceStatus {
+            active_path: None,
+            exists: false,
+            is_directory: false,
+            initialized: false,
+            signalos_runtime: false,
+            plan_present: false,
+            status: "none".into(),
+            artifacts: Vec::new(),
+            recent_workspaces,
+            integration: workspace_status_integration(),
+        };
+    };
+
+    let exists = workspace.exists();
+    let is_directory = workspace.is_dir();
+    let runtime_dir = workspace.join(".signalos");
+    let plan_file = workspace.join("core").join("strategy").join("PLAN.md");
+    let signalos_runtime = runtime_dir.exists();
+    let plan_present = plan_file.exists();
+    let artifacts = if exists && is_directory {
+        collect_project_artifacts(&workspace).artifacts
+    } else {
+        Vec::new()
+    };
+    let initialized = signalos_runtime && plan_present;
+    let status = if !exists {
+        "missing"
+    } else if !is_directory {
+        "invalid"
+    } else if initialized {
+        "initialized"
+    } else {
+        "uninitialized"
+    };
+
+    WorkspaceStatus {
+        active_path: Some(workspace.to_string_lossy().to_string()),
+        exists,
+        is_directory,
+        initialized,
+        signalos_runtime,
+        plan_present,
+        status: status.into(),
+        artifacts,
+        recent_workspaces,
+        integration: workspace_status_integration(),
+    }
+}
+
+fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
     let artifact = |name: &str, rel: &str, kind: &str, detail: String| -> ProjectArtifact {
         let path = workspace.join(rel);
         ProjectArtifact {
@@ -333,11 +536,11 @@ pub fn get_project_artifacts(state: State<WorkspaceState>) -> Result<ProjectArti
     ];
 
     let initialized = runtime_dir.exists() && plan_file.exists();
-    Ok(ProjectArtifacts {
+    ProjectArtifacts {
         workspace: workspace.to_string_lossy().to_string(),
         initialized,
         artifacts,
-    })
+    }
 }
 
 #[tauri::command]
@@ -1642,6 +1845,77 @@ pub async fn start_workspace_watch(
 
 // â”€â”€â”€ HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+fn load_workspace_settings(settings_path: &Path) -> WorkspaceSettings {
+    let Ok(raw) = std::fs::read_to_string(settings_path) else {
+        return WorkspaceSettings::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_workspace_settings(
+    settings_path: &Path,
+    settings: &WorkspaceSettings,
+) -> Result<(), String> {
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create app config folder: {e}"))?;
+    }
+    let content = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Could not serialize workspace settings: {e}"))?;
+    std::fs::write(settings_path, content)
+        .map_err(|e| format!("Could not save workspace settings: {e}"))
+}
+
+fn resolve_workspace_root(path: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(path);
+    if !p.exists() || !p.is_dir() {
+        return Err(format!(
+            "Path does not exist or is not a directory: {}",
+            path
+        ));
+    }
+    p.canonicalize()
+        .map_err(|e| format!("Cannot resolve workspace: {e}"))
+}
+
+fn workspace_display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn paths_equal_for_settings(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+fn recent_workspace_status(entry: &RecentWorkspace) -> RecentWorkspaceStatus {
+    let path = PathBuf::from(&entry.path);
+    let exists = path.exists();
+    let is_directory = path.is_dir();
+    let initialized = is_directory
+        && path.join(".signalos").exists()
+        && path.join("core/strategy/PLAN.md").exists();
+    RecentWorkspaceStatus {
+        path: entry.path.clone(),
+        name: entry.name.clone(),
+        last_opened: entry.last_opened.clone(),
+        exists,
+        is_directory,
+        initialized,
+    }
+}
+
+fn workspace_status_integration() -> WorkspaceStatusIntegration {
+    WorkspaceStatusIntegration {
+        artifacts: "inline:get_project_artifacts".into(),
+        gates: "available:get_gate_status".into(),
+        wave: "available:get_wave_state".into(),
+        validator: "pending:validator-core".into(),
+    }
+}
+
 fn uuid() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -1888,6 +2162,56 @@ mod tests {
         *state.0.lock().unwrap() = Some(tmp.clone());
         let stored = state.0.lock().unwrap().clone().unwrap();
         assert_eq!(stored, tmp);
+    }
+
+    #[test]
+    fn workspace_settings_persist_restore_and_clear() {
+        let root = std::env::temp_dir().join(format!("signalos-ws-{}", uuid()));
+        let cfg = std::env::temp_dir().join(format!("signalos-cfg-{}", uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let settings = WorkspaceSettingsState::new(cfg.clone());
+        settings.set_active_workspace(&root).unwrap();
+        assert_eq!(
+            settings.restored_active_workspace().unwrap(),
+            root.canonicalize().unwrap()
+        );
+        assert_eq!(settings.snapshot().recent_workspaces.len(), 1);
+
+        let reloaded = WorkspaceSettingsState::new(cfg.clone());
+        assert_eq!(
+            reloaded.restored_active_workspace().unwrap(),
+            root.canonicalize().unwrap()
+        );
+        reloaded.clear_active_workspace().unwrap();
+
+        let cleared = WorkspaceSettingsState::new(cfg.clone());
+        assert!(cleared.restored_active_workspace().is_none());
+        assert_eq!(cleared.snapshot().recent_workspaces.len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(cfg);
+    }
+
+    #[test]
+    fn recent_workspace_status_marks_initialized_repos() {
+        let root = std::env::temp_dir().join(format!("signalos-ws-{}", uuid()));
+        std::fs::create_dir_all(root.join(".signalos")).unwrap();
+        std::fs::create_dir_all(root.join("core").join("strategy")).unwrap();
+        std::fs::write(root.join("core").join("strategy").join("PLAN.md"), "# Plan").unwrap();
+
+        let entry = RecentWorkspace {
+            path: root.to_string_lossy().to_string(),
+            name: "Example".into(),
+            last_opened: "2026-05-23T00:00:00Z".into(),
+        };
+        let status = recent_workspace_status(&entry);
+
+        assert!(status.exists);
+        assert!(status.is_directory);
+        assert!(status.initialized);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
