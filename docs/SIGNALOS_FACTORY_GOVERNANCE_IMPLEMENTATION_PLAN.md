@@ -43,7 +43,7 @@ Every implementation PR or wave must update the status table below before comple
 | CI/template validation | Implemented | Agent 9 added profile CI/template validation helpers and focused tests; `python -m unittest python.test_profile_validation -v`, `python -m unittest python.test_profiles -v`, and `python -m pytest python/test_profile_validation.py python/test_profiles.py -q` pass | Downstream validator/factory integration remains |
 | Layer 2 gate flow | Not started | None | None recorded |
 | Product artifact generation | In progress | Agent 4 added shared artifact helper and compatibility export; `python -m unittest python.test_artifacts` and contract-pack tests pass | Rust `get_project_artifacts()` still needs downstream consolidation |
-| Build/test evidence | Not started | None | None recorded |
+| Build/test evidence | In progress | Agent 11 added `signalos verify-product --json` command surface, normalized `.signalos/evidence/<wave>/verify-product.json` output, profile command execution, QA/E2E runner composition, TDD runner detection metadata; `python -m unittest python.test_verify_product -v` and adjacent profile/TDD/E2E runner tests pass | IPC route, Tauri ACL grant, UI display, and full generated-product E2E remain downstream |
 | Release readiness gate | Not started | None | None recorded |
 | Release test suite | In progress | Agent 5 added deterministic pytest config; integration owner verified `python -m pytest -q` = 455 passed, 1 skipped; `cargo test --manifest-path src-tauri/Cargo.toml` and `npm test` pass | Installed-app smoke and E2E release scenarios remain downstream |
 
@@ -481,9 +481,9 @@ signalos verify-product --json
 
 ### Phase Definition Of Done
 
-- [ ] `signalos verify-product --json` exists and captures build/test results.
-- [ ] Product verification composes existing runner modules.
-- [ ] Evidence is saved under `.signalos/evidence/`.
+- [x] `signalos verify-product --json` exists and captures build/test results.
+- [x] Product verification composes existing runner modules.
+- [x] Evidence is saved under `.signalos/evidence/`.
 - [ ] Verification IPC route is granted in Tauri capabilities.
 
 ## Phase 11: Release Readiness Gate

@@ -160,6 +160,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--group", choices=["core", "layer1"], default=None)
     p_val.add_argument("--json", action="store_true", dest="as_json")
 
+    p_verify_product = sub.add_parser("verify-product", help="Run product build/test verification and evidence capture")
+    p_verify_product.add_argument("--repo-root", type=Path, default=None)
+    p_verify_product.add_argument("--wave", default=None)
+    p_verify_product.add_argument("--profile", default=None)
+    p_verify_product.add_argument("--timeout-sec", type=int, default=300)
+    p_verify_product.add_argument("--json", action="store_true", dest="as_json")
+    p_verify_product.add_argument("--no-build", action="store_true")
+    p_verify_product.add_argument("--no-test", action="store_true")
+    p_verify_product.add_argument("--no-lint", action="store_true")
+    p_verify_product.add_argument("--no-qa", action="store_true")
+    p_verify_product.add_argument("--no-e2e", action="store_true")
+
     p_hooks = sub.add_parser("hooks", help="Hook lifecycle management (W3.5)")
     p_hooks.add_argument("action", choices=["test"])
     p_hooks.add_argument("--hook", default=None)
@@ -724,6 +736,29 @@ def main(argv: list[str]) -> int:
             extra += ["--group", args.group]
         if args.as_json:
             extra += ["--json"]
+        return m.main(extra)
+    if cmd == "verify-product":
+        from signalos_lib.commands import verify_product as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.wave:
+            extra += ["--wave", args.wave]
+        if args.profile:
+            extra += ["--profile", args.profile]
+        if args.timeout_sec != 300:
+            extra += ["--timeout-sec", str(args.timeout_sec)]
+        if args.as_json:
+            extra += ["--json"]
+        for attr, flag in (
+            ("no_build", "--no-build"),
+            ("no_test", "--no-test"),
+            ("no_lint", "--no-lint"),
+            ("no_qa", "--no-qa"),
+            ("no_e2e", "--no-e2e"),
+        ):
+            if getattr(args, attr, False):
+                extra += [flag]
         return m.main(extra)
     if cmd == "hooks":
         from signalos_lib.commands import hooks as m
