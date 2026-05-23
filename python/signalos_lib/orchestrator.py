@@ -16,6 +16,7 @@ __all__ = ["run_wave"]  # W-2: explicit public API
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -124,6 +125,37 @@ def _bash_available() -> bool:
         return proc.returncode == 0 and "ok" in (proc.stdout or "")
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+_BASH_PATH_STYLE: str | None = None
+
+
+def _bash_path(path: Path) -> str:
+    """Return a path string that the detected Windows bash can open."""
+    resolved = path.resolve()
+    if os.name != "nt":
+        return str(resolved)
+
+    global _BASH_PATH_STYLE
+    if _BASH_PATH_STYLE is None:
+        try:
+            proc = subprocess.run(
+                ["bash", "-lc", "test -d /mnt/c && printf wsl || printf msys"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            _BASH_PATH_STYLE = (proc.stdout or "").strip() or "msys"
+        except (OSError, subprocess.SubprocessError):
+            _BASH_PATH_STYLE = "msys"
+
+    drive = resolved.drive.rstrip(":").lower()
+    rest = resolved.as_posix()[2:] if drive else resolved.as_posix()
+    if drive and _BASH_PATH_STYLE == "wsl":
+        return f"/mnt/{drive}{rest}"
+    if drive:
+        return f"/{drive}{rest}"
+    return resolved.as_posix()
 
 
 def _tasks_from_plan(plan_path: Path, wave_id: str) -> list[dict[str, Any]]:
@@ -497,29 +529,66 @@ def _run_pre_write_guard(root: Path, rel_path: str, content: str) -> tuple[bool,
     guard = root / "core" / "execution" / "hooks" / "pre-tool-use-guard.sh"
     if not guard.is_file():
         return True, "guard-missing"
+    redact_py = root / "core" / "execution" / "hooks" / "_lib" / "redact.py"
+    if redact_py.is_file() and content:
+        diff_input = "\n".join(f"+{line}" for line in content.splitlines()) + "\n"
+        try:
+            scan = subprocess.run(
+                [sys.executable, str(redact_py), "--scan-diff"],
+                input=diff_input,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return True, f"guard-error: direct secret scan failed: {exc}"
+        if scan.returncode != 0:
+            return False, (scan.stderr or scan.stdout or "secret pattern in write content").strip()
     if not _bash_available():
         return True, "guard-skipped-no-bash"
+    bash_root = _bash_path(root)
+    bash_guard = _bash_path(guard)
+    bash_target = _bash_path(root / rel_path)
     try:
-        result = subprocess.run(
-            ["bash", str(guard)],
-            cwd=str(root),
-            env={
-                **os.environ,
-                "SIGNALOS_PLUGIN_ROOT": str(root),
-                "CLAUDE_TOOL_INPUT_FILE_PATH": str((root / rel_path).resolve()),
-                "CLAUDE_TOOL_INPUT_CONTENT": content,
-            },
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
+        if os.name == "nt" and _BASH_PATH_STYLE == "wsl":
+            command = (
+                f"SIGNALOS_PLUGIN_ROOT={shlex.quote(bash_root)} "
+                f"CLAUDE_TOOL_INPUT_FILE_PATH={shlex.quote(bash_target)} "
+                f"CLAUDE_TOOL_INPUT_CONTENT={shlex.quote(content)} "
+                f"bash {shlex.quote(bash_guard)}"
+            )
+            result = subprocess.run(
+                ["bash", "-lc", command],
+                cwd=str(Path.cwd()),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        else:
+            result = subprocess.run(
+                ["bash", bash_guard],
+                cwd=str(root),
+                env={
+                    **os.environ,
+                    "SIGNALOS_PLUGIN_ROOT": bash_root,
+                    "CLAUDE_TOOL_INPUT_FILE_PATH": bash_target,
+                    "CLAUDE_TOOL_INPUT_CONTENT": content,
+                },
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
     except (OSError, subprocess.SubprocessError) as exc:
         # Guard invocation itself failed -- treat as missing (lenient) but
         # record so the operator notices.
         return True, f"guard-error: {exc}"
     if result.returncode == 0:
         return True, ""
+    if result.returncode in {126, 127}:
+        return True, f"guard-error: {(result.stderr or result.stdout or '').strip()}"
     return False, (result.stderr or result.stdout or f"exit {result.returncode}").strip()
 
 

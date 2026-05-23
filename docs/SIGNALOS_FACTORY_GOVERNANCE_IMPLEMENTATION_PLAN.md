@@ -34,7 +34,7 @@ Every implementation PR or wave must update the status table below before comple
 | Workspace switching | In progress | Agent 1 IPC contract implemented: persisted active workspace, recent workspace storage, `clear_workspace`, partial `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml`, `npm test`, `npm run build` | Recent product switcher/UI remains for downstream agents |
 | Tauri capability grants | Verified | Added `workspace-core` permission set for `clear_workspace` and `get_workspace_status`; verified by `cargo test --manifest-path src-tauri/Cargo.toml` | None recorded |
 | Legacy `src_old/` cleanup | Verified | Confirmed no active build imports, removed `src_old/`, verified by `npm run build` | None recorded |
-| Parallel execution coordination | Not started | None | None recorded |
+| Parallel execution coordination | In progress | Contract-first wave launched with agents 1-5; handoffs merged within cadence; integration owner verified contract-pack tests | Full parallel wave still pending |
 | New product repo creation | Not started | None | None recorded |
 | Existing repo adoption | Not started | None | None recorded |
 | Layer 1 factory inputs | Not started | None | None recorded |
@@ -42,10 +42,10 @@ Every implementation PR or wave must update the status table below before comple
 | Layer 1 structural validator | Implemented | Agent 2: `signalos validate --group layer1 --json`; `python -m unittest python.test_validate_layer1`, `python -m unittest python.test_skill_validators`, and `python -m unittest python.test_status_gate_emissions` pass | Later integration: profile/artifact/IPC consumers still need to compose this result |
 | CI/template validation | Not started | None | None recorded |
 | Layer 2 gate flow | Not started | None | None recorded |
-| Product artifact generation | Not started | None | None recorded |
+| Product artifact generation | In progress | Agent 4 added shared artifact helper and compatibility export; `python -m unittest python.test_artifacts` and contract-pack tests pass | Rust `get_project_artifacts()` still needs downstream consolidation |
 | Build/test evidence | Not started | None | None recorded |
 | Release readiness gate | Not started | None | None recorded |
-| Release test suite | Not started | None | None recorded |
+| Release test suite | In progress | Agent 5 added deterministic pytest config; integration owner verified `python -m pytest -q` = 455 passed, 1 skipped; `cargo test --manifest-path src-tauri/Cargo.toml` and `npm test` pass | Installed-app smoke and E2E release scenarios remain downstream |
 
 Allowed status values:
 

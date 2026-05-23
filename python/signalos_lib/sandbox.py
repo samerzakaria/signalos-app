@@ -148,7 +148,7 @@ def docker_available() -> bool:
             ["docker", "info", "--format", "{{.ServerVersion}}"],
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=15,
             shell=False,
         )
         return proc.returncode == 0 and bool((proc.stdout or "").strip())

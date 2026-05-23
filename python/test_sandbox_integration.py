@@ -136,7 +136,7 @@ class SandboxRealDocker(unittest.TestCase):
         works the TDD/preview/e2e wraps will too."""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            set_sandbox_config(root, enabled=True, image_js=_IMAGE)
+            set_sandbox_config(root, enabled=True, image_js=_IMAGE, image_sh=_IMAGE)
             # An sh-c command that prints a containery hostname pattern.
             # `hostname` inside a Docker container returns a short id,
             # never the host's hostname. That's our proof of containment.
@@ -203,7 +203,7 @@ class TddInDockerEndToEnd(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            set_sandbox_config(root, enabled=True, image_js=_IMAGE)
+            set_sandbox_config(root, enabled=True, image_js=_IMAGE, image_sh=_IMAGE)
             # Synthetic TestRunner: prints the in-container hostname.
             # We use hostname diff (host vs container) as the proof of
             # containment, matching the pattern in
@@ -241,8 +241,12 @@ class TddInDockerEndToEnd(unittest.TestCase):
             root = Path(d)
             set_sandbox_config(root, enabled=False)
             fake_runner = (
-                "shell",
-                ["sh", "-c", "echo HOST_TDD_OK; hostname"],
+                "python",
+                [
+                    sys.executable,
+                    "-c",
+                    "import socket; print('HOST_TDD_OK'); print(socket.gethostname())",
+                ],
             )
             passed, output = run_tests_for_files(
                 root, fake_runner, test_file_paths=[],
