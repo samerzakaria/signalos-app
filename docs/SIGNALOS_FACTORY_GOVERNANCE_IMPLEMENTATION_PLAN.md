@@ -40,7 +40,7 @@ Every implementation PR or wave must update the status table below before comple
 | Layer 1 factory inputs | Not started | None | None recorded |
 | Stack/profile system | In progress | Agent 3 added `python/signalos_lib/profiles/` loader/schema plus `generic` and `react-vite` fixtures; `python -m unittest python.test_profiles -v` passes | UI selector, init `--profile` wiring, validator integration, and preview integration remain for later agents |
 | Layer 1 structural validator | Implemented | Agent 2: `signalos validate --group layer1 --json`; `python -m unittest python.test_validate_layer1`, `python -m unittest python.test_skill_validators`, and `python -m unittest python.test_status_gate_emissions` pass | Later integration: profile/artifact/IPC consumers still need to compose this result |
-| CI/template validation | Not started | None | None recorded |
+| CI/template validation | Implemented | Agent 9 added profile CI/template validation helpers and focused tests; `python -m unittest python.test_profile_validation -v`, `python -m unittest python.test_profiles -v`, and `python -m pytest python/test_profile_validation.py python/test_profiles.py -q` pass | Downstream validator/factory integration remains |
 | Layer 2 gate flow | Not started | None | None recorded |
 | Product artifact generation | In progress | Agent 4 added shared artifact helper and compatibility export; `python -m unittest python.test_artifacts` and contract-pack tests pass | Rust `get_project_artifacts()` still needs downstream consolidation |
 | Build/test evidence | Not started | None | None recorded |
