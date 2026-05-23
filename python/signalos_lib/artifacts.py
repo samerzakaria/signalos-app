@@ -7,7 +7,9 @@ from the definitions here instead of being maintained separately.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path, PurePosixPath
 
 __all__ = [
@@ -46,42 +48,25 @@ class ResolvedGateArtifact:
     path: Path
 
 
-GATE_LABELS: dict[str, str] = {
-    "G0": "Gate 0",
-    "G1": "Gate 1",
-    "G2": "Gate 2",
-    "G3": "Gate 3",
-    "G4": "Gate 4",
-    "G5": "Gate 5",
-}
+def _load_manifest() -> tuple[dict[str, str], dict[str, tuple[GateArtifact, ...]]]:
+    manifest_path = resources.files("signalos_lib").joinpath("gate_artifacts.json")
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    labels = {str(k): str(v) for k, v in raw["gate_labels"].items()}
+    gates: dict[str, tuple[GateArtifact, ...]] = {}
+    for gate, entries in raw["gates"].items():
+        gates[str(gate)] = tuple(
+            GateArtifact(
+                str(gate),
+                str(entry["rel_path"]),
+                tuple(str(role) for role in entry["required_roles"]),
+                str(entry["label"]),
+            )
+            for entry in entries
+        )
+    return labels, gates
 
 
-GATE_ARTIFACTS: dict[str, tuple[GateArtifact, ...]] = {
-    "G0": (
-        GateArtifact("G0", "core/governance/Governance/SOUL-DOCUMENT.md", ("PO", "PE"), "Soul Document"),
-        GateArtifact("G0", "core/governance/Governance/CONSTITUTION.md", ("PO", "PE"), "Constitution"),
-        GateArtifact("G0", "core/governance/Governance/SURFACE_INVENTORY.md", ("PE",), "Surface Inventory"),
-        GateArtifact("G0", "core/governance/Governance/PERMANENTLY_T3.md", ("PE",), "Permanently T3"),
-    ),
-    "G1": (
-        GateArtifact("G1", "core/strategy/BELIEF.md", ("PO",), "Belief"),
-        GateArtifact("G1", "core/execution/ROLE_ACTIVATION_CARD.md", ("PO",), "Role Activation Card"),
-    ),
-    "G2": (
-        GateArtifact("G2", "core/strategy/EXPECTATION_MAP.md", ("PO",), "Expectation Map"),
-    ),
-    "G3": (
-        GateArtifact("G3", "core/strategy/DESIGN_NOTE.md", ("PO",), "Design Note"),
-        GateArtifact("G3", "core/execution/PLAN.md", ("PE",), "Plan"),
-        GateArtifact("G3", "core/execution/ACCEPTANCE_CRITERIA.md", ("PE",), "Acceptance Criteria"),
-    ),
-    "G4": (
-        GateArtifact("G4", "core/execution/TRUST_TIER.md", ("PE", "PO"), "Trust Tier"),
-    ),
-    "G5": (
-        GateArtifact("G5", "core/governance/QUALITY_CHECK.md", ("QA",), "Quality Check"),
-    ),
-}
+GATE_LABELS, GATE_ARTIFACTS = _load_manifest()
 
 
 def gate_artifact_map() -> dict[str, list[tuple[str, list[str], str]]]:

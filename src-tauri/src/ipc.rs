@@ -280,6 +280,17 @@ pub struct ProjectArtifacts {
     pub artifacts: Vec<ProjectArtifact>,
 }
 
+#[derive(Deserialize)]
+struct GateArtifactManifest {
+    gates: std::collections::BTreeMap<String, Vec<GateArtifactSpec>>,
+}
+
+#[derive(Deserialize)]
+struct GateArtifactSpec {
+    rel_path: String,
+    label: String,
+}
+
 #[derive(Serialize)]
 pub struct RecentWorkspaceStatus {
     pub path: String,
@@ -288,6 +299,7 @@ pub struct RecentWorkspaceStatus {
     pub exists: bool,
     pub is_directory: bool,
     pub initialized: bool,
+    pub profile_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -301,6 +313,7 @@ pub struct WorkspaceStatusIntegration {
 #[derive(Serialize)]
 pub struct WorkspaceStatus {
     pub active_path: Option<String>,
+    pub profile_id: Option<String>,
     pub exists: bool,
     pub is_directory: bool,
     pub initialized: bool,
@@ -364,6 +377,7 @@ pub fn get_workspace_status(
     let Some(workspace) = active else {
         return WorkspaceStatus {
             active_path: None,
+            profile_id: None,
             exists: false,
             is_directory: false,
             initialized: false,
@@ -388,6 +402,7 @@ pub fn get_workspace_status(
         Vec::new()
     };
     let initialized = signalos_runtime && plan_present;
+    let profile_id = read_workspace_profile_id(&workspace);
     let status = if !exists {
         "missing"
     } else if !is_directory {
@@ -400,6 +415,7 @@ pub fn get_workspace_status(
 
     WorkspaceStatus {
         active_path: Some(workspace.to_string_lossy().to_string()),
+        profile_id,
         exists,
         is_directory,
         initialized,
@@ -436,7 +452,7 @@ fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
     let issue_report_count = count_files_with_ext(&issue_report_dir, "md");
     let handoff_count = count_files_with_ext(&handoff_dir, "md");
 
-    let artifacts = vec![
+    let mut artifacts = vec![
         artifact(
             "Runtime state",
             ".signalos",
@@ -534,6 +550,18 @@ fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
             },
         ),
     ];
+    artifacts.extend(shared_gate_artifacts(workspace).into_iter().map(|(gate, spec)| {
+        artifact(
+            &format!("{} {}", gate, spec.label),
+            &spec.rel_path,
+            "file",
+            if workspace.join(&spec.rel_path).exists() {
+                format!("Required {} artifact is present.", gate)
+            } else {
+                format!("Missing required {} artifact.", gate)
+            },
+        )
+    }));
 
     let initialized = runtime_dir.exists() && plan_file.exists();
     ProjectArtifacts {
@@ -541,6 +569,18 @@ fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
         initialized,
         artifacts,
     }
+}
+
+fn shared_gate_artifacts(_workspace: &Path) -> Vec<(String, GateArtifactSpec)> {
+    const GATE_ARTIFACTS_JSON: &str = include_str!("../../python/signalos_lib/gate_artifacts.json");
+    let Ok(manifest) = serde_json::from_str::<GateArtifactManifest>(GATE_ARTIFACTS_JSON) else {
+        return Vec::new();
+    };
+    manifest
+        .gates
+        .into_iter()
+        .flat_map(|(gate, specs)| specs.into_iter().map(move |spec| (gate.clone(), spec)))
+        .collect()
 }
 
 #[tauri::command]
@@ -1904,7 +1944,20 @@ fn recent_workspace_status(entry: &RecentWorkspace) -> RecentWorkspaceStatus {
         exists,
         is_directory,
         initialized,
+        profile_id: read_workspace_profile_id(&path),
     }
+}
+
+fn read_workspace_profile_id(workspace: &Path) -> Option<String> {
+    let profile_path = workspace.join(".signalos").join("profile.json");
+    let raw = std::fs::read_to_string(profile_path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parsed
+        .get("profile_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn workspace_status_integration() -> WorkspaceStatusIntegration {
@@ -2199,6 +2252,11 @@ mod tests {
         std::fs::create_dir_all(root.join(".signalos")).unwrap();
         std::fs::create_dir_all(root.join("core").join("strategy")).unwrap();
         std::fs::write(root.join("core").join("strategy").join("PLAN.md"), "# Plan").unwrap();
+        std::fs::write(
+            root.join(".signalos").join("profile.json"),
+            r#"{"profile_id":"react-vite"}"#,
+        )
+        .unwrap();
 
         let entry = RecentWorkspace {
             path: root.to_string_lossy().to_string(),
@@ -2210,6 +2268,23 @@ mod tests {
         assert!(status.exists);
         assert!(status.is_directory);
         assert!(status.initialized);
+        assert_eq!(status.profile_id.as_deref(), Some("react-vite"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_artifacts_include_shared_gate_manifest_paths() {
+        let root = std::env::temp_dir().join(format!("signalos-artifacts-{}", uuid()));
+        std::fs::create_dir_all(root.join(".signalos")).unwrap();
+        std::fs::create_dir_all(root.join("core").join("strategy")).unwrap();
+        std::fs::write(root.join("core").join("strategy").join("PLAN.md"), "# Plan").unwrap();
+
+        let artifacts = collect_project_artifacts(&root);
+        let paths: Vec<String> = artifacts.artifacts.into_iter().map(|item| item.path).collect();
+
+        assert!(paths.contains(&"core/governance/Governance/SOUL-DOCUMENT.md".into()));
+        assert!(paths.contains(&"core/governance/QUALITY_CHECK.md".into()));
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -24,6 +24,21 @@ export const enfOpen = signal<boolean>(false);
 export const keyVisible = signal<boolean>(false);
 export const updateChannel = signal<string>("beta");
 export const workspacePath = signal<string>("");
+export interface RecentWorkspace {
+  path: string;
+  name: string;
+  last_opened?: string;
+  exists?: boolean;
+  is_directory?: boolean;
+  initialized?: boolean;
+  profile_id?: string | null;
+}
+export const recentWorkspaces = signal<RecentWorkspace[]>([]);
+export const selectedProductProfile = signal<string>('generic');
+export const productProfiles = signal([
+  { id: 'generic', name: 'Generic Product Repo' },
+  { id: 'react-vite', name: 'React + Vite' },
+]);
 export const termHistory = signal<string[]>([]);
 export const termHistIdx = signal<number>(-1);
 export const modalOpen = signal<string | null>(null);
@@ -41,7 +56,7 @@ export const previewDevice = signal<string>('desktop');
 export const previewUrl = signal<string>('');
 export const previewStatus = signal<'idle' | 'starting' | 'installing' | 'running' | 'stopped' | 'error'>('idle');
 export const previewKey = signal<string>('');
-export const previewStack = signal<string>('react-vite');
+export const previewStack = signal<string>('');
 
 export const monthlyCap = signal<number | null>(null);
 export const engineRunning = signal<boolean | null>(null);

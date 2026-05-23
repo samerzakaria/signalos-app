@@ -239,6 +239,7 @@ def _layer1_checks() -> list[Layer1Check]:
         ("layer1-gates-readable", "BLOCK_MERGE", _check_gates_readable),
         ("layer1-source-traceability", "BLOCK_MERGE", _check_source_traceability),
         ("layer1-unknowns", "BLOCK_MERGE", _check_unknowns),
+        ("layer1-profile", "BLOCK_MERGE", _check_profile),
         ("layer1-path-safety", "HALT", _check_path_safety),
     ]
 
@@ -410,6 +411,51 @@ def _check_unknowns(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
     return (
         not errors,
         "unknowns are recorded" if not errors else "unknowns file is invalid",
+        details,
+    )
+
+
+def _check_profile(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    profile_path = repo_root / ".signalos" / "profile.json"
+    details: dict[str, Any] = {
+        "path": ".signalos/profile.json",
+        "exists": profile_path.is_file(),
+    }
+    if not profile_path.is_file():
+        details["profile_id"] = "generic"
+        return True, "no explicit profile; generic fallback applies", details
+
+    try:
+        parsed = json.loads(profile_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        details["json_error"] = str(exc)
+        return False, "profile metadata is invalid JSON", details
+
+    profile_id = str(parsed.get("profile_id") or "").strip()
+    details["profile_id"] = profile_id
+    if not profile_id:
+        return False, "profile metadata is missing profile_id", details
+
+    try:
+        from signalos_lib.profiles import load_profile, validate_profile_contract
+
+        profile = load_profile(profile_id)
+        report = validate_profile_contract(profile)
+    except Exception as exc:
+        details["error"] = str(exc)
+        return False, f"profile validation failed: {exc}", details
+
+    required_paths = [template.destination for template in profile.required_templates if template.required]
+    if profile.ci.enabled:
+        required_paths.extend(profile.ci.files)
+    missing = [rel for rel in required_paths if not (repo_root / rel).exists()]
+    details["validation"] = report.to_dict()
+    details["required_paths"] = required_paths
+    details["missing"] = missing
+    ok = report.ok and not missing
+    return (
+        ok,
+        "profile metadata and generated files validate" if ok else "profile validation failed",
         details,
     )
 

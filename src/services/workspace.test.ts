@@ -24,14 +24,14 @@ describe('workspace factory helpers', () => {
     vi.restoreAllMocks();
   });
 
-  it('creates the folder, initializes SignalOS with the product name, signs G0, and refreshes status', async () => {
-    const result = await createSignalosProject('C:/Products/Task App', 'Task App');
+  it('creates the folder, initializes SignalOS with the product name/profile, signs G0, and refreshes status', async () => {
+    const result = await createSignalosProject('C:/Products/Task App', 'Task App', 'react-vite');
 
     expect(mkdir).toHaveBeenCalledWith('C:/Products/Task App', { recursive: true });
     expect(invoke).toHaveBeenCalledWith('set_workspace', { path: 'C:/Products/Task App' });
     expect(invoke).toHaveBeenCalledWith('run_signal_command', {
       command: 'signal-init',
-      args: ['--mode', 'keep', '--name', 'Task App'],
+      args: ['--mode', 'keep', '--name', 'Task App', '--profile', 'react-vite'],
     });
     expect(invoke).toHaveBeenCalledWith('run_signal_command', {
       command: 'signal-sign',

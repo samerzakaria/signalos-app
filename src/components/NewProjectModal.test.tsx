@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NewProjectModal } from './NewProjectModal';
-import { modalOpen, workspacePath } from '../state';
+import { modalOpen, selectedProductProfile, workspacePath } from '../state';
 
 describe('NewProjectModal', () => {
   beforeEach(() => {
     modalOpen.value = 'newProjectModal';
     workspacePath.value = '';
+    selectedProductProfile.value = 'generic';
   });
 
   it('uses the existing workspace picker for Browse and fills the path input', async () => {
@@ -33,5 +34,14 @@ describe('NewProjectModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /create project/i }));
 
     expect(window.createProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the product profile selector', () => {
+    render(<NewProjectModal />);
+
+    const profile = screen.getByLabelText('Product profile') as HTMLSelectElement;
+    fireEvent.input(profile, { target: { value: 'react-vite' } });
+
+    expect(selectedProductProfile.value).toBe('react-vite');
   });
 });

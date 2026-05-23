@@ -45,6 +45,12 @@ _BASH_WARNED = False
 
 from signalos_lib.adoption import scan_existing_repo, write_adoption_artifacts
 from signalos_lib.ide import detect_ide
+from signalos_lib.profiles import (
+    ProfileNotFoundError,
+    dry_run_profile_validation,
+    list_profile_ids,
+    load_profile,
+)
 
 __all__ = ["main"]
 
@@ -272,6 +278,81 @@ Full docs: <https://github.com/samerzakaria/SignalOS>
     )
 
 
+def _safe_profile_path(root: Path, rel_path: str) -> Path:
+    candidate = (root / rel_path).resolve(strict=False)
+    try:
+        candidate.relative_to(root.resolve(strict=False))
+    except ValueError as exc:
+        raise RuntimeError(f"profile path escapes workspace: {rel_path}") from exc
+    return candidate
+
+
+def _copy_profile_template(root: Path, source: str, destination: str, overwrite: bool) -> bool:
+    src = _safe_profile_path(root, source)
+    dst = _safe_profile_path(root, destination)
+    if not src.exists() or not src.is_file():
+        raise RuntimeError(f"profile template source missing: {source}")
+    if dst.exists() and not overwrite:
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.resolve(strict=False) != dst.resolve(strict=False):
+        shutil.copy2(src, dst)
+    return True
+
+
+def _apply_profile(
+    target: Path,
+    profile_id: str,
+    project_name: str,
+    overwrite: bool,
+    emit_templates: bool = True,
+) -> tuple[int, dict]:
+    try:
+        profile = load_profile(profile_id)
+    except ProfileNotFoundError as exc:
+        available = ", ".join(list_profile_ids())
+        raise RuntimeError(f"{exc}; available profiles: {available}") from exc
+
+    generated = 0
+    if emit_templates:
+        for template in profile.required_templates:
+            generated += int(_copy_profile_template(target, template.source, template.destination, overwrite))
+        if profile.ci.enabled:
+            for template in profile.ci.templates:
+                generated += int(_copy_profile_template(target, template.source, template.destination, overwrite))
+
+    metadata = {
+        "schema_version": "signalos.profile_selection.v1",
+        "profile_id": profile.id,
+        "profile_name": profile.name,
+        "project_name": project_name,
+        "preview": profile.preview.to_dict(),
+        "commands": {
+            name: command.to_dict() if command else None
+            for name, command in profile.commands.items()
+        },
+        "validator_groups": list(profile.validator_groups),
+        "generated_templates": generated,
+    }
+    profile_path = target / ".signalos" / "profile.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+    # Init writes the selected profile and emits profile-owned templates, but
+    # frontend governance instantiation may still fill placeholders/sign G0
+    # immediately after this command. Generated-file validation is enforced by
+    # `signalos validate --group layer1` once that fill step has happened.
+    report = dry_run_profile_validation(profile)
+    validation_path = target / ".signalos" / "profile-validation.json"
+    validation_path.write_text(json.dumps(report.to_dict(), indent=2) + "\n", encoding="utf-8")
+    if not report.ok:
+        raise RuntimeError(
+            "profile validation failed: "
+            + "; ".join(issue.message for issue in report.issues[:5])
+        )
+    return generated, metadata
+
+
 # ---------------------------------------------------------------------------
 # git init + IDE register-hooks
 # ---------------------------------------------------------------------------
@@ -435,6 +516,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Skip the IDE-config bundle; ship only "
                              "the .signalos/ runtime + governance "
                              "templates (CLI-only mode)")
+    parser.add_argument("--profile", default="generic", choices=list_profile_ids(),
+                        help="Factory stack/profile to embed in .signalos/profile.json")
     return parser
 
 
@@ -442,6 +525,7 @@ def main(argv: list[str]) -> int:
     args = _build_parser().parse_args(argv)
     target = Path(args.path).expanduser().resolve()
     project_name = args.name or target.name or "signalos-project"
+    profile_id = args.profile or "generic"
     should_adopt_existing = (
         target.exists()
         and target.is_dir()
@@ -511,6 +595,17 @@ def main(argv: list[str]) -> int:
     _render_plan_template(target, project_name)
     ide = detect_ide()
     _render_readme(target, project_name, ide)
+    try:
+        generated_profile_templates, profile_metadata = _apply_profile(
+            target,
+            profile_id,
+            project_name,
+            overwrite=args.force or args.refresh_bundle,
+            emit_templates=not args.minimal,
+        )
+    except RuntimeError as exc:
+        sys.stderr.write(f"signalos init: {exc}\n")
+        return 2
 
     # 4. git init (unless suppressed)
     if not args.no_git:
@@ -524,6 +619,8 @@ def main(argv: list[str]) -> int:
     # consoles don't UnicodeEncodeError on emoji or em-dashes.
     print(f"\n  [OK] SignalOS project bootstrapped at {target}")
     print(f"  [OK] {file_count} bundled files + .signalos/ runtime state")
+    print(f"  [OK] Profile: {profile_metadata['profile_id']} "
+          f"({generated_profile_templates} profile template file(s) generated)")
     if ide:
         print(f"  [OK] Detected IDE: {ide} - slash commands "
               "ready on next reload")

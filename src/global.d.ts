@@ -26,10 +26,11 @@ declare global {
     };
     pickWorkspaceFolder: () => Promise<void>;
     ensureWorkspaceFolder: (path: string) => Promise<void>;
-    initWorkspace: (path: string, options?: { name?: string; strict?: boolean }) => Promise<void>;
+    initWorkspace: (path: string, options?: { name?: string; profile?: string; strict?: boolean }) => Promise<void>;
     createSignalosProject: (
       path: string,
       name: string,
+      profile?: string,
     ) => Promise<{ governance: { filled: string[]; signed: boolean }; status: unknown | null }>;
     instantiateGovernanceAndSignG0: () => Promise<{ filled: string[]; signed: boolean }>;
     approvePlan: (bubbleId: string) => Promise<void>;
@@ -71,6 +72,7 @@ declare global {
     openGate: () => void;
     openModal: (id: string) => void;
     openNewProject: () => void;
+    switchWorkspace: (path: string) => Promise<void>;
     openOverride: () => void;
     openSearch: () => void;
     prevStep: () => void;

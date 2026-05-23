@@ -2,6 +2,7 @@ import {
   userName, userRole, ai, aiModel, providerModels, currentCost,
   workspacePath, monthlyCap, engineRunning, engineTestState,
   engineRestartState, updateCheck, updateChannel,
+  productProfiles, recentWorkspaces, selectedProductProfile,
 } from '../../state';
 
 export function SettingsView() {
@@ -16,6 +17,9 @@ export function SettingsView() {
   const restartSt = engineRestartState.value;
   const upd = updateCheck.value;
   const channel = updateChannel.value || 'beta';
+  const recents = recentWorkspaces.value;
+  const profiles = productProfiles.value;
+  const selectedProfile = selectedProductProfile.value || 'generic';
 
   const engBadgeContent = running === false
     ? <><span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block' }}></span> Stopped</>
@@ -74,6 +78,30 @@ export function SettingsView() {
                 <div className="settings-row-tx"><strong>Active folder</strong><span>The project SignalOS is working in</span></div>
                 <span className="settings-path" id="settingsWorkspacePath">{workspacePath.value || '(none)'}</span>
               </div>
+              <div className="settings-row">
+                <div className="settings-row-tx"><strong>Product profile</strong><span>Controls init validation and preview defaults</span></div>
+                <select className="select-input" id="settingsProductProfile" value={selectedProfile} onInput={(e) => { selectedProductProfile.value = (e.target as HTMLSelectElement).value; }} onChange={() => window.changeStack()} style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }}>
+                  {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                </select>
+              </div>
+              {recents.length > 0 ? (
+                <div className="settings-row recent-workspaces-row">
+                  <div className="settings-row-tx"><strong>Recent products</strong><span>Switch without leaving the app</span></div>
+                  <div className="recent-workspaces" id="settingsRecentWorkspaces">
+                    {recents.map((ws) => {
+                      const active = ws.path === workspacePath.value;
+                      const cls = active ? 'recent-workspace active' : 'recent-workspace';
+                      const icon = ws.exists === false ? 'ti-alert-triangle' : ws.initialized ? 'ti-folder-check' : 'ti-folder';
+                      return (
+                        <button key={ws.path} className={cls} onClick={() => window.switchWorkspace(ws.path)} disabled={active || ws.exists === false} title={ws.path}>
+                          <i className={`ti ${icon}`}></i>
+                          <span>{ws.name || ws.path}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Forget this folder</strong><span>Removes it from SignalOS — files stay on your computer</span></div>
                 <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => window.forgetWorkspace()}><i className="ti ti-trash"></i> Forget</button>

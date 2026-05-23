@@ -13,6 +13,29 @@ from signalos_lib.commands import init
 
 
 class InitAdoptionTests(unittest.TestCase):
+    def test_init_profile_writes_metadata_and_ci_templates(self):
+        with tempfile.TemporaryDirectory(prefix="signalos-profile-") as tmp:
+            root = Path(tmp)
+
+            rc = init.main([
+                str(root),
+                "--yes",
+                "--no-git",
+                "--name",
+                "Profiled Product",
+                "--profile",
+                "react-vite",
+            ])
+
+            self.assertEqual(rc, 0)
+            profile = json.loads((root / ".signalos" / "profile.json").read_text(encoding="utf-8"))
+            validation = json.loads((root / ".signalos" / "profile-validation.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(profile["profile_id"], "react-vite")
+            self.assertEqual(profile["preview"]["mode"], "npm-script")
+            self.assertTrue((root / ".github" / "workflows" / "signalos-ci.yml").is_file())
+            self.assertTrue(validation["ok"], validation)
+
     def test_keep_existing_writes_adoption_artifacts_and_preserves_files(self):
         with tempfile.TemporaryDirectory(prefix="signalos-adopt-") as tmp:
             root = Path(tmp)

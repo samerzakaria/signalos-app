@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "gate_labels": {
+    "G0": "Gate 0",
+    "G1": "Gate 1",
+    "G2": "Gate 2",
+    "G3": "Gate 3",
+    "G4": "Gate 4",
+    "G5": "Gate 5"
+  },
+  "gates": {
+    "G0": [
+      {
+        "rel_path": "core/governance/Governance/SOUL-DOCUMENT.md",
+        "required_roles": ["PO", "PE"],
+        "label": "Soul Document"
+      },
+      {
+        "rel_path": "core/governance/Governance/CONSTITUTION.md",
+        "required_roles": ["PO", "PE"],
+        "label": "Constitution"
+      },
+      {
+        "rel_path": "core/governance/Governance/SURFACE_INVENTORY.md",
+        "required_roles": ["PE"],
+        "label": "Surface Inventory"
+      },
+      {
+        "rel_path": "core/governance/Governance/PERMANENTLY_T3.md",
+        "required_roles": ["PE"],
+        "label": "Permanently T3"
+      }
+    ],
+    "G1": [
+      {
+        "rel_path": "core/strategy/BELIEF.md",
+        "required_roles": ["PO"],
+        "label": "Belief"
+      },
+      {
+        "rel_path": "core/execution/ROLE_ACTIVATION_CARD.md",
+        "required_roles": ["PO"],
+        "label": "Role Activation Card"
+      }
+    ],
+    "G2": [
+      {
+        "rel_path": "core/strategy/EXPECTATION_MAP.md",
+        "required_roles": ["PO"],
+        "label": "Expectation Map"
+      }
+    ],
+    "G3": [
+      {
+        "rel_path": "core/strategy/DESIGN_NOTE.md",
+        "required_roles": ["PO"],
+        "label": "Design Note"
+      },
+      {
+        "rel_path": "core/execution/PLAN.md",
+        "required_roles": ["PE"],
+        "label": "Plan"
+      },
+      {
+        "rel_path": "core/execution/ACCEPTANCE_CRITERIA.md",
+        "required_roles": ["PE"],
+        "label": "Acceptance Criteria"
+      }
+    ],
+    "G4": [
+      {
+        "rel_path": "core/execution/TRUST_TIER.md",
+        "required_roles": ["PE", "PO"],
+        "label": "Trust Tier"
+      }
+    ],
+    "G5": [
+      {
+        "rel_path": "core/governance/QUALITY_CHECK.md",
+        "required_roles": ["QA"],
+        "label": "Quality Check"
+      }
+    ]
+  }
+}

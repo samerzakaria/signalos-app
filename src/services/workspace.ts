@@ -10,6 +10,7 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 export interface InitWorkspaceOptions {
   name?: string;
+  profile?: string;
   strict?: boolean;
 }
 
@@ -73,6 +74,8 @@ export async function initWorkspace(path: string, options: InitWorkspaceOptions 
   const args = ['--mode', 'keep'];
   const name = options.name?.trim();
   if (name) args.push('--name', name);
+  const profile = options.profile?.trim();
+  if (profile) args.push('--profile', profile);
 
   try {
     await tauriInvoke('run_signal_command', { command: 'signal-init', args });
@@ -85,6 +88,7 @@ export async function initWorkspace(path: string, options: InitWorkspaceOptions 
 export async function createSignalosProject(
   path: string,
   name: string,
+  profile = 'generic',
 ): Promise<CreateSignalosProjectResult> {
   const target = path.trim();
   const productName = name.trim();
@@ -93,7 +97,7 @@ export async function createSignalosProject(
   }
 
   await ensureWorkspaceFolder(target);
-  await initWorkspace(target, { name: productName, strict: true });
+  await initWorkspace(target, { name: productName, profile, strict: true });
   const governance = await instantiateGovernanceAndSignG0();
   const status = await tauriInvoke('get_workspace_status').catch(() => null);
 

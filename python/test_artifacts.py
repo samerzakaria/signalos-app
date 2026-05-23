@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,18 @@ from signalos_lib import sign
 
 
 class ArtifactMapTests(unittest.TestCase):
+    def test_gate_artifacts_load_from_shared_manifest(self) -> None:
+        manifest = json.loads((HERE / "signalos_lib" / "gate_artifacts.json").read_text(encoding="utf-8"))
+        expected_paths = {
+            entry["rel_path"]
+            for entries in manifest["gates"].values()
+            for entry in entries
+        }
+        actual_paths = {artifact.rel_path for artifact in artifacts.expected_gate_artifacts()}
+
+        self.assertEqual(actual_paths, expected_paths)
+        self.assertIn("core/governance/Governance/SOUL-DOCUMENT.md", actual_paths)
+
     def test_sign_reexports_shared_gate_map(self) -> None:
         self.assertIs(sign.GATE_MAP, artifacts.GATE_MAP)
         self.assertEqual(artifacts.list_gates(), ["G0", "G1", "G2", "G3", "G4", "G5"])

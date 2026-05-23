@@ -90,6 +90,7 @@ async function bootApp() {
       const termPath = document.querySelector(".term-path");
       if (termPath) termPath.textContent = wsName;
     }
+    applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
   } catch (e) {
     console.warn("Could not load workspace:", e.message);
   }
@@ -145,6 +146,16 @@ function showSidecarError(payload) {
 export function updateCostDisplay(cost) {
   if (!cost) return;
   state.cost = cost.session_usd ?? cost.total_usd ?? 0;
+}
+
+function applyWorkspaceStatus(status) {
+  if (!status) return;
+  if (Array.isArray(status.recent_workspaces)) {
+    state.recentWorkspaces = status.recent_workspaces;
+  }
+  const profileId = status.profile_id || "generic";
+  state.selectedProductProfile = profileId;
+  state.previewStack = profileId === "react-vite" ? "react-vite" : "";
 }
 
 
@@ -702,6 +713,7 @@ async function loadSettings() {
 
     const ws = await ipc.workspace.get().catch(() => null);
     if (ws) state.workspacePath = ws.path || ws;
+    applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
 
     try {
       const engineStatus = await ipc.engine.status();
@@ -785,11 +797,26 @@ async function replaceApiKey() {
 }
 window.replaceApiKey = replaceApiKey;
 
+async function switchWorkspace(path) {
+  const target = String(path || "").trim();
+  if (!target) return;
+  try {
+    await ipc.workspace.set(target);
+    state.workspace = target;
+    applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
+    await bootApp();
+  } catch (e) {
+    showError("Could not switch workspace: " + e.message);
+  }
+}
+window.switchWorkspace = switchWorkspace;
+
 async function forgetWorkspace() {
   if (!confirm("Remove this workspace from SignalOS? Your files stay on your computer.")) return;
   try {
     await ipc.workspace.clear();
     state.workspace = "";
+    applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
   } catch (e) {
     showError("Could not forget workspace: " + e.message);
   }
@@ -1045,6 +1072,7 @@ async function createProject() {
   if (creatingProject) return;
   const name = document.getElementById("newProjName")?.value.trim();
   const path = document.getElementById("newProjPath")?.value.trim();
+  const profile = document.getElementById("newProjProfile")?.value || state.selectedProductProfile || "generic";
   if (!name || !path) { showError("Name and folder path are required"); return; }
 
   if (typeof window.createSignalosProject !== "function") {
@@ -1057,10 +1085,13 @@ async function createProject() {
   setNewProjectStatus("Creating product repo...");
 
   try {
-    const result = await window.createSignalosProject(path, name);
+    state.selectedProductProfile = profile;
+    state.previewStack = profile === "react-vite" ? "react-vite" : "";
+    const result = await window.createSignalosProject(path, name, profile);
     state.workspace = path;
+    state.previewStack = profile === "react-vite" ? "react-vite" : "";
     setNewProjectStatus("Refreshing workspace status...");
-    await ipc.workspace.status().catch(() => null);
+    applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
     closeModal("newProjectModal");
     await bootApp();
     if (result?.governance && !result.governance.signed) {
@@ -1318,10 +1349,8 @@ function voiceInput() {
 window.voiceInput = voiceInput;
 
 function changeStack() {
-  addAIBubble(
-    "Stack changes require a new project. Your current build stack is locked until the wave ends."
-  );
-  switchTab("build");
+  const next = state.selectedProductProfile || "generic";
+  state.previewStack = next === "react-vite" ? "react-vite" : "";
 }
 window.changeStack = changeStack;
 

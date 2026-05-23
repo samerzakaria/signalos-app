@@ -604,6 +604,12 @@ a{color:inherit}
 .settings-row-tx strong{font-size:13.5px;font-weight:600;display:block}
 .settings-row-tx span{font-size:12px;color:var(--ink-2)}
 .settings-path{font-family:var(--f-mono);font-size:11.5px;background:var(--surface-warm);padding:4px 10px;border-radius:6px;color:var(--ink-2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-workspaces-row{align-items:flex-start}
+.recent-workspaces{display:flex;flex-direction:column;gap:6px;min-width:260px;max-width:320px}
+.recent-workspace{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);border-radius:6px;padding:8px 10px;font-size:12.5px;text-align:left;cursor:pointer}
+.recent-workspace span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-workspace.active{border-color:var(--accent);background:var(--accent-soft);cursor:default}
+.recent-workspace:disabled{opacity:.55;cursor:not-allowed}
 
 /* ── History view ── */
 .history-item{display:flex;align-items:flex-start;gap:14px;padding:16px 20px;border-bottom:0.5px solid var(--line);transition:background 0.13s;cursor:pointer;}

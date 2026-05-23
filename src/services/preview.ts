@@ -75,6 +75,12 @@ export async function previewRun(): Promise<void> {
     return;
   }
   previewStatus.value = 'starting';
+  const stack = previewStack.value;
+  if (!stack) {
+    previewStatus.value = 'error';
+    console.warn('preview start skipped: selected product profile does not declare a preview command');
+    return;
+  }
   // Reconcile missing deps before npm install so the preview doesn't
   // fail on a fresh package.json that's missing imports the LLM added.
   try {
@@ -87,7 +93,7 @@ export async function previewRun(): Promise<void> {
   }
   try {
     const result = await tauriInvoke<{ key?: string }>('start_preview', {
-      stack: previewStack.value || 'react-vite',
+      stack,
       workspace: ws,
     });
     if (result?.key) previewKey.value = result.key;
