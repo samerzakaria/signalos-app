@@ -46,9 +46,9 @@ Every implementation PR or wave must update the status table below before comple
 | Build/test evidence | Implemented | Agent 11 added `signalos verify-product --json` command surface, normalized `.signalos/evidence/<wave>/verify-product.json` output, profile command execution, QA/E2E runner composition, TDD runner detection metadata; verified by focused tests and combined source gates | IPC route, Tauri ACL grant, UI display, and full generated-product E2E remain downstream |
 | Release readiness gate | Verified | Agent 12 added `signalos release-readiness --json`, Layer 1 validation evidence at `.signalos/evidence/layer1/validate-layer1.json`, release evidence at `.signalos/evidence/<wave>/release-readiness.json`, sidecar route `signal-release-readiness`, dashboard readiness card, and focused pass/fail/blocker UI tests; latest source gates: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed | Publish itself remains the existing explicit `signalos publish` action; readiness gates relationship as `blocked`, `ready-to-publish`, or `published` but does not auto-publish |
 | Release test suite | Verified | Agent 13 added Phase 12 release-scenario tests for empty repo creation, existing repo adoption, prompt/PRD traceability, workspace switch/clear route coverage, gate timeline rendering, verify-product evidence shape, release-readiness contract, and installed-artifact preflight. Latest source gates passed: `python -m pytest -q` = 490 passed, 0 skipped, 5 subtests passed; `cargo test --manifest-path src-tauri/Cargo.toml` = 48 passed; `npm test` = 161 passed; `npm run build` passed. Installed checks passed: `powershell -File scripts/check-installed-artifact-preconditions.ps1 -Json -RequireInstallers` = READY_FOR_SMOKE; `powershell -File scripts/smoke-installed-build.ps1 -CloseRunning` passed release executable launch, bundled sidecar product validation, and MSI administrative extraction; `scripts/build-internal.ps1` now rebuilds the sidecar before bundling to avoid stale packaged Python routes | `npm run tauri build` produced the release executable, MSI, and NSIS installer but exited 1 because updater signing requires `TAURI_SIGNING_PRIVATE_KEY`; WebView2 DevTools interactivity canary skipped in this environment because port 9223 was unreachable |
-| TDD enforcement | Not started | None | None recorded |
-| Design+UX enforcement | Not started | None | None recorded |
-| Hardening borrows (Phase 13) | Not started | None | None recorded |
+| TDD enforcement | Not started | Template (fill on completion): Added Layer 2 validator `python/signalos_lib/validators/tdd_coverage.py` registered in `validate_cmd.py`; G3 sign in `python/signalos_lib/sign.py` blocks on `validate_tdd_coverage(wave, profile)` unless `--waive-tdd "<reason>"` is passed; waiver records `action=tdd-waiver` in `AUDIT_TRAIL.jsonl` with the failing task IDs named; UI captures waiver reason at G3 sign affordance when prerequisite fails. Verified by focused tests `python -m unittest python.test_tdd_coverage -v` = `<N>` passed, `<N>` subtests passed; combined gates `python -m pytest -q` = `<N>` passed, `<N>` skipped; `cargo test --manifest-path src-tauri/Cargo.toml` = `<N>` passed; `npm test` = `<N>` passed; `npm run build` passed. Commit: `<HASH>`. | Awaiting implementation — scope defined in Phase 8 Required Changes (G3 TDD coverage prerequisite row) |
+| Design+UX enforcement | Not started | Template (fill on completion): Added Layer 2 validator `python/signalos_lib/validators/design_reviewed.py` registered in `validate_cmd.py`; reuses existing `python/signalos_lib/design.py` `check_design_reviewed`; G3 sign in `python/signalos_lib/sign.py` blocks on `validate_design_reviewed(wave, profile)` (requires `.signalos/design/variants/wave-<n>/review.json` with `verdict=approved`; UX rubric required when profile has `ux_required: true`); `--no-ux-changes "<reason>"` flag records `action=ux-skip` per-wave (does not propagate to next wave touching UI files); UI surfaces UX-skip affordance only on `ux_required` profiles when prerequisite fails. Backend profiles (`node-api`, `python`) skip UX automatically via `ux_required: false` in their manifests. Verified by focused tests `python -m unittest python.test_design_reviewed -v` = `<N>` passed, `<N>` subtests passed; combined gates `python -m pytest -q` = `<N>` passed, `<N>` skipped; `cargo test --manifest-path src-tauri/Cargo.toml` = `<N>` passed; `npm test` = `<N>` passed; `npm run build` passed. Commit: `<HASH>`. | Awaiting implementation — scope defined in Phase 8 Required Changes (G3 design+UX prerequisite row); depends on Phase 5 manifest extension landing first |
+| Hardening borrows (Phase 13) | Not started | Template (fill on completion): Five SignalGuard-inspired hardening items landed: (1) DEFER count + harvest commands at `python/signalos_lib/commands/defer.py` writing to `.signalos/backlog/wave-<n>.yaml` using existing `backlog-schema.yaml`; (2) Constitution hash-lock at `python/signalos_lib/commands/constitution.py` + `constitution_integrity` validator registered in Layer 1 group writing to `.signalos/integrity/constitution.lock.json`; (3) Integrity seal at `python/signalos_lib/commands/seal.py` wired into G5 sign writing to `.signalos/integrity/seal-<wave>.json`; (4) Scope-card → code map extended in `gate_artifacts.json` with `scope_card_code_map` index populated from `// SC-NNN` markers; (5) Velocity metrics at `python/signalos_lib/velocity.py` surfaced on dashboard sidebar deriving from existing wave_engine state + `AUDIT_TRAIL.jsonl` timestamps. All Phase 13 IPC routes granted in `src-tauri/capabilities/default.json`. Verified by focused tests `python -m unittest python.test_defer python.test_constitution python.test_seal python.test_scope_code_map python.test_velocity -v` = `<N>` passed, `<N>` subtests passed; combined gates `python -m pytest -q` = `<N>` passed, `<N>` skipped; `cargo test --manifest-path src-tauri/Cargo.toml` = `<N>` passed; `npm test` = `<N>` passed; `npm run build` passed. Commits: defer `<HASH>`, constitution `<HASH>`, seal `<HASH>`, scope-map `<HASH>`, velocity `<HASH>`. | Awaiting implementation — scope defined in Phase 13 Required Changes; recommended as a separate small wave after TDD/Design+UX enforcement lands |
 
 Allowed status values:
 
@@ -625,6 +625,41 @@ Release signing note: `npm run tauri build` currently exits 1 after bundle creat
 
 Release build hygiene note: `scripts/build-internal.ps1` rebuilds the PyInstaller sidecar before bundling so ignored/stale `src-tauri/bin/signalos-python-*` binaries cannot silently ship old Python command routes.
 
+## Phase 13: Hardening Borrows (Audit-Tightening Follow-up)
+
+### Goal
+
+Five small, additive hardening items inspired by external `shaabancis/SignalGuard` (MIT). Each closes a loop SignalOS already opened but did not fully wire. None changes architecture; none introduces a new IDE-plugin or content-product surface. All extend existing modules.
+
+### Required Changes
+
+| Task | Implementation | Likely Files | Acceptance |
+|---|---|---|---|
+| DEFER count + harvest | Add `signalos defer count --json` (count `// DEFER:` markers across workspace, grouped by file/path) and `signalos defer harvest --wave <n> --json` (move counted markers into `.signalos/backlog/wave-<n>.yaml` using existing `backlog-schema.yaml`). Closes the loop from the existing pre-commit DEFER format enforcement to the existing backlog schema | New `python/signalos_lib/commands/defer.py`, existing `_bundle/.../strategy/Templates/backlog-schema.yaml`, register in `cli.py` | DEFER markers are quantifiable and harvestable into the backlog; release-readiness surfaces the count |
+| Constitution hash-lock + verify | Add `signalos constitution lock --json` (SHA-256 the constitution document, write to `.signalos/integrity/constitution.lock.json`) and `signalos constitution verify --json` (verify current hash matches lock). Add `constitution-integrity` to the Layer 1 validator group | New `python/signalos_lib/commands/constitution.py`, new `python/signalos_lib/validators/constitution_integrity.py`, `validate_cmd.py` registry | Tampering with the constitution after a lock is detected at the next Layer 1 validation |
+| Integrity seal at G5 | Add `signalos seal create --json` (SHA-256 over all governance artifacts listed in `gate_artifacts.json`, write to `.signalos/integrity/seal-<wave>.json`) and `signalos seal verify --wave <n> --json`. Wire seal creation into G5 sign so each release produces a tamper-evident snapshot | New `python/signalos_lib/commands/seal.py`, `sign.py` G5 hook | Each G5 sign produces an integrity seal; verify command detects post-seal modifications |
+| Scope-card to code map | Extend the consolidated artifact map (`gate_artifacts.json`) with a `scope_card_code_map` index: scope-card ID → list of source file paths that implement it. Populate via lightweight code annotation (e.g., `// SC-NNN` markers or per-task `implements` metadata) | `python/signalos_lib/artifacts.py`, `gate_artifacts.json`, optional pre-commit hook for SC-NNN format | Each scope card resolves to a concrete file list; release-readiness can audit "every scope card has implementing code" |
+| Wave velocity metrics | Read existing wave_engine state + AUDIT_TRAIL.jsonl timestamps to compute sessions/day, scope-card burndown, and ETA prediction. Surface on dashboard sidebar. No new persistence required | New `python/signalos_lib/velocity.py`, dashboard component, IPC route, ACL grant | Dashboard shows velocity panel; data is derived (not stored), so no new schema |
+
+### Tests
+
+- Python test: `defer count` returns expected counts on a fixture workspace; `defer harvest` writes the backlog file in the existing schema.
+- Python test: `constitution lock` writes a deterministic hash; `verify` passes on unchanged file and fails on modified file.
+- Python test: `seal create` includes every artifact listed in `gate_artifacts.json`; `seal verify` detects single-byte modifications.
+- Python test: `scope_card_code_map` resolves SC-NNN markers to file paths and round-trips through the artifact map.
+- Python test: velocity computation handles empty waves, single-wave, and multi-wave fixtures without error.
+- UI test: dashboard velocity panel renders without blocking when no data exists yet.
+- Static or integration check: every new IPC route added by Phase 13 has a Tauri capability grant.
+
+### Phase Definition Of Done
+
+- [ ] DEFER markers are countable and harvestable into the existing backlog schema.
+- [ ] Constitution hash-lock + verify is part of the Layer 1 validator group.
+- [ ] G5 sign produces an integrity seal; the seal is verifiable.
+- [ ] Scope-card → code map exists in the consolidated artifact map and is surfaced in release-readiness audits.
+- [ ] Velocity metrics render on the dashboard from existing wave/audit state.
+- [ ] All Phase 13 IPC routes are granted in `src-tauri/capabilities/default.json`.
+
 ## Maximum Reliable Parallel Execution Plan
 
 Maximum reliable parallelism: 10 implementation agents plus 1 integration owner.
@@ -727,11 +762,13 @@ Agent 12 and Agent 13 may run in parallel, but Agent 13 should treat unstable AP
 13. Add artifact schemas, consolidate existing gate/artifact maps, and add completeness validation.
 14. Add product verification command that composes existing runners and evidence capture.
 15. Add release-readiness command and UI card that gate publish.
-16. Add full automated and E2E test coverage.
-17. Run source tests and source build checks.
-18. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
-19. Update this document's status table with evidence.
-20. Commit the implementation with a clear message.
+16. Extend profile manifest with `design_required`, `ux_required`, `tdd_threshold` and add `validate_tdd_coverage` + `validate_design_reviewed` Layer 2 validators wired into G3 sign with `--waive-tdd` and `--no-ux-changes` audited override flags.
+17. Add full automated and E2E test coverage.
+18. Run source tests and source build checks.
+19. Build the release artifact, install or launch it, and verify sidecar/product-repo validation from the installed app.
+20. Update this document's status table with evidence.
+21. Commit the implementation with a clear message.
+22. Phase 13 follow-up wave: DEFER count + harvest, constitution hash-lock + verify, integrity seal at G5, scope-card → code map, and dashboard velocity metrics.
 
 ## Definition Of Done
 
@@ -753,6 +790,11 @@ The implementation is done only when all of the following are true:
 - CI/templates cannot be emitted in a broken or placeholder-only state.
 - Layer 2 shows G0-G5 gate state in the UI.
 - Gate sign/reject/request-changes actions extend existing sign/gate IPC surfaces and are auditable.
+- G3 sign blocks on TDD coverage at the profile's `tdd_threshold` unless an audited `tdd-waiver` entry (`--waive-tdd "<reason>"`) is recorded; the waived task IDs are named in the audit entry.
+- G3 sign blocks on an approved design review for the wave unless an audited `ux-skip` entry (`--no-ux-changes "<reason>"`) is recorded; the skip is scoped to the current wave and does not propagate.
+- Profile manifests declare `design_required`, `ux_required`, and `tdd_threshold`; backend-only profiles set `ux_required: false` so they do not require a UX rubric.
+- Release-readiness card surfaces `tdd-waived` and `ux-skipped` counts as visible signals so operators see audited overrides at release time.
+- Phase 13 hardening items are either Implemented/Verified or explicitly deferred with reason: DEFER count + harvest, constitution hash-lock + verify (in Layer 1 validator group), integrity seal at G5 sign, scope-card → code map in the consolidated artifact map, and dashboard velocity metrics derived from existing wave/audit state.
 - New UI panels avoid raw inline handlers/styles and preserve the app's CSP-safe event/style pattern.
 - Scope drift can continue current work or create/switch to a new product repo.
 - Product scope, Soul, Beliefs, traceability, surface inventory, plan, design, trust tier, test strategy, and quality evidence are generated or explicitly blocked by human-needed unknowns.
