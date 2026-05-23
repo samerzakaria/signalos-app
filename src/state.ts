@@ -202,6 +202,37 @@ export const gateCriteria = signal<GateCriterion[]>([]);
 export const currentGateInfo = signal<GateInfo | null>(null);
 export const signFormOpen = signal<boolean>(false);
 
+export interface ReleaseReadinessCheck {
+  id: string;
+  status?: string;
+  severity: string;
+  message: string;
+  evidence?: string[];
+}
+export interface ReleaseReadinessResult {
+  schema_version?: string;
+  ok?: boolean;
+  pass?: boolean;
+  status?: string;
+  checks?: ReleaseReadinessCheck[];
+  blockers?: ReleaseReadinessCheck[];
+  evidence?: string[];
+  evidence_path?: string | null;
+  next_action?: string;
+  publish_relationship?: string;
+  generated_at?: string;
+}
+export interface ReleaseReadinessState {
+  loading: boolean;
+  error: string | null;
+  result: ReleaseReadinessResult | null;
+}
+export const releaseReadiness = signal<ReleaseReadinessState>({
+  loading: false,
+  error: null,
+  result: null,
+});
+
 export interface Secret {
   name?: string;
   key?: string;

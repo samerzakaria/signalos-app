@@ -5,8 +5,10 @@ import {
   currentGateInfo,
   gateActivities,
   gateCriteria,
+  releaseReadiness,
   signFormOpen,
 } from '../../state';
+import { refreshReleaseReadiness } from '../../services/releaseReadiness';
 import {
   GateTimeline,
   activeGateIndex,
@@ -20,6 +22,8 @@ export function DashboardView() {
   const gate = currentGateInfo.value;
   const activities = gateActivities.value;
   const criteria = gateCriteria.value;
+  const readiness = releaseReadiness.value;
+  const readinessResult = readiness.result;
 
   const total = wave?.total_gates ?? (gates.length || 0);
   const signedCount = gates.filter(isGateSigned).length;
@@ -60,6 +64,35 @@ export function DashboardView() {
     ? `${signedCount} of ${total} gates signed.`
     : `${actDone} of ${activities.length} activities done · ${critPassed} of ${criteria.length} checks passed.`;
 
+  const readinessOk = Boolean(readinessResult?.ok ?? readinessResult?.pass);
+  const readinessStatus = readiness.loading
+    ? 'Checking'
+    : readiness.error
+      ? 'Error'
+      : readinessResult
+        ? readinessOk ? 'Ready' : 'Blocked'
+        : 'Not checked';
+  const readinessClass = readiness.loading
+    ? 'release-card checking'
+    : readiness.error || (readinessResult && !readinessOk)
+      ? 'release-card blocked'
+      : readinessOk
+        ? 'release-card ready'
+        : 'release-card idle';
+  const readinessIcon = readiness.loading
+    ? 'ti-loader-2'
+    : readiness.error || (readinessResult && !readinessOk)
+      ? 'ti-alert-triangle'
+      : readinessOk
+        ? 'ti-circle-check'
+        : 'ti-shield-check';
+  const readinessBlockers = readinessResult?.blockers || [];
+  const readinessEvidence = readinessResult?.evidence || [];
+  const readinessNext = readiness.error
+    ? readiness.error
+    : readinessResult?.next_action || 'Run readiness when release evidence has been captured.';
+  const publishRelationship = readinessResult?.publish_relationship || 'blocked';
+
   return (
     <>
 <div className="view active" data-view="dashboard">
@@ -93,6 +126,40 @@ export function DashboardView() {
               <GateTimeline gates={gates} />
             </div>
           ) : null}
+
+          <div className={readinessClass}>
+            <div className="release-head">
+              <div className="release-ic"><i className={`ti ${readinessIcon}`}></i></div>
+              <div className="release-title">
+                <div className="sec-cap">Release readiness</div>
+                <h3>{readinessStatus}</h3>
+                <p>{readinessNext}</p>
+              </div>
+              <button className="btn btn-soft btn-compact" type="button" onClick={() => refreshReleaseReadiness()} disabled={readiness.loading}>
+                <i className={`ti ${readiness.loading ? 'ti-loader-2' : 'ti-refresh'}`}></i> Check
+              </button>
+            </div>
+            <div className="release-meta">
+              <span><i className="ti ti-package"></i> {publishRelationship}</span>
+              <span><i className="ti ti-link"></i> {readinessEvidence.length} evidence link{readinessEvidence.length === 1 ? '' : 's'}</span>
+              <span><i className="ti ti-clock"></i> {readinessResult?.generated_at || 'No run yet'}</span>
+            </div>
+            {readinessBlockers.length > 0 ? (
+              <div className="release-blockers">
+                {readinessBlockers.slice(0, 3).map((blocker) => (
+                  <div className="release-blocker" key={blocker.id}>
+                    <i className="ti ti-circle-x"></i>
+                    <span>{blocker.message}</span>
+                  </div>
+                ))}
+              </div>
+            ) : readinessOk ? (
+              <div className="release-clear">
+                <i className="ti ti-circle-check"></i>
+                <span>All release checks passed.</span>
+              </div>
+            ) : null}
+          </div>
 
           {activeGate || activities.length > 0 || criteria.length > 0 ? (
           <div className="card" id="gateCard">

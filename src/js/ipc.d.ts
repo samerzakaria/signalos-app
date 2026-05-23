@@ -30,7 +30,9 @@ export const engine: {
 
 export const workspace: {
   set(path: string): Promise<unknown>;
+  clear(): Promise<unknown>;
   get(): Promise<unknown>;
+  status(): Promise<unknown>;
   validate(target: string): Promise<unknown>;
   startWatch(): Promise<unknown>;
 };

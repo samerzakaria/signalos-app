@@ -172,6 +172,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_verify_product.add_argument("--no-qa", action="store_true")
     p_verify_product.add_argument("--no-e2e", action="store_true")
 
+    p_release_readiness = sub.add_parser("release-readiness", help="Evaluate release readiness and publish relationship")
+    p_release_readiness.add_argument("--repo-root", type=Path, default=None)
+    p_release_readiness.add_argument("--wave", default=None)
+    p_release_readiness.add_argument("--profile", default=None)
+    p_release_readiness.add_argument("--timeout-sec", type=int, default=300)
+    p_release_readiness.add_argument("--run-verification", action="store_true")
+    p_release_readiness.add_argument("--json", action="store_true", dest="as_json")
+
     p_hooks = sub.add_parser("hooks", help="Hook lifecycle management (W3.5)")
     p_hooks.add_argument("action", choices=["test"])
     p_hooks.add_argument("--hook", default=None)
@@ -759,6 +767,22 @@ def main(argv: list[str]) -> int:
         ):
             if getattr(args, attr, False):
                 extra += [flag]
+        return m.main(extra)
+    if cmd == "release-readiness":
+        from signalos_lib.commands import release_readiness as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.wave:
+            extra += ["--wave", args.wave]
+        if args.profile:
+            extra += ["--profile", args.profile]
+        if args.timeout_sec != 300:
+            extra += ["--timeout-sec", str(args.timeout_sec)]
+        if args.run_verification:
+            extra += ["--run-verification"]
+        if args.as_json:
+            extra += ["--json"]
         return m.main(extra)
     if cmd == "hooks":
         from signalos_lib.commands import hooks as m

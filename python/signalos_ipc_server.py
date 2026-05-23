@@ -367,6 +367,9 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
     if command == "signal-status":
         return ["status", "--repo-root", cwd]
 
+    if command == "signal-release-readiness":
+        return ["release-readiness", "--repo-root", cwd, *cleaned_args]
+
     if command == "signal-init":
         # Init modes — Wave 1 / G0-1. The wizard (G0-2) is the user-facing
         # picker; this function only knows how to translate the chosen mode

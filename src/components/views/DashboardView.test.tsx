@@ -7,6 +7,7 @@ import {
   currentGateInfo,
   gateActivities,
   gateCriteria,
+  releaseReadiness,
 } from '../../state';
 
 // DashboardView is the user's "where are we" screen. Two pieces of
@@ -24,6 +25,7 @@ describe('DashboardView', () => {
     currentGateInfo.value = null;
     gateActivities.value = [];
     gateCriteria.value = [];
+    releaseReadiness.value = { loading: false, error: null, result: null };
     // The Keep-building button calls window.switchTab; stub it.
     (window as unknown as { switchTab: (t: string) => void }).switchTab = vi.fn();
   });
@@ -124,5 +126,55 @@ describe('DashboardView', () => {
     render(<DashboardView />);
     // Active gate is the second entry (index 1), so "Gate 2 of 2 — Plan".
     expect(screen.getByText(/G1 of 2.*Plan/)).toBeInTheDocument();
+  });
+  it('renders release readiness blockers and next action', () => {
+    releaseReadiness.value = {
+      loading: false,
+      error: null,
+      result: {
+        ok: false,
+        status: 'blocked',
+        publish_relationship: 'blocked',
+        next_action: 'Resolve build-test-evidence: build failed',
+        generated_at: '2026-05-23T00:00:00Z',
+        evidence: ['.signalos/evidence/layer1/validate-layer1.json'],
+        blockers: [
+          {
+            id: 'build-test-evidence',
+            severity: 'BLOCK_MERGE',
+            message: 'build or test verification evidence failed',
+          },
+        ],
+      },
+    };
+
+    render(<DashboardView />);
+
+    expect(screen.getByText('Blocked')).toBeInTheDocument();
+    expect(screen.getByText('Resolve build-test-evidence: build failed')).toBeInTheDocument();
+    expect(screen.getByText('build or test verification evidence failed')).toBeInTheDocument();
+    expect(screen.getByText('1 evidence link')).toBeInTheDocument();
+  });
+
+  it('renders release readiness pass state and publish relationship', () => {
+    releaseReadiness.value = {
+      loading: false,
+      error: null,
+      result: {
+        ok: true,
+        status: 'ready-to-publish',
+        publish_relationship: 'ready-to-publish',
+        next_action: 'Ready to publish.',
+        generated_at: '2026-05-23T00:00:00Z',
+        evidence: ['.signalos/evidence/release-readiness/release-readiness.json'],
+        blockers: [],
+      },
+    };
+
+    render(<DashboardView />);
+
+    expect(screen.getByText('Ready')).toBeInTheDocument();
+    expect(screen.getByText('ready-to-publish')).toBeInTheDocument();
+    expect(screen.getByText('All release checks passed.')).toBeInTheDocument();
   });
 });
