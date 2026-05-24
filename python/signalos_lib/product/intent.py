@@ -134,11 +134,16 @@ _ROLE_WORDS = {
     "viewer", "viewers", "editor", "editors",
     "developer", "developers", "employee", "employees",
     "student", "students", "teacher", "teachers",
+    "vet", "vets", "veterinarian", "veterinarians",
+    "technician", "technicians", "receptionist", "receptionists",
+    "analyst", "analysts", "accountant", "accountants",
+    "supervisor", "supervisors", "coordinator", "coordinators",
 }
 
 # Compound role phrases (matched as full phrase before splitting)
 _ROLE_PHRASES = [
     "admin staff", "team members", "team member",
+    "front desk", "help desk", "support staff",
 ]
 
 # ---------------------------------------------------------------------------
@@ -219,6 +224,13 @@ def _extract_entities(text: str) -> list[str]:
 
 
 # Phrases that are security/auth/audit concerns, not domain entities
+_QUALIFIER_WORDS = {
+    "veterinary", "corporate", "enterprise", "personal",
+    "internal", "external", "online", "digital", "virtual",
+    "clinic", "clinics", "hospital", "hospitals", "office", "offices",
+    "company", "companies", "agency", "agencies", "firm", "firms",
+}
+
 _NON_ENTITY_PHRASES = [
     re.compile(r"\brole.based\s+access\b", re.I),
     re.compile(r"\baccess\s+control\b", re.I),
@@ -291,8 +303,8 @@ def _classify_entities(
             extra_users.append(lower)
             continue
 
-        # Filter out role words from the phrase, keep the rest as entity
-        non_role = [w for w in words if w not in _ROLE_WORDS]
+        # Filter out role words and qualifier words, keep the rest as entity
+        non_role = [w for w in words if w not in _ROLE_WORDS and w not in _QUALIFIER_WORDS]
         role_words_found = [w for w in words if w in _ROLE_WORDS]
 
         # If some words were roles, add them as users

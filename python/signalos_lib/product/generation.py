@@ -293,8 +293,9 @@ def _to_pascal_case(name: str) -> str:
     """
     # Split on spaces, hyphens, and underscores
     words = re.split(r"[\s\-_]+", name.strip())
-    # Capitalize each word; filter out empty strings from leading/trailing separators
-    return "".join(word.capitalize() for word in words if word)
+    # Upper-case the first letter of each word; preserve the rest so that
+    # already-PascalCase tokens like "ClinicalNote" are not flattened.
+    return "".join((word[0].upper() + word[1:]) if word else "" for word in words if word)
 
 
 # ---------------------------------------------------------------------------
