@@ -47,6 +47,40 @@ class TestReactViteScaffold:
         assert "scripts" in pkg
         assert "test" in pkg["scripts"]
 
+    def test_scaffold_package_json_has_baseline_deps(self, tmp_path: Path) -> None:
+        ReactViteAdapter().scaffold(tmp_path, {})
+        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        # dependencies
+        assert "react" in pkg["dependencies"]
+        assert "react-dom" in pkg["dependencies"]
+        assert "react-router-dom" in pkg["dependencies"]
+        # devDependencies
+        assert "@types/react" in pkg["devDependencies"]
+        assert "@types/react-dom" in pkg["devDependencies"]
+        assert "@vitejs/plugin-react" in pkg["devDependencies"]
+        assert "typescript" in pkg["devDependencies"]
+        assert "vite" in pkg["devDependencies"]
+        assert "vitest" in pkg["devDependencies"]
+        assert "@testing-library/react" in pkg["devDependencies"]
+        assert "@testing-library/jest-dom" in pkg["devDependencies"]
+        assert "jsdom" in pkg["devDependencies"]
+
+    def test_scaffold_package_json_has_scripts(self, tmp_path: Path) -> None:
+        ReactViteAdapter().scaffold(tmp_path, {})
+        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        assert "dev" in pkg["scripts"]
+        assert "build" in pkg["scripts"]
+        assert "test" in pkg["scripts"]
+
+    def test_scaffold_accepts_extra_dependencies(self, tmp_path: Path) -> None:
+        extra = {"recharts": "^2.12.0"}
+        ReactViteAdapter().scaffold(tmp_path, {}, dependencies=extra)
+        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        assert "recharts" in pkg["dependencies"]
+        assert pkg["dependencies"]["recharts"] == "^2.12.0"
+        # Baseline deps still present
+        assert "react" in pkg["dependencies"]
+
     def test_scaffold_files_not_empty(self, tmp_path: Path) -> None:
         ReactViteAdapter().scaffold(tmp_path, {})
         for rel in ("vite.config.ts", "index.html", "src/main.tsx", "src/App.tsx", "src/App.test.tsx"):

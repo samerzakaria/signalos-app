@@ -14,11 +14,13 @@ from pathlib import Path
 import pytest
 
 from signalos_lib.product.generation import (
+    _to_pascal_case,
     build_generation_manifest,
     check_file_ownership,
     compute_sha256_lf,
     generate_file_content,
     generate_product,
+    get_blueprint_dependencies,
     link_generation_to_acceptance,
     load_generation_manifest,
     verify_trace_completeness,
@@ -423,7 +425,7 @@ class TestGeneratedContent:
     def test_react_source_contains_keywords(self, tmp_repo, task_intent, task_blueprint):
         generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
         content = (tmp_repo / "src/components/TaskList.tsx").read_text(encoding="utf-8")
-        assert "import React" in content
+        assert "import { useState } from 'react'" in content
         assert "function TaskList" in content
         assert "export default TaskList" in content
         assert len(content) > 50
@@ -533,7 +535,7 @@ class TestGenerateFileContent:
             kind="source", profile="react-vite", blueprint=None,
         )
         assert "function Foo" in content
-        assert "import React" in content
+        assert "import { useState } from 'react'" in content
 
     def test_react_test(self):
         content = generate_file_content(
@@ -699,3 +701,123 @@ class TestAcceptanceLinkage:
         manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
         second_pass = [f.get("acceptance_id") for f in manifest["files"]]
         assert first_pass == second_pass
+
+
+# ---------------------------------------------------------------------------
+# PascalCase file name generation
+# ---------------------------------------------------------------------------
+
+class TestPascalCaseHelper:
+    def test_spaces(self):
+        assert _to_pascal_case("patient intake") == "PatientIntake"
+
+    def test_hyphens(self):
+        assert _to_pascal_case("revenue-chart") == "RevenueChart"
+
+    def test_underscores(self):
+        assert _to_pascal_case("lab_results") == "LabResults"
+
+    def test_already_pascal(self):
+        assert _to_pascal_case("Task") == "Task"
+
+    def test_mixed_separators(self):
+        assert _to_pascal_case("clinical notes") == "ClinicalNotes"
+
+    def test_multiple_words(self):
+        assert _to_pascal_case("my cool widget") == "MyCoolWidget"
+
+
+class TestPascalCaseFileNames:
+    def test_entity_with_spaces_generates_pascal_paths(self, tmp_repo):
+        intent = {
+            "product_name": "Clinic",
+            "product_type": "custom",
+            "entities": ["patient intake", "clinical notes"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, None, "react-vite",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+        assert "src/components/PatientIntake.tsx" in paths
+        assert "src/components/PatientIntake.test.tsx" in paths
+        assert "src/components/ClinicalNotes.tsx" in paths
+        assert "src/components/ClinicalNotes.test.tsx" in paths
+        # No spaces in any path
+        for p in paths:
+            assert " " not in p, f"Space found in generated path: {p}"
+
+    def test_entity_patient_intake_not_spaced(self, tmp_repo):
+        intent = {
+            "product_name": "Clinic",
+            "product_type": "custom",
+            "entities": ["patient intake"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, None, "react-vite",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+        assert "src/components/PatientIntake.tsx" in paths
+        assert "src/components/Patient intake.tsx" not in paths
+
+    def test_generated_component_name_matches_file(self, tmp_repo):
+        intent = {
+            "product_name": "Clinic",
+            "product_type": "custom",
+            "entities": ["patient intake"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        generate_product(tmp_repo, intent, None, "react-vite")
+        content = (tmp_repo / "src/components/PatientIntake.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert "function PatientIntake" in content
+        assert "export default PatientIntake" in content
+
+
+# ---------------------------------------------------------------------------
+# Blueprint dependencies
+# ---------------------------------------------------------------------------
+
+class TestBlueprintDependencies:
+    def test_financial_dashboard_includes_recharts(self):
+        bp = {"id": "financial-dashboard", "entities": []}
+        deps = get_blueprint_dependencies(bp, "react-vite")
+        assert "recharts" in deps["dependencies"]
+        assert deps["dependencies"]["recharts"] == "^2.12.0"
+
+    def test_task_management_no_extra_deps(self):
+        bp = {"id": "task-management", "entities": []}
+        deps = get_blueprint_dependencies(bp, "react-vite")
+        assert deps["dependencies"] == {}
+
+    def test_generic_profile_returns_empty(self):
+        bp = {"id": "financial-dashboard", "entities": []}
+        deps = get_blueprint_dependencies(bp, "generic")
+        assert deps["dependencies"] == {}
+        assert deps["devDependencies"] == {}
+
+    def test_none_blueprint_returns_empty(self):
+        deps = get_blueprint_dependencies(None, "react-vite")
+        assert deps["dependencies"] == {}
+        assert deps["devDependencies"] == {}
+
+    def test_financial_dashboard_merges_into_package_json(
+        self, tmp_repo, finance_intent, finance_blueprint,
+    ):
+        """Generate with financial-dashboard -> package.json gains recharts."""
+        # First scaffold a package.json
+        from signalos_lib.product.stacks import ReactViteAdapter
+        ReactViteAdapter().scaffold(tmp_repo, finance_intent)
+        # Now generate product
+        generate_product(
+            tmp_repo, finance_intent, finance_blueprint, "react-vite",
+        )
+        pkg = json.loads(
+            (tmp_repo / "package.json").read_text(encoding="utf-8")
+        )
+        assert "recharts" in pkg["dependencies"]

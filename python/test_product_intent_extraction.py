@@ -35,7 +35,11 @@ class TestTaskManagementPrompt:
         entities_lower = [e.lower() for e in intent["entities"]]
         assert any("project" in e for e in entities_lower)
         assert any("task" in e for e in entities_lower)
-        assert any("team" in e or "member" in e for e in entities_lower)
+
+    def test_team_members_in_target_users(self):
+        intent = extract_product_intent(self.PROMPT)
+        users_lower = [u.lower() for u in intent["target_users"]]
+        assert any("team" in u or "member" in u for u in users_lower)
 
     def test_product_name_extracted(self):
         intent = extract_product_intent(self.PROMPT)
@@ -273,3 +277,109 @@ class TestRecordAssumptions:
             loaded = json.loads(path.read_text(encoding="utf-8"))
             assert isinstance(loaded, list)
             assert len(loaded) == len(assumptions)
+
+
+# ---------------------------------------------------------------------------
+# Medical records prompt — smart entity/role/workflow classification
+# ---------------------------------------------------------------------------
+
+class TestMedicalRecordsPrompt:
+    PROMPT = (
+        "Build a medical records system for patient intake, clinical notes, "
+        "lab results, prescriptions, and provider scheduling. "
+        "Users include doctors, nurses, and admin staff. "
+        "Must be HIPAA compliant with role-based access control and audit trail."
+    )
+
+    def test_entities_are_pascal_case_no_spaces(self):
+        intent = extract_product_intent(self.PROMPT)
+        for entity in intent["entities"]:
+            assert " " not in entity, f"Entity has spaces: {entity}"
+            assert entity[0].isupper(), f"Entity not PascalCase: {entity}"
+
+    def test_entities_include_domain_nouns(self):
+        intent = extract_product_intent(self.PROMPT)
+        entities_lower = [e.lower() for e in intent["entities"]]
+        assert any("clinicalnote" in e for e in entities_lower)
+        assert any("labresult" in e for e in entities_lower)
+        assert any("prescription" in e for e in entities_lower)
+
+    def test_roles_in_target_users_not_entities(self):
+        intent = extract_product_intent(self.PROMPT)
+        users_lower = [u.lower() for u in intent["target_users"]]
+        assert any("doctor" in u for u in users_lower)
+        assert any("nurse" in u for u in users_lower)
+        assert any("admin" in u for u in users_lower)
+        # Should NOT appear in entities
+        entities_lower = [e.lower() for e in intent["entities"]]
+        assert not any("doctor" in e for e in entities_lower)
+        assert not any("nurse" in e for e in entities_lower)
+
+    def test_workflows_detected(self):
+        intent = extract_product_intent(self.PROMPT)
+        workflows_joined = " ".join(intent["primary_workflows"]).lower()
+        assert "intake" in workflows_joined
+        assert "schedul" in workflows_joined
+
+    def test_ux_surfaces_detected(self):
+        intent = extract_product_intent(self.PROMPT)
+        surfaces = intent["ux_surfaces"]
+        assert "table" in surfaces
+        assert "calendar" in surfaces
+
+    def test_hipaa_in_security_constraints(self):
+        intent = extract_product_intent(self.PROMPT)
+        assert "hipaa" in intent["security_constraints"]
+
+    def test_audit_trail_detected(self):
+        intent = extract_product_intent(self.PROMPT)
+        assert "audit-trail" in intent["audit_requirements"]
+
+    def test_rbac_in_auth_requirements(self):
+        intent = extract_product_intent(self.PROMPT)
+        assert "rbac" in intent["auth_requirements"]
+
+
+# ---------------------------------------------------------------------------
+# Project tracking — entity extraction and singularization
+# ---------------------------------------------------------------------------
+
+class TestProjectTrackingPrompt:
+    PROMPT = "Build a project tracking tool with tasks and milestones"
+
+    def test_entities_extracted_pascal_case(self):
+        intent = extract_product_intent(self.PROMPT)
+        entities_lower = [e.lower() for e in intent["entities"]]
+        assert any("task" in e for e in entities_lower)
+        assert any("milestone" in e for e in entities_lower)
+
+    def test_entities_are_singular(self):
+        intent = extract_product_intent(self.PROMPT)
+        # "tasks" -> "Task", "milestones" -> "Milestone"
+        for entity in intent["entities"]:
+            assert not entity.endswith("s") or entity.endswith("ss"), (
+                f"Entity not singularized: {entity}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Plural singularization
+# ---------------------------------------------------------------------------
+
+class TestSingularization:
+    def test_prescriptions_singular(self):
+        intent = extract_product_intent(
+            "Build a system with prescriptions, patients, and categories"
+        )
+        entities = intent["entities"]
+        # Should be "Prescription", not "Prescriptions"
+        assert any(e == "Prescription" for e in entities), (
+            f"Expected 'Prescription', got {entities}"
+        )
+
+    def test_results_singular(self):
+        intent = extract_product_intent("Build an app with lab results")
+        entities = intent["entities"]
+        assert any("Result" in e for e in entities), (
+            f"Expected entity containing 'Result', got {entities}"
+        )

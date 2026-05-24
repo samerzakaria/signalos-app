@@ -12,6 +12,7 @@ __all__ = [
     "compute_sha256_lf",
     "generate_file_content",
     "generate_product",
+    "get_blueprint_dependencies",
     "link_generation_to_acceptance",
     "load_generation_manifest",
     "verify_trace_completeness",
@@ -20,6 +21,7 @@ __all__ = [
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,7 +71,7 @@ def _react_component(name: str, entity: dict | None) -> str:
     if entity and "fields" in entity:
         fields_comment = f"// Entity fields: {', '.join(entity['fields'])}\n"
     return (
-        f"import React from 'react';\n"
+        f"import {{ useState }} from 'react';\n"
         f"\n"
         f"{fields_comment}"
         f"interface {name}Props {{\n"
@@ -113,7 +115,7 @@ def _react_types(entities: list[dict]) -> str:
     """Generate TypeScript type definitions from blueprint entities."""
     lines = ["// Auto-generated type definitions\n"]
     for entity in entities:
-        name = entity["name"]
+        name = _to_pascal_case(entity["name"])
         lines.append(f"export interface {name} {{")
         for field in entity.get("fields", []):
             ts_type = "string"
@@ -139,7 +141,6 @@ def _react_app_registration(component_names: list[str]) -> str:
     )
     components = "\n      ".join(f"<{name} />" for name in component_names)
     return (
-        f"import React from 'react';\n"
         f"{imports}\n"
         f"\n"
         f"function App() {{\n"
@@ -224,8 +225,28 @@ def _to_snake(name: str) -> str:
 
 
 def _to_pascal(name: str) -> str:
-    """Convert snake_case or kebab-case to PascalCase."""
-    return "".join(word.capitalize() for word in name.replace("-", "_").split("_"))
+    """Convert snake_case, kebab-case, or space-separated to PascalCase."""
+    return _to_pascal_case(name)
+
+
+def _to_pascal_case(name: str) -> str:
+    """Convert any entity/workflow name to PascalCase.
+
+    Handles spaces, hyphens, and underscores as word separators.
+    Already-PascalCase names pass through unchanged.
+
+    Examples:
+        "patient intake" -> "PatientIntake"
+        "clinical notes" -> "ClinicalNotes"
+        "lab results"    -> "LabResults"
+        "Task"           -> "Task"
+        "revenue-chart"  -> "RevenueChart"
+        "some_thing"     -> "SomeThing"
+    """
+    # Split on spaces, hyphens, and underscores
+    words = re.split(r"[\s\-_]+", name.strip())
+    # Capitalize each word; filter out empty strings from leading/trailing separators
+    return "".join(word.capitalize() for word in words if word)
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +400,58 @@ def check_file_ownership(path: str, manifest: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Public: get_blueprint_dependencies
+# ---------------------------------------------------------------------------
+
+def get_blueprint_dependencies(
+    blueprint: dict | None, profile: str
+) -> dict[str, dict[str, str]]:
+    """Return additional dependencies needed for this blueprint.
+
+    Returns ``{"dependencies": {...}, "devDependencies": {...}}``.
+    """
+    deps: dict[str, str] = {}
+    dev_deps: dict[str, str] = {}
+
+    if profile != "react-vite" or blueprint is None:
+        return {"dependencies": deps, "devDependencies": dev_deps}
+
+    bp_id = blueprint.get("id", "")
+
+    if bp_id == "financial-dashboard":
+        deps["recharts"] = "^2.12.0"
+
+    # task-management needs react-router-dom which is already in the base
+    # scaffold, so no extra deps needed.
+
+    return {"dependencies": deps, "devDependencies": dev_deps}
+
+
+def _merge_blueprint_deps_into_package_json(
+    repo_root: Path, extra: dict[str, dict[str, str]]
+) -> None:
+    """Merge extra deps into an existing package.json if present."""
+    pkg_path = repo_root / "package.json"
+    if not pkg_path.is_file():
+        return
+    extra_deps = extra.get("dependencies", {})
+    extra_dev = extra.get("devDependencies", {})
+    if not extra_deps and not extra_dev:
+        return
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if extra_deps:
+        pkg.setdefault("dependencies", {}).update(extra_deps)
+    if extra_dev:
+        pkg.setdefault("devDependencies", {}).update(extra_dev)
+    pkg_path.write_text(
+        json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public: generate_product
 # ---------------------------------------------------------------------------
 
@@ -447,6 +520,11 @@ def generate_product(
             continue
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_text(rec["_content"], encoding="utf-8")
+
+    # Merge blueprint-specific dependencies into package.json
+    if blueprint is not None:
+        extra = get_blueprint_dependencies(blueprint, profile)
+        _merge_blueprint_deps_into_package_json(repo_root, extra)
 
     # Strip internal _content before manifest
     clean_records = [

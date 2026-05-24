@@ -97,17 +97,18 @@ _PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
     "dependencies": {
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
+        "react-router-dom": "^6.23.0",
     },
     "devDependencies": {
-        "@types/react": "^18.3.3",
-        "@types/react-dom": "^18.3.0",
-        "@vitejs/plugin-react": "^4.3.1",
-        "typescript": "^5.5.3",
+        "@types/react": "^18.3.1",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.0",
+        "typescript": "^5.4.0",
         "vite": "^5.4.0",
-        "vitest": "^2.0.5",
+        "vitest": "^3.2.0",
         "@testing-library/react": "^16.0.0",
-        "@testing-library/jest-dom": "^6.4.8",
-        "jsdom": "^24.1.1",
+        "@testing-library/jest-dom": "^6.4.0",
+        "jsdom": "^24.0.0",
     },
 }
 
@@ -226,7 +227,12 @@ class ReactViteAdapter:
             info["signals"].append("src-dir")
         return info
 
-    def scaffold(self, repo_root: Path, intent: dict[str, Any]) -> dict[str, Any]:
+    def scaffold(
+        self,
+        repo_root: Path,
+        intent: dict[str, Any],
+        dependencies: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         created: list[str] = []
 
         def _write(rel: str, content: str) -> None:
@@ -235,7 +241,12 @@ class ReactViteAdapter:
             target.write_text(content, encoding="utf-8")
             created.append(rel)
 
-        _write("package.json", json.dumps(_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
+        pkg = dict(_PACKAGE_JSON_TEMPLATE)
+        pkg["dependencies"] = dict(_PACKAGE_JSON_TEMPLATE["dependencies"])
+        pkg["devDependencies"] = dict(_PACKAGE_JSON_TEMPLATE["devDependencies"])
+        if dependencies:
+            pkg["dependencies"].update(dependencies)
+        _write("package.json", json.dumps(pkg, indent=2) + "\n")
         _write("vite.config.ts", _VITE_CONFIG)
         _write("index.html", _INDEX_HTML)
         _write("src/main.tsx", _MAIN_TSX)
