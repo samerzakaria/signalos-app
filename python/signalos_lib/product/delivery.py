@@ -264,7 +264,7 @@ def run_delivery(
         )
 
         # Load the manifest that prepare_generation wrote
-        from .generation import load_generation_manifest
+        from .generation import load_generation_manifest, collect_governance_instructions
         manifest = load_generation_manifest(repo_root / ".signalos")
 
         update_delivery_phase(repo_root, "generated", "complete")
@@ -274,6 +274,33 @@ def run_delivery(
             update_delivery_phase(repo_root, "generated", "partial")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # 4b. AGENT DISPATCH (invoke LLM to write product code)
+    # ------------------------------------------------------------------
+    agent_result = None
+    if generation_packet and agent_mode != "none":
+        try:
+            from .agent_dispatch import dispatch_build_agent
+            governance = collect_governance_instructions(
+                agent_role="build",
+                extra_contexts=(
+                    ["security"] if intent.get("security_constraints") else None
+                ),
+            )
+            agent_result = dispatch_build_agent(
+                repo_root=repo_root,
+                packet=generation_packet,
+                governance=governance,
+            )
+            if agent_result.get("status") == "completed":
+                update_delivery_phase(repo_root, "generated", "complete")
+            elif agent_result.get("status") == "no_api_key":
+                warnings.append("No API key — agent not dispatched. Packet written for external execution.")
+            else:
+                errors.extend(agent_result.get("errors", []))
+        except Exception as exc:
+            errors.append(f"agent dispatch failed: {exc}")
 
     # ------------------------------------------------------------------
     # 5. VALIDATION phase
