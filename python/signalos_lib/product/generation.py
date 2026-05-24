@@ -39,41 +39,80 @@ from .stacks import get_adapter
 
 _BUNDLE_ROOT = Path(__file__).resolve().parent.parent / "_bundle"
 
-# Governance directories to scan — ALL .md and .mdc files are included.
-# Agents are bound by the FULL governance library, not a subset.
-_GOVERNANCE_DIRS = [
-    "core/governance",
-    "core/execution/agents",
-    "core/execution/commands",
-    "core/execution/templates",
-    "core/execution/build",
-    "core/execution/review",
-    "core/execution/skills",
-    "integrations/rules",
-]
-
 _GOVERNANCE_EXTENSIONS = {".md", ".mdc", ".yaml", ".yml"}
 
+# Core files EVERY agent gets (constitution + enforcement only)
+_CORE_GOVERNANCE = [
+    "core/governance/Governance/CONSTITUTION.md",
+    "core/governance/ENFORCEMENT.md",
+    "core/governance/QUALITY_CHECK.md",
+    "core/execution/templates/trust-tier-declaration-template.md",
+]
 
-def collect_governance_instructions() -> dict[str, str]:
-    """Collect ALL governance instruction files for the agent packet.
+# Per-agent-role governance mapping — orchestrator selects the right subset
+_AGENT_GOVERNANCE: dict[str, list[str]] = {
+    "build": [
+        "core/execution/agents/build.md",
+        "core/execution/templates/typescript-standards.md",
+        "core/execution/build/scope-implement/references/security-checklist.md",
+        "core/execution/build/test-generation/SKILL.md",
+        "core/execution/build/test-generation/references/test-patterns.md",
+        "core/execution/build/test-generation/references/test-type-matrix.md",
+    ],
+    "test": [
+        "core/execution/agents/test.md",
+        "core/execution/build/test-generation/SKILL.md",
+        "core/execution/build/test-generation/references/test-patterns.md",
+        "core/execution/build/test-generation/references/test-type-matrix.md",
+    ],
+    "design": [
+        "core/execution/agents/design.md",
+    ],
+    "review": [
+        "core/execution/agents/review.md",
+        "core/execution/review/comprehensive-code-review/references/security-review.md",
+    ],
+    "security": [
+        "core/execution/agents/security.md",
+        "core/execution/review/comprehensive-code-review/references/security-review.md",
+        "core/execution/build/scope-implement/references/security-checklist.md",
+    ],
+}
 
-    Scans the full bundle directory tree for .md, .mdc, .yaml files.
-    Returns a dict of {relative_path: file_content}.  Agents are
-    contractually bound to follow EVERY file in this set — not a
-    cherry-picked subset.
+
+def collect_governance_instructions(
+    agent_role: str = "build",
+    extra_contexts: list[str] | None = None,
+) -> dict[str, str]:
+    """Collect governance files relevant to a specific agent role.
+
+    The orchestrator selects WHICH governance the agent needs:
+    - Core (constitution, enforcement, quality gate) — always
+    - Agent contract + role-specific references — per role
+    - Extra contexts (security, compliance) — when intent requires
+
+    Does NOT dump 287 files.  Agents get what they need for their task.
+    The full library is enforced at VALIDATION time, not at generation time.
     """
+    files_to_load = list(_CORE_GOVERNANCE)
+
+    # Add role-specific files
+    role_files = _AGENT_GOVERNANCE.get(agent_role, _AGENT_GOVERNANCE["build"])
+    files_to_load.extend(role_files)
+
+    # Add extra context files
+    if extra_contexts:
+        for ctx in extra_contexts:
+            ctx_files = _AGENT_GOVERNANCE.get(ctx, [])
+            files_to_load.extend(ctx_files)
+
+    # Deduplicate
+    files_to_load = list(dict.fromkeys(files_to_load))
+
     instructions: dict[str, str] = {}
-    for dir_rel in _GOVERNANCE_DIRS:
-        dir_path = _BUNDLE_ROOT / dir_rel
-        if not dir_path.is_dir():
-            continue
-        for path in dir_path.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() not in _GOVERNANCE_EXTENSIONS:
-                continue
-            rel = path.relative_to(_BUNDLE_ROOT).as_posix()
+    for rel in files_to_load:
+        path = _BUNDLE_ROOT / rel
+        if path.is_file():
             try:
                 instructions[rel] = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -382,7 +421,12 @@ def build_generation_packet(
         "allowed_paths": allowed_paths,
         "forbidden_paths": forbidden_paths,
         "validation_commands": validation_commands,
-        "governance_instructions": collect_governance_instructions(),
+        "governance_instructions": collect_governance_instructions(
+            agent_role="build",
+            extra_contexts=(
+                ["security"] if intent.get("security_constraints") else None
+            ),
+        ),
         "governance_enforcement": {
             "mode": "strict",
             "constitution_required": True,
