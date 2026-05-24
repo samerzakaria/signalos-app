@@ -24,68 +24,68 @@ from signalos_lib.product.stacks import (
 
 
 class TestReactViteScaffold:
-    def test_scaffold_creates_required_files(self, tmp_path: Path) -> None:
+    def test_scaffold_creates_only_governance(self, tmp_path: Path) -> None:
         adapter = ReactViteAdapter()
         result = adapter.scaffold(tmp_path, {})
 
-        assert "package.json" in result["created"]
-        assert "vite.config.ts" in result["created"]
-        assert "src/main.tsx" in result["created"]
-        assert "src/App.tsx" in result["created"]
-        assert "src/App.test.tsx" in result["created"]
+        # Only governance file should be created on disk
+        assert ".signalos/profile.json" in result["created"]
+        assert (tmp_path / ".signalos" / "profile.json").is_file()
 
-        for rel in result["created"]:
-            assert (tmp_path / rel).is_file(), f"{rel} was not created on disk"
+        # No application code files on disk
+        assert not (tmp_path / "package.json").exists()
+        assert not (tmp_path / "vite.config.ts").exists()
+        assert not (tmp_path / "src" / "main.tsx").exists()
+        assert not (tmp_path / "src" / "App.tsx").exists()
 
-    def test_scaffold_package_json_is_parseable(self, tmp_path: Path) -> None:
-        ReactViteAdapter().scaffold(tmp_path, {})
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert isinstance(pkg, dict)
-        assert "dependencies" in pkg
-        assert "react" in pkg["dependencies"]
-        assert "vite" in pkg["devDependencies"]
-        assert "scripts" in pkg
-        assert "test" in pkg["scripts"]
+    def test_scaffold_returns_scaffold_files_spec(self, tmp_path: Path) -> None:
+        result = ReactViteAdapter().scaffold(tmp_path, {})
 
-    def test_scaffold_package_json_has_baseline_deps(self, tmp_path: Path) -> None:
-        ReactViteAdapter().scaffold(tmp_path, {})
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        # dependencies
-        assert "react" in pkg["dependencies"]
-        assert "react-dom" in pkg["dependencies"]
-        assert "react-router-dom" in pkg["dependencies"]
-        # devDependencies
-        assert "@types/react" in pkg["devDependencies"]
-        assert "@types/react-dom" in pkg["devDependencies"]
-        assert "@vitejs/plugin-react" in pkg["devDependencies"]
-        assert "typescript" in pkg["devDependencies"]
-        assert "vite" in pkg["devDependencies"]
-        assert "vitest" in pkg["devDependencies"]
-        assert "@testing-library/react" in pkg["devDependencies"]
-        assert "@testing-library/jest-dom" in pkg["devDependencies"]
-        assert "jsdom" in pkg["devDependencies"]
+        # Should include scaffold_files describing what agent should create
+        assert "scaffold_files" in result
+        sf = result["scaffold_files"]
+        assert "package.json" in sf
+        assert "vite.config.ts" in sf
+        assert "index.html" in sf
+        assert "src/main.tsx" in sf
+        assert "src/App.tsx" in sf
+        assert "src/App.test.tsx" in sf
+        assert "tsconfig.json" in sf
 
-    def test_scaffold_package_json_has_scripts(self, tmp_path: Path) -> None:
-        ReactViteAdapter().scaffold(tmp_path, {})
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "dev" in pkg["scripts"]
-        assert "build" in pkg["scripts"]
-        assert "test" in pkg["scripts"]
+    def test_scaffold_package_json_spec_has_deps(self, tmp_path: Path) -> None:
+        result = ReactViteAdapter().scaffold(tmp_path, {})
+        pkg_spec = result["scaffold_files"]["package.json"]
+
+        assert "required_deps" in pkg_spec
+        assert "react" in pkg_spec["required_deps"]
+        assert "react-dom" in pkg_spec["required_deps"]
+        assert "react-router-dom" in pkg_spec["required_deps"]
+
+        assert "required_dev_deps" in pkg_spec
+        assert "vite" in pkg_spec["required_dev_deps"]
+        assert "vitest" in pkg_spec["required_dev_deps"]
+        assert "typescript" in pkg_spec["required_dev_deps"]
+        assert "@testing-library/react" in pkg_spec["required_dev_deps"]
+        assert "@testing-library/jest-dom" in pkg_spec["required_dev_deps"]
+        assert "jsdom" in pkg_spec["required_dev_deps"]
+
+    def test_scaffold_package_json_spec_has_scripts(self, tmp_path: Path) -> None:
+        result = ReactViteAdapter().scaffold(tmp_path, {})
+        pkg_spec = result["scaffold_files"]["package.json"]
+
+        assert "required_scripts" in pkg_spec
+        assert "dev" in pkg_spec["required_scripts"]
+        assert "build" in pkg_spec["required_scripts"]
+        assert "test" in pkg_spec["required_scripts"]
 
     def test_scaffold_accepts_extra_dependencies(self, tmp_path: Path) -> None:
         extra = {"recharts": "^2.12.0"}
-        ReactViteAdapter().scaffold(tmp_path, {}, dependencies=extra)
-        pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
-        assert "recharts" in pkg["dependencies"]
-        assert pkg["dependencies"]["recharts"] == "^2.12.0"
+        result = ReactViteAdapter().scaffold(tmp_path, {}, dependencies=extra)
+        pkg_spec = result["scaffold_files"]["package.json"]
+        assert "recharts" in pkg_spec["required_deps"]
+        assert pkg_spec["required_deps"]["recharts"] == "^2.12.0"
         # Baseline deps still present
-        assert "react" in pkg["dependencies"]
-
-    def test_scaffold_files_not_empty(self, tmp_path: Path) -> None:
-        ReactViteAdapter().scaffold(tmp_path, {})
-        for rel in ("vite.config.ts", "index.html", "src/main.tsx", "src/App.tsx", "src/App.test.tsx"):
-            content = (tmp_path / rel).read_text(encoding="utf-8")
-            assert len(content.strip()) > 20, f"{rel} looks like an empty stub"
+        assert "react" in pkg_spec["required_deps"]
 
     def test_scaffold_reports_runnable(self, tmp_path: Path) -> None:
         result = ReactViteAdapter().scaffold(tmp_path, {})

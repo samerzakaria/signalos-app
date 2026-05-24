@@ -28,10 +28,11 @@ from .deploy import (
 from .design import (
     build_design_system,
     get_design_dependencies,
+    get_design_instructions,
     scaffold_design_system,
     write_design,
 )
-from .generation import generate_product, write_generation_manifest
+from .generation import prepare_generation, write_generation_manifest
 from .assumptions import record_assumptions, write_assumptions
 from .intent import extract_product_intent, refine_intent_with_llm, write_intent
 from .lifecycle import (
@@ -239,9 +240,10 @@ def run_delivery(
             pass
 
     # ------------------------------------------------------------------
-    # 4. GENERATION phase
+    # 4. GENERATION phase (builds packet -- does NOT write app code)
     # ------------------------------------------------------------------
     manifest = None
+    generation_packet = None
     try:
         # Extract task IDs from acceptance criteria
         task_ids = (
@@ -250,7 +252,7 @@ def run_delivery(
             else []
         )
 
-        manifest = generate_product(
+        generation_packet = prepare_generation(
             repo_root=repo_root,
             intent=intent,
             blueprint=bp,
@@ -260,9 +262,11 @@ def run_delivery(
             acceptance_matrix=acceptance,
             design=design,
         )
-        # Merge design dependencies into package.json
-        if design_deps:
-            _merge_design_deps(repo_root, design_deps)
+
+        # Load the manifest that prepare_generation wrote
+        from .generation import load_generation_manifest
+        manifest = load_generation_manifest(repo_root / ".signalos")
+
         update_delivery_phase(repo_root, "generated", "complete")
     except Exception as exc:
         errors.append(f"generation phase failed: {exc}")

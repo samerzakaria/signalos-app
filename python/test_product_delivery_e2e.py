@@ -19,7 +19,7 @@ class TestDeliveryE2E(unittest.TestCase):
     """Full delivery pipeline tests."""
 
     def test_greenfield_generic_full_pipeline(self):
-        """Full prompt -> product -> proof -> handoff flow (generic profile)."""
+        """Full prompt -> packet -> proof -> handoff flow (generic profile)."""
         with tempfile.TemporaryDirectory() as td:
             repo_root = Path(td) / "test-product"
             closeout = run_delivery(
@@ -277,6 +277,50 @@ class TestDeliveryE2E(unittest.TestCase):
                 dry_run=True,
             )
             self.assertEqual(closeout["product_name"], "auto-named")
+
+    def test_generation_packet_written(self):
+        """GENERATION_PACKET.json is written during delivery."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "packet-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="packet-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            packet_path = (
+                repo_root / ".signalos" / "product" / "GENERATION_PACKET.json"
+            )
+            self.assertTrue(packet_path.exists())
+            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                packet["schema_version"], "signalos.generation_packet.v1"
+            )
+            self.assertGreater(len(packet["file_specs"]), 0)
+
+    def test_no_application_code_written(self):
+        """Delivery does NOT write application source code to disk."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "no-code-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="no-code-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            # No Python source files should exist (only .signalos governance)
+            for child in repo_root.rglob("*.py"):
+                rel = child.relative_to(repo_root).as_posix()
+                if not rel.startswith(".signalos"):
+                    self.fail(f"Application code written to disk: {rel}")
 
 
 class TestDeliveryRepairAndWiring(unittest.TestCase):

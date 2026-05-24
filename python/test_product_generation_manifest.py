@@ -1,8 +1,9 @@
 # test_product_generation_manifest.py
-# Phase P7 - Tests for Generic Product Generation
+# Phase P7 - Tests for Product Generation Packet Builder
 #
-# Covers manifest construction, file generation, overwrite rules,
-# blueprint-specific and intent-driven paths, and round-trip persistence.
+# Covers packet construction, file spec derivation, trace linkage,
+# validation of agent output, and round-trip manifest persistence.
+# SignalOS builds packets (WHAT to create), not code (HOW to create it).
 
 from __future__ import annotations
 
@@ -16,13 +17,14 @@ import pytest
 from signalos_lib.product.generation import (
     _to_pascal_case,
     build_generation_manifest,
+    build_generation_packet,
     check_file_ownership,
     compute_sha256_lf,
-    generate_file_content,
-    generate_product,
     get_blueprint_dependencies,
     link_generation_to_acceptance,
     load_generation_manifest,
+    prepare_generation,
+    validate_generation_output,
     verify_trace_completeness,
     write_generation_manifest,
 )
@@ -86,15 +88,15 @@ def finance_blueprint():
 
 
 # ---------------------------------------------------------------------------
-# Task-management + react-vite generates expected component files
+# Task-management + react-vite generates expected file specs
 # ---------------------------------------------------------------------------
 
 class TestTaskManagementReactVite:
-    def test_generates_expected_files(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_generates_expected_file_specs(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite", wave="1",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/TaskList.tsx" in paths
         assert "src/components/TaskList.test.tsx" in paths
         assert "src/components/TaskForm.tsx" in paths
@@ -102,47 +104,53 @@ class TestTaskManagementReactVite:
         assert "src/components/ProjectBoard.tsx" in paths
         assert "src/components/ProjectBoard.test.tsx" in paths
 
-    def test_generates_types(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_generates_types_spec(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/types.ts" in paths
 
-    def test_generates_app_registration(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_generates_app_registration_spec(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/App.tsx" in paths
 
-    def test_files_land_in_src(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_file_specs_target_src(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             assert f["path"].startswith("src/"), f"File outside src/: {f['path']}"
 
-    def test_component_files_exist_on_disk(self, tmp_repo, task_intent, task_blueprint):
-        generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
-        assert (tmp_repo / "src/components/TaskList.tsx").is_file()
-        assert (tmp_repo / "src/components/TaskList.test.tsx").is_file()
-        assert (tmp_repo / "src/components/TaskForm.tsx").is_file()
-        assert (tmp_repo / "src/components/TaskForm.test.tsx").is_file()
-        assert (tmp_repo / "src/components/ProjectBoard.tsx").is_file()
-        assert (tmp_repo / "src/components/ProjectBoard.test.tsx").is_file()
+    def test_no_code_files_written_to_disk(self, tmp_repo, task_intent, task_blueprint):
+        """prepare_generation does NOT write application code."""
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        # No component files should exist on disk
+        assert not (tmp_repo / "src/components/TaskList.tsx").is_file()
+        assert not (tmp_repo / "src/components/TaskList.test.tsx").is_file()
+
+    def test_packet_written_to_disk(self, tmp_repo, task_intent, task_blueprint):
+        """GENERATION_PACKET.json is written."""
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        packet_path = tmp_repo / ".signalos" / "product" / "GENERATION_PACKET.json"
+        assert packet_path.is_file()
+        data = json.loads(packet_path.read_text(encoding="utf-8"))
+        assert data["schema_version"] == "signalos.generation_packet.v1"
 
 
 # ---------------------------------------------------------------------------
-# Financial-dashboard + react-vite generates chart/gauge files
+# Financial-dashboard + react-vite generates chart/gauge file specs
 # ---------------------------------------------------------------------------
 
 class TestFinancialDashboardReactVite:
-    def test_generates_expected_files(self, tmp_repo, finance_intent, finance_blueprint):
-        manifest = generate_product(
+    def test_generates_expected_file_specs(self, tmp_repo, finance_intent, finance_blueprint):
+        packet = prepare_generation(
             tmp_repo, finance_intent, finance_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/RevenueChart.tsx" in paths
         assert "src/components/RevenueChart.test.tsx" in paths
         assert "src/components/ChurnChart.tsx" in paths
@@ -150,38 +158,38 @@ class TestFinancialDashboardReactVite:
         assert "src/components/RunwayGauge.tsx" in paths
         assert "src/components/RunwayGauge.test.tsx" in paths
 
-    def test_generates_types(self, tmp_repo, finance_intent, finance_blueprint):
-        manifest = generate_product(
+    def test_generates_types_spec(self, tmp_repo, finance_intent, finance_blueprint):
+        packet = prepare_generation(
             tmp_repo, finance_intent, finance_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/types.ts" in paths
 
-    def test_files_land_in_src(self, tmp_repo, finance_intent, finance_blueprint):
-        manifest = generate_product(
+    def test_file_specs_target_src(self, tmp_repo, finance_intent, finance_blueprint):
+        packet = prepare_generation(
             tmp_repo, finance_intent, finance_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             assert f["path"].startswith("src/"), f"File outside src/: {f['path']}"
 
 
 # ---------------------------------------------------------------------------
-# TDD order: tests before source in manifest
+# TDD order: tests before source in file specs
 # ---------------------------------------------------------------------------
 
 class TestTDDOrder:
-    def test_test_files_before_source_files(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_test_specs_before_source_specs(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        files = manifest["files"]
+        specs = packet["file_specs"]
         # For each component pair, the test should come first
-        for i, f in enumerate(files):
+        for i, f in enumerate(specs):
             if f["kind"] == "source" and f["path"].endswith(".tsx"):
                 # Find the matching test
                 test_path = f["path"].replace(".tsx", ".test.tsx")
                 test_indices = [
-                    j for j, t in enumerate(files) if t["path"] == test_path
+                    j for j, t in enumerate(specs) if t["path"] == test_path
                 ]
                 if test_indices:
                     assert test_indices[0] < i, (
@@ -190,126 +198,93 @@ class TestTDDOrder:
 
 
 # ---------------------------------------------------------------------------
-# Manifest includes every generated file with sha256_lf
+# Packet and manifest integrity
 # ---------------------------------------------------------------------------
 
 class TestManifestIntegrity:
-    def test_every_file_has_sha256(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_every_file_spec_has_kind(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
-            assert "sha256_lf" in f, f"Missing sha256_lf: {f['path']}"
-            assert len(f["sha256_lf"]) == 64, f"Bad sha256_lf length: {f['path']}"
+        for f in packet["file_specs"]:
+            assert "kind" in f, f"Missing kind: {f['path']}"
+            assert f["kind"] in ("test", "source", "config", "registration")
 
-    def test_sha256_is_correct(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_every_file_spec_has_description(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
-            if f["overwrite_mode"] == "skip":
-                continue
-            file_path = tmp_repo / f["path"]
-            content = file_path.read_text(encoding="utf-8")
-            expected = compute_sha256_lf(content)
-            assert f["sha256_lf"] == expected, (
-                f"SHA-256 mismatch for {f['path']}"
-            )
+        for f in packet["file_specs"]:
+            assert "description" in f, f"Missing description: {f['path']}"
+            assert len(f["description"]) > 10, f"Description too short: {f['path']}"
 
-    def test_no_orphan_files(self, tmp_repo, task_intent, task_blueprint):
-        """Every file in src/components/ should be in the manifest."""
-        manifest = generate_product(
+    def test_every_file_spec_has_constraints(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        manifest_paths = {f["path"] for f in manifest["files"]}
-        components_dir = tmp_repo / "src" / "components"
-        if components_dir.is_dir():
-            for disk_file in components_dir.iterdir():
-                if disk_file.is_file():
-                    rel = disk_file.relative_to(tmp_repo).as_posix()
-                    assert rel in manifest_paths, f"Orphan file: {rel}"
+        for f in packet["file_specs"]:
+            assert "constraints" in f, f"Missing constraints: {f['path']}"
+            assert isinstance(f["constraints"], list)
 
     def test_manifest_schema_version(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        assert manifest["schema_version"] == "signalos.generation_manifest.v1"
+        assert packet["schema_version"] == "signalos.generation_packet.v1"
 
-    def test_manifest_has_generated_at(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_manifest_has_created_at(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        assert "generated_at" in manifest
-        assert len(manifest["generated_at"]) > 0
+        assert "created_at" in packet
+        assert len(packet["created_at"]) > 0
+
+    def test_packet_has_design_constraints(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        dc = packet["design_constraints"]
+        assert "ui_library" in dc
+        assert "state_management" in dc
+        assert "conventions" in dc
+
+    def test_packet_has_allowed_forbidden_paths(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        assert len(packet["allowed_paths"]) > 0
+        assert len(packet["forbidden_paths"]) > 0
+        assert ".signalos/" in packet["forbidden_paths"]
+
+    def test_packet_has_validation_commands(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        assert len(packet["validation_commands"]) > 0
+        assert "npm test" in packet["validation_commands"]
 
 
 # ---------------------------------------------------------------------------
-# check_file_ownership
+# check_file_ownership (works on manifest)
 # ---------------------------------------------------------------------------
 
 class TestFileOwnership:
     def test_owned_file_returns_true(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         assert check_file_ownership("src/components/TaskList.tsx", manifest) is True
 
     def test_unowned_file_returns_false(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         assert check_file_ownership("src/random/Other.tsx", manifest) is False
 
     def test_backslash_normalisation(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         assert check_file_ownership(
             "src\\components\\TaskList.tsx", manifest
         ) is True
-
-
-# ---------------------------------------------------------------------------
-# Overwrite mode "create" skips existing files
-# ---------------------------------------------------------------------------
-
-class TestOverwriteRules:
-    def test_create_skips_existing(self, tmp_repo, task_intent, task_blueprint):
-        # Pre-create a file
-        existing = tmp_repo / "src" / "components" / "TaskList.tsx"
-        existing.parent.mkdir(parents=True, exist_ok=True)
-        existing.write_text("// pre-existing\n", encoding="utf-8")
-
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
-        # The pre-existing file should not be overwritten
-        assert existing.read_text(encoding="utf-8") == "// pre-existing\n"
-
-        # The manifest should record it as "skip"
-        tl = [f for f in manifest["files"]
-              if f["path"] == "src/components/TaskList.tsx"]
-        assert len(tl) == 1
-        assert tl[0]["overwrite_mode"] == "skip"
-
-    def test_patch_overwrites(self, tmp_repo, task_intent, task_blueprint):
-        # Pre-create App.tsx
-        app = tmp_repo / "src" / "App.tsx"
-        app.parent.mkdir(parents=True, exist_ok=True)
-        app.write_text("// old\n", encoding="utf-8")
-
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
-        # App.tsx should be overwritten (patch mode)
-        content = app.read_text(encoding="utf-8")
-        assert content != "// old\n"
-        assert "import" in content
-
-        app_rec = [f for f in manifest["files"]
-                   if f["path"] == "src/App.tsx"]
-        assert len(app_rec) == 1
-        assert app_rec[0]["overwrite_mode"] == "patch"
 
 
 # ---------------------------------------------------------------------------
@@ -318,54 +293,54 @@ class TestOverwriteRules:
 
 class TestCustomGeneration:
     def test_no_blueprint_uses_intent_entities(self, tmp_repo, task_intent):
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, task_intent, None, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         # Entities from intent: tasks, projects -> Tasks, Projects components
         assert any("Tasks" in p for p in paths)
         assert any("Projects" in p for p in paths)
 
-    def test_generic_profile_generates_python(self, tmp_repo, task_intent):
-        manifest = generate_product(
+    def test_generic_profile_generates_python_specs(self, tmp_repo, task_intent):
+        packet = prepare_generation(
             tmp_repo, task_intent, None, "generic",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert any(p.endswith(".py") for p in paths)
 
     def test_generic_with_blueprint(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "generic",
         )
-        paths = [f["path"] for f in manifest["files"]]
-        # Should generate Python files for blueprint entities
+        paths = [f["path"] for f in packet["file_specs"]]
+        # Should generate Python file specs for blueprint entities
         assert any("task" in p.lower() for p in paths)
         assert any("project" in p.lower() for p in paths)
 
 
 # ---------------------------------------------------------------------------
-# Empty intent generates no files (no crash)
+# Empty intent generates no file specs (no crash)
 # ---------------------------------------------------------------------------
 
 class TestEmptyIntent:
     def test_empty_intent_no_crash(self, tmp_repo, empty_intent):
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, empty_intent, None, "react-vite",
         )
-        # No component files, but manifest should still be valid
-        assert manifest["schema_version"] == "signalos.generation_manifest.v1"
-        # No source or test files (possibly just empty list)
-        source_files = [
-            f for f in manifest["files"] if f["kind"] in ("source", "test")
+        # No component file specs, but packet should still be valid
+        assert packet["schema_version"] == "signalos.generation_packet.v1"
+        # No source or test specs
+        source_specs = [
+            f for f in packet["file_specs"] if f["kind"] in ("source", "test")
         ]
-        assert len(source_files) == 0
+        assert len(source_specs) == 0
 
     def test_empty_intent_generic_no_crash(self, tmp_repo, empty_intent):
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, empty_intent, None, "generic",
         )
-        assert manifest["schema_version"] == "signalos.generation_manifest.v1"
-        assert len(manifest["files"]) == 0
+        assert packet["schema_version"] == "signalos.generation_packet.v1"
+        assert len(packet["file_specs"]) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -374,18 +349,15 @@ class TestEmptyIntent:
 
 class TestManifestPersistence:
     def test_round_trip(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
         signalos_dir = tmp_repo / ".signalos"
         loaded = load_generation_manifest(signalos_dir)
         assert loaded is not None
-        assert loaded["schema_version"] == manifest["schema_version"]
-        assert loaded["product"] == manifest["product"]
-        assert loaded["blueprint"] == manifest["blueprint"]
-        assert loaded["profile"] == manifest["profile"]
-        assert loaded["wave"] == manifest["wave"]
-        assert len(loaded["files"]) == len(manifest["files"])
+        assert loaded["schema_version"] == "signalos.generation_manifest.v1"
+        assert loaded["product"] == "TaskApp"
+        assert loaded["profile"] == "react-vite"
+        assert loaded["wave"] == "1"
+        assert len(loaded["files"]) > 0
 
     def test_explicit_write_load(self, tmp_path):
         signalos_dir = tmp_path / ".signalos"
@@ -418,63 +390,38 @@ class TestManifestPersistence:
 
 
 # ---------------------------------------------------------------------------
-# Generated content is non-empty and syntactically plausible
+# File spec descriptions are meaningful (not code)
 # ---------------------------------------------------------------------------
 
-class TestGeneratedContent:
-    def test_react_source_contains_keywords(self, tmp_repo, task_intent, task_blueprint):
-        generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
-        content = (tmp_repo / "src/components/TaskList.tsx").read_text(encoding="utf-8")
-        assert "import { useState } from 'react'" in content
-        assert "function TaskList" in content
-        assert "export default TaskList" in content
-        assert len(content) > 50
+class TestFileSpecDescriptions:
+    def test_source_specs_describe_what_not_how(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        source_specs = [f for f in packet["file_specs"] if f["kind"] == "source"]
+        for spec in source_specs:
+            # Descriptions should be natural language, not code
+            assert "function" not in spec["description"]
+            assert "import" not in spec["description"]
+            assert len(spec["description"]) > 20
 
-    def test_react_test_contains_keywords(self, tmp_repo, task_intent, task_blueprint):
-        generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
-        content = (tmp_repo / "src/components/TaskList.test.tsx").read_text(encoding="utf-8")
-        assert "describe" in content
-        assert "it(" in content or "it('" in content
-        assert "render" in content
-        assert "expect" in content
-        assert len(content) > 50
+    def test_test_specs_describe_what_to_test(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        test_specs = [f for f in packet["file_specs"] if f["kind"] == "test"]
+        for spec in test_specs:
+            assert "test" in spec["description"].lower() or "vitest" in spec["description"].lower()
 
-    def test_types_file_contains_interfaces(self, tmp_repo, task_intent, task_blueprint):
-        generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
-        content = (tmp_repo / "src/types.ts").read_text(encoding="utf-8")
-        assert "export interface Task" in content
-        assert "export interface Project" in content
-        assert "export interface User" in content
+    def test_generic_source_specs(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "generic")
+        source_specs = [f for f in packet["file_specs"] if f["kind"] == "source"]
+        assert len(source_specs) > 0
+        for spec in source_specs:
+            assert "entity" in spec["description"].lower() or "module" in spec["description"].lower()
 
-    def test_app_tsx_imports_components(self, tmp_repo, task_intent, task_blueprint):
-        generate_product(tmp_repo, task_intent, task_blueprint, "react-vite")
-        content = (tmp_repo / "src/App.tsx").read_text(encoding="utf-8")
-        assert "import TaskList" in content
-        assert "import TaskForm" in content
-        assert "import ProjectBoard" in content
-
-    def test_generic_python_source(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "generic",
-        )
-        # Find a source file
-        source_files = [f for f in manifest["files"] if f["kind"] == "source"]
-        assert len(source_files) > 0
-        path = tmp_repo / source_files[0]["path"]
-        content = path.read_text(encoding="utf-8")
-        assert "class " in content
-        assert "def " in content
-
-    def test_generic_python_test(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "generic",
-        )
-        test_files = [f for f in manifest["files"] if f["kind"] == "test"]
-        assert len(test_files) > 0
-        path = tmp_repo / test_files[0]["path"]
-        content = path.read_text(encoding="utf-8")
-        assert "unittest" in content
-        assert "def test_" in content
+    def test_generic_test_specs(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "generic")
+        test_specs = [f for f in packet["file_specs"] if f["kind"] == "test"]
+        assert len(test_specs) > 0
+        for spec in test_specs:
+            assert "test" in spec["description"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -482,24 +429,24 @@ class TestGeneratedContent:
 # ---------------------------------------------------------------------------
 
 class TestReservedPaths:
-    def test_no_files_in_signalos(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_no_specs_in_signalos(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             normed = f["path"].replace("\\", "/")
             assert not normed.startswith(".signalos/"), (
-                f"File in reserved .signalos/: {f['path']}"
+                f"Spec in reserved .signalos/: {f['path']}"
             )
 
-    def test_no_files_in_node_modules(self, tmp_repo, task_intent, task_blueprint):
-        manifest = generate_product(
+    def test_no_specs_in_node_modules(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             normed = f["path"].replace("\\", "/")
             assert not normed.startswith("node_modules/"), (
-                f"File in reserved node_modules/: {f['path']}"
+                f"Spec in reserved node_modules/: {f['path']}"
             )
 
 
@@ -524,50 +471,40 @@ class TestSHA256:
 
 
 # ---------------------------------------------------------------------------
-# generate_file_content standalone tests
+# validate_generation_output
 # ---------------------------------------------------------------------------
 
-class TestGenerateFileContent:
-    def test_react_source(self):
-        content = generate_file_content(
-            entity={"name": "Foo", "fields": ["id", "name"]},
-            workflow=None, surface=None,
-            kind="source", profile="react-vite", blueprint=None,
-        )
-        assert "function Foo" in content
-        assert "import { useState } from 'react'" in content
+class TestValidateGenerationOutput:
+    def test_all_files_present_is_valid(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        # Simulate agent writing files
+        for spec in packet["file_specs"]:
+            path = tmp_repo / spec["path"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"// {spec['description']}\nexport default null;\n", encoding="utf-8")
+        result = validate_generation_output(tmp_repo, packet)
+        assert result["valid"] is True
+        assert result["files_missing"] == []
+        assert result["files_expected"] == len(packet["file_specs"])
+        assert result["files_found"] == len(packet["file_specs"])
 
-    def test_react_test(self):
-        content = generate_file_content(
-            entity={"name": "Foo"}, workflow=None, surface=None,
-            kind="test", profile="react-vite", blueprint=None,
-        )
-        assert "describe" in content
-        assert "Foo" in content
+    def test_missing_files_reported(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        # Don't write any files -- all should be missing
+        result = validate_generation_output(tmp_repo, packet)
+        assert result["valid"] is False
+        assert len(result["files_missing"]) == len(packet["file_specs"])
+        assert result["files_found"] == 0
 
-    def test_generic_source(self):
-        content = generate_file_content(
-            entity={"name": "Bar", "fields": ["id"]},
-            workflow=None, surface=None,
-            kind="source", profile="generic", blueprint=None,
-        )
-        assert "class Bar" in content
-
-    def test_generic_test(self):
-        content = generate_file_content(
-            entity={"name": "Bar"}, workflow=None, surface=None,
-            kind="test", profile="generic", blueprint=None,
-        )
-        assert "unittest" in content
-        assert "TestBar" in content
-
-    def test_react_config_with_entities(self):
-        bp = {"entities": [{"name": "X", "fields": ["id", "name"]}]}
-        content = generate_file_content(
-            entity=None, workflow=None, surface=None,
-            kind="config", profile="react-vite", blueprint=bp,
-        )
-        assert "export interface X" in content
+    def test_empty_file_is_violation(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        # Write one empty file
+        spec = packet["file_specs"][0]
+        path = tmp_repo / spec["path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+        result = validate_generation_output(tmp_repo, packet)
+        assert any("empty" in v.lower() for v in result["violations"])
 
 
 # ---------------------------------------------------------------------------
@@ -575,30 +512,29 @@ class TestGenerateFileContent:
 # ---------------------------------------------------------------------------
 
 class TestAcceptanceLinkage:
-    """Tests for linking generated files to acceptance criteria."""
+    """Tests for linking file specs to acceptance criteria."""
 
     @pytest.fixture
     def acceptance_matrix(self, task_intent, task_blueprint):
         return build_acceptance_matrix(task_intent, task_blueprint, "react-vite")
 
-    def test_generation_with_acceptance_links_files(
+    def test_generation_with_acceptance_links_specs(
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
-        """Generate with acceptance matrix -> files have non-None acceptance_ids."""
-        manifest = generate_product(
+        """Generate with acceptance matrix -> specs have non-None acceptance_ids."""
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
             acceptance_matrix=acceptance_matrix,
         )
-        linked = [f for f in manifest["files"] if f["acceptance_id"] is not None]
-        assert len(linked) > 0, "No files were linked to acceptance criteria"
+        linked = [f for f in packet["file_specs"] if f["acceptance_id"] is not None]
+        assert len(linked) > 0, "No specs were linked to acceptance criteria"
 
     def test_link_generation_to_acceptance_matches_entities(
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
         """Entity-based matching links Task files to Task criteria."""
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
         # TaskList and TaskForm should be linked to the task entity criterion
         task_files = [
@@ -616,11 +552,8 @@ class TestAcceptanceLinkage:
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
         """Workflow-based matching works for files related to workflows."""
-        # The acceptance matrix has workflow criteria like "create task"
-        # and "complete task" - these should match files containing "task"
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
         # At minimum, task-related files should be linked
         linked = [f for f in manifest["files"] if f["acceptance_id"] is not None]
@@ -630,7 +563,6 @@ class TestAcceptanceLinkage:
         self, tmp_repo, task_intent, task_blueprint,
     ):
         """When all files are linked and all criteria covered, complete=True."""
-        # Use a small custom matrix with fewer criteria than generated files
         small_matrix = {
             "criteria": [
                 {"id": "AC-001", "entity": "tasks", "workflow": None},
@@ -638,9 +570,8 @@ class TestAcceptanceLinkage:
             ],
             "test_scenarios": [],
         }
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         # Assign every file to one of the two criteria (round-robin)
         cids = [c["id"] for c in small_matrix["criteria"]]
         for i, f in enumerate(manifest["files"]):
@@ -654,9 +585,8 @@ class TestAcceptanceLinkage:
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
         """Some unlinked files returns complete=False with unlinked_paths."""
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         # Don't link anything - all files should be unlinked
         result = verify_trace_completeness(manifest, acceptance_matrix)
         assert result["complete"] is False
@@ -666,26 +596,26 @@ class TestAcceptanceLinkage:
     def test_trace_with_task_ids(
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
-        """When task_ids provided, files get task_id assignments."""
+        """When task_ids provided, specs get task_id assignments."""
         task_ids = ["T-001", "T-002"]
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
             task_ids=task_ids,
             acceptance_matrix=acceptance_matrix,
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             assert f["task_id"] in task_ids, (
-                f"File {f['path']} has unexpected task_id: {f['task_id']}"
+                f"Spec {f['path']} has unexpected task_id: {f['task_id']}"
             )
 
     def test_backward_compatible_no_matrix(
         self, tmp_repo, task_intent, task_blueprint,
     ):
         """Without acceptance_matrix, task_id and acceptance_id remain None."""
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
         )
-        for f in manifest["files"]:
+        for f in packet["file_specs"]:
             assert f["task_id"] is None
             assert f["acceptance_id"] is None
 
@@ -693,9 +623,8 @@ class TestAcceptanceLinkage:
         self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
     ):
         """Calling link_generation_to_acceptance twice doesn't change results."""
-        manifest = generate_product(
-            tmp_repo, task_intent, task_blueprint, "react-vite",
-        )
+        prepare_generation(tmp_repo, task_intent, task_blueprint, "react-vite")
+        manifest = load_generation_manifest(tmp_repo / ".signalos")
         manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
         first_pass = [f.get("acceptance_id") for f in manifest["files"]]
         manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
@@ -736,10 +665,10 @@ class TestPascalCaseFileNames:
             "primary_workflows": [],
             "ux_surfaces": [],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, None, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/PatientIntake.tsx" in paths
         assert "src/components/PatientIntake.test.tsx" in paths
         assert "src/components/ClinicalNotes.tsx" in paths
@@ -756,27 +685,12 @@ class TestPascalCaseFileNames:
             "primary_workflows": [],
             "ux_surfaces": [],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, None, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/PatientIntake.tsx" in paths
         assert "src/components/Patient intake.tsx" not in paths
-
-    def test_generated_component_name_matches_file(self, tmp_repo):
-        intent = {
-            "product_name": "Clinic",
-            "product_type": "custom",
-            "entities": ["patient intake"],
-            "primary_workflows": [],
-            "ux_surfaces": [],
-        }
-        generate_product(tmp_repo, intent, None, "react-vite")
-        content = (tmp_repo / "src/components/PatientIntake.tsx").read_text(
-            encoding="utf-8"
-        )
-        assert "function PatientIntake" in content
-        assert "export default PatientIntake" in content
 
 
 # ---------------------------------------------------------------------------
@@ -807,22 +721,6 @@ class TestBlueprintDependencies:
         assert deps["dependencies"] == {}
         assert deps["devDependencies"] == {}
 
-    def test_financial_dashboard_merges_into_package_json(
-        self, tmp_repo, finance_intent, finance_blueprint,
-    ):
-        """Generate with financial-dashboard -> package.json gains recharts."""
-        # First scaffold a package.json
-        from signalos_lib.product.stacks import ReactViteAdapter
-        ReactViteAdapter().scaffold(tmp_repo, finance_intent)
-        # Now generate product
-        generate_product(
-            tmp_repo, finance_intent, finance_blueprint, "react-vite",
-        )
-        pkg = json.loads(
-            (tmp_repo / "package.json").read_text(encoding="utf-8")
-        )
-        assert "recharts" in pkg["dependencies"]
-
 
 # ---------------------------------------------------------------------------
 # Level 8: data-driven generation (no hardcoded product types)
@@ -833,7 +731,7 @@ class TestDataDrivenGeneration:
 
     def test_generation_is_blueprint_driven(self, tmp_repo):
         """A custom blueprint with unique components generates those exact
-        components without any code change to generation.py."""
+        component specs without any code change to generation.py."""
         custom_blueprint = {
             "id": "custom-crm",
             "display_name": "Custom CRM",
@@ -869,17 +767,16 @@ class TestDataDrivenGeneration:
             "primary_workflows": [],
             "ux_surfaces": [],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, custom_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/ContactList.tsx" in paths
         assert "src/components/ContactList.test.tsx" in paths
         assert "src/components/DealPipeline.tsx" in paths
         assert "src/components/DealPipeline.test.tsx" in paths
-        # Files actually exist on disk
-        assert (tmp_repo / "src/components/ContactList.tsx").is_file()
-        assert (tmp_repo / "src/components/DealPipeline.tsx").is_file()
+        # No files on disk (packet only)
+        assert not (tmp_repo / "src/components/ContactList.tsx").is_file()
 
     def test_new_blueprint_without_code_change(self, tmp_repo):
         """A third blueprint (recipe-manager) generates correctly just from
@@ -928,10 +825,10 @@ class TestDataDrivenGeneration:
             "primary_workflows": ["create recipe"],
             "ux_surfaces": ["list", "detail"],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, recipe_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
 
         # All three components from the blueprint
         assert "src/components/RecipeList.tsx" in paths
@@ -941,17 +838,21 @@ class TestDataDrivenGeneration:
         assert "src/components/IngredientPicker.tsx" in paths
         assert "src/components/IngredientPicker.test.tsx" in paths
 
-        # Types file includes blueprint entities
+        # Types spec includes blueprint entities
         assert "src/types.ts" in paths
-        types_content = (tmp_repo / "src/types.ts").read_text(encoding="utf-8")
-        assert "export interface Recipe" in types_content
-        assert "export interface Ingredient" in types_content
+        types_spec = next(
+            f for f in packet["file_specs"] if f["path"] == "src/types.ts"
+        )
+        assert "Recipe" in types_spec["description"]
+        assert "Ingredient" in types_spec["description"]
 
-        # App.tsx wires all components
-        app_content = (tmp_repo / "src/App.tsx").read_text(encoding="utf-8")
-        assert "import RecipeList" in app_content
-        assert "import RecipeDetail" in app_content
-        assert "import IngredientPicker" in app_content
+        # App.tsx spec references all components
+        app_spec = next(
+            f for f in packet["file_specs"] if f["path"] == "src/App.tsx"
+        )
+        assert "RecipeList" in app_spec["description"]
+        assert "RecipeDetail" in app_spec["description"]
+        assert "IngredientPicker" in app_spec["description"]
 
     def test_no_product_type_switch_in_generation(self):
         """generation.py must not contain if/elif checks on specific
@@ -961,13 +862,8 @@ class TestDataDrivenGeneration:
         )
         source = gen_path.read_text(encoding="utf-8")
 
-        # These patterns indicate hardcoded product-type branching
-        # for component selection (not acceptable at Level 8).
-        # We allow the strings in comments or in dependency inference,
-        # but not in if/elif blocks that pick components.
         import re
 
-        # Find lines that are if/elif checking blueprint IDs
         hardcoded_patterns = [
             r'if\s+.*["\']task-management["\']',
             r'elif\s+.*["\']task-management["\']',
@@ -976,7 +872,6 @@ class TestDataDrivenGeneration:
         ]
         for pattern in hardcoded_patterns:
             matches = re.findall(pattern, source)
-            # Filter out comment lines
             real_matches = [
                 m for m in matches
                 if not m.strip().startswith("#")
@@ -1004,10 +899,10 @@ class TestDataDrivenGeneration:
             "primary_workflows": [],
             "ux_surfaces": [],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, minimal_blueprint, "react-vite",
         )
-        paths = [f["path"] for f in manifest["files"]]
+        paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/WidgetList.tsx" in paths
         assert "src/components/WidgetForm.tsx" in paths
 
@@ -1030,10 +925,10 @@ class TestDataDrivenGeneration:
             "primary_workflows": [],
             "ux_surfaces": [],
         }
-        manifest = generate_product(
+        packet = prepare_generation(
             tmp_repo, intent, bp, "generic",
         )
-        paths = [f["path"] for f in manifest["files"]]
-        # Python files for each entity
+        paths = [f["path"] for f in packet["file_specs"]]
+        # Python file specs for each entity
         assert any("product" in p.lower() and p.endswith(".py") for p in paths)
         assert any("warehouse" in p.lower() and p.endswith(".py") for p in paths)

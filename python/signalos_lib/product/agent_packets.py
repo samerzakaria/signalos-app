@@ -91,6 +91,7 @@ def build_agent_packet(
     tasks: list[dict],
     allowed_paths: list[str],
     forbidden_actions: list[str] | None = None,
+    generation_packet: dict | None = None,
 ) -> dict:
     """Build a scoped agent execution packet.
 
@@ -98,6 +99,11 @@ def build_agent_packet(
     bounded set of tasks: intent context, acceptance criteria, allowed
     and forbidden file paths, validation commands, and the expected
     result schema.
+
+    When *generation_packet* is provided, it is included under the
+    ``generation`` key -- this gives the agent the full file specs,
+    design constraints, and entity definitions needed to build the
+    product.
 
     Forbidden paths always include ``.signalos/``, ``node_modules/``,
     ``.git/``, ``.env``, ``.env.local``, ``*.pem``, and ``*.key``.
@@ -132,7 +138,7 @@ def build_agent_packet(
     if forbidden_actions is None:
         forbidden_actions = list(_DEFAULT_FORBIDDEN_ACTIONS)
 
-    return {
+    packet: dict[str, Any] = {
         "schema_version": "signalos.agent_packet.v1",
         "run_id": run_id,
         "created_at": now,
@@ -148,6 +154,12 @@ def build_agent_packet(
         "validation_commands": validation_commands,
         "result_schema": _RESULT_SCHEMA,
     }
+
+    # Include generation packet data when available
+    if generation_packet:
+        packet["generation"] = generation_packet
+
+    return packet
 
 
 def _flatten_validation_commands(plan: dict) -> list[str]:

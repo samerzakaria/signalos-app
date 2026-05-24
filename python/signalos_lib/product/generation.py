@@ -1,20 +1,24 @@
 # signalos_lib/product/generation.py
-# Phase P7 - Generic Product Generation
+# Phase P7 - Product Generation Packet Builder
 #
-# Generates product files from intent, blueprint, stack adapter, and
-# approved wave scope.  Every generated file is tracked in a manifest.
+# Builds generation packets that define WHAT files the agent must create.
+# SignalOS does NOT write application code -- it defines constraints,
+# file specs, and acceptance criteria.  The AGENT writes the code.
+# SignalOS validates the result.
 
 from __future__ import annotations
 
 __all__ = [
     "build_generation_manifest",
+    "build_generation_packet",
     "check_file_ownership",
+    "collect_governance_instructions",
     "compute_sha256_lf",
-    "generate_file_content",
-    "generate_product",
     "get_blueprint_dependencies",
     "link_generation_to_acceptance",
     "load_generation_manifest",
+    "prepare_generation",
+    "validate_generation_output",
     "verify_trace_completeness",
     "write_generation_manifest",
 ]
@@ -27,6 +31,55 @@ from pathlib import Path
 from typing import Any
 
 from .stacks import get_adapter
+
+
+# ---------------------------------------------------------------------------
+# Governance instructions bundling
+# ---------------------------------------------------------------------------
+
+_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / "_bundle" / "core"
+
+_GOVERNANCE_FILES = [
+    # Constitution and enforcement — the supreme law
+    "governance/Governance/CONSTITUTION.md",
+    "governance/ENFORCEMENT.md",
+    # Coding and test standards
+    "execution/templates/typescript-standards.md",
+    "execution/build/test-generation/SKILL.md",
+    "execution/build/test-generation/references/test-patterns.md",
+    "execution/build/test-generation/references/test-type-matrix.md",
+    # Security
+    "execution/review/comprehensive-code-review/references/security-review.md",
+    "execution/build/scope-implement/references/security-checklist.md",
+    # Trust tiers
+    "execution/templates/trust-tier-declaration-template.md",
+    # Agent contracts
+    "execution/agents/build.md",
+    "execution/agents/test.md",
+    "execution/agents/security.md",
+    "execution/agents/design.md",
+    "execution/agents/review.md",
+    # Quality gate
+    "governance/QUALITY_CHECK.md",
+]
+
+
+def collect_governance_instructions() -> dict[str, str]:
+    """Collect governance instruction files for the agent packet.
+
+    Returns a dict of {relative_path: file_content} for all governance
+    files that agents are contractually bound to follow.  Missing files
+    are silently skipped (graceful in dev environments).
+    """
+    instructions: dict[str, str] = {}
+    for rel in _GOVERNANCE_FILES:
+        path = _BUNDLE_ROOT / rel
+        if path.is_file():
+            try:
+                instructions[rel] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                pass
+    return instructions
 
 
 # ---------------------------------------------------------------------------
@@ -59,203 +112,6 @@ def compute_sha256_lf(content: str) -> str:
     """Compute SHA-256 of LF-normalized content."""
     normalised = content.replace("\r\n", "\n").replace("\r", "\n")
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# File content generators - react-vite profile
-# ---------------------------------------------------------------------------
-
-def _react_component(name: str, entity: dict | None, design: dict | None = None) -> str:
-    """Generate a minimal React component.
-
-    When *design* is provided, imports are tailored to the selected UI
-    library and components use design-system primitives.
-    """
-    fields_comment = ""
-    if entity and "fields" in entity:
-        fields_comment = f"// Entity fields: {', '.join(entity['fields'])}\n"
-
-    ui_name = (design or {}).get("ui_library", {}).get("name", "")
-
-    if ui_name == "@mantine/core":
-        return (
-            f"import {{ Paper, Title }} from '@mantine/core';\n"
-            f"\n"
-            f"{fields_comment}"
-            f"interface {name}Props {{\n"
-            f"  title?: string;\n"
-            f"}}\n"
-            f"\n"
-            f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
-            f"  return (\n"
-            f"    <Paper data-testid=\"{name}\" p=\"md\" shadow=\"xs\">\n"
-            f"      <Title order={{3}}>{{title}}</Title>\n"
-            f"    </Paper>\n"
-            f"  );\n"
-            f"}}\n"
-            f"\n"
-            f"export default {name};\n"
-        )
-
-    if ui_name == "shadcn/ui":
-        return (
-            f"import {{ theme }} from '../ui/theme';\n"
-            f"\n"
-            f"{fields_comment}"
-            f"interface {name}Props {{\n"
-            f"  title?: string;\n"
-            f"}}\n"
-            f"\n"
-            f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
-            f"  return (\n"
-            f"    <div data-testid=\"{name}\" className=\"rounded-md border p-4\">\n"
-            f"      <h2 className=\"text-lg font-semibold\">{{title}}</h2>\n"
-            f"    </div>\n"
-            f"  );\n"
-            f"}}\n"
-            f"\n"
-            f"export default {name};\n"
-        )
-
-    # Fallback - no design system
-    return (
-        f"import {{ useState }} from 'react';\n"
-        f"\n"
-        f"{fields_comment}"
-        f"interface {name}Props {{\n"
-        f"  title?: string;\n"
-        f"}}\n"
-        f"\n"
-        f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
-        f"  return (\n"
-        f"    <div data-testid=\"{name}\">\n"
-        f"      <h2>{{title}}</h2>\n"
-        f"    </div>\n"
-        f"  );\n"
-        f"}}\n"
-        f"\n"
-        f"export default {name};\n"
-    )
-
-
-def _react_test(name: str) -> str:
-    """Generate a minimal vitest test for a React component."""
-    return (
-        f"import {{ render, screen }} from '@testing-library/react';\n"
-        f"import {{ describe, expect, it }} from 'vitest';\n"
-        f"import {name} from './{name}';\n"
-        f"\n"
-        f"describe('{name}', () => {{\n"
-        f"  it('renders without crashing', () => {{\n"
-        f"    render(<{name} />);\n"
-        f"    expect(screen.getByTestId('{name}')).toBeDefined();\n"
-        f"  }});\n"
-        f"\n"
-        f"  it('displays the title', () => {{\n"
-        f"    render(<{name} title=\"Test\" />);\n"
-        f"    expect(screen.getByText('Test')).toBeDefined();\n"
-        f"  }});\n"
-        f"}});\n"
-    )
-
-
-def _react_types(entities: list[dict]) -> str:
-    """Generate TypeScript type definitions from blueprint entities."""
-    lines = ["// Auto-generated type definitions\n"]
-    for entity in entities:
-        name = _to_pascal_case(entity["name"])
-        lines.append(f"export interface {name} {{")
-        for field in entity.get("fields", []):
-            ts_type = "string"
-            if field == "id":
-                ts_type = "string"
-            elif field.endswith("_id"):
-                ts_type = "string"
-            elif field in ("amount", "value", "mrr", "burn_rate",
-                           "runway_months", "mrr_lost", "balance"):
-                ts_type = "number"
-            elif field in ("recurring"):
-                ts_type = "boolean"
-            lines.append(f"  {field}: {ts_type};")
-        lines.append("}\n")
-    return "\n".join(lines) + "\n"
-
-
-def _react_app_registration(component_names: list[str]) -> str:
-    """Generate an App.tsx that imports and renders components."""
-    imports = "\n".join(
-        f"import {name} from './components/{name}';"
-        for name in component_names
-    )
-    components = "\n      ".join(f"<{name} />" for name in component_names)
-    return (
-        f"{imports}\n"
-        f"\n"
-        f"function App() {{\n"
-        f"  return (\n"
-        f"    <div className=\"app\">\n"
-        f"      <h1>SignalOS Product</h1>\n"
-        f"      {components}\n"
-        f"    </div>\n"
-        f"  );\n"
-        f"}}\n"
-        f"\n"
-        f"export default App;\n"
-    )
-
-
-# ---------------------------------------------------------------------------
-# File content generators - generic (Python) profile
-# ---------------------------------------------------------------------------
-
-def _python_module(name: str, entity: dict | None) -> str:
-    """Generate a minimal Python module for an entity."""
-    snake = _to_snake(name)
-    fields_comment = ""
-    if entity and "fields" in entity:
-        fields_comment = f"# Fields: {', '.join(entity['fields'])}\n"
-    return (
-        f'"""{name} module."""\n'
-        f"\n"
-        f"from __future__ import annotations\n"
-        f"\n"
-        f"{fields_comment}"
-        f"\n"
-        f"class {name}:\n"
-        f"    \"\"\"Represents a {name} entity.\"\"\"\n"
-        f"\n"
-        f"    def __init__(self, **kwargs):\n"
-        f"        for key, value in kwargs.items():\n"
-        f"            setattr(self, key, value)\n"
-        f"\n"
-        f"    def to_dict(self):\n"
-        f"        return self.__dict__.copy()\n"
-    )
-
-
-def _python_test(name: str) -> str:
-    """Generate a minimal Python unittest file."""
-    snake = _to_snake(name)
-    return (
-        f"import unittest\n"
-        f"\n"
-        f"from {snake} import {name}\n"
-        f"\n"
-        f"\n"
-        f"class Test{name}(unittest.TestCase):\n"
-        f"    def test_create(self):\n"
-        f"        obj = {name}(id='1')\n"
-        f"        self.assertEqual(obj.id, '1')\n"
-        f"\n"
-        f"    def test_to_dict(self):\n"
-        f"        obj = {name}(id='1', name='test')\n"
-        f"        data = obj.to_dict()\n"
-        f"        self.assertIn('id', data)\n"
-        f"\n"
-        f"\n"
-        f"if __name__ == '__main__':\n"
-        f"    unittest.main()\n"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -391,63 +247,445 @@ def _entity_by_name(
 
 
 # ---------------------------------------------------------------------------
-# Public: generate_file_content
+# Public: build_generation_packet
 # ---------------------------------------------------------------------------
 
-def generate_file_content(
-    entity: dict | None,
-    workflow: dict | None,
-    surface: str | None,
-    kind: str,
-    profile: str,
+def build_generation_packet(
+    repo_root: Path,
+    intent: dict,
     blueprint: dict | None,
+    profile: str,
     design: dict | None = None,
-) -> str:
-    """Generate file content for a single product file.
+    wave: str = "1",
+    task_ids: list[str] | None = None,
+    acceptance_matrix: dict | None = None,
+) -> dict:
+    """Build the generation packet that tells the agent what to create.
 
-    For react-vite profile:
-    - "test" kind  -> vitest test file with describe/it blocks
-    - "source" kind -> React component (.tsx)
-    - "config" kind -> config/types
-    - "registration" kind -> route registration or app wiring
+    SignalOS does NOT write the code. It defines:
+    - What files need to exist (from blueprint/intent)
+    - What each file should contain (acceptance criteria)
+    - Where files go (from adapter resolve_targets)
+    - Design constraints (UI library, tokens, conventions)
+    - What tests must pass
+    - What paths are forbidden
 
-    For generic profile:
-    - "test" kind  -> Python unittest file
-    - "source" kind -> Python module
-
-    Content is real code -- not stubs or empty files.  It is minimal
-    but syntactically valid and runnable.
+    Returns:
+    {
+        "schema_version": "signalos.generation_packet.v1",
+        "product": str,
+        "profile": str,
+        "blueprint_id": str | None,
+        "wave": str,
+        "design": dict | None,
+        "file_specs": [
+            {
+                "path": str,
+                "kind": "test" | "source" | "config" | "registration",
+                "description": str,
+                "entity": str | None,
+                "acceptance_id": str | None,
+                "task_id": str | None,
+                "constraints": list[str],
+            },
+            ...
+        ],
+        "entities": list[dict],
+        "workflows": list[dict],
+        "acceptance_criteria": list[dict],
+        "design_constraints": {
+            "ui_library": str,
+            "state_management": str,
+            "data_layer": str,
+            "form_handling": str,
+            "design_tokens": dict,
+            "conventions": list[str],
+        },
+        "allowed_paths": list[str],
+        "forbidden_paths": list[str],
+        "validation_commands": list[str],
+    }
     """
-    name = ""
-    if entity:
-        name = entity.get("name", "Entity")
-    elif surface:
-        name = _to_pascal(surface)
-    elif workflow:
-        name = _to_pascal(workflow.get("name", "workflow"))
-    else:
-        name = "Generated"
+    if task_ids is None:
+        task_ids = []
 
+    adapter = get_adapter(profile)
+    targets = adapter.resolve_targets(repo_root)
+    val_plan = adapter.validation_plan(repo_root)
+    validation_commands = _flatten_validation(val_plan)
+
+    product_name = intent.get("product_name", "")
+    blueprint_id = blueprint.get("id") if blueprint else None
+
+    # Build file specs from blueprint or intent
+    file_specs: list[dict[str, Any]] = []
     if profile == "react-vite":
-        if kind == "test":
-            return _react_test(name)
-        if kind == "source":
-            return _react_component(name, entity, design)
-        if kind == "config":
-            entities = (blueprint or {}).get("entities", [])
-            if entities:
-                return _react_types(entities)
-            return "// Config\nexport {};\n"
-        if kind == "registration":
-            return ""  # handled specially in generate_product
-        return f"// {kind}\n"
+        file_specs = _build_react_vite_file_specs(
+            intent, blueprint, targets, design,
+        )
+    else:
+        file_specs = _build_generic_file_specs(
+            intent, blueprint, targets,
+        )
 
-    # generic / python
-    if kind == "test":
-        return _python_test(name)
-    if kind == "source":
-        return _python_module(name, entity)
-    return f"# {kind}\n"
+    # Assign task_ids round-robin if provided
+    if task_ids:
+        for i, spec in enumerate(file_specs):
+            spec["task_id"] = task_ids[i % len(task_ids)]
+
+    # Link to acceptance criteria if matrix provided
+    if acceptance_matrix is not None:
+        _link_specs_to_acceptance(file_specs, acceptance_matrix)
+
+    # Extract entities and workflows
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+    if not bp_entities:
+        bp_entities = [
+            {"name": _to_pascal(e), "fields": []}
+            for e in intent.get("entities", [])
+        ]
+    if not bp_workflows:
+        bp_workflows = [
+            {"name": w} for w in intent.get("primary_workflows", [])
+        ]
+
+    # Design constraints
+    design_constraints = _extract_design_constraints(design)
+
+    # Allowed / forbidden paths
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", source_base)
+    allowed_paths = [f"{source_base}/**", f"{test_base}/**"]
+    if source_base != test_base:
+        allowed_paths.append(f"{test_base}/**")
+    # Deduplicate
+    allowed_paths = list(dict.fromkeys(allowed_paths))
+
+    forbidden_paths = [".signalos/", "node_modules/", ".git/",
+                       ".env", ".env.local", "*.pem", "*.key"]
+
+    # Acceptance criteria
+    acceptance_criteria = (acceptance_matrix or {}).get("criteria", [])
+
+    return {
+        "schema_version": "signalos.generation_packet.v1",
+        "product": product_name,
+        "profile": profile,
+        "blueprint_id": blueprint_id,
+        "wave": wave,
+        "design": design,
+        "file_specs": file_specs,
+        "entities": bp_entities,
+        "workflows": bp_workflows,
+        "acceptance_criteria": acceptance_criteria,
+        "design_constraints": design_constraints,
+        "allowed_paths": allowed_paths,
+        "forbidden_paths": forbidden_paths,
+        "validation_commands": validation_commands,
+        "governance_instructions": collect_governance_instructions(),
+        "governance_enforcement": {
+            "mode": "strict",
+            "constitution_required": True,
+            "trust_tier_ceiling": "T2",
+            "permanently_t3": [
+                "auth", "payments", "migrations", "secrets",
+                "infrastructure-as-code", "constitution",
+            ],
+            "refusal_on_violation": True,
+            "validators": [
+                "gate-signature-guard",
+                "trust-tier-guard",
+                "artifact-shape-guard",
+                "path-consistency-guard",
+            ],
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Internal: build file specs for react-vite
+# ---------------------------------------------------------------------------
+
+def _build_react_vite_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for a react-vite profile."""
+    file_specs: list[dict[str, Any]] = []
+    component_names: list[str] = []
+    source_base = targets.get("source", "src")
+
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    ui_name = (design or {}).get("ui_library", {}).get("name", "")
+    state_name = (design or {}).get("state_management", {}).get("name", "")
+    form_name = (design or {}).get("form_handling", {}).get("name", "")
+
+    # Build constraints list based on design
+    base_constraints = []
+    if ui_name:
+        base_constraints.append(f"Import UI components from {ui_name}")
+    if state_name:
+        base_constraints.append(f"Use {state_name} for state management")
+    if form_name and form_name != "native":
+        base_constraints.append(f"Use {form_name} for form inputs")
+    base_constraints.append("Follow PascalCase naming")
+    base_constraints.append("Co-locate test file as <Component>.test.tsx")
+
+    # Data-driven: derive component list from blueprint ui data
+    component_specs = (
+        _derive_components_from_blueprint(blueprint) if blueprint else []
+    )
+
+    if component_specs:
+        for spec in component_specs:
+            comp_name = spec["component"]
+            entity_name = spec["entity_name"]
+            entity = _entity_by_name(bp_entities, entity_name)
+            component_names.append(comp_name)
+
+            test_path = f"{source_base}/components/{comp_name}.test.tsx"
+            source_path = f"{source_base}/components/{comp_name}.tsx"
+
+            if _is_reserved(test_path) or _is_reserved(source_path):
+                continue
+
+            # Build description from surface data
+            fields_desc = ""
+            if entity and entity.get("fields"):
+                fields_desc = f" Entity fields: {', '.join(entity['fields'])}."
+
+            surface_desc = spec.get("surface", "")
+            entity_ref = entity_name or comp_name
+
+            # TDD: test first
+            file_specs.append({
+                "path": test_path,
+                "kind": "test",
+                "description": (
+                    f"Vitest test file for {comp_name}. "
+                    f"Tests rendering, user interactions, and data display."
+                ),
+                "entity": entity_name or None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use @testing-library/react for rendering",
+                    "Use vitest describe/it/expect",
+                    "Test renders without crashing",
+                    "Test displays expected content",
+                ],
+            })
+            file_specs.append({
+                "path": source_path,
+                "kind": "source",
+                "description": (
+                    f"React component for {entity_ref}. "
+                    f"Surface: {surface_desc}.{fields_desc} "
+                    f"Uses design tokens from src/ui/theme.ts."
+                ),
+                "entity": entity_name or None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": list(base_constraints),
+            })
+    else:
+        # No blueprint - generate from intent entities
+        for ent_name in intent.get("entities", []):
+            pascal = _to_pascal(ent_name)
+            component_names.append(pascal)
+
+            test_path = f"{source_base}/components/{pascal}.test.tsx"
+            source_path = f"{source_base}/components/{pascal}.tsx"
+
+            if _is_reserved(test_path) or _is_reserved(source_path):
+                continue
+
+            file_specs.append({
+                "path": test_path,
+                "kind": "test",
+                "description": (
+                    f"Vitest test file for {pascal}. "
+                    f"Tests rendering, user interactions, and data display."
+                ),
+                "entity": ent_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use @testing-library/react for rendering",
+                    "Use vitest describe/it/expect",
+                    "Test renders without crashing",
+                    "Test displays expected content",
+                ],
+            })
+            file_specs.append({
+                "path": source_path,
+                "kind": "source",
+                "description": (
+                    f"React component for the {pascal} entity. "
+                    f"Renders with CRUD operations. "
+                    f"Uses design tokens from src/ui/theme.ts."
+                ),
+                "entity": ent_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": list(base_constraints),
+            })
+
+    # Types file (config)
+    if bp_entities:
+        types_path = f"{source_base}/types.ts"
+        if not _is_reserved(types_path):
+            entity_names = [e.get("name", "") for e in bp_entities]
+            file_specs.append({
+                "path": types_path,
+                "kind": "config",
+                "description": (
+                    f"TypeScript type definitions for entities: "
+                    f"{', '.join(entity_names)}. "
+                    f"Export an interface for each entity with its fields."
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Export one interface per entity",
+                    "Use appropriate TypeScript types for each field",
+                ],
+            })
+
+    # App registration
+    if component_names:
+        app_path = f"{source_base}/App.tsx"
+        if not _is_reserved(app_path):
+            file_specs.append({
+                "path": app_path,
+                "kind": "registration",
+                "description": (
+                    f"Root App component that imports and renders: "
+                    f"{', '.join(component_names)}. "
+                    f"Wire all generated components into the app."
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    f"Import each component from ./components/",
+                    "Render all components in the JSX tree",
+                ],
+            })
+
+    return file_specs
+
+
+# ---------------------------------------------------------------------------
+# Internal: build file specs for generic (Python) profile
+# ---------------------------------------------------------------------------
+
+def _build_generic_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the generic (Python) profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "")
+    test_base = targets.get("tests", "")
+
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    if bp_entities:
+        entities_to_gen = bp_entities
+    else:
+        entities_to_gen = [
+            {"name": _to_pascal(e), "fields": []}
+            for e in intent.get("entities", [])
+        ]
+
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+        fields = entity.get("fields", [])
+
+        test_rel = f"{test_base}/test_{snake}.py" if test_base else f"test_{snake}.py"
+        source_rel = f"{source_base}/{snake}.py" if source_base else f"{snake}.py"
+
+        # Clean up double slashes
+        test_rel = test_rel.lstrip("/")
+        source_rel = source_rel.lstrip("/")
+
+        if _is_reserved(test_rel) or _is_reserved(source_rel):
+            continue
+
+        fields_desc = ""
+        if fields:
+            fields_desc = f" Fields: {', '.join(fields)}."
+
+        # TDD: test first
+        file_specs.append({
+            "path": test_rel,
+            "kind": "test",
+            "description": (
+                f"Python unittest file for {name}. "
+                f"Tests creation, serialization, and field access."
+            ),
+            "entity": name,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use unittest.TestCase",
+                "Test object creation with kwargs",
+                "Test to_dict serialization",
+            ],
+        })
+        file_specs.append({
+            "path": source_rel,
+            "kind": "source",
+            "description": (
+                f"Python module for the {name} entity.{fields_desc} "
+                f"Implements a class with __init__, to_dict, and field access."
+            ),
+            "entity": name,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use dataclass or __init__ with **kwargs",
+                "Implement to_dict() method",
+                "Use snake_case naming",
+            ],
+        })
+
+    return file_specs
+
+
+# ---------------------------------------------------------------------------
+# Design constraint extraction
+# ---------------------------------------------------------------------------
+
+def _extract_design_constraints(design: dict | None) -> dict:
+    """Extract design constraints from the design system selection."""
+    if not design:
+        return {
+            "ui_library": "",
+            "state_management": "",
+            "data_layer": "",
+            "form_handling": "",
+            "design_tokens": {},
+            "conventions": [],
+        }
+
+    return {
+        "ui_library": design.get("ui_library", {}).get("name", ""),
+        "state_management": design.get("state_management", {}).get("name", ""),
+        "data_layer": design.get("data_layer", {}).get("name", ""),
+        "form_handling": design.get("form_handling", {}).get("name", ""),
+        "design_tokens": design.get("design_tokens", {}),
+        "conventions": design.get("consistency_rules", []),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -555,35 +793,11 @@ def get_blueprint_dependencies(
     return {"dependencies": deps, "devDependencies": dev_deps}
 
 
-def _merge_blueprint_deps_into_package_json(
-    repo_root: Path, extra: dict[str, dict[str, str]]
-) -> None:
-    """Merge extra deps into an existing package.json if present."""
-    pkg_path = repo_root / "package.json"
-    if not pkg_path.is_file():
-        return
-    extra_deps = extra.get("dependencies", {})
-    extra_dev = extra.get("devDependencies", {})
-    if not extra_deps and not extra_dev:
-        return
-    try:
-        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    if extra_deps:
-        pkg.setdefault("dependencies", {}).update(extra_deps)
-    if extra_dev:
-        pkg.setdefault("devDependencies", {}).update(extra_dev)
-    pkg_path.write_text(
-        json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-
-
 # ---------------------------------------------------------------------------
-# Public: generate_product
+# Public: prepare_generation (replaces generate_product)
 # ---------------------------------------------------------------------------
 
-def generate_product(
+def prepare_generation(
     repo_root: Path,
     intent: dict,
     blueprint: dict | None,
@@ -593,72 +807,52 @@ def generate_product(
     acceptance_matrix: dict | None = None,
     design: dict | None = None,
 ) -> dict:
-    """Generate product files from intent, blueprint, and profile.
+    """Prepare the generation packet and manifest.
+
+    Unlike the old generate_product(), this does NOT write application
+    source code.  It builds a packet describing what the agent should
+    create, writes governance metadata (manifest + packet), and returns
+    the packet.
 
     Steps:
-    1. Resolve target paths from adapter
-    2. Generate tests first (TDD)
-    3. Generate implementation files
-    4. Generate route/module registration
-    5. Link files to acceptance criteria (if matrix provided)
-    6. Write generation manifest
+    1. Build the generation packet (file specs, constraints, etc.)
+    2. Build the generation manifest (metadata tracking)
+    3. Write both to .signalos/product/
+    4. Return the packet
 
-    Returns generation manifest dict.
+    The packet is consumed by the agent (or user) to actually build
+    the product.  Validation runs AFTER the agent works.
     """
     if task_ids is None:
         task_ids = []
 
-    adapter = get_adapter(profile)
-    targets = adapter.resolve_targets(repo_root)
-    val_plan = adapter.validation_plan(repo_root)
-    validation_commands = _flatten_validation(val_plan)
+    # Build the generation packet
+    packet = build_generation_packet(
+        repo_root=repo_root,
+        intent=intent,
+        blueprint=blueprint,
+        profile=profile,
+        design=design,
+        wave=wave,
+        task_ids=task_ids,
+        acceptance_matrix=acceptance_matrix,
+    )
 
     product_name = intent.get("product_name", "")
     blueprint_id = blueprint.get("id") if blueprint else None
 
-    file_records: list[dict[str, Any]] = []
-    component_names: list[str] = []
-
-    if profile == "react-vite":
-        file_records, component_names = _generate_react_vite(
-            repo_root, intent, blueprint, blueprint_id, targets, design,
-        )
-    else:
-        file_records = _generate_generic(
-            repo_root, intent, blueprint, blueprint_id, targets,
-        )
-
-    # Assign task_ids round-robin if provided
-    if task_ids:
-        for i, rec in enumerate(file_records):
-            rec["task_id"] = task_ids[i % len(task_ids)]
-
-    # Link to acceptance criteria if matrix provided
-    if acceptance_matrix is not None:
-        _link_records_to_acceptance(file_records, acceptance_matrix)
-
-    # Write files to disk respecting overwrite rules
-    for rec in file_records:
-        abs_path = repo_root / rec["path"]
-        if _is_reserved(rec["path"]):
-            continue  # safety - should not happen
-        if rec["overwrite_mode"] == "create" and abs_path.exists():
-            rec["overwrite_mode"] = "skip"
-            continue
-        if rec["overwrite_mode"] == "skip":
-            continue
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(rec["_content"], encoding="utf-8")
-
-    # Merge blueprint-specific dependencies into package.json
-    if blueprint is not None:
-        extra = get_blueprint_dependencies(blueprint, profile)
-        _merge_blueprint_deps_into_package_json(repo_root, extra)
-
-    # Strip internal _content before manifest
-    clean_records = [
-        {k: v for k, v in rec.items() if k != "_content"}
-        for rec in file_records
+    # Build manifest file records from the packet file_specs
+    manifest_files = [
+        {
+            "path": spec["path"],
+            "kind": spec["kind"],
+            "task_id": spec.get("task_id"),
+            "acceptance_id": spec.get("acceptance_id"),
+            "sha256_lf": None,  # not yet written -- agent will create
+            "overwrite_mode": "create",
+            "description": spec.get("description", ""),
+        }
+        for spec in packet["file_specs"]
     ]
 
     manifest = build_generation_manifest(
@@ -667,194 +861,158 @@ def generate_product(
         profile=profile,
         wave=wave,
         task_ids=task_ids,
-        files=clean_records,
-        validation_commands=validation_commands,
+        files=manifest_files,
+        validation_commands=packet["validation_commands"],
     )
 
-    # Write manifest
+    # Write manifest and packet
     signalos_dir = repo_root / ".signalos"
     write_generation_manifest(manifest, signalos_dir)
 
-    return manifest
-
-
-# ---------------------------------------------------------------------------
-# Internal: react-vite generation
-# ---------------------------------------------------------------------------
-
-def _generate_react_vite(
-    repo_root: Path,
-    intent: dict,
-    blueprint: dict | None,
-    blueprint_id: str | None,
-    targets: dict[str, str],
-    design: dict | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Generate file records for a react-vite profile."""
-    file_records: list[dict[str, Any]] = []
-    component_names: list[str] = []
-    source_base = targets.get("source", "src")
-
-    bp_entities = (blueprint or {}).get("entities", [])
-
-    # Data-driven: derive component list from blueprint ui data
-    component_specs = (
-        _derive_components_from_blueprint(blueprint) if blueprint else []
+    # Write the packet itself
+    packet_path = signalos_dir / "product" / "GENERATION_PACKET.json"
+    packet_path.parent.mkdir(parents=True, exist_ok=True)
+    packet_path.write_text(
+        json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
-    if component_specs:
-        # Blueprint provides UI surface definitions - generate from data
-        for spec in component_specs:
-            comp_name = spec["component"]
-            entity_name = spec["entity_name"]
-            entity = _entity_by_name(bp_entities, entity_name)
-            component_names.append(comp_name)
+    return packet
 
-            test_path = f"{source_base}/components/{comp_name}.test.tsx"
-            source_path = f"{source_base}/components/{comp_name}.tsx"
 
-            if _is_reserved(test_path) or _is_reserved(source_path):
-                continue
-
-            test_content = _react_test(comp_name)
-            source_content = _react_component(comp_name, entity, design)
-
-            # TDD: test first
-            file_records.append(_file_record(
-                test_path, "test", test_content,
-                task_id=None, acceptance_id=None, mode="create",
-            ))
-            file_records.append(_file_record(
-                source_path, "source", source_content,
-                task_id=None, acceptance_id=None, mode="create",
-            ))
-    else:
-        # No blueprint - generate from intent entities
-        for ent_name in intent.get("entities", []):
-            pascal = _to_pascal(ent_name)
-            component_names.append(pascal)
-
-            test_path = f"{source_base}/components/{pascal}.test.tsx"
-            source_path = f"{source_base}/components/{pascal}.tsx"
-
-            if _is_reserved(test_path) or _is_reserved(source_path):
-                continue
-
-            test_content = _react_test(pascal)
-            source_content = _react_component(pascal, None, design)
-
-            file_records.append(_file_record(
-                test_path, "test", test_content,
-                task_id=None, acceptance_id=None, mode="create",
-            ))
-            file_records.append(_file_record(
-                source_path, "source", source_content,
-                task_id=None, acceptance_id=None, mode="create",
-            ))
-
-    # Types file (config)
-    if bp_entities:
-        types_path = f"{source_base}/types.ts"
-        if not _is_reserved(types_path):
-            types_content = _react_types(bp_entities)
-            file_records.append(_file_record(
-                types_path, "config", types_content,
-                task_id=None, acceptance_id=None, mode="create",
-            ))
-
-    # App registration (patch - may overwrite)
-    if component_names:
-        app_path = f"{source_base}/App.tsx"
-        if not _is_reserved(app_path):
-            app_content = _react_app_registration(component_names)
-            file_records.append(_file_record(
-                app_path, "registration", app_content,
-                task_id=None, acceptance_id=None, mode="patch",
-            ))
-
-    return file_records, component_names
+# Backward-compatible alias
+generate_product = prepare_generation
 
 
 # ---------------------------------------------------------------------------
-# Internal: generic (Python) generation
+# Public: validate_generation_output
 # ---------------------------------------------------------------------------
 
-def _generate_generic(
+def validate_generation_output(
     repo_root: Path,
-    intent: dict,
-    blueprint: dict | None,
-    blueprint_id: str | None,
-    targets: dict[str, str],
-) -> list[dict[str, Any]]:
-    """Generate file records for the generic (Python) profile."""
-    file_records: list[dict[str, Any]] = []
-    source_base = targets.get("source", "")
-    test_base = targets.get("tests", "")
+    packet: dict,
+) -> dict:
+    """Validate that the agent's output matches the generation packet.
 
-    bp_entities = (blueprint or {}).get("entities", [])
+    Checks:
+    1. Every file_spec has a corresponding file on disk
+    2. Files are within allowed_paths
+    3. No files in forbidden_paths
+    4. Files are non-empty
+    5. Test files exist for source files (TDD check)
 
-    if bp_entities:
-        entities_to_gen = bp_entities
-    else:
-        # Build from intent entities
-        entities_to_gen = [
-            {"name": _to_pascal(e), "fields": []}
-            for e in intent.get("entities", [])
-        ]
+    Returns:
+    {
+        "valid": bool,
+        "files_expected": int,
+        "files_found": int,
+        "files_missing": list[str],
+        "files_unexpected": list[str],
+        "violations": list[str],
+    }
+    """
+    import fnmatch
 
-    for entity in entities_to_gen:
-        name = entity["name"]
-        snake = _to_snake(name)
+    file_specs = packet.get("file_specs", [])
+    allowed_paths = packet.get("allowed_paths", [])
+    forbidden_paths = packet.get("forbidden_paths", [])
 
-        test_rel = f"{test_base}/test_{snake}.py" if test_base else f"test_{snake}.py"
-        source_rel = f"{source_base}/{snake}.py" if source_base else f"{snake}.py"
+    files_expected = len(file_specs)
+    files_found = 0
+    files_missing: list[str] = []
+    violations: list[str] = []
 
-        # Clean up double slashes
-        test_rel = test_rel.lstrip("/")
-        source_rel = source_rel.lstrip("/")
+    for spec in file_specs:
+        rel_path = spec["path"]
+        abs_path = repo_root / rel_path
 
-        if _is_reserved(test_rel) or _is_reserved(source_rel):
+        # Check existence
+        if not abs_path.is_file():
+            files_missing.append(rel_path)
             continue
 
-        test_content = _python_test(name)
-        source_content = _python_module(name, entity)
+        files_found += 1
 
-        # TDD: test first
-        file_records.append(_file_record(
-            test_rel, "test", test_content,
-            task_id=None, acceptance_id=None, mode="create",
-        ))
-        file_records.append(_file_record(
-            source_rel, "source", source_content,
-            task_id=None, acceptance_id=None, mode="create",
-        ))
+        # Check non-empty
+        try:
+            content = abs_path.read_text(encoding="utf-8")
+            if not content.strip():
+                violations.append(f"File is empty: {rel_path}")
+        except (OSError, UnicodeDecodeError):
+            violations.append(f"File unreadable: {rel_path}")
 
-    return file_records
+        # Check allowed paths
+        normed = rel_path.replace("\\", "/")
+        in_allowed = False
+        for pattern in allowed_paths:
+            pat = pattern.replace("\\", "/")
+            if fnmatch.fnmatch(normed, pat):
+                in_allowed = True
+                break
+            if pat.endswith("/**"):
+                prefix = pat[:-3]
+                if normed.startswith(prefix + "/") or normed.startswith(prefix):
+                    in_allowed = True
+                    break
+        if not in_allowed and allowed_paths:
+            violations.append(f"File outside allowed paths: {rel_path}")
+
+        # Check forbidden paths
+        for pat in forbidden_paths:
+            p = pat.replace("\\", "/").rstrip("/")
+            if pat.endswith("/"):
+                if normed.startswith(p + "/") or normed == p:
+                    violations.append(f"File in forbidden path: {rel_path}")
+            elif "*" in pat:
+                if fnmatch.fnmatch(normed, p):
+                    violations.append(f"File matches forbidden pattern: {rel_path}")
+
+    # TDD check: source files should have co-located tests
+    source_paths = {s["path"] for s in file_specs if s["kind"] == "source"}
+    test_paths = {s["path"] for s in file_specs if s["kind"] == "test"}
+    for src in source_paths:
+        # Derive expected test path
+        if src.endswith(".tsx"):
+            expected_test = src.replace(".tsx", ".test.tsx")
+        elif src.endswith(".ts"):
+            expected_test = src.replace(".ts", ".test.ts")
+        elif src.endswith(".py"):
+            parts = src.rsplit("/", 1)
+            if len(parts) == 2:
+                expected_test = f"{parts[0]}/test_{parts[1]}"
+            else:
+                expected_test = f"test_{parts[0]}"
+        else:
+            continue
+        if expected_test not in test_paths:
+            violations.append(f"Missing test file for source: {src}")
+
+    # Check for unexpected files (files on disk in source dirs not in specs)
+    files_unexpected: list[str] = []
+    # Only check src/components if react-vite
+    spec_paths = {s["path"].replace("\\", "/") for s in file_specs}
+    components_dir = repo_root / "src" / "components"
+    if components_dir.is_dir():
+        for disk_file in components_dir.iterdir():
+            if disk_file.is_file():
+                rel = disk_file.relative_to(repo_root).as_posix()
+                if rel not in spec_paths:
+                    files_unexpected.append(rel)
+
+    valid = len(violations) == 0 and len(files_missing) == 0
+    return {
+        "valid": valid,
+        "files_expected": files_expected,
+        "files_found": files_found,
+        "files_missing": files_missing,
+        "files_unexpected": files_unexpected,
+        "violations": violations,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _file_record(
-    path: str,
-    kind: str,
-    content: str,
-    *,
-    task_id: str | None,
-    acceptance_id: str | None,
-    mode: str,
-) -> dict[str, Any]:
-    return {
-        "path": path,
-        "kind": kind,
-        "task_id": task_id,
-        "acceptance_id": acceptance_id,
-        "sha256_lf": compute_sha256_lf(content),
-        "overwrite_mode": mode,
-        "_content": content,  # stripped before manifest write
-    }
-
 
 def _flatten_validation(plan: dict[str, list[str]]) -> list[str]:
     """Flatten a validation plan into a single command list."""
@@ -866,7 +1024,7 @@ def _flatten_validation(plan: dict[str, list[str]]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Internal: acceptance-criteria linking for file records
+# Internal: acceptance-criteria linking for file specs
 # ---------------------------------------------------------------------------
 
 def _match_criterion_for_file(
@@ -921,20 +1079,24 @@ def _match_criterion_for_file(
     return None
 
 
-def _link_records_to_acceptance(
-    file_records: list[dict[str, Any]],
+def _link_specs_to_acceptance(
+    file_specs: list[dict[str, Any]],
     acceptance_matrix: dict[str, Any],
 ) -> None:
-    """Link file records to acceptance criteria in place."""
+    """Link file specs to acceptance criteria in place."""
     criteria = acceptance_matrix.get("criteria", [])
     test_scenarios = acceptance_matrix.get("test_scenarios", [])
 
-    for rec in file_records:
-        if rec.get("acceptance_id") is not None:
+    for spec in file_specs:
+        if spec.get("acceptance_id") is not None:
             continue  # already linked
-        matched = _match_criterion_for_file(rec, criteria, test_scenarios)
+        matched = _match_criterion_for_file(spec, criteria, test_scenarios)
         if matched is not None:
-            rec["acceptance_id"] = matched
+            spec["acceptance_id"] = matched
+
+
+# Backward-compatible alias for the old name
+_link_records_to_acceptance = _link_specs_to_acceptance
 
 
 # ---------------------------------------------------------------------------

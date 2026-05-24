@@ -11,6 +11,7 @@ import pytest
 from signalos_lib.product.design import (
     build_design_system,
     get_design_dependencies,
+    get_design_instructions,
     load_design,
     scaffold_design_system,
     write_design,
@@ -245,51 +246,68 @@ class TestPersistence:
 
 
 # ---------------------------------------------------------------------------
-# Scaffold design system files
+# Design instructions (replaces scaffold_design_system file writing)
 # ---------------------------------------------------------------------------
 
+class TestDesignInstructions:
+    def test_returns_design_system_files(self):
+        design = build_design_system(_financial_dashboard_intent(), "react-vite")
+        instructions = get_design_instructions(design)
+
+        assert "src/ui/theme.ts" in instructions["design_system_files"]
+        assert "src/ui/index.ts" in instructions["design_system_files"]
+        assert "src/ui/layouts/AppLayout.tsx" in instructions["design_system_files"]
+        assert "src/ui/layouts/PageLayout.tsx" in instructions["design_system_files"]
+
+    def test_theme_file_has_tokens(self):
+        design = build_design_system(_financial_dashboard_intent(), "react-vite")
+        instructions = get_design_instructions(design)
+
+        theme_spec = instructions["design_system_files"]["src/ui/theme.ts"]
+        assert "tokens" in theme_spec
+        assert theme_spec["tokens"]["primary_color"] == "#2563eb"
+
+    def test_conventions_present(self):
+        design = build_design_system(_financial_dashboard_intent(), "react-vite")
+        instructions = get_design_instructions(design)
+
+        assert len(instructions["conventions"]) >= 3
+        assert any("src/ui" in c for c in instructions["conventions"])
+
+    def test_empty_for_non_ui_profile(self):
+        design = build_design_system(_minimal_intent(), "generic")
+        instructions = get_design_instructions(design)
+
+        assert instructions["design_system_files"] == {}
+        assert instructions["conventions"] == []
+
+
 class TestScaffoldDesignSystem:
-    def test_creates_expected_files(self, tmp_path):
+    def test_returns_expected_paths(self, tmp_path):
+        """scaffold_design_system returns paths but does NOT write files."""
         design = build_design_system(_financial_dashboard_intent(), "react-vite")
-        created = scaffold_design_system(tmp_path, design)
+        paths = scaffold_design_system(tmp_path, design)
 
-        assert "src/ui/theme.ts" in created
-        assert "src/ui/index.ts" in created
-        assert "src/ui/layouts/AppLayout.tsx" in created
-        assert "src/ui/layouts/PageLayout.tsx" in created
+        assert "src/ui/theme.ts" in paths
+        assert "src/ui/index.ts" in paths
+        assert "src/ui/layouts/AppLayout.tsx" in paths
+        assert "src/ui/layouts/PageLayout.tsx" in paths
 
-    def test_theme_contains_primary_color(self, tmp_path):
+    def test_does_not_write_files(self, tmp_path):
+        """scaffold_design_system does NOT create files on disk."""
         design = build_design_system(_financial_dashboard_intent(), "react-vite")
         scaffold_design_system(tmp_path, design)
 
-        theme_path = tmp_path / "src" / "ui" / "theme.ts"
-        assert theme_path.is_file()
-        content = theme_path.read_text(encoding="utf-8")
-        assert "#2563eb" in content  # financial blue
-
-    def test_mantine_app_layout(self, tmp_path):
-        design = build_design_system(_medical_records_intent(), "react-vite")
-        scaffold_design_system(tmp_path, design)
-
-        layout_path = tmp_path / "src" / "ui" / "layouts" / "AppLayout.tsx"
-        assert layout_path.is_file()
-        content = layout_path.read_text(encoding="utf-8")
-        assert "@mantine/core" in content
-
-    def test_shadcn_app_layout(self, tmp_path):
-        design = build_design_system(_simple_task_intent(), "react-vite")
-        scaffold_design_system(tmp_path, design)
-
-        layout_path = tmp_path / "src" / "ui" / "layouts" / "AppLayout.tsx"
-        assert layout_path.is_file()
-        content = layout_path.read_text(encoding="utf-8")
-        assert "theme" in content
+        # No files should exist
+        assert not (tmp_path / "src" / "ui" / "theme.ts").is_file()
+        assert not (tmp_path / "src" / "ui" / "index.ts").is_file()
+        assert not (tmp_path / "src" / "ui" / "layouts" / "AppLayout.tsx").is_file()
 
     def test_no_scaffold_for_empty_ui(self, tmp_path):
-        """Non-UI profile produces no scaffold files."""
+        """Non-UI profile produces no scaffold paths."""
         design = build_design_system(_minimal_intent(), "generic")
-        created = scaffold_design_system(tmp_path, design)
-        assert created == []
+        paths = scaffold_design_system(tmp_path, design)
+        assert paths == []
 
 
 # ---------------------------------------------------------------------------

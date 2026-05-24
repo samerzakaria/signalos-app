@@ -7,8 +7,8 @@ from __future__ import annotations
 __all__ = [
     "build_design_system",
     "get_design_dependencies",
+    "get_design_instructions",
     "load_design",
-    "scaffold_design_system",
     "write_design",
 ]
 
@@ -266,220 +266,77 @@ def get_design_dependencies(design: dict) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Scaffold design-system files into the repo
+# Design instructions for the agent packet
 # ---------------------------------------------------------------------------
 
-def scaffold_design_system(repo_root: Path, design: dict) -> list[str]:
-    """Create the shared UI layer files based on design decisions.
+def get_design_instructions(design: dict) -> dict:
+    """Return design instructions for the agent packet.
 
-    Creates:
-    - src/ui/theme.ts      -- design tokens (colors, spacing, fonts)
-    - src/ui/index.ts      -- re-exports of UI primitives
-    - src/ui/layouts/AppLayout.tsx  -- shared app shell / layout
-    - src/ui/layouts/PageLayout.tsx -- consistent page wrapper
-
-    Returns list of created file paths (relative to *repo_root*).
+    Does NOT write files. Returns what the agent should create:
+    {
+        "design_system_files": {
+            "src/ui/theme.ts": { ... },
+            "src/ui/index.ts": { ... },
+            "src/ui/layouts/AppLayout.tsx": { ... },
+            "src/ui/layouts/PageLayout.tsx": { ... },
+        },
+        "conventions": [...],
+    }
     """
     ui_name = design.get("ui_library", {}).get("name", "")
     if not ui_name:
-        return []  # non-UI profile, nothing to scaffold
+        return {"design_system_files": {}, "conventions": []}
 
     tokens = design.get("design_tokens", {})
-    created: list[str] = []
 
-    def _write(rel: str, content: str) -> None:
-        target = repo_root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        created.append(rel)
+    design_system_files: dict[str, dict] = {
+        "src/ui/theme.ts": {
+            "description": "Design tokens file exporting theme object with colors, spacing, radius, and fonts",
+            "tokens": {
+                "primary_color": tokens.get("primary_color", "#3b82f6"),
+                "font_family": tokens.get("font_family", "Inter, sans-serif"),
+                "spacing_unit": tokens.get("spacing_unit", 8),
+                "border_radius": tokens.get("border_radius", "8px"),
+                "color_scheme": tokens.get("color_scheme", "light"),
+            },
+        },
+        "src/ui/index.ts": {
+            "description": f"Barrel re-export from theme and {ui_name} UI library primitives",
+        },
+        "src/ui/layouts/AppLayout.tsx": {
+            "description": f"Shared app shell with header, main content area, and footer. Uses {ui_name}.",
+        },
+        "src/ui/layouts/PageLayout.tsx": {
+            "description": "Page-level wrapper with title prop and consistent spacing from theme",
+        },
+    }
 
-    # --- theme.ts ---
-    _write("src/ui/theme.ts", _build_theme_ts(tokens, ui_name))
+    conventions = design.get("consistency_rules", [])
 
-    # --- index.ts ---
-    _write("src/ui/index.ts", _build_index_ts(ui_name))
-
-    # --- AppLayout.tsx ---
-    _write("src/ui/layouts/AppLayout.tsx", _build_app_layout(ui_name))
-
-    # --- PageLayout.tsx ---
-    _write("src/ui/layouts/PageLayout.tsx", _build_page_layout(ui_name))
-
-    return created
-
-
-# ---------------------------------------------------------------------------
-# Template builders
-# ---------------------------------------------------------------------------
-
-def _build_theme_ts(tokens: dict, ui_name: str) -> str:
-    primary = tokens.get("primary_color", "#3b82f6")
-    radius = tokens.get("border_radius", "8px")
-    font = tokens.get("font_family", "Inter, sans-serif")
-    spacing_unit = tokens.get("spacing_unit", 8)
-
-    return (
-        "export const theme = {\n"
-        "  colors: {\n"
-        f'    primary: "{primary}",\n'
-        '    background: "#ffffff",\n'
-        '    surface: "#f8fafc",\n'
-        '    text: "#0f172a",\n'
-        '    muted: "#64748b",\n'
-        '    border: "#e2e8f0",\n'
-        "  },\n"
-        "  spacing: {\n"
-        f"    xs: {spacing_unit // 2},\n"
-        f"    sm: {spacing_unit},\n"
-        f"    md: {spacing_unit * 2},\n"
-        f"    lg: {spacing_unit * 3},\n"
-        f"    xl: {spacing_unit * 4},\n"
-        "  },\n"
-        "  radius: {\n"
-        f'    sm: "{_halve_px(radius)}",\n'
-        f'    md: "{radius}",\n'
-        f'    lg: "{_double_px(radius)}",\n'
-        "  },\n"
-        "  fonts: {\n"
-        f'    body: "{font}",\n'
-        '    mono: "JetBrains Mono, monospace",\n'
-        "  },\n"
-        "} as const;\n"
-        "\n"
-        "export type Theme = typeof theme;\n"
-    )
+    return {
+        "design_system_files": design_system_files,
+        "conventions": conventions,
+    }
 
 
-def _halve_px(val: str) -> str:
-    """'8px' -> '4px'."""
-    try:
-        num = int(val.replace("px", ""))
-        return f"{num // 2}px"
-    except (ValueError, AttributeError):
-        return val
+# Backward-compatible alias -- old code that calls scaffold_design_system
+# now gets a no-op that returns the file list the agent should create.
+def scaffold_design_system(repo_root: Path, design: dict) -> list[str]:
+    """Return list of design system files the agent should create.
 
+    Does NOT write any files to disk. Returns the paths that the
+    agent is expected to produce.
+    """
+    ui_name = design.get("ui_library", {}).get("name", "")
+    if not ui_name:
+        return []
 
-def _double_px(val: str) -> str:
-    """'8px' -> '16px'."""
-    try:
-        num = int(val.replace("px", ""))
-        return f"{num * 2}px"
-    except (ValueError, AttributeError):
-        return val
-
-
-def _build_index_ts(ui_name: str) -> str:
-    lines = [
-        "// Shared UI primitives -- all components import from here\n",
-        "export { theme } from './theme';\n",
+    return [
+        "src/ui/theme.ts",
+        "src/ui/index.ts",
+        "src/ui/layouts/AppLayout.tsx",
+        "src/ui/layouts/PageLayout.tsx",
     ]
-
-    if ui_name == "@mantine/core":
-        lines.append(
-            "export { Button, TextInput, Table, Select, Modal, Tabs, "
-            "Group, Stack, Paper, Title, Text } from '@mantine/core';\n"
-        )
-    elif ui_name == "shadcn/ui":
-        lines.append(
-            "// Re-export shadcn primitives as they are added\n"
-            "// e.g. export { Button } from './button';\n"
-        )
-
-    return "".join(lines)
-
-
-def _build_app_layout(ui_name: str) -> str:
-    if ui_name == "@mantine/core":
-        return (
-            "import React from 'react';\n"
-            "import { AppShell, Group, Title } from '@mantine/core';\n"
-            "\n"
-            "interface AppLayoutProps {\n"
-            "  children: React.ReactNode;\n"
-            "}\n"
-            "\n"
-            "export function AppLayout({ children }: AppLayoutProps) {\n"
-            "  return (\n"
-            "    <AppShell header={{ height: 56 }} padding=\"md\">\n"
-            "      <AppShell.Header>\n"
-            "        <Group h=\"100%\" px=\"md\">\n"
-            "          <Title order={3}>SignalOS Product</Title>\n"
-            "        </Group>\n"
-            "      </AppShell.Header>\n"
-            "      <AppShell.Main>{children}</AppShell.Main>\n"
-            "    </AppShell>\n"
-            "  );\n"
-            "}\n"
-        )
-
-    # shadcn / default
-    return (
-        "import React from 'react';\n"
-        "import { theme } from '../theme';\n"
-        "\n"
-        "interface AppLayoutProps {\n"
-        "  children: React.ReactNode;\n"
-        "}\n"
-        "\n"
-        "export function AppLayout({ children }: AppLayoutProps) {\n"
-        "  return (\n"
-        "    <div style={{ minHeight: '100vh', background: theme.colors.background }}>\n"
-        "      <header style={{\n"
-        "        height: 56,\n"
-        "        display: 'flex',\n"
-        "        alignItems: 'center',\n"
-        "        padding: `0 ${theme.spacing.md}px`,\n"
-        "        borderBottom: `1px solid ${theme.colors.border}`,\n"
-        "      }}>\n"
-        "        <h1 style={{ fontSize: 18, margin: 0 }}>SignalOS Product</h1>\n"
-        "      </header>\n"
-        "      <main style={{ padding: theme.spacing.md }}>{children}</main>\n"
-        "    </div>\n"
-        "  );\n"
-        "}\n"
-    )
-
-
-def _build_page_layout(ui_name: str) -> str:
-    if ui_name == "@mantine/core":
-        return (
-            "import React from 'react';\n"
-            "import { Stack, Title } from '@mantine/core';\n"
-            "\n"
-            "interface PageLayoutProps {\n"
-            "  title: string;\n"
-            "  children: React.ReactNode;\n"
-            "}\n"
-            "\n"
-            "export function PageLayout({ title, children }: PageLayoutProps) {\n"
-            "  return (\n"
-            "    <Stack gap=\"md\">\n"
-            "      <Title order={2}>{title}</Title>\n"
-            "      {children}\n"
-            "    </Stack>\n"
-            "  );\n"
-            "}\n"
-        )
-
-    # shadcn / default
-    return (
-        "import React from 'react';\n"
-        "import { theme } from '../theme';\n"
-        "\n"
-        "interface PageLayoutProps {\n"
-        "  title: string;\n"
-        "  children: React.ReactNode;\n"
-        "}\n"
-        "\n"
-        "export function PageLayout({ title, children }: PageLayoutProps) {\n"
-        "  return (\n"
-        "    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.spacing.md }}>\n"
-        "      <h2 style={{ margin: 0 }}>{title}</h2>\n"
-        "      {children}\n"
-        "    </div>\n"
-        "  );\n"
-        "}\n"
-    )
 
 
 # ---------------------------------------------------------------------------
