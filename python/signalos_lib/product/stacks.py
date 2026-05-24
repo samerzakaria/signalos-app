@@ -82,6 +82,122 @@ def _empty_validation_plan() -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 # ReactViteAdapter
 # ---------------------------------------------------------------------------
+# Delivery infrastructure templates — owned by SignalOS, not agents.
+# These define HOW to deliver (build tooling, config, entry points).
+# Agents write WHAT to deliver (components, logic, tests) inside this shell.
+# ---------------------------------------------------------------------------
+
+_PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
+    "name": "signalos-product",
+    "private": True,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+    },
+    "dependencies": {
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-router-dom": "^6.23.0",
+    },
+    "devDependencies": {
+        "@types/react": "^18.3.1",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.0",
+        "typescript": "^5.4.0",
+        "vite": "^5.4.0",
+        "vitest": "^3.2.0",
+        "@testing-library/react": "^16.0.0",
+        "@testing-library/jest-dom": "^6.4.0",
+        "jsdom": "^24.0.0",
+    },
+}
+
+_VITE_CONFIG = """\
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
+});
+"""
+
+_INDEX_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SignalOS Product</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+"""
+
+_MAIN_TSX = """\
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+"""
+
+_APP_TSX = """\
+function App() {
+  return <h1>SignalOS Product</h1>;
+}
+
+export default App;
+"""
+
+_APP_TEST_TSX = """\
+import { render, screen } from '@testing-library/react';
+import { expect, test } from 'vitest';
+import App from './App';
+
+test('renders heading', () => {
+  render(<App />);
+  expect(screen.getByText('SignalOS Product')).toBeDefined();
+});
+"""
+
+_TSCONFIG: dict[str, Any] = {
+    "compilerOptions": {
+        "target": "ES2020",
+        "useDefineForClassFields": True,
+        "lib": ["ES2020", "DOM", "DOM.Iterable"],
+        "module": "ESNext",
+        "skipLibCheck": True,
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": True,
+        "isolatedModules": True,
+        "moduleDetection": "force",
+        "noEmit": True,
+        "jsx": "react-jsx",
+        "strict": True,
+        "noUnusedLocals": True,
+        "noUnusedParameters": True,
+        "noFallthroughCasesInSwitch": True,
+    },
+    "include": ["src"],
+}
+
+
+# ---------------------------------------------------------------------------
 
 @dataclass
 class ReactViteAdapter:
@@ -121,16 +237,34 @@ class ReactViteAdapter:
         intent: dict[str, Any],
         dependencies: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Return scaffold specification for the agent.
+        """Create delivery infrastructure for a React+Vite project.
 
-        Creates ONLY:
-        - .signalos/profile.json (governance)
-
-        Returns scaffold spec describing what the agent should create.
+        SignalOS owns the delivery shell (build tooling, config, entry points).
+        Agents write product code (components, logic, tests) INSIDE this shell.
         """
         created: list[str] = []
 
-        # Governance directory -- the ONLY thing SignalOS writes
+        def _write(rel: str, content: str) -> None:
+            target = repo_root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            created.append(rel)
+
+        # Delivery infrastructure — SignalOS owns this
+        pkg = dict(_PACKAGE_JSON_TEMPLATE)
+        pkg["dependencies"] = dict(_PACKAGE_JSON_TEMPLATE["dependencies"])
+        pkg["devDependencies"] = dict(_PACKAGE_JSON_TEMPLATE["devDependencies"])
+        if dependencies:
+            pkg["dependencies"].update(dependencies)
+        _write("package.json", json.dumps(pkg, indent=2) + "\n")
+        _write("vite.config.ts", _VITE_CONFIG)
+        _write("index.html", _INDEX_HTML)
+        _write("src/main.tsx", _MAIN_TSX)
+        _write("src/App.tsx", _APP_TSX)
+        _write("src/App.test.tsx", _APP_TEST_TSX)
+        _write("tsconfig.json", json.dumps(_TSCONFIG, indent=2) + "\n")
+
+        # Governance metadata
         signalos_dir = repo_root / ".signalos"
         signalos_dir.mkdir(parents=True, exist_ok=True)
         profile_meta = {"profile": self.id, "display_name": self.display_name}
@@ -139,63 +273,10 @@ class ReactViteAdapter:
         )
         created.append(".signalos/profile.json")
 
-        # Build required deps
-        required_deps = {
-            "react": "^18.3.1",
-            "react-dom": "^18.3.1",
-            "react-router-dom": "^6.23.0",
-        }
-        if dependencies:
-            required_deps.update(dependencies)
-
-        required_dev_deps = {
-            "@types/react": "^18.3.1",
-            "@types/react-dom": "^18.3.1",
-            "@vitejs/plugin-react": "^4.3.0",
-            "typescript": "^5.4.0",
-            "vite": "^5.4.0",
-            "vitest": "^3.2.0",
-            "@testing-library/react": "^16.0.0",
-            "@testing-library/jest-dom": "^6.4.0",
-            "jsdom": "^24.0.0",
-        }
-
         return {
             "created": created,
             "can_deliver_ui": True,
             "can_deliver_runnable": True,
-            "scaffold_files": {
-                "package.json": {
-                    "description": "Node.js package manifest with React 18, Vite 5, Vitest, TypeScript",
-                    "required_deps": required_deps,
-                    "required_dev_deps": required_dev_deps,
-                    "required_scripts": {
-                        "dev": "vite",
-                        "build": "tsc && vite build",
-                        "preview": "vite preview",
-                        "test": "vitest run",
-                    },
-                },
-                "vite.config.ts": {
-                    "description": "Vite configuration with React plugin and vitest setup (jsdom environment, globals: true)",
-                },
-                "tsconfig.json": {
-                    "description": "TypeScript config targeting ES2020 with jsx: react-jsx, strict mode, bundler moduleResolution",
-                },
-                "index.html": {
-                    "description": "HTML entry point with div#root and module script tag for src/main.tsx",
-                },
-                "src/main.tsx": {
-                    "description": "React DOM entry point rendering App component into #root with StrictMode",
-                },
-                "src/App.tsx": {
-                    "description": "Root App component -- agent will wire generated components here",
-                },
-                "src/App.test.tsx": {
-                    "description": "Smoke test verifying App renders without crashing",
-                },
-            },
-            "profile": self.id,
         }
 
     def resolve_targets(self, repo_root: Path) -> dict[str, str]:
