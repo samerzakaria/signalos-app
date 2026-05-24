@@ -32,6 +32,7 @@ from .design import (
     write_design,
 )
 from .generation import generate_product, write_generation_manifest
+from .assumptions import record_assumptions, write_assumptions
 from .intent import extract_product_intent, write_intent
 from .lifecycle import (
     create_delivery_state,
@@ -39,6 +40,7 @@ from .lifecycle import (
     update_delivery_phase,
 )
 from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
+from .questions import generate_questions
 from .repair_loop import run_repair_loop
 from .scaffold import run_scaffold
 from .security_gate import run_security_gate, write_security_result
@@ -111,6 +113,34 @@ def run_delivery(
     if name:
         intent["product_name"] = name
     product_name = intent.get("product_name") or name or repo_root.name
+
+    # ------------------------------------------------------------------
+    # 1b. HITL: Check if intent needs clarification
+    # ------------------------------------------------------------------
+    try:
+        questions = generate_questions(intent)
+        blocking = [q for q in questions if q.get("blocking")]
+
+        # Write QUESTIONS.json for desktop app to consume
+        questions_path = signalos_dir / "product" / "QUESTIONS.json"
+        questions_path.parent.mkdir(parents=True, exist_ok=True)
+        questions_payload = {
+            "questions": questions,
+            "blocking": blocking,
+            "answered": False,
+            "assumptions_used": True,
+        }
+        questions_path.write_text(
+            json.dumps(questions_payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        # Always record assumptions for unfilled fields
+        assumptions = record_assumptions(intent)
+        if assumptions:
+            write_assumptions(assumptions, signalos_dir)
+    except Exception as exc:
+        errors.append(f"HITL questions/assumptions failed: {exc}")
 
     # Auto-detect blueprint
     if blueprint == "auto":

@@ -38,6 +38,7 @@ export function Toolbar() {
         <span id="viewName">Dashboard</span>
       </div>
       <div className="seg">
+        <div className="seg-i" data-tab="deliver" onClick={() => window.switchTab('deliver')}><i className="ti ti-rocket"></i> Deliver</div>
         <div className="seg-i" data-tab="build" onClick={() => window.switchTab('build')}><i className="ti ti-message-circle-2"></i> Build</div>
         <div className="seg-i" data-tab="preview" onClick={() => window.switchTab('preview')}><i className="ti ti-device-desktop"></i> Preview</div>
         <div className="seg-i" data-tab="terminal" onClick={() => window.switchTab('terminal')}><i className="ti ti-terminal-2"></i> Terminal</div>

@@ -15,6 +15,7 @@ import { SettingsView } from './components/views/SettingsView';
 import { HistoryView } from './components/views/HistoryView';
 import { BrainView } from './components/views/BrainView';
 import { HelpView } from './components/views/HelpView';
+import { DeliverView } from './components/views/DeliverView';
 
 import { AddSecretModal } from './components/AddSecretModal';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -41,6 +42,7 @@ export function App() {
               <HistoryView />
               <BrainView />
               <HelpView />
+              <DeliverView />
             </div>
           </section>
         </div>

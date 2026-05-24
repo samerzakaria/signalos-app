@@ -1,6 +1,6 @@
 # signalos_lib/product/design.py
-# Design Phase — selects UX library, design tokens, state management,
-# and data layer based on product intent.  All deterministic — no LLM.
+# Design Phase -- selects UX library, design tokens, state management,
+# and data layer based on product intent.  All deterministic -- no LLM.
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def build_design_system(
 ) -> dict:
     """Select design system, UX library, and tech composition for this product.
 
-    Decision logic is fully deterministic — no LLM, no network.
+    Decision logic is fully deterministic -- no LLM, no network.
 
     Returns a ``signalos.design_system.v1`` dict describing the selected
     UI library, design tokens, state management, data layer, form handling,
@@ -75,7 +75,7 @@ def build_design_system(
         },
         "consistency_rules": [
             "All components import from src/ui for primitives",
-            "No inline styles — use design tokens via theme",
+            "No inline styles -- use design tokens via theme",
             "Shared layout components in src/ui/layouts",
             "Consistent spacing via theme.spacing",
         ],
@@ -132,7 +132,7 @@ def _select_ui_library(intent: dict, blueprint: dict | None) -> dict:
 
 
 def _select_state_management(intent: dict) -> dict:
-    """Always zustand for now — simple, scales well."""
+    """Always zustand for now -- simple, scales well."""
     return {
         "name": "zustand",
         "version": "^4.5.0",
@@ -151,7 +151,7 @@ def _select_data_layer(intent: dict) -> dict:
     return {
         "name": "local",
         "version": None,
-        "reason": "No external data sources detected — local state sufficient",
+        "reason": "No external data sources detected -- local state sufficient",
     }
 
 
@@ -167,7 +167,7 @@ def _select_form_handling(intent: dict) -> dict:
     return {
         "name": "native",
         "version": None,
-        "reason": "Simple inputs — native controlled components sufficient",
+        "reason": "Simple inputs -- native controlled components sufficient",
     }
 
 
@@ -370,7 +370,7 @@ def _double_px(val: str) -> str:
 
 def _build_index_ts(ui_name: str) -> str:
     lines = [
-        "// Shared UI primitives — all components import from here\n",
+        "// Shared UI primitives -- all components import from here\n",
         "export { theme } from './theme';\n",
     ]
 

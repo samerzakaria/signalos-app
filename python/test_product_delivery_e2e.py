@@ -459,5 +459,94 @@ class TestDeliveryRepairAndWiring(unittest.TestCase):
             self.assertTrue(ws["switch_recommended"])
 
 
+class TestDeliveryHITL(unittest.TestCase):
+    """Tests for HITL questions/assumptions wiring."""
+
+    def test_delivery_writes_assumptions(self):
+        """Delivery with vague prompt writes ASSUMPTIONS.json."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "vague-product"
+            run_delivery(
+                prompt="Build me something",
+                name="vague-product",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+                yes=True,
+            )
+            assumptions_path = (
+                repo_root / ".signalos" / "product" / "ASSUMPTIONS.json"
+            )
+            self.assertTrue(assumptions_path.exists())
+            assumptions = json.loads(
+                assumptions_path.read_text(encoding="utf-8")
+            )
+            self.assertIsInstance(assumptions, list)
+            self.assertGreater(len(assumptions), 0)
+            # Each assumption has required keys
+            for a in assumptions:
+                self.assertIn("field", a)
+                self.assertIn("assumed_value", a)
+                self.assertIn("reason", a)
+
+    def test_delivery_writes_questions_for_ui(self):
+        """Delivery with vague prompt (no --yes) writes QUESTIONS.json with blocking."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "questions-product"
+            run_delivery(
+                prompt="Build me something",
+                name="questions-product",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+                yes=False,
+            )
+            questions_path = (
+                repo_root / ".signalos" / "product" / "QUESTIONS.json"
+            )
+            self.assertTrue(questions_path.exists())
+            data = json.loads(questions_path.read_text(encoding="utf-8"))
+            self.assertIn("questions", data)
+            self.assertIn("blocking", data)
+            self.assertIn("answered", data)
+            self.assertIn("assumptions_used", data)
+            self.assertFalse(data["answered"])
+            self.assertTrue(data["assumptions_used"])
+            # Vague prompt should have blocking questions
+            self.assertGreater(len(data["blocking"]), 0)
+
+    def test_delivery_with_yes_skips_blocking(self):
+        """Delivery with yes=True completes even with blocking questions."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "yes-product"
+            closeout = run_delivery(
+                prompt="Build me something",
+                name="yes-product",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+                yes=True,
+            )
+            # Pipeline completes successfully
+            self.assertIn("closure_level", closeout)
+            self.assertEqual(closeout["product_name"], "yes-product")
+            # Questions are still written for UI reference
+            questions_path = (
+                repo_root / ".signalos" / "product" / "QUESTIONS.json"
+            )
+            self.assertTrue(questions_path.exists())
+            # Assumptions are also written
+            assumptions_path = (
+                repo_root / ".signalos" / "product" / "ASSUMPTIONS.json"
+            )
+            self.assertTrue(assumptions_path.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
