@@ -785,7 +785,8 @@ class TestPascalCaseFileNames:
 
 class TestBlueprintDependencies:
     def test_financial_dashboard_includes_recharts(self):
-        bp = {"id": "financial-dashboard", "entities": []}
+        bp = {"id": "financial-dashboard", "entities": [],
+              "ui": ["revenue-chart", "churn-chart", "runway-gauge"]}
         deps = get_blueprint_dependencies(bp, "react-vite")
         assert "recharts" in deps["dependencies"]
         assert deps["dependencies"]["recharts"] == "^2.12.0"
@@ -821,3 +822,218 @@ class TestBlueprintDependencies:
             (tmp_repo / "package.json").read_text(encoding="utf-8")
         )
         assert "recharts" in pkg["dependencies"]
+
+
+# ---------------------------------------------------------------------------
+# Level 8: data-driven generation (no hardcoded product types)
+# ---------------------------------------------------------------------------
+
+class TestDataDrivenGeneration:
+    """Verify generation is purely blueprint-driven, not hardcoded."""
+
+    def test_generation_is_blueprint_driven(self, tmp_repo):
+        """A custom blueprint with unique components generates those exact
+        components without any code change to generation.py."""
+        custom_blueprint = {
+            "id": "custom-crm",
+            "display_name": "Custom CRM",
+            "entities": [
+                {"name": "Contact", "fields": ["id", "name", "email"]},
+                {"name": "Deal", "fields": ["id", "title", "value"]},
+            ],
+            "workflows": [],
+            "ui": [],
+            "ui_detail": {
+                "surfaces": [
+                    {
+                        "id": "contact-list",
+                        "component": "ContactList",
+                        "description": "List of contacts",
+                        "data_bindings": ["GET /contacts"],
+                        "layout": "main-content",
+                    },
+                    {
+                        "id": "deal-pipeline",
+                        "component": "DealPipeline",
+                        "description": "Pipeline view for deals",
+                        "data_bindings": ["GET /deals"],
+                        "layout": "full-width",
+                    },
+                ]
+            },
+        }
+        intent = {
+            "product_name": "MyCRM",
+            "product_type": "custom-crm",
+            "entities": ["contact", "deal"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, custom_blueprint, "react-vite",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+        assert "src/components/ContactList.tsx" in paths
+        assert "src/components/ContactList.test.tsx" in paths
+        assert "src/components/DealPipeline.tsx" in paths
+        assert "src/components/DealPipeline.test.tsx" in paths
+        # Files actually exist on disk
+        assert (tmp_repo / "src/components/ContactList.tsx").is_file()
+        assert (tmp_repo / "src/components/DealPipeline.tsx").is_file()
+
+    def test_new_blueprint_without_code_change(self, tmp_repo):
+        """A third blueprint (recipe-manager) generates correctly just from
+        data, proving no product-type-specific code is needed."""
+        recipe_blueprint = {
+            "id": "recipe-manager",
+            "display_name": "Recipe Manager",
+            "entities": [
+                {"name": "Recipe", "fields": ["id", "title", "servings"]},
+                {"name": "Ingredient", "fields": ["id", "name", "unit"]},
+            ],
+            "workflows": [
+                {"name": "create_recipe", "description": "Create a new recipe"},
+            ],
+            "ui": [],
+            "ui_detail": {
+                "surfaces": [
+                    {
+                        "id": "recipe-list",
+                        "component": "RecipeList",
+                        "description": "Browse all recipes",
+                        "data_bindings": ["GET /recipes"],
+                        "layout": "main-content",
+                    },
+                    {
+                        "id": "recipe-detail",
+                        "component": "RecipeDetail",
+                        "description": "View a single recipe",
+                        "data_bindings": ["GET /recipes/:id"],
+                        "layout": "detail-panel",
+                    },
+                    {
+                        "id": "ingredient-picker",
+                        "component": "IngredientPicker",
+                        "description": "Search and pick ingredients",
+                        "data_bindings": ["GET /ingredients"],
+                        "layout": "sidebar",
+                    },
+                ]
+            },
+        }
+        intent = {
+            "product_name": "RecipeApp",
+            "product_type": "recipe-manager",
+            "entities": ["recipe", "ingredient"],
+            "primary_workflows": ["create recipe"],
+            "ux_surfaces": ["list", "detail"],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, recipe_blueprint, "react-vite",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+
+        # All three components from the blueprint
+        assert "src/components/RecipeList.tsx" in paths
+        assert "src/components/RecipeList.test.tsx" in paths
+        assert "src/components/RecipeDetail.tsx" in paths
+        assert "src/components/RecipeDetail.test.tsx" in paths
+        assert "src/components/IngredientPicker.tsx" in paths
+        assert "src/components/IngredientPicker.test.tsx" in paths
+
+        # Types file includes blueprint entities
+        assert "src/types.ts" in paths
+        types_content = (tmp_repo / "src/types.ts").read_text(encoding="utf-8")
+        assert "export interface Recipe" in types_content
+        assert "export interface Ingredient" in types_content
+
+        # App.tsx wires all components
+        app_content = (tmp_repo / "src/App.tsx").read_text(encoding="utf-8")
+        assert "import RecipeList" in app_content
+        assert "import RecipeDetail" in app_content
+        assert "import IngredientPicker" in app_content
+
+    def test_no_product_type_switch_in_generation(self):
+        """generation.py must not contain if/elif checks on specific
+        blueprint IDs for component selection."""
+        gen_path = Path(__file__).resolve().parent / (
+            "signalos_lib/product/generation.py"
+        )
+        source = gen_path.read_text(encoding="utf-8")
+
+        # These patterns indicate hardcoded product-type branching
+        # for component selection (not acceptable at Level 8).
+        # We allow the strings in comments or in dependency inference,
+        # but not in if/elif blocks that pick components.
+        import re
+
+        # Find lines that are if/elif checking blueprint IDs
+        hardcoded_patterns = [
+            r'if\s+.*["\']task-management["\']',
+            r'elif\s+.*["\']task-management["\']',
+            r'if\s+.*["\']financial-dashboard["\']',
+            r'elif\s+.*["\']financial-dashboard["\']',
+        ]
+        for pattern in hardcoded_patterns:
+            matches = re.findall(pattern, source)
+            # Filter out comment lines
+            real_matches = [
+                m for m in matches
+                if not m.strip().startswith("#")
+            ]
+            assert len(real_matches) == 0, (
+                f"Found hardcoded blueprint ID check in generation.py: {real_matches}"
+            )
+
+    def test_blueprint_fallback_to_ui_ids(self, tmp_repo):
+        """When ui_detail is absent, generation falls back to the ui list
+        of surface IDs and converts them to PascalCase components."""
+        minimal_blueprint = {
+            "id": "minimal-app",
+            "display_name": "Minimal",
+            "entities": [
+                {"name": "Widget", "fields": ["id", "name"]},
+            ],
+            "workflows": [],
+            "ui": ["widget-list", "widget-form"],
+        }
+        intent = {
+            "product_name": "MinimalApp",
+            "product_type": "minimal-app",
+            "entities": ["widget"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, minimal_blueprint, "react-vite",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+        assert "src/components/WidgetList.tsx" in paths
+        assert "src/components/WidgetForm.tsx" in paths
+
+    def test_generic_profile_blueprint_driven(self, tmp_repo):
+        """Generic (Python) profile also works with arbitrary blueprints."""
+        bp = {
+            "id": "inventory-tracker",
+            "display_name": "Inventory Tracker",
+            "entities": [
+                {"name": "Product", "fields": ["id", "sku", "name", "qty"]},
+                {"name": "Warehouse", "fields": ["id", "location"]},
+            ],
+            "workflows": [],
+            "ui": [],
+        }
+        intent = {
+            "product_name": "InventoryApp",
+            "product_type": "inventory-tracker",
+            "entities": ["product", "warehouse"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        manifest = generate_product(
+            tmp_repo, intent, bp, "generic",
+        )
+        paths = [f["path"] for f in manifest["files"]]
+        # Python files for each entity
+        assert any("product" in p.lower() and p.endswith(".py") for p in paths)
+        assert any("warehouse" in p.lower() and p.endswith(".py") for p in paths)

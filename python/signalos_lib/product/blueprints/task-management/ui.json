@@ -8,10 +8,10 @@
       "layout": "main-content"
     },
     {
-      "id": "task-detail",
-      "component": "TaskDetail",
-      "description": "Single task view with edit capability",
-      "data_bindings": ["GET /tasks/:id", "PATCH /tasks/:id"],
+      "id": "task-form",
+      "component": "TaskForm",
+      "description": "Form for creating and editing a task",
+      "data_bindings": ["POST /tasks", "PATCH /tasks/:id"],
       "layout": "detail-panel"
     },
     {

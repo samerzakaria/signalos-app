@@ -117,7 +117,7 @@ def _react_component(name: str, entity: dict | None, design: dict | None = None)
             f"export default {name};\n"
         )
 
-    # Fallback — no design system
+    # Fallback - no design system
     return (
         f"import {{ useState }} from 'react';\n"
         f"\n"
@@ -298,25 +298,86 @@ def _to_pascal_case(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Blueprint -> component mapping
+# Blueprint -> component mapping (data-driven)
 # ---------------------------------------------------------------------------
 
-_TASK_MANAGEMENT_COMPONENTS = [
-    {"component": "TaskList", "entity_name": "Task", "surface": "task-list"},
-    {"component": "TaskForm", "entity_name": "Task", "surface": "task-detail"},
-    {"component": "ProjectBoard", "entity_name": "Project", "surface": "project-board"},
-]
 
-_FINANCIAL_DASHBOARD_COMPONENTS = [
-    {"component": "RevenueChart", "entity_name": "Revenue", "surface": "revenue-chart"},
-    {"component": "ChurnChart", "entity_name": "Churn", "surface": "churn-chart"},
-    {"component": "RunwayGauge", "entity_name": "CashRunway", "surface": "runway-gauge"},
-]
+def _derive_components_from_blueprint(blueprint: dict) -> list[dict[str, str]]:
+    """Derive component specs from blueprint ui_detail data.
 
-_BLUEPRINT_COMPONENT_MAP: dict[str, list[dict[str, str]]] = {
-    "task-management": _TASK_MANAGEMENT_COMPONENTS,
-    "financial-dashboard": _FINANCIAL_DASHBOARD_COMPONENTS,
-}
+    Reads the ``ui_detail`` key (merged from ui.json by the registry loader)
+    and builds a component spec for each surface.  Falls back to the top-level
+    ``ui`` list of surface IDs when ``ui_detail`` is absent.
+
+    Each returned dict has:
+        component  - PascalCase component name
+        entity_name - best-guess entity (from surface data or first entity)
+        surface    - the surface id
+    """
+    specs: list[dict[str, str]] = []
+
+    ui_detail = blueprint.get("ui_detail", {})
+    surfaces = ui_detail.get("surfaces", []) if isinstance(ui_detail, dict) else []
+
+    if surfaces:
+        for surface in surfaces:
+            comp_name = surface.get("component", _to_pascal_case(surface.get("id", "")))
+            surface_id = surface.get("id", "")
+            # Try to infer entity from surface metadata or from surface id
+            entity_name = surface.get("entity", "")
+            if not entity_name:
+                # Infer from component name / data_bindings heuristic
+                entity_name = _infer_entity_for_surface(surface, blueprint)
+            specs.append({
+                "component": comp_name,
+                "entity_name": entity_name,
+                "surface": surface_id,
+            })
+    else:
+        # Fallback: use the top-level ui list of surface IDs
+        ui_list = blueprint.get("ui", [])
+        for surface_id in ui_list:
+            if isinstance(surface_id, str):
+                comp_name = _to_pascal_case(surface_id)
+                specs.append({
+                    "component": comp_name,
+                    "entity_name": "",
+                    "surface": surface_id,
+                })
+
+    return specs
+
+
+def _infer_entity_for_surface(surface: dict, blueprint: dict) -> str:
+    """Best-effort entity inference for a UI surface.
+
+    Checks data_bindings for entity-like path segments, then falls back
+    to the first entity in the blueprint.
+    """
+    entities = blueprint.get("entities", [])
+    entity_names_lower = {
+        e["name"].lower(): e["name"] for e in entities if isinstance(e, dict)
+    }
+
+    # Check data_bindings for entity references like "GET /tasks"
+    for binding in surface.get("data_bindings", []):
+        # Extract path segments: "GET /tasks/:id" -> ["tasks"]
+        parts = binding.split()
+        if len(parts) >= 2:
+            path_parts = [
+                seg for seg in parts[1].strip("/").split("/")
+                if not seg.startswith(":")
+            ]
+            for seg in path_parts:
+                # Try singular and as-is
+                for candidate in (seg, seg.rstrip("s")):
+                    if candidate.lower() in entity_names_lower:
+                        return entity_names_lower[candidate.lower()]
+
+    # Fallback: first entity
+    if entities and isinstance(entities[0], dict):
+        return entities[0].get("name", "")
+    return ""
 
 
 def _entity_by_name(
@@ -457,6 +518,10 @@ def get_blueprint_dependencies(
 ) -> dict[str, dict[str, str]]:
     """Return additional dependencies needed for this blueprint.
 
+    Reads explicit ``dependencies`` from the blueprint when available,
+    otherwise infers based on UI surface types (e.g. chart surfaces
+    require a charting library).
+
     Returns ``{"dependencies": {...}, "devDependencies": {...}}``.
     """
     deps: dict[str, str] = {}
@@ -465,13 +530,26 @@ def get_blueprint_dependencies(
     if profile != "react-vite" or blueprint is None:
         return {"dependencies": deps, "devDependencies": dev_deps}
 
-    bp_id = blueprint.get("id", "")
+    # Explicit dependencies in blueprint take priority
+    explicit = blueprint.get("npm_dependencies", {})
+    if explicit:
+        deps.update(explicit.get("dependencies", {}))
+        dev_deps.update(explicit.get("devDependencies", {}))
+        return {"dependencies": deps, "devDependencies": dev_deps}
 
-    if bp_id == "financial-dashboard":
+    # Infer from UI surfaces: any chart/gauge surfaces need recharts
+    ui_detail = blueprint.get("ui_detail", {})
+    surfaces = ui_detail.get("surfaces", []) if isinstance(ui_detail, dict) else []
+    ui_ids = blueprint.get("ui", [])
+
+    has_chart_surface = any(
+        "chart" in (s.get("id", "") if isinstance(s, dict) else s).lower()
+        or "gauge" in (s.get("id", "") if isinstance(s, dict) else s).lower()
+        for s in (surfaces or ui_ids)
+    )
+
+    if has_chart_surface:
         deps["recharts"] = "^2.12.0"
-
-    # task-management needs react-router-dom which is already in the base
-    # scaffold, so no extra deps needed.
 
     return {"dependencies": deps, "devDependencies": dev_deps}
 
@@ -617,10 +695,14 @@ def _generate_react_vite(
     source_base = targets.get("source", "src")
 
     bp_entities = (blueprint or {}).get("entities", [])
-    component_specs = _BLUEPRINT_COMPONENT_MAP.get(blueprint_id or "", [])
+
+    # Data-driven: derive component list from blueprint ui data
+    component_specs = (
+        _derive_components_from_blueprint(blueprint) if blueprint else []
+    )
 
     if component_specs:
-        # Known blueprint - use predefined component map
+        # Blueprint provides UI surface definitions - generate from data
         for spec in component_specs:
             comp_name = spec["component"]
             entity_name = spec["entity_name"]
@@ -646,7 +728,7 @@ def _generate_react_vite(
                 task_id=None, acceptance_id=None, mode="create",
             ))
     else:
-        # Unknown blueprint or no blueprint - generate from intent entities
+        # No blueprint - generate from intent entities
         for ent_name in intent.get("entities", []):
             pascal = _to_pascal(ent_name)
             component_names.append(pascal)
