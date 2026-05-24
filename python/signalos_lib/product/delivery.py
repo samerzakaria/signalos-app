@@ -33,7 +33,7 @@ from .design import (
 )
 from .generation import generate_product, write_generation_manifest
 from .assumptions import record_assumptions, write_assumptions
-from .intent import extract_product_intent, write_intent
+from .intent import extract_product_intent, refine_intent_with_llm, write_intent
 from .lifecycle import (
     create_delivery_state,
     load_delivery_state,
@@ -113,6 +113,15 @@ def run_delivery(
     if name:
         intent["product_name"] = name
     product_name = intent.get("product_name") or name or repo_root.name
+
+    # Optional LLM refinement -- cleans up entities/roles/qualifiers
+    # when an API key is available. Falls back silently if not.
+    import os
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+        try:
+            intent = refine_intent_with_llm(intent, prompt)
+        except Exception:
+            pass  # deterministic extraction is the fallback
 
     # ------------------------------------------------------------------
     # 1b. HITL: Check if intent needs clarification

@@ -10,6 +10,7 @@ __all__ = [
     "EMPTY_INTENT",
     "extract_product_intent",
     "load_intent",
+    "refine_intent_with_llm",
     "write_intent",
 ]
 
@@ -719,3 +720,89 @@ def _dedup(items: list[str]) -> list[str]:
             seen.add(key)
             result.append(item)
     return result
+
+
+# ---------------------------------------------------------------------------
+# LLM refinement (optional -- requires API key)
+# ---------------------------------------------------------------------------
+
+_REFINE_PROMPT = """\
+You are a product architect. Given a user's product description and a \
+deterministic extraction of entities, users, and workflows, refine them.
+
+Rules:
+- Entities are domain objects (Patient, Task, Appointment) in PascalCase singular.
+- Users/roles are people who use the system (doctor, admin) in lowercase.
+- Workflows are actions (create_task, schedule_appointment) in snake_case.
+- Remove location/context qualifiers from entity names \
+  ("veterinary clinics pet" -> "Pet", not "VeterinaryClinicsPet").
+- If a word is both a user AND a domain entity (e.g. "Patient" in a medical \
+  app), include it in BOTH lists.
+- Do NOT invent new entities not implied by the prompt.
+
+Prompt: {prompt}
+
+Current extraction:
+  entities: {entities}
+  target_users: {users}
+  workflows: {workflows}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{"entities": [...], "target_users": [...], "workflows": [...]}}
+"""
+
+
+def refine_intent_with_llm(
+    intent: dict[str, Any],
+    prompt: str,
+    provider_name: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Refine extracted intent using a single LLM call.
+
+    Falls back to the original intent if the call fails or no API key
+    is configured.  Never crashes -- returns the input unchanged on error.
+    """
+    try:
+        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+    except ImportError:
+        return intent
+
+    llm_prompt = _REFINE_PROMPT.format(
+        prompt=prompt,
+        entities=json.dumps(intent.get("entities", [])),
+        users=json.dumps(intent.get("target_users", [])),
+        workflows=json.dumps(intent.get("primary_workflows", [])),
+    )
+
+    try:
+        provider = _resolve_provider(provider_name)
+        response_text, _tok_in, _tok_out = provider.call(
+            llm_prompt, model or DEFAULT_MODEL,
+        )
+    except Exception:
+        return intent
+
+    # Parse the JSON response
+    try:
+        # Strip markdown fences if present
+        text = response_text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        refined = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return intent
+
+    if not isinstance(refined, dict):
+        return intent
+
+    # Merge refinements back into intent
+    updated = dict(intent)
+    if "entities" in refined and isinstance(refined["entities"], list):
+        updated["entities"] = refined["entities"]
+    if "target_users" in refined and isinstance(refined["target_users"], list):
+        updated["target_users"] = refined["target_users"]
+    if "workflows" in refined and isinstance(refined["workflows"], list):
+        updated["primary_workflows"] = refined["workflows"]
+
+    return updated
