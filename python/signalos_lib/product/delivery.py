@@ -19,10 +19,17 @@ from typing import Any
 from .acceptance import build_acceptance_matrix, write_acceptance_matrix
 from .blueprints.registry import load_blueprint, match_blueprint
 from .closeout import build_closeout, write_closeout, write_handoff_files
+from datetime import datetime, timezone
 from .deploy import (
     make_deploy_decision,
     prepare_deploy_evidence,
     write_deploy_decision,
+)
+from .design import (
+    build_design_system,
+    get_design_dependencies,
+    scaffold_design_system,
+    write_design,
 )
 from .generation import generate_product, write_generation_manifest
 from .intent import extract_product_intent, write_intent
@@ -32,7 +39,9 @@ from .lifecycle import (
     update_delivery_phase,
 )
 from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
+from .repair_loop import run_repair_loop
 from .scaffold import run_scaffold
+from .security_gate import run_security_gate, write_security_result
 from .stacks import detect_profile
 from .validation import (
     build_validation_plan,
@@ -162,6 +171,20 @@ def run_delivery(
         pass  # state file may not exist if everything failed
 
     # ------------------------------------------------------------------
+    # 2b. DESIGN phase — select UX library, tokens, state management
+    # ------------------------------------------------------------------
+    design = None
+    design_deps: dict[str, str] = {}
+    try:
+        design = build_design_system(intent, actual_profile, bp)
+        write_design(design, signalos_dir)
+        design_deps = get_design_dependencies(design)
+        # Scaffold shared UI layer (theme, layouts)
+        scaffold_design_system(repo_root, design)
+    except Exception as exc:
+        errors.append(f"design phase failed: {exc}")
+
+    # ------------------------------------------------------------------
     # 3. ACCEPTANCE phase
     # ------------------------------------------------------------------
     try:
@@ -181,13 +204,26 @@ def run_delivery(
     # ------------------------------------------------------------------
     manifest = None
     try:
+        # Extract task IDs from acceptance criteria
+        task_ids = (
+            [f"T-{i+1:03d}" for i in range(len(acceptance.get("criteria", [])))]
+            if acceptance
+            else []
+        )
+
         manifest = generate_product(
             repo_root=repo_root,
             intent=intent,
             blueprint=bp,
             profile=actual_profile,
+            wave="1",
+            task_ids=task_ids,
             acceptance_matrix=acceptance,
+            design=design,
         )
+        # Merge design dependencies into package.json
+        if design_deps:
+            _merge_design_deps(repo_root, design_deps)
         update_delivery_phase(repo_root, "generated", "complete")
     except Exception as exc:
         errors.append(f"generation phase failed: {exc}")
@@ -205,6 +241,21 @@ def run_delivery(
         val_plan = build_validation_plan(repo_root, actual_profile)
         val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
         write_validation_result(val_result, signalos_dir)
+
+        # Repair loop: if validation fails and agent_mode is active
+        if not val_result.get("can_close_delivery", False) and agent_mode != "none":
+            repair_result = run_repair_loop(
+                repo_root=repo_root,
+                validation_result=val_result,
+                profile=actual_profile,
+                max_cycles=max_repair_cycles,
+                agent_mode=agent_mode,
+            )
+            # If repaired, re-run validation
+            if repair_result.get("status") == "repaired":
+                val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
+                write_validation_result(val_result, signalos_dir)
+
         closure = check_product_closure(val_result)
         update_delivery_phase(
             repo_root, "validated", closure.get("level", "partial"),
@@ -215,6 +266,25 @@ def run_delivery(
             update_delivery_phase(repo_root, "validated", "partial")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # 5b. SECURITY phase — injection scan, threat model, GDPR detection
+    # ------------------------------------------------------------------
+    try:
+        gen_files = (
+            [f["path"] for f in manifest.get("files", [])]
+            if isinstance(manifest, dict)
+            else []
+        )
+        security_result = run_security_gate(
+            repo_root=repo_root,
+            intent=intent,
+            generated_files=gen_files,
+            profile=actual_profile,
+        )
+        write_security_result(security_result, signalos_dir)
+    except Exception as exc:
+        errors.append(f"security gate failed: {exc}")
 
     # ------------------------------------------------------------------
     # 6. PROOF phase
@@ -294,10 +364,55 @@ def run_delivery(
             pass
 
     # ------------------------------------------------------------------
-    # 9. Output
+    # 9. Workspace switch metadata
+    # ------------------------------------------------------------------
+    closeout["workspace"] = {
+        "repo_root": str(repo_root),
+        "product_name": product_name,
+        "profile": actual_profile,
+        "switch_recommended": True,
+    }
+
+    # Write WORKSPACE.json for Tauri app to discover on next launch
+    workspace_info = {
+        "repo_root": str(repo_root),
+        "product_name": product_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "profile": actual_profile,
+    }
+    try:
+        workspace_path = signalos_dir / "product" / "WORKSPACE.json"
+        workspace_path.write_text(
+            json.dumps(workspace_info, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        errors.append(f"workspace file write failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # 10. Output
     # ------------------------------------------------------------------
     if json_output:
         json.dump(closeout, sys.stdout, indent=2)
         print()
 
     return closeout
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _merge_design_deps(repo_root: Path, deps: dict[str, str]) -> None:
+    """Merge design-system dependencies into package.json."""
+    pkg_path = repo_root / "package.json"
+    if not pkg_path.is_file() or not deps:
+        return
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    pkg.setdefault("dependencies", {}).update(deps)
+    pkg_path.write_text(
+        json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )

@@ -279,5 +279,185 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertEqual(closeout["product_name"], "auto-named")
 
 
+class TestDeliveryRepairAndWiring(unittest.TestCase):
+    """Tests for repair loop wiring, task IDs, and workspace metadata."""
+
+    def test_repair_loop_invoked_when_validation_fails(self):
+        """When validation fails and agent_mode is set, repair loop runs."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repair-test"
+
+            # Monkeypatch run_validation to return can_close_delivery=False
+            fake_val_result = {
+                "schema_version": "signalos.validation_result.v1",
+                "profile": "generic",
+                "dry_run": False,
+                "results": {},
+                "summary": {"total_checks": 1, "passed": 0, "failed": 1,
+                            "skipped": 0, "blocked": 0},
+                "can_close_delivery": False,
+                "blockers": ["build failed"],
+            }
+
+            with patch(
+                "signalos_lib.product.delivery.run_validation",
+                return_value=fake_val_result,
+            ), patch(
+                "signalos_lib.product.delivery.run_repair_loop",
+            ) as mock_repair:
+                mock_repair.return_value = {
+                    "status": "awaiting_agent",
+                    "cycles_used": 1,
+                    "max_cycles": 3,
+                    "repairs": [],
+                    "final_validation": fake_val_result,
+                }
+                run_delivery(
+                    prompt="Build a task app",
+                    name="repair-test",
+                    repo_root=repo_root,
+                    mode="greenfield",
+                    profile="generic",
+                    deploy="none",
+                    dry_run=False,
+                    agent_mode="packet-only",
+                )
+                mock_repair.assert_called_once()
+                call_kwargs = mock_repair.call_args[1]
+                self.assertEqual(call_kwargs["agent_mode"], "packet-only")
+                self.assertEqual(call_kwargs["max_cycles"], 3)
+
+    def test_repair_loop_not_invoked_when_agent_mode_none(self):
+        """Repair loop is NOT called when agent_mode is 'none'."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "no-repair"
+
+            fake_val_result = {
+                "schema_version": "signalos.validation_result.v1",
+                "profile": "generic",
+                "dry_run": False,
+                "results": {},
+                "summary": {"total_checks": 1, "passed": 0, "failed": 1,
+                            "skipped": 0, "blocked": 0},
+                "can_close_delivery": False,
+                "blockers": ["build failed"],
+            }
+
+            with patch(
+                "signalos_lib.product.delivery.run_validation",
+                return_value=fake_val_result,
+            ), patch(
+                "signalos_lib.product.delivery.run_repair_loop",
+            ) as mock_repair:
+                run_delivery(
+                    prompt="Build a task app",
+                    name="no-repair",
+                    repo_root=repo_root,
+                    mode="greenfield",
+                    profile="generic",
+                    deploy="none",
+                    dry_run=False,
+                    agent_mode="none",
+                )
+                mock_repair.assert_not_called()
+
+    def test_task_ids_passed_to_generation(self):
+        """Generation manifest contains non-None task_ids on file records."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "taskid-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="taskid-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            manifest_path = (
+                repo_root / ".signalos" / "product" / "GENERATION_MANIFEST.json"
+            )
+            self.assertTrue(manifest_path.exists())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            # task_ids list should be non-empty
+            self.assertGreater(len(manifest.get("task_ids", [])), 0)
+            # At least some files should have task_id set
+            files_with_task = [
+                f for f in manifest.get("files", [])
+                if f.get("task_id") is not None
+            ]
+            self.assertGreater(len(files_with_task), 0)
+
+    def test_acceptance_matrix_linked_to_generation(self):
+        """Generation manifest files have acceptance_ids linked."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "accept-link-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="accept-link-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            manifest_path = (
+                repo_root / ".signalos" / "product" / "GENERATION_MANIFEST.json"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            files_with_acceptance = [
+                f for f in manifest.get("files", [])
+                if f.get("acceptance_id") is not None
+            ]
+            self.assertGreater(len(files_with_acceptance), 0)
+
+    def test_workspace_json_written(self):
+        """WORKSPACE.json is written with correct content."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "ws-test"
+            run_delivery(
+                prompt="Build a tool",
+                name="ws-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+            )
+            ws_path = repo_root / ".signalos" / "product" / "WORKSPACE.json"
+            self.assertTrue(ws_path.exists())
+            ws = json.loads(ws_path.read_text(encoding="utf-8"))
+            self.assertEqual(ws["product_name"], "ws-test")
+            self.assertEqual(ws["profile"], "generic")
+            self.assertEqual(ws["repo_root"], str(repo_root))
+            self.assertIn("created_at", ws)
+
+    def test_closeout_has_workspace_info(self):
+        """Closeout dict includes workspace switch metadata."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "ws-closeout"
+            closeout = run_delivery(
+                prompt="Build a tool",
+                name="ws-closeout",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+            )
+            self.assertIn("workspace", closeout)
+            ws = closeout["workspace"]
+            self.assertEqual(ws["product_name"], "ws-closeout")
+            self.assertEqual(ws["profile"], "generic")
+            self.assertEqual(ws["repo_root"], str(repo_root))
+            self.assertTrue(ws["switch_recommended"])
+
+
 if __name__ == "__main__":
     unittest.main()

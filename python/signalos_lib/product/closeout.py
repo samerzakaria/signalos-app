@@ -27,6 +27,7 @@ from .deploy import load_deploy_decision
 from .generation import load_generation_manifest
 from .lifecycle import capture_git_state, load_delivery_state
 from .proof import check_proof_completeness
+from .security_gate import load_security_result
 from .validation import load_validation_result, check_product_closure
 
 SCHEMA_VERSION = "signalos.product_closeout.v1"
@@ -94,6 +95,11 @@ def build_closeout(
             })
         build_status = results.get("build", {}).get("status", "not_run")
         security_status = results.get("security", {}).get("status", "not_run")
+
+    # --- Security gate result (richer than validation-only security) ---
+    security_gate = load_security_result(signalos_dir)
+    if security_gate is not None:
+        security_status = security_gate.get("status", security_status)
 
     # --- Proof completeness ---
     proof = check_proof_completeness(repo_root, profile)

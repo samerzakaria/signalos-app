@@ -65,11 +65,59 @@ def compute_sha256_lf(content: str) -> str:
 # File content generators - react-vite profile
 # ---------------------------------------------------------------------------
 
-def _react_component(name: str, entity: dict | None) -> str:
-    """Generate a minimal React component."""
+def _react_component(name: str, entity: dict | None, design: dict | None = None) -> str:
+    """Generate a minimal React component.
+
+    When *design* is provided, imports are tailored to the selected UI
+    library and components use design-system primitives.
+    """
     fields_comment = ""
     if entity and "fields" in entity:
         fields_comment = f"// Entity fields: {', '.join(entity['fields'])}\n"
+
+    ui_name = (design or {}).get("ui_library", {}).get("name", "")
+
+    if ui_name == "@mantine/core":
+        return (
+            f"import {{ Paper, Title }} from '@mantine/core';\n"
+            f"\n"
+            f"{fields_comment}"
+            f"interface {name}Props {{\n"
+            f"  title?: string;\n"
+            f"}}\n"
+            f"\n"
+            f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
+            f"  return (\n"
+            f"    <Paper data-testid=\"{name}\" p=\"md\" shadow=\"xs\">\n"
+            f"      <Title order={{3}}>{{title}}</Title>\n"
+            f"    </Paper>\n"
+            f"  );\n"
+            f"}}\n"
+            f"\n"
+            f"export default {name};\n"
+        )
+
+    if ui_name == "shadcn/ui":
+        return (
+            f"import {{ theme }} from '../ui/theme';\n"
+            f"\n"
+            f"{fields_comment}"
+            f"interface {name}Props {{\n"
+            f"  title?: string;\n"
+            f"}}\n"
+            f"\n"
+            f"function {name}({{ title = '{name}' }}: {name}Props) {{\n"
+            f"  return (\n"
+            f"    <div data-testid=\"{name}\" className=\"rounded-md border p-4\">\n"
+            f"      <h2 className=\"text-lg font-semibold\">{{title}}</h2>\n"
+            f"    </div>\n"
+            f"  );\n"
+            f"}}\n"
+            f"\n"
+            f"export default {name};\n"
+        )
+
+    # Fallback — no design system
     return (
         f"import {{ useState }} from 'react';\n"
         f"\n"
@@ -291,6 +339,7 @@ def generate_file_content(
     kind: str,
     profile: str,
     blueprint: dict | None,
+    design: dict | None = None,
 ) -> str:
     """Generate file content for a single product file.
 
@@ -321,7 +370,7 @@ def generate_file_content(
         if kind == "test":
             return _react_test(name)
         if kind == "source":
-            return _react_component(name, entity)
+            return _react_component(name, entity, design)
         if kind == "config":
             entities = (blueprint or {}).get("entities", [])
             if entities:
@@ -463,6 +512,7 @@ def generate_product(
     wave: str = "1",
     task_ids: list[str] | None = None,
     acceptance_matrix: dict | None = None,
+    design: dict | None = None,
 ) -> dict:
     """Generate product files from intent, blueprint, and profile.
 
@@ -492,7 +542,7 @@ def generate_product(
 
     if profile == "react-vite":
         file_records, component_names = _generate_react_vite(
-            repo_root, intent, blueprint, blueprint_id, targets,
+            repo_root, intent, blueprint, blueprint_id, targets, design,
         )
     else:
         file_records = _generate_generic(
@@ -559,6 +609,7 @@ def _generate_react_vite(
     blueprint: dict | None,
     blueprint_id: str | None,
     targets: dict[str, str],
+    design: dict | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Generate file records for a react-vite profile."""
     file_records: list[dict[str, Any]] = []
@@ -583,7 +634,7 @@ def _generate_react_vite(
                 continue
 
             test_content = _react_test(comp_name)
-            source_content = _react_component(comp_name, entity)
+            source_content = _react_component(comp_name, entity, design)
 
             # TDD: test first
             file_records.append(_file_record(
@@ -607,7 +658,7 @@ def _generate_react_vite(
                 continue
 
             test_content = _react_test(pascal)
-            source_content = _react_component(pascal, None)
+            source_content = _react_component(pascal, None, design)
 
             file_records.append(_file_record(
                 test_path, "test", test_content,
