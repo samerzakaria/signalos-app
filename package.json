@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node scripts/patch-zimmerframe.js"
   },
   "dependencies": {
     "@preact/signals": "^1.3.0",
