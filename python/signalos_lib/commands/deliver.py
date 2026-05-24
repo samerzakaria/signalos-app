@@ -38,6 +38,70 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
     return p
 
 
+def cmd_deliver_intent(args: argparse.Namespace) -> int:
+    """Preview intent extraction without running full delivery."""
+    import json as _json
+
+    from ..product.intent import extract_product_intent
+    from ..product.questions import generate_questions
+    from ..product.assumptions import record_assumptions
+    from ..product.blueprints.registry import match_blueprint
+    from ..product.design import build_design_system
+
+    intent = extract_product_intent(args.prompt)
+    if args.name:
+        intent["product_name"] = args.name
+
+    questions = generate_questions(intent)
+    assumptions = record_assumptions(intent)
+    blueprint_id = match_blueprint(intent)
+
+    payload = {
+        "intent": intent,
+        "questions": questions,
+        "assumptions": assumptions,
+        "blueprint_id": blueprint_id,
+    }
+
+    if getattr(args, "as_json", True):
+        _json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+
+    return 0
+
+
+def cmd_deliver_design(args: argparse.Namespace) -> int:
+    """Preview design decisions without running full delivery."""
+    import json as _json
+
+    from ..product.intent import extract_product_intent
+    from ..product.blueprints.registry import load_blueprint, match_blueprint
+    from ..product.design import build_design_system, get_design_dependencies
+
+    intent = extract_product_intent(args.prompt)
+    if args.name:
+        intent["product_name"] = args.name
+
+    profile = args.profile if args.profile != "auto" else "react-vite"
+    blueprint_id = match_blueprint(intent)
+    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    design = build_design_system(intent, profile, bp)
+    deps = get_design_dependencies(design)
+
+    payload = {
+        "design": design,
+        "dependencies": deps,
+        "blueprint_id": blueprint_id,
+        "profile": profile,
+    }
+
+    if getattr(args, "as_json", True):
+        _json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+
+    return 0
+
+
 def cmd_deliver(args: argparse.Namespace) -> int:
     """Execute the deliver command."""
     from ..product.delivery import run_delivery

@@ -36,7 +36,7 @@ const INITIAL_STATE: DeliverState = {
   name: '',
   profile: 'auto',
   mode: 'auto',
-  deploy: 'local',
+  deploy: 'none',
   loading: false,
   error: null,
   intent: null,
@@ -171,7 +171,7 @@ export function DeliverView() {
     updateState({ step: 'prompt', error: null });
   };
 
-  // ─── Render helpers ──────────────���──────────────────────────────────────────
+  // -- Render helpers --
 
   const renderPhaseStrip = () => {
     return (
@@ -263,9 +263,9 @@ export function DeliverView() {
             onChange={(e) => updateState({ deploy: (e.target as HTMLSelectElement).value })}
             data-testid="deliver-deploy-select"
           >
-            <option value="local">Local only</option>
-            <option value="vercel">Vercel</option>
-            <option value="netlify">Netlify</option>
+            <option value="none">No deploy</option>
+            <option value="prepare">Prepare only</option>
+            <option value="live">Live deploy</option>
           </select>
         </div>
       </div>

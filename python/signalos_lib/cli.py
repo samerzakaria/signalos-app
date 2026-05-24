@@ -404,6 +404,21 @@ def _build_parser() -> argparse.ArgumentParser:
     from signalos_lib.commands.deliver import register as _register_deliver
     _register_deliver(sub)
 
+    # Product delivery bridge — intent preview
+    p_di = sub.add_parser("deliver-intent",
+        help="Preview product intent extraction (no full delivery)")
+    p_di.add_argument("--prompt", required=True, help="Product request prompt")
+    p_di.add_argument("--name", default=None, help="Product/repo name")
+    p_di.add_argument("--json", action="store_true", dest="as_json")
+
+    # Product delivery bridge — design preview
+    p_dd = sub.add_parser("deliver-design",
+        help="Preview design decisions (no full delivery)")
+    p_dd.add_argument("--prompt", required=True, help="Product request prompt")
+    p_dd.add_argument("--name", default=None, help="Product/repo name")
+    p_dd.add_argument("--profile", default="auto")
+    p_dd.add_argument("--json", action="store_true", dest="as_json")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1159,6 +1174,14 @@ def main(argv: list[str]) -> int:
     if cmd == "deliver":
         from signalos_lib.commands.deliver import cmd_deliver
         return cmd_deliver(args)
+
+    if cmd == "deliver-intent":
+        from signalos_lib.commands.deliver import cmd_deliver_intent
+        return cmd_deliver_intent(args)
+
+    if cmd == "deliver-design":
+        from signalos_lib.commands.deliver import cmd_deliver_design
+        return cmd_deliver_design(args)
 
     return 1
 
