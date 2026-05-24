@@ -80,6 +80,20 @@ export const brainFilter = signal<string>('all');
 export const revealedSecrets = signal<Record<string, string>>({});
 export const copiedSecret = signal<string | null>(null);
 
+// Bulk .env import modal state
+export interface BulkDiffResult {
+  added: string[];
+  changed: string[];
+  unchanged: string[];
+  removed: string[];
+  applied: boolean;
+}
+export const bulkImportOpen = signal<boolean>(false);
+export const bulkImportText = signal<string>('');
+export const bulkImportDiff = signal<BulkDiffResult | null>(null);
+export const bulkImportError = signal<string | null>(null);
+export const bulkImportAllowRemovals = signal<boolean>(false);
+
 export interface TermLine {
   kind: 'output' | 'echo' | 'error' | 'loading' | 'dim';
   text: string;

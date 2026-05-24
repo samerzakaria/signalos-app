@@ -43,6 +43,14 @@ export async function loadBuild() {
   await loadEnforcement().catch(() => {});
 }
 
+// Auto-switch sidebar tab based on user intent keywords.
+function autoSwitchSidebarForIntent(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(build|make|create|add|fix|edit|generate)\b/.test(t)) { window.switchSbTab?.('files'); return; }
+  if (/\b(sign|gate|freeze|unfreeze|pause|observe|wave|status|onboard)\b/.test(t)) { window.switchSbTab?.('gov'); return; }
+  if (/\b(remember|note|brain|audit|history|debrief|review|retrospective)\b/.test(t)) { window.switchSbTab?.('projects'); return; }
+}
+
 async function sendMsg() {
   const val = (state.chatInputValue || '').trim();
   if (!val || state.busy) return;
@@ -52,6 +60,9 @@ async function sendMsg() {
 
   addUserBubble(val);
   state.chatInputValue = '';
+
+  // Auto-switch sidebar to the relevant tab based on message keywords.
+  autoSwitchSidebarForIntent(val);
 
   // Slash commands route to the Python sidecar (signalos CLI), not to the AI provider.
   // Anything starting with "/signal-" hits dispatch_cli in signalos_ipc_server.py.

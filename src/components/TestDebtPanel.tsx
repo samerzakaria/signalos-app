@@ -53,6 +53,10 @@ const loading = signal<boolean>(true);
 const errorMsg = signal<string | null>(null);
 const dismissing = signal<TestDebtEntry | null>(null);
 const dismissReason = signal<string>('');
+const reportingDefect = signal<boolean>(false);
+const reportTitle = signal<string>('');
+const reportArea = signal<string>('');
+const reportDetail = signal<string>('');
 let mounted = false;
 
 async function refresh() {
@@ -72,6 +76,41 @@ async function refresh() {
     mutationScore.value = null;
   } finally {
     loading.value = false;
+  }
+}
+
+function openReportDefect() {
+  reportingDefect.value = true;
+  reportTitle.value = '';
+  reportArea.value = '';
+  reportDetail.value = '';
+}
+
+function cancelReport() {
+  reportingDefect.value = false;
+  reportTitle.value = '';
+  reportArea.value = '';
+  reportDetail.value = '';
+}
+
+async function submitReport() {
+  const title = reportTitle.value.trim();
+  const area = reportArea.value.trim();
+  const detail = reportDetail.value.trim();
+  if (!title) {
+    errorMsg.value = 'Title is required.';
+    return;
+  }
+  try {
+    await ipc.testAutomation.addDebt('manual-defect', area, title, detail);
+    reportingDefect.value = false;
+    reportTitle.value = '';
+    reportArea.value = '';
+    reportDetail.value = '';
+    await refresh();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Could not log defect.';
+    errorMsg.value = msg;
   }
 }
 
@@ -211,14 +250,26 @@ export function TestDebtPanel() {
           <i className="ti ti-flask" style={{ marginRight: '6px' }}></i>
           Test debt
         </h3>
-        <button
-          className="btn btn-soft"
-          style={{ fontSize: '11px', padding: '3px 8px' }}
-          onClick={() => refresh()}
-          aria-label="Refresh test debt"
-        >
-          <i className="ti ti-refresh"></i>
-        </button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            className="btn btn-soft"
+            style={{ fontSize: '11px', padding: '3px 8px' }}
+            onClick={() => openReportDefect()}
+            aria-label="Report a defect"
+            data-testid="td-report-btn"
+          >
+            <i className="ti ti-plus" style={{ marginRight: '3px' }}></i>
+            Report defect
+          </button>
+          <button
+            className="btn btn-soft"
+            style={{ fontSize: '11px', padding: '3px 8px' }}
+            onClick={() => refresh()}
+            aria-label="Refresh test debt"
+          >
+            <i className="ti ti-refresh"></i>
+          </button>
+        </div>
       </header>
 
       {banner}
@@ -332,6 +383,139 @@ export function TestDebtPanel() {
           ))}
         </div>
       )}
+
+      {reportingDefect.value ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="td-report-title"
+          data-testid="td-report-modal"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => cancelReport()}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(540px, 92%)',
+              padding: '18px 20px',
+              background: 'var(--surface)',
+            }}
+          >
+            <h3 id="td-report-title" style={{ margin: '0 0 8px', fontSize: '14px' }}>
+              Report a defect
+            </h3>
+            <p style={{ fontSize: '12px', color: 'var(--ink-2)', margin: '0 0 12px' }}>
+              Every manually-found defect must become an automated test before the fix
+              merges. Logging it here makes that promise.
+            </p>
+            <label
+              htmlFor="td-report-title-input"
+              style={{ fontSize: '11.5px', color: 'var(--ink-2)', display: 'block', marginBottom: '4px' }}
+            >
+              Title (required)
+            </label>
+            <input
+              id="td-report-title-input"
+              data-testid="td-report-title-input"
+              type="text"
+              value={reportTitle.value}
+              onInput={(e) => { reportTitle.value = (e.target as HTMLInputElement).value; }}
+              placeholder="Short defect summary"
+              style={{
+                width: '100%',
+                fontSize: '12px',
+                padding: '8px 10px',
+                borderRadius: 'var(--r-sm)',
+                border: '1px solid var(--line)',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+                marginBottom: '10px',
+              }}
+            />
+            <label
+              htmlFor="td-report-area-input"
+              style={{ fontSize: '11.5px', color: 'var(--ink-2)', display: 'block', marginBottom: '4px' }}
+            >
+              Area / file glob
+            </label>
+            <input
+              id="td-report-area-input"
+              data-testid="td-report-area-input"
+              type="text"
+              value={reportArea.value}
+              onInput={(e) => { reportArea.value = (e.target as HTMLInputElement).value; }}
+              placeholder="src/utils/dates.ts"
+              style={{
+                width: '100%',
+                fontSize: '12px',
+                padding: '8px 10px',
+                borderRadius: 'var(--r-sm)',
+                border: '1px solid var(--line)',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+                marginBottom: '10px',
+              }}
+            />
+            <label
+              htmlFor="td-report-detail-input"
+              style={{ fontSize: '11.5px', color: 'var(--ink-2)', display: 'block', marginBottom: '4px' }}
+            >
+              Repro steps + expected behavior
+            </label>
+            <textarea
+              id="td-report-detail-input"
+              data-testid="td-report-detail-input"
+              rows={4}
+              value={reportDetail.value}
+              onInput={(e) => { reportDetail.value = (e.target as HTMLTextAreaElement).value; }}
+              placeholder="Steps to reproduce and what the code should have done."
+              style={{
+                width: '100%',
+                fontSize: '12px',
+                padding: '8px 10px',
+                borderRadius: 'var(--r-sm)',
+                border: '1px solid var(--line)',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+              }}
+            />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+                marginTop: '14px',
+              }}
+            >
+              <button
+                className="btn btn-ghost"
+                onClick={() => cancelReport()}
+                data-testid="td-report-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => submitReport()}
+                disabled={reportTitle.value.trim().length === 0}
+                data-testid="td-report-submit"
+              >
+                Log test debt
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {dismissTarget ? (
         <div

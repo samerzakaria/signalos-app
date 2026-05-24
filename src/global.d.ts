@@ -66,6 +66,7 @@ declare global {
     freezeWave: () => void;
     nextStep: () => void;
     openAddSecret: () => void;
+    openBulkImport: () => void;
     openExit: () => void;
     openExternal: () => void;
     openFile: (path: string) => void;

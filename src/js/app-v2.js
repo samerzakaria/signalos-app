@@ -573,6 +573,12 @@ function openAddSecret() {
 }
 window.openAddSecret = openAddSecret;
 
+function openBulkImport() {
+  // Delegates to VaultView's signal-driven modal (state.bulkImportOpen)
+  state.bulkImportOpen = true;
+}
+window.openBulkImport = openBulkImport;
+
 async function saveSecret() {
   const name = document.getElementById("newSecretName")?.value.trim();
   const valueInput = document.getElementById("newSecretValue");
@@ -1026,7 +1032,8 @@ function showFileWriteToast(files) {
       <strong>${files.length} file${files.length > 1 ? "s" : ""} written</strong>
       <span>${esc(names)}</span>
     </div>
-    <div class="file-toast-close" onclick="this.parentElement.remove()"><i class="ti ti-x"></i></div>`;
+    <div class="file-toast-close"><i class="ti ti-x"></i></div>`;
+  toast.querySelector(".file-toast-close").addEventListener("click", () => toast.remove());
   document.body.appendChild(toast);
   setTimeout(() => { if (toast.parentElement) toast.remove(); }, 5000);
 }

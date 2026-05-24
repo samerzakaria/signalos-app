@@ -2,6 +2,7 @@ import type { ChatBubble } from '../../state';
 import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../state';
 import { TestDebtPanel } from '../TestDebtPanel';
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
+import { ProgressDetail } from '../ProgressDetail';
 
 export function BuildView() {
   const bubbles = chatBubbles.value;
@@ -242,6 +243,7 @@ export function BuildView() {
                 </div>
               );
             })}
+            <ProgressDetail />
           </div>
         </div>
 
