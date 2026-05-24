@@ -379,22 +379,32 @@ export function DeliverView() {
     </div>
   );
 
+  const handleDesignOverride = (field: string, value: string) => {
+    if (!state.design) return;
+    const updated = { ...state.design, [field]: value };
+    updateState({ design: updated });
+  };
+
   const renderDesignStep = () => (
     <div className="deliver-step" data-testid="deliver-step-design">
       <div className="deliver-step-head">
         <h2>Design selected</h2>
-        <p>Review the design decisions below. Approve to begin building your product.</p>
+        <p>Review and modify the design decisions below. Nothing is built until you approve.</p>
       </div>
 
-      {state.design?.ui_library ? (
-        <div className="deliver-section">
-          <h3><i className="ti ti-palette"></i> UI library</h3>
-          <div className="deliver-detail">
-            <strong>{state.design.ui_library}</strong>
-            {state.design.ui_reason ? <span className="deliver-meta"> — {state.design.ui_reason}</span> : null}
-          </div>
-        </div>
-      ) : null}
+      <div className="deliver-section">
+        <h3><i className="ti ti-palette"></i> UI library</h3>
+        <select
+          className="deliver-select"
+          value={state.design?.ui_library || ''}
+          onChange={(e) => handleDesignOverride('ui_library', (e.target as HTMLSelectElement).value)}
+          data-testid="deliver-design-ui-select"
+        >
+          <option value="@mantine/core">Mantine (forms, tables, dates)</option>
+          <option value="shadcn/ui">shadcn/ui (composable, lightweight)</option>
+        </select>
+        {state.design?.ui_reason ? <div className="deliver-meta">{state.design.ui_reason}</div> : null}
+      </div>
 
       {state.design?.tokens ? (
         <div className="deliver-section">
@@ -402,7 +412,16 @@ export function DeliverView() {
           <div className="deliver-tokens">
             {state.design.tokens.color ? (
               <div className="deliver-token-row">
-                <span className="deliver-token-label">Color</span>
+                <span className="deliver-token-label">Primary color</span>
+                <input
+                  type="color"
+                  className="deliver-color-input"
+                  value={state.design.tokens.color}
+                  onInput={(e) => {
+                    const tokens = { ...state.design.tokens, color: (e.target as HTMLInputElement).value };
+                    updateState({ design: { ...state.design, tokens } });
+                  }}
+                />
                 <span className="deliver-token-value">{state.design.tokens.color}</span>
               </div>
             ) : null}
@@ -422,26 +441,47 @@ export function DeliverView() {
         </div>
       ) : null}
 
-      {state.design?.state_management ? (
-        <div className="deliver-section">
-          <h3><i className="ti ti-database"></i> State management</h3>
-          <div className="deliver-detail">{state.design.state_management}</div>
-        </div>
-      ) : null}
+      <div className="deliver-section">
+        <h3><i className="ti ti-database"></i> State management</h3>
+        <select
+          className="deliver-select"
+          value={state.design?.state_management || 'zustand'}
+          onChange={(e) => handleDesignOverride('state_management', (e.target as HTMLSelectElement).value)}
+          data-testid="deliver-design-state-select"
+        >
+          <option value="zustand">Zustand (minimal, scalable)</option>
+          <option value="jotai">Jotai (atomic, fine-grained)</option>
+          <option value="redux-toolkit">Redux Toolkit (structured, middleware)</option>
+        </select>
+      </div>
 
-      {state.design?.data_layer ? (
-        <div className="deliver-section">
-          <h3><i className="ti ti-server"></i> Data layer</h3>
-          <div className="deliver-detail">{state.design.data_layer}</div>
-        </div>
-      ) : null}
+      <div className="deliver-section">
+        <h3><i className="ti ti-server"></i> Data layer</h3>
+        <select
+          className="deliver-select"
+          value={state.design?.data_layer || 'local'}
+          onChange={(e) => handleDesignOverride('data_layer', (e.target as HTMLSelectElement).value)}
+          data-testid="deliver-design-data-select"
+        >
+          <option value="@tanstack/react-query">TanStack Query (API caching)</option>
+          <option value="local">Local state only</option>
+          <option value="swr">SWR (stale-while-revalidate)</option>
+        </select>
+      </div>
 
-      {state.design?.form_handling ? (
-        <div className="deliver-section">
-          <h3><i className="ti ti-forms"></i> Form handling</h3>
-          <div className="deliver-detail">{state.design.form_handling}</div>
-        </div>
-      ) : null}
+      <div className="deliver-section">
+        <h3><i className="ti ti-forms"></i> Form handling</h3>
+        <select
+          className="deliver-select"
+          value={state.design?.form_handling || 'native'}
+          onChange={(e) => handleDesignOverride('form_handling', (e.target as HTMLSelectElement).value)}
+          data-testid="deliver-design-form-select"
+        >
+          <option value="react-hook-form">React Hook Form + Zod</option>
+          <option value="native">Native controlled inputs</option>
+          <option value="formik">Formik</option>
+        </select>
+      </div>
 
       {state.error ? (
         <div className="deliver-error" data-testid="deliver-error">
