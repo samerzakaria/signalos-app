@@ -31,7 +31,13 @@ from pathlib import Path
 from .artifacts import GATE_LABELS, GATE_MAP, list_gates, resolve_gate_artifacts
 
 VALID_ROLES = ("PO", "PE", "QA", "DevOps")
-VALID_VERDICTS = ("APPROVED", "APPROVED-WITH-CONDITIONS", "WAIVED")
+VALID_VERDICTS = (
+    "APPROVED",
+    "APPROVED-WITH-CONDITIONS",
+    "WAIVED",
+    "REQUEST-CHANGES",
+    "REJECTED",
+)
 
 
 # ---------------------------------------------------------------------------

@@ -42,6 +42,7 @@ from .lifecycle import (
 )
 from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
 from .questions import generate_questions
+from .gate_review import classify_review, handle_request_changes, handle_rejection
 from .repair_loop import run_repair_loop
 from .scaffold import run_scaffold
 from .security_gate import run_security_gate, write_security_result
@@ -274,6 +275,30 @@ def run_delivery(
             update_delivery_phase(repo_root, "generated", "partial")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # 4a. REVIEW GATE — write review state for UI to consume
+    # ------------------------------------------------------------------
+    if generation_packet and not yes:
+        try:
+            review_state = {
+                "gate": "generation",
+                "status": "awaiting_review",
+                "artifact_summary": {
+                    "profile": actual_profile,
+                    "task_count": len(task_ids) if task_ids else 0,
+                    "blueprint": blueprint_id,
+                },
+                "cycle": 0,
+                "max_cycles": 3,
+            }
+            review_state_path = signalos_dir / "product" / "REVIEW_STATE.json"
+            review_state_path.write_text(
+                json.dumps(review_state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            errors.append(f"review state write failed: {exc}")
 
     # ------------------------------------------------------------------
     # 4b. AGENT DISPATCH (invoke LLM to write product code)

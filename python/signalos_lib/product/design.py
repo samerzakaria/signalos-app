@@ -1,6 +1,8 @@
 # signalos_lib/product/design.py
 # Design Phase -- selects UX library, design tokens, state management,
-# and data layer based on product intent.  All deterministic -- no LLM.
+# and data layer based on product intent.
+#
+# LLM architect agent is FIRST choice; deterministic logic is FALLBACK.
 
 from __future__ import annotations
 
@@ -9,12 +11,232 @@ __all__ = [
     "get_design_dependencies",
     "get_design_instructions",
     "load_design",
+    "select_design_with_llm",
     "write_design",
 ]
 
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# LLM-driven design selection (Architect agent)
+# ---------------------------------------------------------------------------
+
+# The design agent contract, loaded lazily.
+_DESIGN_CONTRACT_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "_bundle" / "core" / "execution" / "agents" / "design.md"
+)
+
+_ARCHITECT_SYSTEM_PROMPT = """\
+You are the Architect agent in a SignalOS-governed software house.
+
+Your job: select the best design system composition for a product based on
+its intent (entities, surfaces, workflows, users), profile constraints, and
+optional blueprint context.
+
+You must pick from the SUPPORTED OPTIONS below. Do not invent new libraries.
+
+## Supported Options
+
+UI library (pick one):
+- "@mantine/core" — rich form controls, tables, date pickers; good for entity-heavy apps
+- "shadcn/ui" — composable primitives, lightweight; good for dashboards and general UI
+
+State management (pick one):
+- "zustand" — minimal boilerplate, scales well
+- "jotai" — atomic state, good for many independent pieces
+- "redux-toolkit" — heavy but powerful, good for complex shared state
+
+Data layer (pick one):
+- "@tanstack/react-query" — API-backed data fetching with caching
+- "swr" — lightweight alternative to react-query
+- "local" — no external data sources, local state only
+
+Form handling (pick one):
+- "react-hook-form" — performant validated forms for entity-rich apps
+- "formik" — established form library, simpler API
+- "native" — native controlled components for simple inputs
+
+Primary color: any valid hex color appropriate for the product domain
+
+Font (pick one):
+- "Inter" — clean sans-serif, general purpose
+- "JetBrains Mono" — monospace, good for developer tools
+- "system" — system font stack
+
+## Output Format
+
+Return ONLY valid JSON (no markdown fencing, no explanation outside the JSON):
+{
+  "ui_library": {"name": "<choice>", "version": "<semver or latest>", "reason": "<why>"},
+  "design_tokens": {
+    "color_scheme": "light",
+    "primary_color": "<hex>",
+    "border_radius": "8px",
+    "font_family": "<choice>, sans-serif",
+    "spacing_unit": 8
+  },
+  "state_management": {"name": "<choice>", "version": "<semver>", "reason": "<why>"},
+  "data_layer": {"name": "<choice>", "version": "<semver or null>", "reason": "<why>"},
+  "form_handling": {"name": "<choice>", "version": "<semver or null>", "reason": "<why>"},
+  "additional_deps": {}
+}
+"""
+
+
+def select_design_with_llm(
+    intent: dict,
+    profile: str,
+    blueprint: dict | None = None,
+    provider_name: str | None = None,
+    model: str | None = None,
+) -> dict | None:
+    """Use an LLM architect agent to select the best design system.
+
+    The agent receives:
+    - Product intent (entities, surfaces, workflows, users)
+    - Profile constraints
+    - Blueprint context (if matched)
+    - Design agent governance contract
+
+    The agent returns design decisions as JSON.
+    Falls back to None if LLM unavailable (caller uses deterministic fallback).
+    """
+    try:
+        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+    except Exception:
+        return None
+
+    try:
+        provider = _resolve_provider(provider_name)
+    except Exception:
+        return None
+
+    # Build the user prompt
+    parts: list[str] = []
+
+    # Include governance contract if available
+    if _DESIGN_CONTRACT_PATH.is_file():
+        try:
+            contract_text = _DESIGN_CONTRACT_PATH.read_text(encoding="utf-8")
+            parts.append(f"## Design Agent Governance Contract\n\n{contract_text}\n")
+        except OSError:
+            pass
+
+    parts.append("## Product Intent\n")
+    parts.append(json.dumps(intent, indent=2, default=str))
+    parts.append(f"\n## Profile: {profile}\n")
+
+    if blueprint:
+        parts.append("## Blueprint Context\n")
+        parts.append(json.dumps(blueprint, indent=2, default=str))
+
+    parts.append(
+        "\nSelect the best design system composition for this product. "
+        "Return ONLY the JSON object described in the output format."
+    )
+
+    user_prompt = "\n".join(parts)
+    use_model = model or DEFAULT_MODEL
+
+    try:
+        response_text, _, _ = provider.call(
+            f"{_ARCHITECT_SYSTEM_PROMPT}\n\n{user_prompt}",
+            use_model,
+        )
+    except Exception:
+        return None
+
+    # Parse the LLM response as JSON
+    return _parse_design_response(response_text)
+
+
+def _parse_design_response(response: str) -> dict | None:
+    """Parse LLM response into a valid design dict, or None on failure."""
+    if not response or not response.strip():
+        return None
+
+    text = response.strip()
+
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first and last fence lines
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        text = "\n".join(lines)
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Try to find JSON object in the response
+        import re
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Validate required keys
+    required = {"ui_library", "design_tokens", "state_management", "data_layer", "form_handling"}
+    if not required.issubset(data.keys()):
+        return None
+
+    # Validate ui_library is from supported set
+    valid_ui = {"@mantine/core", "shadcn/ui"}
+    ui_name = data.get("ui_library", {}).get("name", "")
+    if ui_name not in valid_ui:
+        return None
+
+    # Validate state_management
+    valid_state = {"zustand", "jotai", "redux-toolkit"}
+    state_name = data.get("state_management", {}).get("name", "")
+    if state_name not in valid_state:
+        return None
+
+    # Validate data_layer
+    valid_data = {"@tanstack/react-query", "swr", "local"}
+    data_name = data.get("data_layer", {}).get("name", "")
+    if data_name not in valid_data:
+        return None
+
+    # Validate form_handling
+    valid_form = {"react-hook-form", "formik", "native"}
+    form_name = data.get("form_handling", {}).get("name", "")
+    if form_name not in valid_form:
+        return None
+
+    # Build the full design system dict with standard envelope
+    return {
+        "schema_version": "signalos.design_system.v1",
+        "ui_library": data["ui_library"],
+        "design_tokens": data["design_tokens"],
+        "state_management": data["state_management"],
+        "data_layer": data["data_layer"],
+        "form_handling": data["form_handling"],
+        "additional_deps": data.get("additional_deps", {}),
+        "component_conventions": {
+            "file_structure": "feature-based",
+            "naming": "PascalCase",
+            "test_co_location": True,
+            "shared_ui_path": "src/ui",
+            "theme_path": "src/ui/theme.ts",
+        },
+        "consistency_rules": [
+            "All components import from src/ui for primitives",
+            "No inline styles -- use design tokens via theme",
+            "Shared layout components in src/ui/layouts",
+            "Consistent spacing via theme.spacing",
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +250,8 @@ def build_design_system(
 ) -> dict:
     """Select design system, UX library, and tech composition for this product.
 
-    Decision logic is fully deterministic -- no LLM, no network.
+    Tries LLM architect agent first; falls back to deterministic selection
+    if LLM is unavailable or returns an invalid response.
 
     Returns a ``signalos.design_system.v1`` dict describing the selected
     UI library, design tokens, state management, data layer, form handling,
@@ -38,6 +261,18 @@ def build_design_system(
     if profile == "generic":
         return _empty_design()
 
+    # Try LLM architect agent first
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+        llm_result = select_design_with_llm(intent, profile, blueprint)
+        if llm_result:
+            return llm_result
+
+    # Fallback: deterministic selection (existing logic)
+    return _deterministic_design(intent, profile, blueprint)
+
+
+def _deterministic_design(intent: dict, profile: str, blueprint: dict | None = None) -> dict:
+    """Deterministic design selection -- no LLM, no network."""
     ui = _select_ui_library(intent, blueprint)
     state = _select_state_management(intent)
     data = _select_data_layer(intent)

@@ -341,3 +341,41 @@ class TestGenericProfile:
         design = build_design_system(_minimal_intent(), "generic")
         deps = get_design_dependencies(design)
         assert deps == {}
+
+
+# ---------------------------------------------------------------------------
+# LLM architect agent (with TestProvider fallback)
+# ---------------------------------------------------------------------------
+
+class TestLLMDesignSelection:
+    def test_build_design_system_tries_llm_first(self, monkeypatch):
+        """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
+        back to deterministic because TestProvider returns canned text."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+        monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "test")
+
+        design = build_design_system(_financial_dashboard_intent(), "react-vite")
+        # Fallback should still produce a valid result
+        assert design["schema_version"] == "signalos.design_system.v1"
+        assert design["ui_library"]["name"] in ("shadcn/ui", "@mantine/core")
+        assert design["state_management"]["name"] != ""
+
+    def test_select_design_with_llm_returns_none_on_empty_response(self, monkeypatch):
+        """select_design_with_llm returns None when provider returns empty."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+
+        from signalos_lib.product.design import select_design_with_llm
+        result = select_design_with_llm(_financial_dashboard_intent(), "react-vite")
+        # TestProvider returns canned text, not valid JSON -> None
+        assert result is None
+
+    def test_deterministic_fallback_unchanged(self):
+        """Deterministic fallback works exactly as before without env vars."""
+        import os
+        # Ensure no LLM env vars
+        for key in ("ANTHROPIC_API_KEY", "SIGNALOS_LLM_PROVIDER", "SIGNALOS_HARNESS_TEST"):
+            os.environ.pop(key, None)
+
+        design = build_design_system(_financial_dashboard_intent(), "react-vite")
+        assert design["ui_library"]["name"] == "shadcn/ui"
+        assert design["state_management"]["name"] == "zustand"

@@ -383,3 +383,55 @@ class TestSingularization:
         assert any("Result" in e for e in entities), (
             f"Expected entity containing 'Result', got {entities}"
         )
+
+
+# ---------------------------------------------------------------------------
+# LLM agent fallback tests (questions + assumptions)
+# ---------------------------------------------------------------------------
+
+class TestLLMQuestionsFallback:
+    def test_generate_questions_tries_llm_first(self, monkeypatch):
+        """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
+        back to deterministic because TestProvider returns canned text."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+        monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "test")
+
+        intent = extract_product_intent("")
+        questions = generate_questions(intent)
+        # Fallback produces valid questions
+        assert isinstance(questions, list)
+        assert len(questions) > 0
+        blocking = [q for q in questions if q["blocking"]]
+        assert "product_name" in [q["field"] for q in blocking]
+
+    def test_generate_questions_with_llm_returns_none_on_canned(self, monkeypatch):
+        """generate_questions_with_llm returns None on non-JSON response."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+
+        from signalos_lib.product.questions import generate_questions_with_llm
+        result = generate_questions_with_llm(extract_product_intent(""))
+        assert result is None
+
+
+class TestLLMAssumptionsFallback:
+    def test_record_assumptions_tries_llm_first(self, monkeypatch):
+        """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
+        back to deterministic because TestProvider returns canned text."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+        monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "test")
+
+        intent = extract_product_intent("")
+        assumptions = record_assumptions(intent)
+        # Fallback produces valid assumptions
+        assert isinstance(assumptions, list)
+        assert len(assumptions) > 0
+        fields = [a["field"] for a in assumptions]
+        assert "deployment_intent" in fields
+
+    def test_record_assumptions_with_llm_returns_none_on_canned(self, monkeypatch):
+        """record_assumptions_with_llm returns None on non-JSON response."""
+        monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
+
+        from signalos_lib.product.assumptions import record_assumptions_with_llm
+        result = record_assumptions_with_llm(extract_product_intent(""))
+        assert result is None

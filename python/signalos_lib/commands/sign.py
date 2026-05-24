@@ -141,7 +141,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
             role = raw
 
         if args.verdict is None:
-            raw_v = _prompt("  Verdict [APPROVED / APPROVED-WITH-CONDITIONS / WAIVED]: ").strip().upper()
+            raw_v = _prompt("  Verdict [APPROVED / APPROVED-WITH-CONDITIONS / WAIVED / REQUEST-CHANGES / REJECTED]: ").strip().upper()
             verdict = raw_v if raw_v in sign_lib.VALID_VERDICTS else "APPROVED"
 
         if verdict == "APPROVED-WITH-CONDITIONS" and not conditions:
