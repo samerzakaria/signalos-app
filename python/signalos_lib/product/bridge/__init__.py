@@ -1,1 +1,1 @@
-# signalos_lib.product.bridge — Asset inventory and bridge orchestration.
+# signalos_lib.product.bridge - Asset inventory and bridge orchestration.

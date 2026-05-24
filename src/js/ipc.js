@@ -1,5 +1,5 @@
-﻿/**
- * ipc.js - Frontend â†” Tauri bridge
+/**
+ * ipc.js - Frontend to Tauri bridge
  *
  * Wraps all Tauri invoke() calls in typed async functions.
  * Falls back to mock data when running outside Tauri (browser dev mode).
@@ -35,7 +35,7 @@ async function invoke(cmd, args = {}) {
   if (IS_TAURI) {
     return invokeTauri(cmd, args);
   }
-  // No mocks. SignalOS is a native installed app — if the Tauri runtime
+  // No mocks. SignalOS is a native installed app - if the Tauri runtime
   // is missing, the shell is broken. Fail loudly so production never
   // silently renders fake data. (User directive: 2026-05-15.)
   throw new Error(
@@ -83,7 +83,7 @@ function rejectPendingSidecars(message = "Command stopped by user.") {
   pendingSidecar.clear();
 }
 
-// â”€â”€â”€ WORKSPACE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// WORKSPACE
 
 export const workspace = {
   set:      (path)         => invoke("set_workspace",           { path }),
@@ -103,7 +103,7 @@ export const project = {
     invoke("write_workspace_files", { files, overwrite }),
   previewFiles: (files) =>
     invoke("preview_workspace_files", { files }),
-  // Wave 5 closeout — read + list inside the workspace sandbox.
+  // Wave 5 closeout - read + list inside the workspace sandbox.
   readFile: (relativePath) =>
     invoke("read_workspace_file", { relative_path: relativePath }),
   listDir: (relativePath = ".") =>
@@ -113,7 +113,7 @@ export const project = {
 export const secrets = {
   upsert: (name, value, filename = ".env.local") =>
     invoke("upsert_workspace_secret", { name, value, filename }),
-  // Wave 1 / G0-6 — Replit-style secrets manager
+  // Wave 1 / G0-6 - Replit-style secrets manager
   list:   (filename = ".env.local") =>
     invoke("list_workspace_secrets", { filename }),
   reveal: (name, filename = ".env.local") =>
@@ -130,7 +130,7 @@ export function onWorkspaceChange(cb) {
   return listenTauri("workspace:changed", (e) => cb(e.payload));
 }
 
-// â”€â”€â”€ SIGNAL COMMANDS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// SIGNAL COMMANDS
 
 export const signal = {
   run: (command, args = []) => invoke("run_signal_command", { command, args }),
@@ -167,39 +167,39 @@ export function invokeProgressContract(name) {
   return invokeSidecar("run_signal_command", { command: "phase:contract", args: [name] }, 5000);
 }
 
-// â”€â”€â”€ AUTO-UPDATER (T1-5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// AUTO-UPDATER (T1-5)
 
 export const updater = {
   check: (channel = "beta") => invoke("check_for_updates", { channel }),
 };
 
-// â”€â”€â”€ WAVE STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// WAVE STATE
 
 export const wave = {
   get: () => invokeSidecar("get_wave_state"),
 };
 
-// â”€â”€â”€ GIT / WORKTREE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GIT / WORKTREE
 
 export const git = {
   status: () => invoke("get_git_status"),
 };
 
-// â”€â”€â”€ GATES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// GATES
 
 export const gates = {
   getAll: ()                    => invokeSidecar("get_gate_status"),
   sign:   (gateId, signer)      => invokeSidecar("sign_gate", { gate_id: gateId, signer }),
 };
 
-// â”€â”€â”€ BRAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// BRAIN
 
 export const brain = {
   search: (query)                => invokeSidecar("get_brain_entries",  { query }),
   add:    (text, entryType)      => invokeSidecar("add_brain_entry",    { text, entry_type: entryType }),
 };
 
-// â”€â”€â”€ AUDIT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// AUDIT
 
 export const audit = {
   list: (limit = 50) => invokeSidecar("get_audit_trail", { limit }),
@@ -217,7 +217,7 @@ export const attachments = {
   ),
 };
 
-// ─── IDENTITY + ROLE (Wave 3) ────────────────────────────────────────────────
+// IDENTITY + ROLE (Wave 3)
 
 export const identity = {
   set:           (name, role)    => invoke("set_identity", { name, role }),
@@ -225,7 +225,7 @@ export const identity = {
   canSignGate:   (gateId)        => invoke("check_role_for_gate", { gate_id: gateId }),
 };
 
-// ─── TEST AUTOMATION (Wave 5 / G4) ───────────────────────────────────────────
+// TEST AUTOMATION (Wave 5 / G4)
 
 export const testAutomation = {
   listDebt:         ()                                  => invoke("list_test_debt"),
@@ -233,11 +233,11 @@ export const testAutomation = {
   resolveDebt:      (title)                             => invoke("resolve_test_debt", { title }),
   checkMutation:    (score, area)                       => invoke("check_mutation_threshold", { args: { score, area } }),
   checkTestFirst:   (testRefs)                          => invoke("check_test_first", { args: { test_refs: testRefs } }),
-  // Wave 5 / G4 + rule 12 — read mutation score from .signalos/mutation-score.json
+  // Wave 5 / G4 + rule 12 - read mutation score from .signalos/mutation-score.json
   readMutationScore: ()                                  => invoke("read_mutation_score"),
 };
 
-// ─── ENFORCEMENT (Wave 3 / G2-21..26) ────────────────────────────────────────
+// ENFORCEMENT (Wave 3 / G2-21..26)
 
 export const enforcement = {
   state:    ()                      => invoke("get_enforcement_state"),
@@ -248,7 +248,7 @@ export const enforcement = {
   unfreeze: ()                      => invoke("unfreeze_wave"),
 };
 
-// ─── PREVIEW (Wave 2 / G1-10+11) ─────────────────────────────────────────────
+// PREVIEW (Wave 2 / G1-10+11)
 
 export const preview = {
   probeNode: ()                  => invoke("probe_node"),
@@ -263,7 +263,7 @@ export function onPreviewEvent(cb) {
   return listenTauri("preview:event", (e) => cb(e.payload));
 }
 
-// ─── PROVIDER + COST ─────────────────────────────────────────────────────────
+// PROVIDER + COST
 
 export const provider = {
   list:         ()              => invoke("list_providers"),
@@ -282,7 +282,7 @@ export const provider = {
   test:         (p, apiKey, model) => invoke("test_provider_connection", { provider: p, api_key: apiKey || null, model: model || null }),
   chat:         (p, model, message) =>
     invoke("send_provider_message", { provider: p, model: model || null, message }),
-  // Wave 5 closeout — streaming chat. Caller listens via onChatToken(streamId, cb).
+  // Wave 5 closeout - streaming chat. Caller listens via onChatToken(streamId, cb).
   chatStream:   (streamId, p, model, message) =>
     invoke("send_provider_message_stream", { stream_id: streamId, provider: p, model: model || null, message }),
 };
@@ -299,7 +299,7 @@ export function onChatToken(streamId, cb) {
   return () => { unsub.then((f) => { try { f(); } catch {} }); };
 }
 
-// â”€â”€â”€ KEYCHAIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// KEYCHAIN
 
 export const keychain = {
   store:  (p, key) => invoke("store_api_key",  { provider: p, key }),

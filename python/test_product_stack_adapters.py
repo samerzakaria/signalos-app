@@ -96,7 +96,7 @@ class TestReactViteScaffold:
 class TestReactViteValidation:
     def test_validation_plan_has_install_build_test(self, tmp_path: Path) -> None:
         plan = ReactViteAdapter().validation_plan(tmp_path)
-        assert plan["install"] == ["npm install"]
+        assert plan["install"] == ["npm install --legacy-peer-deps"]
         assert plan["build"] == ["npm run build"]
         assert plan["test"] == ["npm test"]
 
@@ -219,7 +219,7 @@ class TestExistingRepoValidation:
         pkg = {"scripts": {"build": "tsc", "test": "jest", "lint": "eslint ."}}
         (tmp_path / "package.json").write_text(json.dumps(pkg), encoding="utf-8")
         plan = ExistingRepoAdapter().validation_plan(tmp_path)
-        assert plan["install"] == ["npm install"]
+        assert plan["install"] == ["npm install --legacy-peer-deps"]
         assert plan["build"] == ["npm run build"]
         assert plan["test"] == ["npm test"]
         assert plan["lint"] == ["npm run lint"]

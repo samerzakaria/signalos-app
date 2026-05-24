@@ -269,7 +269,7 @@ def run_scaffold(
         resolved_profile = stacks.detect_profile(repo_root)
         profile_detected = True
 
-    # 6. Run adapter scaffold (skip for adopt mode — preserve existing files)
+    # 6. Run adapter scaffold (skip for adopt mode - preserve existing files)
     if resolved_mode != "adopt":
         try:
             adapter = stacks.get_adapter(resolved_profile)

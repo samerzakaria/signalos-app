@@ -34,7 +34,7 @@ def _node_available() -> bool:
 
 
 pytestmark = pytest.mark.skipif(
-    not _node_available(), reason="Node.js not available — skipping live E2E",
+    not _node_available(), reason="Node.js not available - skipping live E2E",
 )
 
 
@@ -89,7 +89,7 @@ class TestLiveE2E:
             val = _load_validation_result(repo)
             results = val.get("results", {})
 
-            # Install should have run (not skipped — that would mean dry-run)
+            # Install should have run (not skipped - that would mean dry-run)
             install_status = results.get("install", {}).get("status")
             assert install_status in (
                 "passed", "failed", "blocked",
@@ -127,13 +127,14 @@ class TestLiveE2E:
 
             val = _load_validation_result(repo)
             install_status = val.get("results", {}).get("install", {}).get("status")
-
-            if install_status != "passed":
-                pytest.skip(f"Install did not pass ({install_status}); cannot verify test execution")
+            assert install_status == "passed", (
+                f"Install must pass (got {install_status}): "
+                f"{val.get('results', {}).get('install', {}).get('output', '')[:300]}"
+            )
 
             test_status = val.get("results", {}).get("test", {}).get("status")
             # Tests may fail (generated code might not pass) but they should
-            # at least RUN — not be "skipped" or "blocked".
+            # at least RUN - not be "skipped" or "blocked".
             assert test_status in (
                 "passed", "failed",
             ), f"Tests were: {test_status}"
@@ -154,16 +155,15 @@ class TestLiveE2E:
 
             # Install dependencies
             result = subprocess.run(
-                "npm install",
+                "npm install --legacy-peer-deps",
                 cwd=str(repo),
                 capture_output=True,
                 timeout=120,
                 shell=True,
             )
-            if result.returncode != 0:
-                pytest.skip(
-                    f"npm install failed: {result.stderr.decode()[:200]}"
-                )
+            assert result.returncode == 0, (
+                f"npm install must succeed: {result.stderr.decode()[:300]}"
+            )
 
             # Start dev server
             proc = subprocess.Popen(
@@ -238,5 +238,5 @@ class TestLiveE2E:
                 if r.get("status") != "skipped"
             ]
             assert len(non_skipped) > 0, (
-                "All checks were skipped — pipeline did not execute real commands"
+                "All checks were skipped - pipeline did not execute real commands"
             )

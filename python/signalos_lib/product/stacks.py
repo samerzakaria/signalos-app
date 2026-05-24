@@ -279,7 +279,7 @@ class ReactViteAdapter:
 
     def validation_plan(self, repo_root: Path) -> dict[str, list[str]]:
         plan = _empty_validation_plan()
-        plan["install"] = ["npm install"]
+        plan["install"] = ["npm install --legacy-peer-deps"]
         plan["build"] = ["npm run build"]
         plan["test"] = ["npm test"]
         return plan
@@ -481,7 +481,7 @@ class ExistingRepoAdapter:
             except (json.JSONDecodeError, OSError):
                 scripts = {}
 
-            plan["install"] = ["npm install"]
+            plan["install"] = ["npm install --legacy-peer-deps"]
             if "build" in scripts:
                 plan["build"] = ["npm run build"]
             if "test" in scripts:

@@ -1,6 +1,6 @@
 """Deploy decision and evidence recording for SignalOS-governed product repos.
 
-This module records deploy decisions and evidence — it does NOT execute
+This module records deploy decisions and evidence - it does NOT execute
 deployments.  Deploy is always opt-in, explicit, and evidence-backed.
 """
 
@@ -60,7 +60,7 @@ def make_deploy_decision(
 ) -> dict[str, Any]:
     """Make and record a deploy decision.
 
-    The function only records the decision — it never performs a deployment.
+    The function only records the decision - it never performs a deployment.
 
     Parameters
     ----------
@@ -86,7 +86,7 @@ def make_deploy_decision(
             "decided_at": _utc_now(),
             "validation_status": "unknown",
             "deploy_allowed": False,
-            "reason": f"Invalid mode: {mode!r} — expected one of {sorted(VALID_MODES)}",
+            "reason": f"Invalid mode: {mode!r} - expected one of {sorted(VALID_MODES)}",
             "blockers": [f"Invalid mode: {mode!r}"],
             "evidence": {
                 "validation_closeable": None,
@@ -115,7 +115,7 @@ def make_deploy_decision(
             mode=mode,
             validation_status=validation_status,
             deploy_allowed=False,
-            reason="Prepare mode — evidence created, no live deploy",
+            reason="Prepare mode - evidence created, no live deploy",
             blockers=[],
             closeable=closeable,
             level=level,

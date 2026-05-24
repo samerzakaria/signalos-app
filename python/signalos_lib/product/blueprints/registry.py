@@ -1,9 +1,9 @@
 # signalos_lib/product/blueprints/registry.py
-# Phase P2 — Blueprint Registry
+# Phase P2 - Blueprint Registry
 #
 # Data-driven blueprint loader, validator, and intent matcher.
 # Adding a new product type means adding a blueprint directory and
-# an entry in registry.json — no code changes required.
+# an entry in registry.json - no code changes required.
 
 from __future__ import annotations
 

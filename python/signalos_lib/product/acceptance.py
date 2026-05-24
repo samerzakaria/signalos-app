@@ -1,7 +1,7 @@
 # signalos_lib/product/acceptance.py
-# Phase P6 — TDD and Acceptance Plan
+# Phase P6 - TDD and Acceptance Plan
 #
-# Builds an acceptance matrix mapping intent → criteria → test scenarios.
+# Builds an acceptance matrix mapping intent -> criteria -> test scenarios.
 # The matrix is the gate artifact that must be green before delivery closure.
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Profile → test-file target mapping
+# Profile -> test-file target mapping
 # ---------------------------------------------------------------------------
 
 _PROFILE_TEST_TARGETS: dict[str, str] = {
@@ -286,10 +286,10 @@ def check_closure_readiness(matrix: dict[str, Any]) -> dict[str, Any]:
             passed += 1
         elif st == "failed":
             failed += 1
-            blockers.append(f"{crit['id']}: {crit.get('description', '')} — failed")
+            blockers.append(f"{crit['id']}: {crit.get('description', '')} - failed")
         elif st == "pending":
             pending += 1
-            blockers.append(f"{crit['id']}: {crit.get('description', '')} — pending")
+            blockers.append(f"{crit['id']}: {crit.get('description', '')} - pending")
         elif st == "skipped":
             skipped += 1
 

@@ -122,7 +122,7 @@ _NOISE_WORDS = {
 }
 
 # ---------------------------------------------------------------------------
-# Role / actor words — these go to target_users, not entities
+# Role / actor words - these go to target_users, not entities
 # ---------------------------------------------------------------------------
 
 _ROLE_WORDS = {
@@ -142,7 +142,7 @@ _ROLE_PHRASES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Workflow gerunds / verb-nouns — these indicate workflows, not entities
+# Workflow gerunds / verb-nouns - these indicate workflows, not entities
 # ---------------------------------------------------------------------------
 
 _WORKFLOW_GERUNDS = {
@@ -151,7 +151,7 @@ _WORKFLOW_GERUNDS = {
     "onboarding", "billing", "invoicing",
 }
 
-# Patterns: "X management" → manage_X, "X tracking" → track_X
+# Patterns: "X management" -> manage_X, "X tracking" -> track_X
 _WORKFLOW_SUFFIX_MAP: dict[str, str] = {
     "management": "manage",
     "tracking": "track",
@@ -169,9 +169,9 @@ _WORKFLOW_SUFFIX_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 _PLURAL_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"ies$"), "y"),       # categories → category
-    (re.compile(r"ses$"), "s"),       # addresses → address
-    (re.compile(r"([^s])s$"), r"\1"), # tasks → task
+    (re.compile(r"ies$"), "y"),       # categories -> category
+    (re.compile(r"ses$"), "s"),       # addresses -> address
+    (re.compile(r"([^s])s$"), r"\1"), # tasks -> task
 ]
 
 
@@ -193,7 +193,7 @@ def _singularize(word: str) -> str:
 
 
 def _to_pascal_case(phrase: str) -> str:
-    """Convert a phrase to PascalCase: 'lab results' → 'LabResult'."""
+    """Convert a phrase to PascalCase: 'lab results' -> 'LabResult'."""
     words = phrase.strip().split()
     # Singularize the last word (the head noun)
     if words:
@@ -259,7 +259,7 @@ def _classify_entities(
     for raw in raw_entities:
         lower = raw.lower().strip()
 
-        # Skip security/auth/audit phrases — not domain entities
+        # Skip security/auth/audit phrases - not domain entities
         if _is_non_entity(lower):
             continue
 

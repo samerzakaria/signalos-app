@@ -1,5 +1,5 @@
 # signalos_lib/product/questions.py
-# Phase P1 — Blocking clarifying questions for ambiguous intent
+# Phase P1 - Blocking clarifying questions for ambiguous intent
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ __all__ = ["generate_questions"]
 from typing import Any
 
 
-# Fields that MUST have values before proceeding — blocking questions.
+# Fields that MUST have values before proceeding - blocking questions.
 _CRITICAL_FIELDS: list[tuple[str, str]] = [
     ("product_name", "What is the name of the product you want to build?"),
     ("product_type", "What kind of product is this? (e.g. task manager, dashboard, e-commerce store)"),
     ("primary_workflows", "What are the main things users need to do in this product?"),
 ]
 
-# Fields that are nice to know — non-blocking questions.
+# Fields that are nice to know - non-blocking questions.
 _OPTIONAL_FIELDS: list[tuple[str, str]] = [
     ("target_users", "Who are the primary users of this product?"),
     ("entities", "What are the main data objects? (e.g. projects, tasks, users, invoices)"),

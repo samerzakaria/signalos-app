@@ -50,7 +50,7 @@ GATE_DESCRIPTIONS = {
 # multiplexer can route it to the `sidecar:progress` event.
 #
 # A PhaseContract is a list of (phase_id, [substep_id, ...]) tuples. The
-# emitter walks substeps in order, marking each pending → running → done.
+# emitter walks substeps in order, marking each pending -> running -> done.
 # Errors flip state to "error" and stop the walk.
 
 import time as _time
@@ -119,7 +119,7 @@ def handle(req: dict) -> dict:
     raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
     args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
-    # WAVE-ENGINE-DESIGN §3.2 — multi-project plumbing. UI does not yet
+    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. UI does not yet
     # expose a project picker, so callers omit `project_id` and we default
     # to "default" (today's workspace-root layout).
     project_id = str(req.get("project_id") or "default")
@@ -139,7 +139,8 @@ def handle(req: dict) -> dict:
 
 
 def route(req_id: str, command: str, args: list[str], project_id: str = "default") -> dict:
-    if command.startswith("/signal-") or command.startswith("signal-"):
+    direct_cli_commands = {"deliver", "deliver-intent", "deliver-design"}
+    if command in direct_cli_commands or command.startswith("/signal-") or command.startswith("signal-"):
         return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id, project_id=project_id))
 
     if command == "state:wave":
@@ -221,9 +222,9 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             return err(req_id, f"Unknown phase contract: {name}")
         return ok(req_id, data={"name": name, "phases": contract})
 
-    # ── Wave engine handlers (M-W3..M-W7) ─────────────────────────────────
+    # Wave engine handlers (M-W3..M-W7)
     # The engine is reconstructed per-request from disk inspection (the
-    # design's persistence model for v1 — see WAVE-ENGINE-DESIGN §3.1).
+    # design's persistence model for v1 - see WAVE-ENGINE-DESIGN section3.1).
     # Each handler builds a fresh WaveEngine, runs the requested action,
     # and returns the structured result for the chat layer to render.
 
@@ -297,11 +298,11 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
 def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: str = "default") -> str:
     cwd = os.getcwd()
     redacted = redact_arg_list(args)
-    # WAVE-ENGINE-DESIGN §3.2 — multi-project plumbing. The UI does not yet
+    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. The UI does not yet
     # expose a project picker, so the IPC layer accepts project_id but only
     # forwards it to subcommands that have a --project-id flag wired. Future
     # M-Wx milestones extend the list of commands that consume it.
-    _ = project_id  # plumbing — used by future M-W3+ command-wiring
+    _ = project_id  # plumbing - used by future M-W3+ command-wiring
 
     # Wave checkpoint: capture pre-wave HEAD SHA so "Undo Wave" can
     # restore the workspace to its pre-approval state.
@@ -371,10 +372,10 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         return ["release-readiness", "--repo-root", cwd, *cleaned_args]
 
     if command == "signal-init":
-        # Init modes — Wave 1 / G0-1. The wizard (G0-2) is the user-facing
+        # Init modes - Wave 1 / G0-1. The wizard (G0-2) is the user-facing
         # picker; this function only knows how to translate the chosen mode
-        # into the right argv. Default mode is "keep" — non-destructive.
-        # See docs/DEEP_REVIEW_AS_END_USER_2026-05-14.md §11.4b.
+        # into the right argv. Default mode is "keep" - non-destructive.
+        # See docs/DEEP_REVIEW_AS_END_USER_2026-05-14.md section11.4b.
         if cleaned_args and cleaned_args[0] in {"--mode", "-m"} and len(cleaned_args) >= 2:
             mode = cleaned_args[1]
             tail = cleaned_args[2:]
@@ -391,7 +392,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
             return ["init", cwd, "--yes", "--minimal", *tail]
         if mode == "full":
             return ["init", cwd, "--yes", "--force", *tail]
-        # "keep" (default): merge — write bundle files only where the user
+        # "keep" (default): merge - write bundle files only where the user
         # has no file of that name. Never overwrites user content. Safe even
         # if the user picked a populated folder by mistake.
         return ["init", cwd, "--yes", "--keep-existing", *tail]
@@ -885,39 +886,39 @@ def audit_list(limit: int) -> list[dict]:
     return list(reversed(entries))[:limit]
 
 
-# ── Wave engine handlers (M-W3..M-W7) ───────────────────────────────────────
+# Wave engine handlers (M-W3..M-W7)
 # Each handler reconstructs a fresh WaveEngine from the workspace root and
 # returns a JSON-serializable result. The engine is stateless across
-# requests in v1 — state lives in .signalos/ (read by inspect()) and in
+# requests in v1 - state lives in .signalos/ (read by inspect()) and in
 # the request payload (current_gate, user_request, etc).
 #
 # IPC contract per command:
 #   wave:begin                args=[user_request]
-#                             → {action, current_gate, agent, inspection,
+#                             -> {action, current_gate, agent, inspection,
 #                                drift, system_bubble}
 #   wave:reply                args=[user_reply, current_gate]
-#                             → {action, signed_gate?, current_gate,
+#                             -> {action, signed_gate?, current_gate,
 #                                system_bubble, auto_signed?, ...}
 #   wave:scope-drift-resolve  args=[user_request, choice(a|b|c|d)]
-#                             → {action, mode?, current_gate}
+#                             -> {action, mode?, current_gate}
 #   wave:translate-external   args=[artifact_path_or_url, optional gate]
-#                             → {translation, gate, system_bubble}
+#                             -> {translation, gate, system_bubble}
 #   wave:violation-request    args=[{violation_kind, findings, gate?}]
-#                             → {prompt, system_bubble}
+#                             -> {prompt, system_bubble}
 #   wave:violation-confirm    args=[{violation_kind, choice, user_reply,
 #                                    findings, gate?}]
-#                             → {audit_entry, system_bubble}
+#                             -> {audit_entry, system_bubble}
 #   wave:g5-handoff           args=[wave_id, optional summary_dict]
-#                             → {commit_outcome, system_bubble}
+#                             -> {commit_outcome, system_bubble}
 
 
 def _build_engine(project_id: str = "default"):
     """Construct a WaveEngine rooted at the current working directory.
 
-    Deferred import — keeps signalos_ipc_server cheap to import for the
+    Deferred import - keeps signalos_ipc_server cheap to import for the
     non-wave-engine code paths (status, sign, brain, etc.).
 
-    When SIGNALOS_LLM_JUDGE_DRIFT=1 is set (per design §13.Q2 — opt-in
+    When SIGNALOS_LLM_JUDGE_DRIFT=1 is set (per design section13.Q2 - opt-in
     LLM-judged scope-drift), the engine is constructed with the harness
     LLM-judge wired in. The cheap heuristic still runs first; the judge
     only fires in the ambiguous zone (0.1 < overlap < 0.4).
@@ -938,7 +939,7 @@ def _serialize_engine_result(result: dict) -> dict:
     """Drop non-JSON-serializable fields (e.g., Path objects) so the
     structured engine result survives the IPC json.dumps step."""
     # Paths inside inspection/artifacts already come back as strings via
-    # wave_engine.inspect — but if a future change leaks a Path through,
+    # wave_engine.inspect - but if a future change leaks a Path through,
     # this layer is a safety net.
     def _walk(obj):
         if isinstance(obj, dict):

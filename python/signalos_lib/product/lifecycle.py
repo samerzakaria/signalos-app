@@ -162,7 +162,7 @@ def init_product_repo(
     For adopt: runs init with ``--keep-existing``.
     For refresh: runs init with ``--refresh-bundle``.
 
-    Delegates to ``signalos_lib.commands.init.main`` — does NOT duplicate
+    Delegates to ``signalos_lib.commands.init.main`` - does NOT duplicate
     init logic.
 
     Returns ``{"success": bool, "mode": str, "errors": list}``.
@@ -182,8 +182,10 @@ def init_product_repo(
         argv.extend(["--name", product_name])
 
     if mode == "greenfield":
-        # init will create the directory via --yes
-        pass
+        # The delivery pipeline may have already created the target dir
+        # (e.g., for writing INTENT.json). Use --keep-existing so init
+        # merges governance files without rejecting a non-empty dir.
+        argv.append("--keep-existing")
     elif mode == "adopt":
         argv.append("--keep-existing")
     elif mode == "refresh":

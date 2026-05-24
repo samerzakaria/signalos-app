@@ -1,5 +1,5 @@
 # signalos_lib/product/assumptions.py
-# Phase P1 — Record safe-default assumptions for empty non-critical fields
+# Phase P1 - Record safe-default assumptions for empty non-critical fields
 
 from __future__ import annotations
 

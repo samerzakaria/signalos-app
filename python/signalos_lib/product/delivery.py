@@ -201,7 +201,7 @@ def run_delivery(
         pass  # state file may not exist if everything failed
 
     # ------------------------------------------------------------------
-    # 2b. DESIGN phase — select UX library, tokens, state management
+    # 2b. DESIGN phase - select UX library, tokens, state management
     # ------------------------------------------------------------------
     design = None
     design_deps: dict[str, str] = {}
@@ -298,7 +298,7 @@ def run_delivery(
             pass
 
     # ------------------------------------------------------------------
-    # 5b. SECURITY phase — injection scan, threat model, GDPR detection
+    # 5b. SECURITY phase - injection scan, threat model, GDPR detection
     # ------------------------------------------------------------------
     try:
         gen_files = (

@@ -1,4 +1,4 @@
-// DeliverView.test.tsx — Product Delivery Bridge guided flow tests.
+// DeliverView.test.tsx - Product Delivery Bridge guided flow tests.
 //
 // Covers the load-bearing render paths:
 //   1. Renders prompt input step initially
