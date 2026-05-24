@@ -1,4 +1,4 @@
-// DeliverView.tsx — Product Delivery Bridge guided flow
+// DeliverView.tsx - Product Delivery Bridge guided flow
 //
 // Multi-step wizard that collects prompt, shows intent/design,
 // runs delivery, and displays closeout. Calls the Python sidecar
@@ -60,6 +60,56 @@ const PHASES = [
   'Closeout',
 ];
 
+const parseIpcJson = (raw: unknown): any => {
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  return JSON.parse(text);
+};
+
+const textItems = (items: unknown): string[] => {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        return String(record.question ?? record.reason ?? record.assumed_value ?? record.field ?? '');
+      }
+      return String(item ?? '');
+    })
+    .filter(Boolean);
+};
+
+const normalizeIntentPayload = (payload: any): any => {
+  const intent = payload?.intent ?? payload ?? {};
+  return {
+    ...intent,
+    primary_workflows: intent.primary_workflows ?? intent.workflows ?? [],
+    ux_surfaces: intent.ux_surfaces ?? intent.surfaces ?? [],
+    workflows: intent.workflows ?? intent.primary_workflows ?? [],
+    surfaces: intent.surfaces ?? intent.ux_surfaces ?? [],
+    assumptions: textItems(payload?.assumptions ?? intent.assumptions ?? []),
+  };
+};
+
+const normalizeDesignPayload = (payload: any): any => {
+  const design = payload?.design ?? payload ?? {};
+  const tokens = design.tokens ?? {
+    color: design.design_tokens?.primary_color,
+    typography: design.design_tokens?.font_family,
+    spacing: design.design_tokens?.spacing_unit ? `${design.design_tokens.spacing_unit}px` : design.design_tokens?.spacing,
+  };
+  return {
+    ...design,
+    ui_library: typeof design.ui_library === 'object' ? design.ui_library?.name : design.ui_library,
+    ui_reason: typeof design.ui_library === 'object' ? design.ui_library?.reason : design.ui_reason,
+    tokens,
+    state_management: typeof design.state_management === 'object' ? design.state_management?.name : design.state_management,
+    data_layer: typeof design.data_layer === 'object' ? design.data_layer?.name : design.data_layer,
+    form_handling: typeof design.form_handling === 'object' ? design.form_handling?.name : design.form_handling,
+    dependencies: payload?.dependencies ?? design.dependencies ?? design.additional_deps ?? {},
+  };
+};
+
 export function DeliverView() {
   const [state, setState] = useState<DeliverState>(INITIAL_STATE);
 
@@ -80,13 +130,13 @@ export function DeliverView() {
         '--json',
       ], 30000);
 
-      const intentText = typeof intentRaw === 'string' ? intentRaw : JSON.stringify(intentRaw);
-      const intent = JSON.parse(intentText);
+      const payload = parseIpcJson(intentRaw);
+      const intent = normalizeIntentPayload(payload);
 
       updateState({
         loading: false,
         intent,
-        questions: intent.questions || [],
+        questions: textItems(payload.questions ?? intent.questions ?? []),
         completedPhases: ['Intent'],
         currentPhase: null,
       });
@@ -107,8 +157,7 @@ export function DeliverView() {
         '--json',
       ], 30000);
 
-      const designText = typeof designRaw === 'string' ? designRaw : JSON.stringify(designRaw);
-      const design = JSON.parse(designText);
+      const design = normalizeDesignPayload(parseIpcJson(designRaw));
 
       updateState({
         loading: false,
@@ -135,8 +184,7 @@ export function DeliverView() {
         '--json',
       ], 300000); // 5 minute timeout for full delivery
 
-      const closeoutText = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      const closeout = JSON.parse(closeoutText);
+      const closeout = parseIpcJson(raw);
 
       updateState({
         loading: false,
@@ -309,22 +357,22 @@ export function DeliverView() {
         </div>
       ) : null}
 
-      {state.intent?.workflows && state.intent.workflows.length > 0 ? (
+      {state.intent?.primary_workflows && state.intent.primary_workflows.length > 0 ? (
         <div className="deliver-section">
           <h3><i className="ti ti-arrows-split"></i> Workflows</h3>
           <ul className="deliver-list">
-            {state.intent.workflows.map((w: string, i: number) => (
+            {state.intent.primary_workflows.map((w: string, i: number) => (
               <li key={i}>{w}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {state.intent?.surfaces && state.intent.surfaces.length > 0 ? (
+      {state.intent?.ux_surfaces && state.intent.ux_surfaces.length > 0 ? (
         <div className="deliver-section">
           <h3><i className="ti ti-layout"></i> Surfaces</h3>
           <ul className="deliver-list">
-            {state.intent.surfaces.map((s: string, i: number) => (
+            {state.intent.ux_surfaces.map((s: string, i: number) => (
               <li key={i}>{s}</li>
             ))}
           </ul>
@@ -570,7 +618,7 @@ export function DeliverView() {
           <div className="deliver-detail">
             <strong>{c.name || state.name || 'Product'}</strong>
             {c.workspace?.repo_root ? (
-              <span className="deliver-meta" data-testid="deliver-repo-path"> — {c.workspace.repo_root}</span>
+              <span className="deliver-meta" data-testid="deliver-repo-path"> - {c.workspace.repo_root}</span>
             ) : null}
           </div>
         </div>
