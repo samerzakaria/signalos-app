@@ -37,44 +37,43 @@ from .stacks import get_adapter
 # Governance instructions bundling
 # ---------------------------------------------------------------------------
 
-_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / "_bundle" / "core"
+_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / "_bundle"
 
-_GOVERNANCE_FILES = [
-    # Constitution and enforcement — the supreme law
-    "governance/Governance/CONSTITUTION.md",
-    "governance/ENFORCEMENT.md",
-    # Coding and test standards
-    "execution/templates/typescript-standards.md",
-    "execution/build/test-generation/SKILL.md",
-    "execution/build/test-generation/references/test-patterns.md",
-    "execution/build/test-generation/references/test-type-matrix.md",
-    # Security
-    "execution/review/comprehensive-code-review/references/security-review.md",
-    "execution/build/scope-implement/references/security-checklist.md",
-    # Trust tiers
-    "execution/templates/trust-tier-declaration-template.md",
-    # Agent contracts
-    "execution/agents/build.md",
-    "execution/agents/test.md",
-    "execution/agents/security.md",
-    "execution/agents/design.md",
-    "execution/agents/review.md",
-    # Quality gate
-    "governance/QUALITY_CHECK.md",
+# Governance directories to scan — ALL .md and .mdc files are included.
+# Agents are bound by the FULL governance library, not a subset.
+_GOVERNANCE_DIRS = [
+    "core/governance",
+    "core/execution/agents",
+    "core/execution/commands",
+    "core/execution/templates",
+    "core/execution/build",
+    "core/execution/review",
+    "core/execution/skills",
+    "integrations/rules",
 ]
+
+_GOVERNANCE_EXTENSIONS = {".md", ".mdc", ".yaml", ".yml"}
 
 
 def collect_governance_instructions() -> dict[str, str]:
-    """Collect governance instruction files for the agent packet.
+    """Collect ALL governance instruction files for the agent packet.
 
-    Returns a dict of {relative_path: file_content} for all governance
-    files that agents are contractually bound to follow.  Missing files
-    are silently skipped (graceful in dev environments).
+    Scans the full bundle directory tree for .md, .mdc, .yaml files.
+    Returns a dict of {relative_path: file_content}.  Agents are
+    contractually bound to follow EVERY file in this set — not a
+    cherry-picked subset.
     """
     instructions: dict[str, str] = {}
-    for rel in _GOVERNANCE_FILES:
-        path = _BUNDLE_ROOT / rel
-        if path.is_file():
+    for dir_rel in _GOVERNANCE_DIRS:
+        dir_path = _BUNDLE_ROOT / dir_rel
+        if not dir_path.is_dir():
+            continue
+        for path in dir_path.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in _GOVERNANCE_EXTENSIONS:
+                continue
+            rel = path.relative_to(_BUNDLE_ROOT).as_posix()
             try:
                 instructions[rel] = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
