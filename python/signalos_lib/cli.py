@@ -400,6 +400,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wave-velocity metrics for dashboard sidebar")
     p_velocity.add_argument("velocity_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    # Product delivery bridge — full pipeline orchestration
+    from signalos_lib.commands.deliver import register as _register_deliver
+    _register_deliver(sub)
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1150,6 +1154,11 @@ def main(argv: list[str]) -> int:
     if cmd == "signal-velocity":
         from signalos_lib.commands.velocity import cmd_signal_velocity
         return cmd_signal_velocity(list(getattr(args, "velocity_args", None) or []))
+
+    # Product delivery bridge
+    if cmd == "deliver":
+        from signalos_lib.commands.deliver import cmd_deliver
+        return cmd_deliver(args)
 
     return 1
 

@@ -12,7 +12,9 @@ __all__ = [
     "compute_sha256_lf",
     "generate_file_content",
     "generate_product",
+    "link_generation_to_acceptance",
     "load_generation_manifest",
+    "verify_trace_completeness",
     "write_generation_manifest",
 ]
 
@@ -387,6 +389,7 @@ def generate_product(
     profile: str,
     wave: str = "1",
     task_ids: list[str] | None = None,
+    acceptance_matrix: dict | None = None,
 ) -> dict:
     """Generate product files from intent, blueprint, and profile.
 
@@ -395,7 +398,8 @@ def generate_product(
     2. Generate tests first (TDD)
     3. Generate implementation files
     4. Generate route/module registration
-    5. Write generation manifest
+    5. Link files to acceptance criteria (if matrix provided)
+    6. Write generation manifest
 
     Returns generation manifest dict.
     """
@@ -421,6 +425,15 @@ def generate_product(
         file_records = _generate_generic(
             repo_root, intent, blueprint, blueprint_id, targets,
         )
+
+    # Assign task_ids round-robin if provided
+    if task_ids:
+        for i, rec in enumerate(file_records):
+            rec["task_id"] = task_ids[i % len(task_ids)]
+
+    # Link to acceptance criteria if matrix provided
+    if acceptance_matrix is not None:
+        _link_records_to_acceptance(file_records, acceptance_matrix)
 
     # Write files to disk respecting overwrite rules
     for rec in file_records:
@@ -638,3 +651,156 @@ def _flatten_validation(plan: dict[str, list[str]]) -> list[str]:
                 "e2e", "runtime_smoke", "ux_smoke", "security"):
         result.extend(plan.get(key, []))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Internal: acceptance-criteria linking for file records
+# ---------------------------------------------------------------------------
+
+def _match_criterion_for_file(
+    file_rec: dict[str, Any],
+    criteria: list[dict[str, Any]],
+    test_scenarios: list[dict[str, Any]],
+) -> str | None:
+    """Find the best-matching acceptance criterion ID for a file record.
+
+    Matching strategy (case-insensitive):
+    1. Extract entity/component name from the file path
+    2. Match against criterion entity field
+    3. Match against criterion workflow field
+    4. For test files, match against test scenario descriptions
+    """
+    path_lower = file_rec.get("path", "").lower()
+
+    # Extract a meaningful name from the path (e.g. "TaskList" from
+    # "src/components/TaskList.tsx" or "task" from "task.py")
+    path_stem = Path(file_rec.get("path", "")).stem
+    # Strip test prefixes/suffixes
+    clean_stem = path_stem.replace(".test", "").replace("test_", "")
+    stem_lower = clean_stem.lower()
+
+    # 1. Match by entity name
+    for crit in criteria:
+        entity = crit.get("entity")
+        if entity and entity.lower() in stem_lower:
+            return crit["id"]
+
+    # 2. Match by workflow name
+    for crit in criteria:
+        workflow = crit.get("workflow")
+        if workflow:
+            # Check if any word from the workflow appears in the path
+            workflow_words = [w.lower() for w in workflow.split() if len(w) > 2]
+            for word in workflow_words:
+                if word in stem_lower or word in path_lower:
+                    return crit["id"]
+
+    # 3. For test files, match against test scenario descriptions
+    if file_rec.get("kind") == "test":
+        for scenario in test_scenarios:
+            desc_words = [
+                w.lower() for w in scenario.get("description", "").split()
+                if len(w) > 3
+            ]
+            for word in desc_words:
+                if word in stem_lower:
+                    return scenario.get("acceptance_id")
+
+    return None
+
+
+def _link_records_to_acceptance(
+    file_records: list[dict[str, Any]],
+    acceptance_matrix: dict[str, Any],
+) -> None:
+    """Link file records to acceptance criteria in place."""
+    criteria = acceptance_matrix.get("criteria", [])
+    test_scenarios = acceptance_matrix.get("test_scenarios", [])
+
+    for rec in file_records:
+        if rec.get("acceptance_id") is not None:
+            continue  # already linked
+        matched = _match_criterion_for_file(rec, criteria, test_scenarios)
+        if matched is not None:
+            rec["acceptance_id"] = matched
+
+
+# ---------------------------------------------------------------------------
+# Public: link_generation_to_acceptance
+# ---------------------------------------------------------------------------
+
+def link_generation_to_acceptance(
+    manifest: dict,
+    acceptance_matrix: dict,
+) -> dict:
+    """Link generated files to acceptance criteria.
+
+    For each file in the manifest:
+    - Match by entity name -> find AC with matching entity
+    - Match by workflow name -> find AC with matching workflow
+    - Match test files to test scenarios by description keywords
+
+    Updates manifest files in place with acceptance_id and task_id.
+    Returns the updated manifest.
+    """
+    criteria = acceptance_matrix.get("criteria", [])
+    test_scenarios = acceptance_matrix.get("test_scenarios", [])
+
+    for file_rec in manifest.get("files", []):
+        if file_rec.get("acceptance_id") is not None:
+            continue
+        matched = _match_criterion_for_file(file_rec, criteria, test_scenarios)
+        if matched is not None:
+            file_rec["acceptance_id"] = matched
+
+    return manifest
+
+
+# ---------------------------------------------------------------------------
+# Public: verify_trace_completeness
+# ---------------------------------------------------------------------------
+
+def verify_trace_completeness(
+    manifest: dict,
+    acceptance_matrix: dict,
+) -> dict:
+    """Verify that every generated file traces back to acceptance criteria.
+
+    Returns:
+    {
+        "complete": bool,
+        "linked_files": int,
+        "unlinked_files": int,
+        "unlinked_paths": list[str],
+        "covered_criteria": list[str],   # AC IDs covered by at least one file
+        "uncovered_criteria": list[str],  # AC IDs with no linked file
+    }
+    """
+    files = manifest.get("files", [])
+    linked = 0
+    unlinked = 0
+    unlinked_paths: list[str] = []
+    covered_set: set[str] = set()
+
+    for f in files:
+        aid = f.get("acceptance_id")
+        if aid is not None:
+            linked += 1
+            covered_set.add(aid)
+        else:
+            unlinked += 1
+            unlinked_paths.append(f.get("path", ""))
+
+    all_criteria_ids = [
+        c["id"] for c in acceptance_matrix.get("criteria", [])
+    ]
+    uncovered = [cid for cid in all_criteria_ids if cid not in covered_set]
+
+    return {
+        "complete": unlinked == 0 and len(uncovered) == 0,
+        "linked_files": linked,
+        "unlinked_files": unlinked,
+        "unlinked_paths": unlinked_paths,
+        "covered_criteria": sorted(covered_set),
+        "uncovered_criteria": uncovered,
+    }

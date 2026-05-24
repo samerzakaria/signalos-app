@@ -19,9 +19,12 @@ from signalos_lib.product.generation import (
     compute_sha256_lf,
     generate_file_content,
     generate_product,
+    link_generation_to_acceptance,
     load_generation_manifest,
+    verify_trace_completeness,
     write_generation_manifest,
 )
+from signalos_lib.product.acceptance import build_acceptance_matrix
 from signalos_lib.product.blueprints.registry import load_blueprint
 
 
@@ -563,3 +566,136 @@ class TestGenerateFileContent:
             kind="config", profile="react-vite", blueprint=bp,
         )
         assert "export interface X" in content
+
+
+# ---------------------------------------------------------------------------
+# W4 trace linkage: acceptance matrix integration
+# ---------------------------------------------------------------------------
+
+class TestAcceptanceLinkage:
+    """Tests for linking generated files to acceptance criteria."""
+
+    @pytest.fixture
+    def acceptance_matrix(self, task_intent, task_blueprint):
+        return build_acceptance_matrix(task_intent, task_blueprint, "react-vite")
+
+    def test_generation_with_acceptance_links_files(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """Generate with acceptance matrix -> files have non-None acceptance_ids."""
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+            acceptance_matrix=acceptance_matrix,
+        )
+        linked = [f for f in manifest["files"] if f["acceptance_id"] is not None]
+        assert len(linked) > 0, "No files were linked to acceptance criteria"
+
+    def test_link_generation_to_acceptance_matches_entities(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """Entity-based matching links Task files to Task criteria."""
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
+        # TaskList and TaskForm should be linked to the task entity criterion
+        task_files = [
+            f for f in manifest["files"]
+            if "task" in f["path"].lower()
+            and f["path"].endswith((".tsx", ".test.tsx"))
+        ]
+        assert len(task_files) > 0
+        for f in task_files:
+            assert f["acceptance_id"] is not None, (
+                f"Task file {f['path']} not linked"
+            )
+
+    def test_link_generation_to_acceptance_matches_workflows(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """Workflow-based matching works for files related to workflows."""
+        # The acceptance matrix has workflow criteria like "create task"
+        # and "complete task" - these should match files containing "task"
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
+        # At minimum, task-related files should be linked
+        linked = [f for f in manifest["files"] if f["acceptance_id"] is not None]
+        assert len(linked) > 0
+
+    def test_verify_trace_completeness_all_linked(
+        self, tmp_repo, task_intent, task_blueprint,
+    ):
+        """When all files are linked and all criteria covered, complete=True."""
+        # Use a small custom matrix with fewer criteria than generated files
+        small_matrix = {
+            "criteria": [
+                {"id": "AC-001", "entity": "tasks", "workflow": None},
+                {"id": "AC-002", "entity": "projects", "workflow": None},
+            ],
+            "test_scenarios": [],
+        }
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        # Assign every file to one of the two criteria (round-robin)
+        cids = [c["id"] for c in small_matrix["criteria"]]
+        for i, f in enumerate(manifest["files"]):
+            f["acceptance_id"] = cids[i % len(cids)]
+        result = verify_trace_completeness(manifest, small_matrix)
+        assert result["complete"] is True
+        assert result["unlinked_files"] == 0
+        assert result["unlinked_paths"] == []
+
+    def test_verify_trace_completeness_with_unlinked(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """Some unlinked files returns complete=False with unlinked_paths."""
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        # Don't link anything - all files should be unlinked
+        result = verify_trace_completeness(manifest, acceptance_matrix)
+        assert result["complete"] is False
+        assert result["unlinked_files"] > 0
+        assert len(result["unlinked_paths"]) == result["unlinked_files"]
+
+    def test_trace_with_task_ids(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """When task_ids provided, files get task_id assignments."""
+        task_ids = ["T-001", "T-002"]
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+            task_ids=task_ids,
+            acceptance_matrix=acceptance_matrix,
+        )
+        for f in manifest["files"]:
+            assert f["task_id"] in task_ids, (
+                f"File {f['path']} has unexpected task_id: {f['task_id']}"
+            )
+
+    def test_backward_compatible_no_matrix(
+        self, tmp_repo, task_intent, task_blueprint,
+    ):
+        """Without acceptance_matrix, task_id and acceptance_id remain None."""
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        for f in manifest["files"]:
+            assert f["task_id"] is None
+            assert f["acceptance_id"] is None
+
+    def test_link_idempotent(
+        self, tmp_repo, task_intent, task_blueprint, acceptance_matrix,
+    ):
+        """Calling link_generation_to_acceptance twice doesn't change results."""
+        manifest = generate_product(
+            tmp_repo, task_intent, task_blueprint, "react-vite",
+        )
+        manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
+        first_pass = [f.get("acceptance_id") for f in manifest["files"]]
+        manifest = link_generation_to_acceptance(manifest, acceptance_matrix)
+        second_pass = [f.get("acceptance_id") for f in manifest["files"]]
+        assert first_pass == second_pass
