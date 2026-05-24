@@ -728,17 +728,23 @@ def _dedup(items: list[str]) -> list[str]:
 
 _REFINE_PROMPT = """\
 You are a product architect. Given a user's product description and a \
-deterministic extraction of entities, users, and workflows, refine them.
+deterministic extraction, refine ALL fields.
 
 Rules:
-- Entities are domain objects (Patient, Task, Appointment) in PascalCase singular.
-- Users/roles are people who use the system (doctor, admin) in lowercase.
-- Workflows are actions (create_task, schedule_appointment) in snake_case.
-- Remove location/context qualifiers from entity names \
-  ("veterinary clinics pet" -> "Pet", not "VeterinaryClinicsPet").
-- If a word is both a user AND a domain entity (e.g. "Patient" in a medical \
-  app), include it in BOTH lists.
-- Do NOT invent new entities not implied by the prompt.
+- entities: domain objects in PascalCase singular (Patient, Task). Remove \
+  location/context qualifiers ("veterinary clinics pet" -> "Pet"). If a word \
+  is both a user AND entity (Patient in medical app), include in BOTH lists.
+- target_users: roles/actors in lowercase (doctor, admin, front desk).
+- primary_workflows: user actions in snake_case (create_task, schedule_appointment).
+- product_type: one of "task-management", "financial-dashboard", "e-commerce", \
+  "social", "cms", "analytics", "custom", or a short descriptive slug.
+- ux_surfaces: UI patterns needed (dashboard, table, form, detail, list, chart, \
+  calendar, search, kanban, timeline, inbox, feed, map, settings).
+- security_constraints: compliance/security requirements (hipaa, gdpr, soc2, pci, \
+  encryption-at-rest, mfa) -- only if explicitly stated or strongly implied.
+- audit_requirements: audit needs (audit-trail, audit-log, change-history).
+- pii_entities: which entities contain personally identifiable information.
+- Do NOT invent features not implied by the prompt.
 
 Prompt: {prompt}
 
@@ -746,9 +752,15 @@ Current extraction:
   entities: {entities}
   target_users: {users}
   workflows: {workflows}
+  product_type: {product_type}
+  ux_surfaces: {surfaces}
+  security_constraints: {security}
+  audit_requirements: {audit}
 
 Return ONLY valid JSON (no markdown, no explanation):
-{{"entities": [...], "target_users": [...], "workflows": [...]}}
+{{"entities": [...], "target_users": [...], "workflows": [...], \
+"product_type": "...", "ux_surfaces": [...], "security_constraints": [...], \
+"audit_requirements": [...], "pii_entities": [...]}}
 """
 
 
@@ -773,6 +785,10 @@ def refine_intent_with_llm(
         entities=json.dumps(intent.get("entities", [])),
         users=json.dumps(intent.get("target_users", [])),
         workflows=json.dumps(intent.get("primary_workflows", [])),
+        product_type=intent.get("product_type", "custom"),
+        surfaces=json.dumps(intent.get("ux_surfaces", [])),
+        security=json.dumps(intent.get("security_constraints", [])),
+        audit=json.dumps(intent.get("audit_requirements", [])),
     )
 
     try:
@@ -796,13 +812,23 @@ def refine_intent_with_llm(
     if not isinstance(refined, dict):
         return intent
 
-    # Merge refinements back into intent
+    # Merge refinements back into intent -- only override with non-empty lists
     updated = dict(intent)
-    if "entities" in refined and isinstance(refined["entities"], list):
-        updated["entities"] = refined["entities"]
-    if "target_users" in refined and isinstance(refined["target_users"], list):
-        updated["target_users"] = refined["target_users"]
-    if "workflows" in refined and isinstance(refined["workflows"], list):
-        updated["primary_workflows"] = refined["workflows"]
+    _LIST_FIELDS = {
+        "entities": "entities",
+        "target_users": "target_users",
+        "workflows": "primary_workflows",
+        "ux_surfaces": "ux_surfaces",
+        "security_constraints": "security_constraints",
+        "audit_requirements": "audit_requirements",
+        "pii_entities": "pii_entities",
+    }
+    for llm_key, intent_key in _LIST_FIELDS.items():
+        val = refined.get(llm_key)
+        if isinstance(val, list) and val:
+            updated[intent_key] = val
+
+    if refined.get("product_type") and isinstance(refined["product_type"], str):
+        updated["product_type"] = refined["product_type"]
 
     return updated

@@ -67,13 +67,21 @@ _JS_EXTENSIONS = {".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs"}
 # PII detection
 # ---------------------------------------------------------------------------
 
-def detect_pii_entities(entities: list[str]) -> list[str]:
+def detect_pii_entities(
+    entities: list[str],
+    llm_pii: list[str] | None = None,
+) -> list[str]:
     """Return entity names that likely contain PII.
 
-    Matches case-insensitively against known PII indicator words.
-    A match occurs when any word in the entity name (split on non-alpha)
-    is found in the PII indicators set.
+    If *llm_pii* is provided (from the LLM refinement pass), use it
+    directly -- it supersedes the static indicator list.  Otherwise
+    fall back to matching against ``_PII_INDICATORS``.
     """
+    if llm_pii:
+        # LLM already classified which entities hold PII
+        entity_lower = {e.lower() for e in entities}
+        return [p for p in llm_pii if p.lower() in entity_lower or p in entities]
+
     results: list[str] = []
     for entity in entities:
         words = re.split(r"[^a-zA-Z]+", entity.lower())
@@ -238,7 +246,8 @@ def run_security_gate(
 
         # --- 3. GDPR / PII detection ---
         entities = intent.get("entities", [])
-        pii_entities = detect_pii_entities(entities)
+        llm_pii = intent.get("pii_entities")  # from LLM refinement, if available
+        pii_entities = detect_pii_entities(entities, llm_pii=llm_pii)
         if pii_entities:
             result["gdpr_required"] = True
             result["gdpr_reason"] = (
