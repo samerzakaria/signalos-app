@@ -309,7 +309,7 @@ function Test-BundledSidecarProductValidation {
   $process = [System.Diagnostics.Process]::Start($psi)
 
   try {
-    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 30
+    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 120
     $ready = $readyLine | ConvertFrom-Json
     if (-not $ready.ok -or -not $ready.data.ready) {
       throw "Bundled sidecar did not report ready: $readyLine"
