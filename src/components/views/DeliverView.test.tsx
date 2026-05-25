@@ -137,6 +137,9 @@ describe('DeliverView', () => {
       form_handling: 'Native forms',
     });
 
+    // Mock design preview (returns HTML for iframe)
+    mockRunOnce({ preview_html: '<html><body>Preview</body></html>' });
+
     // Mock full delivery
     mockRunOnce({
       name: 'my-kanban',
