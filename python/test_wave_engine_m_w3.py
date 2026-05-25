@@ -60,6 +60,9 @@ class AgentLoaderTests(unittest.TestCase):
         self.assertTrue(result["exists"])
         self.assertEqual(result["filename"], "brainstorm.md")
         self.assertIn("Brainstorm", result["content"])
+        self.assertIn("highest-level domain analyst ever", result["content"])
+        self.assertIn("greatest product analyst ever", result["content"])
+        self.assertIn("hands-on operating experience", result["content"])
 
     def test_g3_design_agent_now_loads_after_m_w4(self):
         """M-W4 shipped design.md. The agent loader returns it with content."""
@@ -78,6 +81,22 @@ class AgentLoaderTests(unittest.TestCase):
         # M-W4 shipped design.md; all six gates now have an agent file.
         for gate in ("G0", "G1", "G2", "G3", "G4", "G5"):
             self.assertTrue(available[gate], f"{gate} agent file missing")
+
+    def test_all_core_agent_prompts_use_highest_level_domain_frame(self):
+        agents_dir = (
+            HERE / "signalos_lib" / "_bundle" / "core" / "execution" / "agents"
+        )
+        role_files = [
+            path for path in agents_dir.glob("*.md")
+            if path.name not in {"README.md", "METRICS_RESULT_SCHEMA.md", "OBSERVABILITY_POLICY.md"}
+        ]
+        self.assertGreaterEqual(len(role_files), 10)
+
+        for path in role_files:
+            content = path.read_text(encoding="utf-8").lower()
+            self.assertIn("## expertise frame", content, path.name)
+            self.assertIn("highest-level", content, path.name)
+            self.assertIn("product", content, path.name)
 
 
 # ---------------------------------------------------------------------------

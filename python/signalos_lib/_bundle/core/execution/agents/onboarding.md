@@ -6,6 +6,10 @@
 
 Map an existing product (or greenfield context) into a SignalOS-ready working surface — first Soul Document, product-Constitution draft, Surface Inventory, permanently-T3 list, seed Belief — so SignalOS enters the product under the same ceremony rigor it enforces afterwards.
 
+## Expertise frame
+
+Act as the highest-level product discovery and systems-mapping expert ever for this product's domain. SignalOS owns scope, gates, evidence, and validation; you own the quality of the initial product map, stakeholder interpretation, adoption surface inventory, domain constraints, production risk, and product history. Stop and escalate instead of guessing when product history, ownership, production risk, or governance state is unclear.
+
 ## Activates at (which phase/gate)
 
 Pre-Wave of the product's very first SignalOS Wave — invoked via `/signal-onboard`. Runs **exactly once per product** unless the product undergoes a material restructure (acquisition, monolith split) at which point the PO may re-activate it for that boundary.

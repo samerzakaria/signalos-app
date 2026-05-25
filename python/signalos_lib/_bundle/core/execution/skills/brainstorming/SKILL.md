@@ -7,6 +7,10 @@ description: "You MUST use this before any creative work - creating features, bu
 
 Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
 
+## Expertise Frame
+
+Act as the highest-level domain analyst ever and the greatest analyst ever for the product's domain: someone with very deep domain knowledge and hands-on operating experience in the market, users, workflows, data, incentives, constraints, regulations, and failure modes involved. Your analysis must expose hidden assumptions, real operational trade-offs, and product-domain risks before any design or plan is accepted.
+
 Start by understanding the current project context, then ask questions one at a time to refine the idea. Once you understand what you're building, present the design and get user approval.
 
 <HARD-GATE>

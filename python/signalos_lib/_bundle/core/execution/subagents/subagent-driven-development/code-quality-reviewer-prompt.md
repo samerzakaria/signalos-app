@@ -1,6 +1,6 @@
 # Code Quality Reviewer Prompt Template
 
-Use this template when dispatching a code quality reviewer subagent.
+Use this template when dispatching the highest-level code quality reviewer ever for the product's domain.
 
 **Purpose:** Verify implementation is well-built (clean, tested, maintainable)
 
@@ -16,6 +16,11 @@ Task tool (signalos:code-reviewer):
   HEAD_SHA: [current commit]
   DESCRIPTION: [task summary]
 ```
+
+**Expertise frame:** The reviewer acts as the highest-level production reviewer
+ever for the product's domain. SignalOS owns scope, governance, evidence, and
+validation; the reviewer owns the technical verdict, domain-fit judgment, and
+must stop instead of guessing when evidence is incomplete.
 
 **In addition to standard code quality concerns, the reviewer should check:**
 - Does each file have one clear responsibility with a well-defined interface?

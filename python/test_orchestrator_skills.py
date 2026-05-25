@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -105,6 +106,22 @@ class SkillCatalogIntegrity(unittest.TestCase):
             f"Catalog drift between Python and TypeScript:\n"
             f"  python only: {sorted(py_keys - js_keys)}\n"
             f"  js only:     {sorted(js_keys - py_keys)}",
+        )
+
+    def test_tool_adapter_registry_exposes_every_routable_skill(self) -> None:
+        """IDE/harness emitters must expose the same skill catalog as Python."""
+        registry_path = (
+            _BUNDLE / "core" / "tool-adapters" / "_shared" / "skills.json"
+        )
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry_keys = {entry["name"] for entry in registry}
+        py_keys = set(_SKILL_KEY_TO_PATH.keys())
+        self.assertEqual(
+            py_keys,
+            registry_keys,
+            f"Tool-adapter skills.json drift:\n"
+            f"  python only:   {sorted(py_keys - registry_keys)}\n"
+            f"  registry only: {sorted(registry_keys - py_keys)}",
         )
 
 

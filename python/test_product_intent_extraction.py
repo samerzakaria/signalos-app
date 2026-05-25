@@ -390,6 +390,17 @@ class TestSingularization:
 # ---------------------------------------------------------------------------
 
 class TestLLMQuestionsFallback:
+    def test_question_prompt_sets_deep_domain_analyst_bar(self):
+        """Discovery LLM prompt must require deep product-domain analysis."""
+        from signalos_lib.product.questions import _ACCOUNT_MANAGER_SYSTEM_PROMPT
+
+        prompt = " ".join(_ACCOUNT_MANAGER_SYSTEM_PROMPT.lower().split())
+        assert "highest-level domain analyst ever" in prompt
+        assert "greatest product analyst ever" in prompt
+        assert "very deep domain knowledge" in prompt
+        assert "hands-on operating experience" in prompt
+        assert "product domain" in prompt
+
     def test_generate_questions_tries_llm_first(self, monkeypatch):
         """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
         back to deterministic because TestProvider returns canned text."""
@@ -413,7 +424,31 @@ class TestLLMQuestionsFallback:
         assert result is None
 
 
+class TestLLMIntentRefinementPrompt:
+    def test_refine_prompt_sets_deep_domain_analyst_bar(self):
+        """Intent refinement LLM prompt must require hands-on domain analysis."""
+        from signalos_lib.product.intent import _REFINE_PROMPT
+
+        prompt = " ".join(_REFINE_PROMPT.lower().split())
+        assert "highest-level domain analyst ever" in prompt
+        assert "greatest product analyst ever" in prompt
+        assert "very deep domain knowledge" in prompt
+        assert "hands-on operating experience" in prompt
+        assert "failure modes" in prompt
+
+
 class TestLLMAssumptionsFallback:
+    def test_assumptions_prompt_sets_deep_domain_analyst_bar(self):
+        """Assumption LLM prompt must require domain-specific expertise."""
+        from signalos_lib.product.assumptions import _ASSUMPTIONS_SYSTEM_PROMPT
+
+        prompt = " ".join(_ASSUMPTIONS_SYSTEM_PROMPT.lower().split())
+        assert "highest-level domain analyst ever" in prompt
+        assert "greatest product analyst ever" in prompt
+        assert "very deep domain knowledge" in prompt
+        assert "hands-on operating experience" in prompt
+        assert "failure modes" in prompt
+
     def test_record_assumptions_tries_llm_first(self, monkeypatch):
         """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
         back to deterministic because TestProvider returns canned text."""

@@ -28,7 +28,16 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a Build agent in a SignalOS-governed software house.
+You are the highest-level software engineer ever for the selected stack and
+product domain, acting as the SignalOS Build agent in a SignalOS-governed
+software house.
+
+SignalOS owns product scope, governance, evidence, and validation. You own
+implementation quality inside the allowed files. Apply highest-level domain
+judgment for the selected stack, including architecture fit, maintainability,
+accessibility, security, testability, production readiness, and real user
+workflows. If the packet is ambiguous or asks for work outside scope, stop and
+report the blocker instead of guessing.
 
 You MUST follow the governance instructions provided. Violations will be
 caught by validators and your output will be rejected.
@@ -41,6 +50,7 @@ Rules:
 - Write ONLY the files listed in file_specs
 - Follow ALL constraints listed per file
 - Follow the design system (UI library, state management, tokens)
+- Consult applicable SignalOS skills before producing files
 - Write tests FIRST (TDD -- test files before source files)
 - Never write to forbidden paths
 - Never perform forbidden actions
@@ -64,6 +74,50 @@ def _build_agent_prompt(
 ) -> str:
     """Construct the prompt for the build agent from the packet."""
     lines: list[str] = []
+
+    role = packet.get("agent_role", "SignalOS Build agent")
+    expertise_frame = packet.get("expertise_frame", "")
+    lines.append("# Agent Role")
+    lines.append(f"Role: {role}")
+    if expertise_frame:
+        lines.append(f"Expertise frame: {expertise_frame}")
+    lines.append("")
+
+    applicable_skills = packet.get("applicable_skills", [])
+    if applicable_skills:
+        lines.append("## Applicable SignalOS Skills")
+        lines.append("")
+        lines.append(
+            "Read and apply these skill docs before writing code. They are "
+            "selected from the full SignalOS skill catalog for this run."
+        )
+        lines.append("")
+        for skill in applicable_skills:
+            lines.append(
+                f"### {skill.get('name', skill.get('key', 'unknown'))} "
+                f"(`{skill.get('key', '')}`)"
+            )
+            if skill.get("path"):
+                lines.append(f"Source: `{skill['path']}`")
+            content = str(skill.get("content", "")).strip()
+            if content:
+                lines.append(content[:4000])
+            lines.append("")
+
+    skills_catalog = packet.get("skills_catalog", [])
+    if skills_catalog:
+        lines.append("## Available SignalOS Skill Catalog")
+        lines.append("")
+        lines.append(
+            "The product repo contains these additional skill docs. Consult "
+            "them if your task needs that guidance."
+        )
+        for skill in skills_catalog:
+            lines.append(
+                f"- `{skill.get('key', '')}` -- {skill.get('name', '')} "
+                f"({skill.get('path', '')})"
+            )
+        lines.append("")
 
     # Product context
     gen = packet.get("generation", packet)

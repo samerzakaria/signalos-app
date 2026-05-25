@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 __all__ = [
+    "build_applicable_skills",
     "build_agent_packet",
+    "build_skills_catalog",
     "validate_agent_result",
     "write_agent_packet",
 ]
@@ -45,6 +47,36 @@ _DEFAULT_FORBIDDEN_ACTIONS: list[str] = [
     "deploy",
     "rm -rf",
 ]
+
+_DEFAULT_AGENT_ROLE = "SignalOS Build agent"
+
+_DEFAULT_EXPERTISE_FRAME = (
+    "Act as the highest-level software engineer ever for the selected stack "
+    "and product domain. "
+    "SignalOS owns scope, governance, and validation; you own implementation "
+    "quality inside the allowed files. Apply domain judgment for real user "
+    "workflows, architecture, maintainability, security, accessibility, and "
+    "tests. Stop and report a blocker instead of guessing when requirements, "
+    "safety, or architecture are ambiguous."
+)
+
+_SKILL_CONTENT_BUDGET_CHARS = 6_000
+
+_DEFAULT_PRODUCT_AGENT_SKILLS = [
+    "test-driven-development",
+    "test-generation",
+    "verification-before-completion",
+]
+
+_UI_HINTS = {
+    "ui", "ux", "screen", "view", "page", "dashboard", "chart", "form",
+    "frontend", "component", "tsx", "html", "css", "accessibility",
+}
+
+_SECURITY_HINTS = {
+    "auth", "login", "permission", "role", "security", "secret", "token",
+    "password", "audit", "tenant", "xss", "csrf", "injection",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -138,10 +170,20 @@ def build_agent_packet(
     if forbidden_actions is None:
         forbidden_actions = list(_DEFAULT_FORBIDDEN_ACTIONS)
 
+    skills_catalog = build_skills_catalog()
+    applicable_skills = build_applicable_skills(
+        repo_root=repo_root,
+        intent=intent,
+        tasks=tasks,
+        generation_packet=generation_packet,
+    )
+
     packet: dict[str, Any] = {
         "schema_version": "signalos.agent_packet.v1",
         "run_id": run_id,
         "created_at": now,
+        "agent_role": _DEFAULT_AGENT_ROLE,
+        "expertise_frame": _DEFAULT_EXPERTISE_FRAME,
         "intent_summary": intent_summary,
         "blueprint_id": blueprint_id,
         "profile": profile,
@@ -152,6 +194,8 @@ def build_agent_packet(
         "forbidden_paths": list(_DEFAULT_FORBIDDEN_PATHS),
         "forbidden_actions": forbidden_actions,
         "validation_commands": validation_commands,
+        "skills_catalog": skills_catalog,
+        "applicable_skills": applicable_skills,
         "result_schema": _RESULT_SCHEMA,
     }
 
@@ -160,6 +204,116 @@ def build_agent_packet(
         packet["generation"] = generation_packet
 
     return packet
+
+
+def build_skills_catalog() -> list[dict[str, str]]:
+    """Return the routable SignalOS skill catalog shared with orchestrator."""
+    from signalos_lib.orchestrator import _SKILL_KEY_TO_PATH
+
+    return [
+        {"key": key, "name": label, "path": path}
+        for key, (label, path) in _SKILL_KEY_TO_PATH.items()
+    ]
+
+
+def build_applicable_skills(
+    repo_root: Path,
+    intent: dict,
+    tasks: list[dict],
+    generation_packet: dict | None,
+) -> list[dict[str, str]]:
+    """Select and load the skills a product build agent should read first.
+
+    The full catalog is always present in ``skills_catalog``. This function
+    loads the smaller working set directly into the packet so packet-only and
+    live LLM dispatch modes do not depend on the agent discovering files.
+    """
+    catalog_by_key = {entry["key"]: entry for entry in build_skills_catalog()}
+    keys = _select_applicable_skill_keys(intent, tasks, generation_packet)
+
+    out: list[dict[str, str]] = []
+    for key in keys:
+        entry = catalog_by_key.get(key)
+        if entry is None:
+            continue
+        content = _load_skill_content(repo_root, entry["path"])
+        if not content:
+            continue
+        out.append({
+            "key": key,
+            "name": entry["name"],
+            "path": entry["path"],
+            "content": _trim_skill_content(content),
+        })
+    return out
+
+
+def _select_applicable_skill_keys(
+    intent: dict,
+    tasks: list[dict],
+    generation_packet: dict | None,
+) -> list[str]:
+    keys: list[str] = list(_DEFAULT_PRODUCT_AGENT_SKILLS)
+
+    for task in tasks:
+        for raw in task.get("skills") or []:
+            if isinstance(raw, str):
+                keys.append(raw.strip().lower())
+
+    haystack = _skill_hint_text(intent, tasks, generation_packet)
+    if any(hint in haystack for hint in _UI_HINTS):
+        keys.extend(["design", "e2e-testing"])
+    if any(hint in haystack for hint in _SECURITY_HINTS):
+        keys.append("security-audit")
+    if any(hint in haystack for hint in ("debug", "bug", "failure", "regression")):
+        keys.append("systematic-debugging")
+    if any(hint in haystack for hint in ("existing repo", "brownfield", "legacy", "adopt")):
+        keys.extend(["existing-product-kit", "product-surface-mapping"])
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for key in keys:
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
+
+
+def _skill_hint_text(
+    intent: dict,
+    tasks: list[dict],
+    generation_packet: dict | None,
+) -> str:
+    parts: list[str] = [json.dumps(intent, ensure_ascii=False, sort_keys=True)]
+    parts.append(json.dumps(tasks, ensure_ascii=False, sort_keys=True))
+    if generation_packet:
+        parts.append(json.dumps(generation_packet, ensure_ascii=False, sort_keys=True))
+    return " ".join(parts).lower()
+
+
+def _load_skill_content(repo_root: Path, relative_path: str) -> str:
+    """Load skill content from the product repo, falling back to app bundle."""
+    candidates = [
+        repo_root / relative_path,
+        Path(__file__).resolve().parents[1] / "_bundle" / relative_path,
+    ]
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return ""
+
+
+def _trim_skill_content(text: str) -> str:
+    if len(text) <= _SKILL_CONTENT_BUDGET_CHARS:
+        return text
+    return (
+        text[:_SKILL_CONTENT_BUDGET_CHARS]
+        + "\n\n[...skill trimmed for product agent packet budget...]\n"
+    )
 
 
 def _flatten_validation_commands(plan: dict) -> list[str]:
@@ -186,6 +340,8 @@ def write_agent_packet(
     Creates:
     - ``PACKET.md``            -- human-readable summary
     - ``scope.json``           -- full packet data
+    - ``skills-catalog.json``  -- every routable SignalOS skill
+    - ``applicable-skills.md`` -- loaded skill docs for this run
     - ``files-allowed.txt``    -- one glob per line
     - ``commands-allowed.txt`` -- validation commands
     - ``validation-plan.json`` -- validation plan for the agent to run
@@ -200,6 +356,18 @@ def write_agent_packet(
     # scope.json -- full packet
     (run_dir / "scope.json").write_text(
         json.dumps(packet, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # skills-catalog.json -- all routable skills exposed to agents
+    (run_dir / "skills-catalog.json").write_text(
+        json.dumps(packet.get("skills_catalog", []), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # applicable-skills.md -- loaded skill docs selected for this run
+    (run_dir / "applicable-skills.md").write_text(
+        _render_applicable_skills_md(packet),
         encoding="utf-8",
     )
 
@@ -247,6 +415,15 @@ def _render_packet_md(packet: dict) -> str:
     lines.append(f"**Profile:** {packet.get('profile', '')}")
     lines.append(f"**Wave:** {packet.get('wave', '')}")
 
+    lines.append("")
+    lines.append("## Agent Role")
+    lines.append("")
+    lines.append(f"**Role:** {packet.get('agent_role', _DEFAULT_AGENT_ROLE)}")
+    lines.append(
+        f"**Expertise frame:** "
+        f"{packet.get('expertise_frame', _DEFAULT_EXPERTISE_FRAME)}"
+    )
+
     intent = packet.get("intent_summary", {})
     lines.append("")
     lines.append("## Intent")
@@ -288,7 +465,60 @@ def _render_packet_md(packet: dict) -> str:
         for p in forbidden:
             lines.append(f"- `{p}`")
 
+    catalog = packet.get("skills_catalog", [])
+    if catalog:
+        lines.append("")
+        lines.append("## SignalOS Skills Catalog")
+        lines.append("")
+        lines.append(
+            "All listed skills are available in this product repo. Use the "
+            "applicable skills below first; consult other catalog entries "
+            "when the task needs that domain guidance."
+        )
+        lines.append("")
+        for skill in catalog:
+            lines.append(
+                f"- `{skill.get('key', '')}` -- {skill.get('name', '')} "
+                f"({skill.get('path', '')})"
+            )
+
+    applicable_md = _render_applicable_skills_md(packet)
+    if applicable_md.strip():
+        lines.append("")
+        lines.append(applicable_md.rstrip())
+
     lines.append("")
+    return "\n".join(lines)
+
+
+def _render_applicable_skills_md(packet: dict) -> str:
+    skills = packet.get("applicable_skills", [])
+    if not skills:
+        return ""
+
+    lines: list[str] = [
+        "## Applicable SignalOS Skills",
+        "",
+        "Read these before producing files. They are selected from the full "
+        "catalog for this product agent run.",
+        "",
+    ]
+    for skill in skills:
+        lines.append(
+            f"### {skill.get('name', skill.get('key', 'unknown'))} "
+            f"(`{skill.get('key', '')}`)"
+        )
+        path = skill.get("path", "")
+        if path:
+            lines.append("")
+            lines.append(f"Source: `{path}`")
+        content = str(skill.get("content", "")).strip()
+        if content:
+            lines.append("")
+            lines.append(content)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
     return "\n".join(lines)
 
 

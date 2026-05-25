@@ -172,7 +172,7 @@ const VALID_TIERS = new Set(['T1', 'T2', 'T3']);
 const VALID_STATUSES = new Set(['pending', 'in_progress', 'completed', 'failed', 'aborted', 'paused']);
 
 // Catalog of skill keys the AI may attach to a task. Must stay in sync with
-// _SKILL_KEY_TO_PATH in python/signalos_lib/orchestrator.py. All 34 routable
+// _SKILL_KEY_TO_PATH in python/signalos_lib/orchestrator.py. All 35 routable
 // bundle skills are listed -- the JS test_catalog_matches_js_side check
 // (python/test_orchestrator_skills.py) breaks the build if they drift.
 export const VALID_SKILL_KEYS = new Set([

@@ -1,5 +1,80 @@
 [
   {
+    "name": "test-driven-development",
+    "source": "core/execution/build/test-driven-development/SKILL.md",
+    "description": "TDD workflow: write failing tests first, implement the smallest change, then refactor with validation evidence."
+  },
+  {
+    "name": "test-generation",
+    "source": "core/execution/build/test-generation/SKILL.md",
+    "description": "Generate unit, integration, edge-case, and security tests from requirements and expected behavior."
+  },
+  {
+    "name": "e2e-testing",
+    "source": "core/execution/build/e2e-testing/SKILL.md",
+    "description": "End-to-end browser testing with realistic user workflows, smoke checks, and screenshot evidence."
+  },
+  {
+    "name": "systematic-debugging",
+    "source": "core/execution/build/systematic-debugging/SKILL.md",
+    "description": "Reproduce, isolate, instrument, fix, and prove defects without guesswork."
+  },
+  {
+    "name": "verification-before-completion",
+    "source": "core/execution/build/verification-before-completion/SKILL.md",
+    "description": "Completion discipline: run real checks, inspect outputs, and refuse to claim done without evidence."
+  },
+  {
+    "name": "writing-plans",
+    "source": "core/execution/plan/writing-plans/SKILL.md",
+    "description": "Produce executable plans with clear scope, sequencing, dependencies, risks, and acceptance criteria."
+  },
+  {
+    "name": "executing-plans",
+    "source": "core/execution/plan/executing-plans/SKILL.md",
+    "description": "Execute plans incrementally while preserving scope, evidence, and handoff state."
+  },
+  {
+    "name": "comprehensive-code-review",
+    "source": "core/execution/review/comprehensive-code-review/SKILL.md",
+    "description": "Review code for correctness, regressions, security, maintainability, and missing tests."
+  },
+  {
+    "name": "receiving-code-review",
+    "source": "core/execution/review/receiving-code-review/SKILL.md",
+    "description": "Process reviewer feedback precisely, preserve intent, and verify each addressed comment."
+  },
+  {
+    "name": "requesting-code-review",
+    "source": "core/execution/review/requesting-code-review/SKILL.md",
+    "description": "Prepare reviewable changes with focused summary, evidence, risk notes, and reviewer context."
+  },
+  {
+    "name": "security-audit",
+    "source": "core/governance/SecurityAudit/SKILL.md",
+    "description": "Security audit using OWASP, STRIDE, trust-tier boundaries, and actionable remediation evidence."
+  },
+  {
+    "name": "retro-run",
+    "source": "core/governance/Retro/retro-run/SKILL.md",
+    "description": "Run a wave retrospective that captures facts, deltas, incidents, and improvement actions."
+  },
+  {
+    "name": "retrospective-analyze",
+    "source": "core/governance/Retro/retrospective-analyze/SKILL.md",
+    "description": "Analyze retrospective records for recurring risks, bottlenecks, and governance improvements."
+  },
+  {
+    "name": "using-git-worktrees",
+    "source": "core/execution/worktree/using-git-worktrees/SKILL.md",
+    "description": "Use isolated git worktrees for parallel development without cross-branch contamination."
+  },
+  {
+    "name": "finishing-a-development-branch",
+    "source": "core/execution/worktree/finishing-a-development-branch/SKILL.md",
+    "description": "Finish, validate, merge, and retire a development branch or worktree cleanly."
+  },
+  {
     "name": "memory",
     "source": "core/execution/skills/memory/SKILL.md",
     "description": "Cross-session memory retrieval with relevance scoring"

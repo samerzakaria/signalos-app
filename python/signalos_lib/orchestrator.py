@@ -836,7 +836,7 @@ def _load_skill(root: Path, relative_path: str) -> str:
 # Must stay in sync with VALID_SKILL_KEYS in src/services/signalosPrompt.ts.
 # Each entry maps key -> (display-label, workspace-relative SKILL.md path).
 #
-# All 34 bundle SKILL.md files are routable. The first 15 are "deliverable"
+# All 35 bundle SKILL.md files are routable. The first 15 are "deliverable"
 # skills (have a structured-output artifact validator in skill_validators.py);
 # the rest are context / process skills that get injected into prompts when
 # relevant but don't have enforcement gates -- their value is the guidance
@@ -905,7 +905,7 @@ def _relevant_skills(task: dict[str, Any], root: Path) -> list[tuple[str, str]]:
 
     candidates: list[tuple[str, str, str]] = [
         # (keyword regex, label, path-from-workspace).
-        # Covers all 34 routable skills. Order matters only for the
+        # Covers all 35 routable skills. Order matters only for the
         # display label; de-dup is by SKILL.md path further down.
         # --- Build ---
         ("tdd|red.green.refactor|write tests? first",

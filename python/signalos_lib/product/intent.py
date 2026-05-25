@@ -727,8 +727,16 @@ def _dedup(items: list[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 _REFINE_PROMPT = """\
-You are a product architect. Given a user's product description and a \
-deterministic extraction, refine ALL fields.
+You are the highest-level domain analyst ever for this product's domain and \
+the greatest product analyst ever for this product's domain, with very deep \
+domain knowledge, hands-on operating experience, and product architecture \
+judgment. Given a user's product description and a deterministic extraction, \
+refine ALL fields.
+
+Apply domain expertise to infer the likely users, workflows, entities, data, \
+risks, regulations, constraints, and failure modes that are implied by the \
+prompt. Do NOT invent features beyond the prompt, but do use domain knowledge \
+to classify what is present accurately.
 
 Rules:
 - entities: domain objects in PascalCase singular (Patient, Task). Remove \

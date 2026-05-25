@@ -348,6 +348,17 @@ class TestGenericProfile:
 # ---------------------------------------------------------------------------
 
 class TestLLMDesignSelection:
+    def test_architect_prompt_sets_world_class_ux_bar(self):
+        """Design LLM prompt must hold the highest UI/UX quality bar."""
+        from signalos_lib.product.design import _ARCHITECT_SYSTEM_PROMPT
+
+        prompt = _ARCHITECT_SYSTEM_PROMPT.lower()
+        normalized = " ".join(prompt.split())
+        assert "highest-level ui/ux designer ever" in normalized
+        assert "best ui/ux designer in the world" in normalized
+        assert "world-class frontend architect" in normalized
+        assert "empty/loading/error states" in normalized
+
     def test_build_design_system_tries_llm_first(self, monkeypatch):
         """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
         back to deterministic because TestProvider returns canned text."""

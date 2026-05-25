@@ -33,6 +33,7 @@ Every agent prompt file MUST follow this structure:
 # Agent — {Seat Name}
 
 ## Purpose (one sentence)
+## Expertise frame (senior role and quality bar the agent must inhabit)
 ## Activates at (which phase/gate)
 ## Prerequisites (signed artifacts required before activation)
 ## Inputs (paths the agent reads)

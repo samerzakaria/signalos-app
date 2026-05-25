@@ -9,10 +9,13 @@ from pathlib import Path
 import pytest
 
 from signalos_lib.product.agent_packets import (
+    build_skills_catalog,
     build_agent_packet,
     validate_agent_result,
     write_agent_packet,
 )
+from signalos_lib.product.agent_dispatch import _build_agent_prompt
+from signalos_lib.orchestrator import _SKILL_KEY_TO_PATH
 from signalos_lib.product.repair_loop import (
     build_repair_packet,
     run_repair_loop,
@@ -90,9 +93,10 @@ class TestBuildAgentPacket:
     def test_returns_all_required_fields(self, packet):
         required = [
             "schema_version", "run_id", "created_at", "intent_summary",
-            "blueprint_id", "profile", "wave", "tasks",
+            "agent_role", "expertise_frame", "blueprint_id", "profile", "wave", "tasks",
             "acceptance_criteria", "allowed_paths", "forbidden_paths",
-            "forbidden_actions", "validation_commands", "result_schema",
+            "forbidden_actions", "validation_commands", "skills_catalog",
+            "applicable_skills", "result_schema",
         ]
         for field in required:
             assert field in packet, f"Missing field: {field}"
@@ -150,6 +154,58 @@ class TestBuildAgentPacket:
         )
         assert pkt["blueprint_id"] == "bp-123"
 
+    def test_includes_expert_role_frame(self, packet):
+        assert packet["agent_role"] == "SignalOS Build agent"
+        frame = packet["expertise_frame"].lower()
+        assert "highest-level software engineer ever" in frame
+        assert "product domain" in frame
+        assert "stop and report a blocker" in frame
+
+    def test_skills_catalog_exposes_every_routable_skill(self, packet):
+        catalog = packet["skills_catalog"]
+        assert len(catalog) == len(_SKILL_KEY_TO_PATH)
+        assert {entry["key"] for entry in catalog} == set(_SKILL_KEY_TO_PATH)
+        assert all(entry["path"].endswith("SKILL.md") for entry in catalog)
+
+    def test_build_skills_catalog_uses_orchestrator_catalog(self):
+        catalog = build_skills_catalog()
+        by_key = {entry["key"]: entry for entry in catalog}
+        for key, (label, path) in _SKILL_KEY_TO_PATH.items():
+            assert by_key[key]["name"] == label
+            assert by_key[key]["path"] == path
+
+    def test_applicable_skills_include_default_build_skills(self, packet):
+        keys = {entry["key"] for entry in packet["applicable_skills"]}
+        assert "test-driven-development" in keys
+        assert "test-generation" in keys
+        assert "verification-before-completion" in keys
+        assert all(entry.get("content") for entry in packet["applicable_skills"])
+
+    def test_ui_and_security_context_adds_domain_skills(
+        self, repo, intent, acceptance_matrix, tasks, allowed_paths
+    ):
+        pkt = build_agent_packet(
+            repo_root=repo,
+            intent={**intent, "auth_requirements": ["login"]},
+            blueprint=None,
+            acceptance_matrix=acceptance_matrix,
+            profile="generic",
+            wave="1",
+            tasks=[
+                *tasks,
+                {
+                    "id": "T3",
+                    "title": "Build secure dashboard UI",
+                    "description": "Add login-gated dashboard screen",
+                },
+            ],
+            allowed_paths=allowed_paths,
+        )
+        keys = {entry["key"] for entry in pkt["applicable_skills"]}
+        assert "design" in keys
+        assert "e2e-testing" in keys
+        assert "security-audit" in keys
+
 
 # ---------------------------------------------------------------------------
 # write_agent_packet
@@ -159,7 +215,8 @@ class TestWriteAgentPacket:
     def test_creates_all_expected_files(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)
         expected_files = [
-            "PACKET.md", "scope.json", "files-allowed.txt",
+            "PACKET.md", "scope.json", "skills-catalog.json",
+            "applicable-skills.md", "files-allowed.txt",
             "commands-allowed.txt", "validation-plan.json",
             "result.schema.json",
         ]
@@ -190,6 +247,32 @@ class TestWriteAgentPacket:
         # Contains task titles
         assert "Create task list" in md
         assert "Add task form" in md
+        # Contains role/expertise framing for external agents
+        assert "## Agent Role" in md
+        assert "SignalOS Build agent" in md
+        assert "highest-level software engineer ever" in md
+        assert "## SignalOS Skills Catalog" in md
+        assert "`test-driven-development`" in md
+        assert "## Applicable SignalOS Skills" in md
+        assert "Test-Driven Development" in md
+
+    def test_skills_files_are_written_for_packet_only_agents(self, repo, packet):
+        run_dir = write_agent_packet(packet, repo)
+        catalog = json.loads(
+            (run_dir / "skills-catalog.json").read_text(encoding="utf-8")
+        )
+        applicable = (run_dir / "applicable-skills.md").read_text(encoding="utf-8")
+        assert len(catalog) == len(_SKILL_KEY_TO_PATH)
+        assert "test-driven-development" in {entry["key"] for entry in catalog}
+        assert "Applicable SignalOS Skills" in applicable
+        assert "Verification Before Completion" in applicable
+
+    def test_live_agent_prompt_receives_applicable_skills(self, packet):
+        prompt = _build_agent_prompt(packet, governance={})
+        assert "## Applicable SignalOS Skills" in prompt
+        assert "Test-Driven Development" in prompt
+        assert "## Available SignalOS Skill Catalog" in prompt
+        assert "`verification-before-completion`" in prompt
 
     def test_files_allowed_txt(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)

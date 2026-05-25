@@ -11,7 +11,7 @@
 SignalOS ships with 10 agent seats (see `core/execution/agents/README.md` for the full roster). If your team needs an additional agent seat:
 
 1. **Justify the seat.** A new agent must fill a gap that no existing seat covers. Document why an existing agent cannot absorb the responsibility.
-2. **Follow the file shape.** Every agent prompt file must match the contract defined in `Agents/README.md`: Purpose, Activates-at, Prerequisites, Inputs, Outputs, Refusal conditions, Handoff, Trust Tier ceiling.
+2. **Follow the file shape.** Every agent prompt file must match the contract defined in `Agents/README.md`: Purpose, Expertise frame, Activates-at, Prerequisites, Inputs, Outputs, Refusal conditions, Handoff, Trust Tier ceiling.
 3. **Assign a human owner.** Law 4: no agent without a named human owner. The new seat must map to one of the four human roles (PO, PE, QA, DevOps).
 4. **Register in the Charter.** Add the seat to `docs/Team-Charters/AGENTIC_TEAM_CHARTER.md` before the agent file is considered active.
 5. **Update the agent count** in `docs/CHANGELOG.md`, `docs/MANIFEST.md`, and `docs/SIGNALOS_REFERENCE.md`.
