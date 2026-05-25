@@ -448,7 +448,7 @@ fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
     let handoff_dir = runtime_dir.join("handoffs");
     let package_file = workspace.join("package.json");
     let requirements_file = workspace.join("requirements.txt");
-    let app_entry = detect_app_entry(&workspace);
+    let app_entry = detect_app_entry(workspace);
     let issue_report_count = count_files_with_ext(&issue_report_dir, "md");
     let handoff_count = count_files_with_ext(&handoff_dir, "md");
 
