@@ -66,7 +66,7 @@ jobs:
         # gates, so this install must happen BEFORE that step (mirrors
         # the l1-build job's identical install).
         shell: bash
-        run: python -m pip install "pyyaml>=6.0,<7"
+        run: python -m pip install "pyyaml>=6.0,<7" "pytest>=9.0,<10"
       - name: cargo fmt check
         working-directory: src-tauri
         run: cargo fmt --check
@@ -152,7 +152,7 @@ jobs:
         # round-trip) which test_orchestrator_core / _skills exercise.
         # Anthropic SDK is optional at import time but harmless to add.
         shell: bash
-        run: python -m pip install "pyyaml>=6.0,<7"
+        run: python -m pip install "pyyaml>=6.0,<7" "pytest>=9.0,<10"
       - name: cargo check (all targets)
         working-directory: src-tauri
         run: cargo check --all-targets
@@ -162,7 +162,7 @@ jobs:
       - name: python tests
         working-directory: python
         run: |
-          python -m unittest discover -p "test_*.py" -t .
+          python -m pytest test_*.py --ignore=test_product_live_e2e.py -q
       - uses: actions/setup-node@v5
         with:
           node-version: 20
@@ -246,7 +246,7 @@ jobs:
         # here so the L1 extended-gates run doesn't break on the same
         # ModuleNotFoundError I missed first time around.
         shell: bash
-        run: python -m pip install "pyyaml>=6.0,<7"
+        run: python -m pip install "pyyaml>=6.0,<7" "pytest>=9.0,<10"
       - name: Run extended test-gates
         run: bash scripts/test-gates.sh L1
 
