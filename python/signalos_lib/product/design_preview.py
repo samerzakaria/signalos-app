@@ -1,8 +1,13 @@
-"""Generate a self-contained HTML preview of the selected design system.
+"""Generate an interactive HTML prototype of the product design.
 
-The preview renders REAL visual output using the selected UI library's
-CDN styles and the chosen design tokens so the user can SEE what their
-product will look like before approving. No build step required.
+The preview is a REAL interactive prototype — not a static component
+showcase. The user can click through navigation, see forms respond,
+see tables sort. It's what an agent would produce if asked "build me
+a working prototype of this app."
+
+When an API key is available, the LLM generates the prototype
+(full interactivity, real UX). When no key is available, a
+deterministic fallback produces a reasonable static preview.
 """
 
 from __future__ import annotations
@@ -10,15 +15,98 @@ from __future__ import annotations
 __all__ = ["generate_design_preview_html"]
 
 import html
+import json
+import os
 from typing import Any
 
 
 def generate_design_preview_html(design: dict, intent: dict) -> str:
-    """Generate a self-contained HTML page showing the selected design system.
+    """Generate an interactive HTML prototype for design approval.
 
-    Renders real components styled with the selected UI library's CSS and
-    the chosen design tokens applied. The user sees what their product
-    will look like before any code is written.
+    With API key: dispatches to LLM to produce a full interactive
+    single-page HTML app (clickable nav, working forms, sortable
+    tables, responsive layout) using the selected design system.
+
+    Without API key: falls back to a deterministic static preview
+    showing layout, colors, typography, and component samples.
+
+    The HTML is self-contained (CDN deps only, no local files).
+    """
+    # Try LLM-generated interactive prototype first
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+        result = _generate_with_llm(design, intent)
+        if result:
+            return result
+
+    # Fallback: deterministic static preview
+    return _generate_deterministic(design, intent)
+
+
+def _generate_with_llm(design: dict, intent: dict) -> str | None:
+    """Use LLM to generate a full interactive HTML prototype."""
+    try:
+        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+    except ImportError:
+        return None
+
+    ui_lib = design.get("ui_library", {})
+    ui_name = ui_lib.get("name", "shadcn/ui") if isinstance(ui_lib, dict) else str(ui_lib)
+    tokens = design.get("design_tokens", {})
+    primary_color = tokens.get("primary_color", "#3b82f6")
+    font = tokens.get("font_family", "Inter, sans-serif")
+    entities = intent.get("entities", [])
+    product_name = intent.get("product_name", "Product")
+    workflows = intent.get("primary_workflows", [])
+    surfaces = intent.get("ux_surfaces", [])
+
+    prompt = f"""Generate a single self-contained HTML file that is a fully interactive
+prototype of a product called "{product_name}".
+
+Design system:
+- UI library style: {ui_name}
+- Primary color: {primary_color}
+- Font: {font}
+- Entities: {json.dumps(entities)}
+- Workflows: {json.dumps(workflows)}
+- UX surfaces: {json.dumps(surfaces)}
+
+Requirements:
+- Self-contained single HTML file (use CDN for Tailwind/styles)
+- Fully interactive: clickable navigation between pages/views
+- Working forms with validation feedback (client-side)
+- Sortable/filterable tables with sample data
+- Responsive layout (works on mobile and desktop)
+- Sidebar navigation listing all entities
+- Each entity has a list view and a detail/form view
+- Use realistic sample data (5-10 rows per entity)
+- No placeholder text like "Lorem ipsum" — use domain-realistic content
+- Apply the primary color and font throughout
+- Professional, production-quality appearance
+
+Return ONLY the HTML. No explanation, no markdown fences, just the raw HTML starting with <!DOCTYPE html>."""
+
+    try:
+        provider = _resolve_provider()
+        response_text, _, _ = provider.call(prompt, DEFAULT_MODEL)
+    except Exception:
+        return None
+
+    # Extract HTML from response (handle markdown fences if present)
+    text = response_text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    # Validate it's actual HTML
+    if not text.startswith("<!") and not text.startswith("<html"):
+        return None
+
+    return text
+
+
+def _generate_deterministic(design: dict, intent: dict) -> str:
+    """Fallback: generate a static but visually complete preview.
+
+    Shows layout, colors, typography, and component samples.
 
     Includes:
     - App shell / layout (header, sidebar, content area)
