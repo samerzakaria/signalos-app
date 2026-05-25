@@ -139,7 +139,7 @@ def handle(req: dict) -> dict:
 
 
 def route(req_id: str, command: str, args: list[str], project_id: str = "default") -> dict:
-    direct_cli_commands = {"deliver", "deliver-intent", "deliver-design"}
+    direct_cli_commands = {"deliver", "deliver-intent", "deliver-design", "deliver-design-preview"}
     if command in direct_cli_commands or command.startswith("/signal-") or command.startswith("signal-"):
         return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id, project_id=project_id))
 
@@ -459,6 +459,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         "deliver",
         "deliver-intent",
         "deliver-design",
+        "deliver-design-preview",
     }
     if command in direct:
         return [command, *cleaned_args]

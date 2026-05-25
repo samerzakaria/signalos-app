@@ -268,6 +268,15 @@ def run_delivery(
         design_deps = get_design_dependencies(design)
         # Scaffold shared UI layer (theme, layouts)
         scaffold_design_system(repo_root, design)
+        # Generate visual design preview for client approval
+        try:
+            from .design_preview import generate_design_preview_html
+            preview_html = generate_design_preview_html(design, intent)
+            (signalos_dir / "product" / "design-preview.html").write_text(
+                preview_html, encoding="utf-8"
+            )
+        except Exception:
+            pass  # Preview is optional
     except Exception as exc:
         errors.append(f"design phase failed: {exc}")
 

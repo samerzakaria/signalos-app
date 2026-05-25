@@ -419,6 +419,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dd.add_argument("--profile", default="auto")
     p_dd.add_argument("--json", action="store_true", dest="as_json")
 
+    # Product delivery bridge — visual design preview HTML
+    p_dp = sub.add_parser("deliver-design-preview",
+        help="Generate visual design preview HTML")
+    p_dp.add_argument("--prompt", required=True, help="Product request prompt")
+    p_dp.add_argument("--name", default=None, help="Product/repo name")
+    p_dp.add_argument("--profile", default="auto")
+    p_dp.add_argument("--repo-root", default=None, help="Repo root for output")
+    p_dp.add_argument("--json", action="store_true", dest="as_json")
+
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
     p_qa = sub.add_parser("signal-qa",
         help="Run gating QA scenario suite (Gate 5 entry) (W7)")
@@ -1182,6 +1191,10 @@ def main(argv: list[str]) -> int:
     if cmd == "deliver-design":
         from signalos_lib.commands.deliver import cmd_deliver_design
         return cmd_deliver_design(args)
+
+    if cmd == "deliver-design-preview":
+        from signalos_lib.commands.deliver import cmd_deliver_design_preview
+        return cmd_deliver_design_preview(args)
 
     return 1
 

@@ -24,6 +24,7 @@ interface DeliverState {
   error: string | null;
   intent: any | null;
   design: any | null;
+  designPreviewUrl: string | null;
   closeout: any | null;
   questions: any[] | null;
   currentPhase: string | null;
@@ -41,6 +42,7 @@ const INITIAL_STATE: DeliverState = {
   error: null,
   intent: null,
   design: null,
+  designPreviewUrl: null,
   closeout: null,
   questions: null,
   currentPhase: null,
@@ -159,9 +161,29 @@ export function DeliverView() {
 
       const design = normalizeDesignPayload(parseIpcJson(designRaw));
 
+      // Fetch design preview HTML
+      let designPreviewUrl: string | null = null;
+      try {
+        const previewRaw = await signalIpc.runAndWait('deliver-design-preview', [
+          '--prompt', state.prompt,
+          '--name', state.name || 'untitled',
+          '--profile', state.profile,
+          '--json',
+        ], 30000);
+        const previewPayload = parseIpcJson(previewRaw);
+        const html = previewPayload?.preview_html;
+        if (html) {
+          const blob = new Blob([html], { type: 'text/html' });
+          designPreviewUrl = URL.createObjectURL(blob);
+        }
+      } catch (_previewErr) {
+        // Preview is optional — design step still works without it
+      }
+
       updateState({
         loading: false,
         design,
+        designPreviewUrl,
         completedPhases: ['Intent', 'Scaffold', 'Design'],
         currentPhase: null,
       });
@@ -530,6 +552,21 @@ export function DeliverView() {
           <option value="formik">Formik</option>
         </select>
       </div>
+
+      {state.designPreviewUrl ? (
+        <div className="deliver-section">
+          <h3><i className="ti ti-eye"></i> Visual preview</h3>
+          <p className="deliver-meta">This is how your product will look with the selected design.</p>
+          <div className="deliver-preview-frame" data-testid="deliver-design-preview">
+            <iframe
+              src={state.designPreviewUrl}
+              sandbox="allow-scripts"
+              title="Design preview"
+              style={{ width: '100%', height: '480px', border: '1px solid var(--border, #dee2e6)', borderRadius: '8px', background: '#fff' }}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {state.error ? (
         <div className="deliver-error" data-testid="deliver-error">

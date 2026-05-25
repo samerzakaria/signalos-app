@@ -102,6 +102,47 @@ def cmd_deliver_design(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deliver_design_preview(args: argparse.Namespace) -> int:
+    """Generate and return design preview HTML path."""
+    import json as _json
+
+    from ..product.intent import extract_product_intent
+    from ..product.blueprints.registry import load_blueprint, match_blueprint
+    from ..product.design import build_design_system
+    from ..product.design_preview import generate_design_preview_html
+
+    intent = extract_product_intent(args.prompt)
+    if args.name:
+        intent["product_name"] = args.name
+
+    profile = args.profile if args.profile != "auto" else "react-vite"
+    blueprint_id = match_blueprint(intent)
+    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    design = build_design_system(intent, profile, bp)
+
+    preview_html = generate_design_preview_html(design, intent)
+
+    # Write to .signalos/product/design-preview.html
+    from pathlib import Path
+    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
+    signalos_dir = repo_root / ".signalos"
+    product_dir = signalos_dir / "product"
+    product_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = product_dir / "design-preview.html"
+    preview_path.write_text(preview_html, encoding="utf-8")
+
+    payload = {
+        "preview_path": str(preview_path),
+        "preview_html": preview_html,
+    }
+
+    if getattr(args, "as_json", True):
+        _json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+
+    return 0
+
+
 def cmd_deliver(args: argparse.Namespace) -> int:
     """Execute the deliver command."""
     from ..product.delivery import run_delivery
