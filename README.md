@@ -1,182 +1,151 @@
-# SignalOS App
+# SignalOS
 
-SignalOS App is the native desktop shell for the vendored SignalOS Core runtime. It is built for an installer-first workflow: an end user installs the app, chooses a separate project folder, connects an AI provider or local model, and uses SignalOS without this repository.
+SignalOS is an agentic software house packaged as a desktop application. You describe what you want built; SignalOS assigns agents, enforces governance at every gate, and delivers a running, tested, governed product. Agents write the code. SignalOS runs the house.
 
-Current status: ready-to-sign installer candidate. The app-side first-run journey is implemented; code signing, notarization, release signatures, and clean-machine installer validation are release gates.
+**Version: v3.0.0-internal**
 
-## What It Does
+## How It Works
 
-- Chat-first workspace for plain AI questions and `/signal-*` commands.
-- Guided project setup with visible setup/status results and project artifacts.
-- Dashboard for project readiness, AI state, engine health, next action, gates, and files.
-- Gate signing UI with signer name and audit-oriented command output.
-- First-project proof checklist for project, AI, setup, status, first note, and first gate action.
-- Notes and Brain search for project memory.
-- Multi-provider AI setup with model fetch, model picker, and manual "Other model" entry.
-- OS keychain storage for API keys; raw keys are not shown after save.
-- Secret summary that shows risky file names and variable names without exposing values.
-- Engine diagnostics with ping, status, restart, and redacted diagnostic copy.
-- Redacted issue-report export and team handoff export into the selected project.
-- Project templates, workflow recipes, and local privacy guidance in the in-app guide.
-- Beta/stable update-channel preference for release checks.
-- Cost controls for session spend and monthly budget.
-- Release readiness script for local checks and unsigned installer builds.
+A product delivery follows this pipeline:
 
-## End User Requirements
+```
+Client prompt -> Intent -> Design -> Acceptance -> Agent builds -> Validation -> Security -> Proof -> Closeout
+```
 
-An installed user should only need:
+The desktop UI presents a 5-step wizard (Intent, Design, Build, Validate, Deliver). The user reviews and approves at every gate using one of five verdicts: approve, request changes, reject, waive, or approve with conditions. Bounded rework loops prevent infinite cycles when changes are requested.
 
-- The SignalOS installer for their operating system.
-- A writable project folder.
-- An AI provider key, or Ollama running locally with a pulled model.
-- Network access for cloud AI providers.
+## What Gets Delivered
 
-They should not need:
+- Real project scaffold (package.json, Vite config, tsconfig, entry points)
+- Agent-generated product code (components, tests, application logic)
+- Design system (UI library, tokens, layouts)
+- Acceptance matrix linking every output file to acceptance criteria
+- Security scan (injection detection, PII check, compliance rules)
+- Runtime proof (dev server starts, page renders successfully)
+- Honest closeout (evidence-based summary; never claims what is not proven)
 
-- This `signalos-app` repository.
-- The separate SignalOS core repository.
-- Python installed system-wide.
-- Rust, Node, Cargo, Tauri, or build tools.
+## Governance
+
+SignalOS enforces its way of working at build time and runtime:
+
+- **Constitution** -- supreme governing document for all agent behavior
+- **Trust tiers** -- T1 advisory, T2 review-required, T3 autonomous
+- **Gates** -- G0 through G5, each requiring a human signature to proceed
+- **Governance library** -- 287 bundled governance files; the orchestrator selects the relevant subset per agent role
+- **Runtime enforcement** -- 13 rules, strict mode, fails closed
+- **Privacy** -- GDPR Article 15 export and Article 17 erasure support
+- **Threat modeling** -- OWASP/STRIDE methodology applied during security gate
+- **Audit trail** -- append-only, tamper-evident log of all decisions
 
 ## Architecture
 
-```text
-signalos-app/
-|-- src/                         Frontend app shell
-|   |-- index.html               HTML/CSS UI
-|   `-- js/
-|       |-- app.js               Workspace behavior
-|       `-- ipc.js               Tauri IPC wrapper and browser mock
-|-- src-tauri/                   Rust backend (Tauri 2)
-|   |-- src/
-|   |   |-- main.rs              App entry point and command registration
-|   |   |-- ipc.rs               Project, AI, notes, command, and artifact IPC
-|   |   |-- provider.rs          AI provider integration
-|   |   |-- sidecar.rs           Python SignalOS Core sidecar manager
-|   |   `-- keychain.rs          OS credential storage
-|   |-- Cargo.toml
-|   `-- tauri.conf.json          App, bundle, signing, and updater config
-|-- python/                      Vendored SignalOS Core runtime
-|-- distribution/
-|   |-- landing/                 Download landing page
-|   `-- update-manifest/         Beta/latest updater manifests
-|-- docs/
-|   `-- SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md
-|-- scripts/
-|   |-- bundle-sidecar.ps1       Build the bundled Python sidecar
-|   |-- verify-release.ps1       Local release readiness checks
-|   |-- test-installer.ps1       Windows manual installed-app checklist
-|   `-- test-installer.sh        Cross-platform manual installed-app checklist
-|-- SIGNING.md                   Signing and notarization checklist
-`-- README.md
 ```
-
-Tauri owns the native window, menus, IPC, updater, and OS integration. The Rust backend launches the bundled Python sidecar and keeps AI keys in the OS credential store. The webview frontend provides the installed-user journey.
+signalos-app/
+|-- src/                                  Preact frontend
+|   |-- components/
+|   |   |-- views/
+|   |   |   |-- DeliverView.tsx           5-step product delivery wizard
+|   |   |   |-- BuildView.tsx             Build progress and output
+|   |   |   |-- DashboardView.tsx         Project overview
+|   |   |   |-- VelocityPanel.tsx         Delivery metrics
+|   |   |   |-- VaultView.tsx             Secret management
+|   |   |   |-- PreviewView.tsx           Live preview of generated product
+|   |   |   |-- SettingsView.tsx          App configuration
+|   |   |   `-- TerminalView.tsx          Terminal output
+|   |   |-- ProgressDetail.tsx            Gate progress breakdown
+|   |   |-- TestDebtPanel.tsx             Test coverage tracking
+|   |   |-- GateTimeline.tsx              Gate signing timeline
+|   |   `-- Sidebar.tsx / Titlebar.tsx    Shell chrome
+|   `-- js/
+|       `-- ipc.js                        Tauri IPC wrapper
+|-- src-tauri/                            Rust backend (Tauri 2)
+|   `-- src/
+|       |-- main.rs                       Entry point and command registration
+|       |-- ipc.rs                        IPC commands (project, delivery, gates)
+|       |-- governance.rs                 Governance rule evaluation
+|       |-- enforcement.rs                Runtime enforcement engine
+|       |-- keychain.rs                   OS credential storage
+|       |-- sandbox.rs                    Agent sandboxing
+|       |-- runtime.rs                    Runtime management
+|       |-- sidecar.rs                    Python sidecar lifecycle
+|       |-- test_automation.rs            Test-automation bridge
+|       `-- provider.rs                   AI provider integration
+|-- python/
+|   |-- signalos_lib/
+|   |   |-- product/                      Delivery bridge modules
+|   |   |   |-- intent.py                 Client intent extraction
+|   |   |   |-- design.py                 Design generation
+|   |   |   |-- scaffold.py               Project scaffolding
+|   |   |   |-- generation.py             Agent code generation
+|   |   |   |-- validation.py             Output validation
+|   |   |   |-- security_gate.py          Security scanning
+|   |   |   |-- proof.py                  Runtime proof collection
+|   |   |   |-- deploy.py                 Deployment packaging
+|   |   |   |-- closeout.py               Evidence-based closeout
+|   |   |   |-- acceptance.py             Acceptance criteria matrix
+|   |   |   |-- agent_dispatch.py         Agent assignment and dispatch
+|   |   |   |-- gate_review.py            Gate verdict handling
+|   |   |   |-- questions.py              Client clarification questions
+|   |   |   |-- repair_loop.py            Bounded rework loops
+|   |   |   |-- lifecycle.py              Delivery lifecycle orchestration
+|   |   |   `-- blueprints/               Product type blueprints
+|   |   `-- _bundle/                      Governance library
+|   |       `-- core/
+|   |           |-- governance/            Constitution, rules, policies
+|   |           |-- execution/             Agent execution framework
+|   |           |-- strategy/              Planning and sequencing
+|   |           |-- registry/              Agent and skill registry
+|   |           |-- observability/         Logging and audit
+|   |           `-- tool-adapters/         External tool integrations
+|   `-- signalos_ipc_server.py            IPC server entry point
+|-- .github/workflows/
+|   |-- pages.yml                         GitHub Pages deployment
+|   |-- smoke.yml                         Build smoke tests
+|   |-- test-automation.yml               L0 through L3 test levels
+|   |-- release.yml                       Release pipeline
+|   `-- windows-installer.yml             Installer build and validation
+|-- distribution/                         Landing page and updater manifests
+`-- scripts/                              Build, bundle, and release tooling
+```
 
 ## Development
 
 ### Prerequisites
 
-- Rust stable toolchain.
-- Node.js 18+.
-- Python 3.11+ for sidecar bundling and local development.
-- Tauri CLI: `cargo install tauri-cli`.
+- Rust stable toolchain
+- Node.js 18+
+- Python 3.11+
+- Tauri CLI: `cargo install tauri-cli`
 
-### Run The App
+### Run the App
 
-```powershell
+```bash
 cargo tauri dev
 ```
 
-The browser mock can be opened directly from `src/index.html`, but real app behavior should be verified through Tauri because keychain, sidecar, updater, and file opening are native features.
+### Tests
+
+```bash
+python -m pytest python/ -q          # Python unit and integration tests
+npx vitest run                       # Frontend component tests
+npx tsc --noEmit                     # TypeScript type check
+```
 
 ### Verify Release Readiness
-
-Run the local readiness checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1
 ```
 
-Build unsigned local installer bundles:
+## CI
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BuildInstaller -SmokeInstalledBuild -InstallNsisSmoke
-```
-
-Expected Windows outputs:
-
-```text
-src-tauri/target/release/bundle/nsis/SignalOS_0.0.9_x64-setup.exe
-src-tauri/target/release/bundle/msi/SignalOS_0.0.9_x64_en-US.msi
-```
-
-Run the local unsigned package smoke again without rebuilding, if needed:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -SmokeInstalledBuild -InstallNsisSmoke
-```
-
-If the smoke command reports that SignalOS is already running, close SignalOS and retry.
-
-Run the installer-only runtime smoke:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -InstalledRuntimeSmoke
-```
-
-Run live provider validation:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -LiveProviderValidation
-```
-
-Validate local and remote release URLs:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -ValidateRemoteReleaseUrls
-```
-
-Run the manual installed-app checklist on a clean Windows machine or VM:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-installer.ps1
-```
-
-## Signing
-
-The product is ready to sign, but signing is intentionally not completed in this stage. See [SIGNING.md](SIGNING.md) for certificates, notarization, updater signing, and CI secrets.
-
-Do not describe a build as public beta until signed packages and signed update manifests have been validated from a tagged release.
-
-## Distribution
-
-Updater manifest source files live in:
-
-```text
-distribution/update-manifest/beta.json
-distribution/update-manifest/latest.json
-```
-
-The installed app reads the public copies deployed through GitHub Pages:
-
-```text
-https://samerzakaria.github.io/signalos-app/update-manifest/beta.json
-https://samerzakaria.github.io/signalos-app/update-manifest/latest.json
-```
-
-The Tauri updater is wired to those checked-in manifest paths. Release signatures must be populated during the signed release process.
-
-## Reference
-
-The installed-app product review, user guide, roadmap, and acceptance checklist are in [docs/SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md](docs/SIGNALOS_INSTALLED_APP_REFERENCE_REVIEW.md).
-
-Additional operating docs:
-
-- [User Guide](docs/USER_GUIDE.md)
-- [Release Operator Guide](docs/RELEASE_OPERATOR_GUIDE.md)
-- [Provider Validation Guide](docs/PROVIDER_VALIDATION_GUIDE.md)
-- [Clean-Machine Validation](docs/CLEAN_MACHINE_VALIDATION.md)
+| Workflow | Purpose |
+|---|---|
+| `pages.yml` | Deploy GitHub Pages (landing page, update manifests) |
+| `smoke.yml` | Build smoke test on push |
+| `test-automation.yml` | L0 through L3 automated test levels |
+| `release.yml` | Tagged release pipeline |
+| `windows-installer.yml` | Installer build and validation |
 
 ## License
 

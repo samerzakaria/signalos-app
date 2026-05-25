@@ -114,28 +114,6 @@
   .hero-sub{color:var(--muted);font-size:18px;max-width:660px;margin:0 auto 22px}
   .cover-icons{display:flex;gap:18px;margin:24px 0;font-size:32px}
 
-  /* Folder */
-  .folder-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
-  /* Inputs match src/index.html `input, select, textarea` exactly. */
-  .input{
-    width:100%;border:1px solid var(--line-strong);border-radius:var(--radius);
-    background:#fff;color:var(--text);padding:10px 11px;font:inherit;font-size:14px;min-height:42px;
-  }
-  .input:focus{outline:2px solid #c9d8ff;border-color:var(--blue)}
-  .check-list{display:grid;gap:6px;margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:#fbfaf7}
-  .check-line{display:flex;gap:8px;align-items:center;font-size:13px}
-  .check-line.ok{color:var(--green);font-weight:700}
-  .check-line.warn{color:var(--amber);font-weight:700}
-
-  /* Init modes */
-  .mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
-  .mode-card{border:3px solid var(--line);border-radius:var(--radius);padding:18px;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
-  .mode-card:hover{transform:translateY(-3px)}
-  .mode-card.selected{border-color:var(--blue);background:var(--blue-soft)}
-  .mode-emoji{font-size:32px}
-  .mode-title{font-weight:800;font-size:16px;margin:6px 0 4px}
-  .mode-desc{color:var(--muted);font-size:12px}
-
   /* Provider */
   .provider-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
   .provider-chip{padding:10px 8px;border:2px solid var(--line);border-radius:12px;background:#fff;text-align:center;font-weight:700;font-size:12px;cursor:pointer;transition:border-color .15s,background .15s}
@@ -145,103 +123,64 @@
   .test-ping{padding:12px;border-radius:10px;background:var(--green-soft);color:var(--green);font-weight:700;margin-top:12px;display:none}
   .test-ping.show{display:block}
 
-  /* Identity */
-  .role-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
-  .role-chip{padding:14px;text-align:center;border:2px solid var(--line);border-radius:12px;cursor:pointer;font-weight:700}
-  .role-chip:hover{border-color:var(--blue)}
-  .role-chip.selected{border-color:var(--blue);background:var(--blue-soft)}
-  .role-emoji{font-size:24px;display:block}
+  /* Prompt textarea */
+  .input{
+    width:100%;border:1px solid var(--line-strong);border-radius:var(--radius);
+    background:#fff;color:var(--text);padding:10px 11px;font:inherit;font-size:14px;min-height:42px;
+  }
+  .input:focus{outline:2px solid #c9d8ff;border-color:var(--blue)}
+  .prompt-area{min-height:120px;resize:vertical;line-height:1.5}
 
-  /* Budget */
-  .budget-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
-  .privacy-list{display:grid;gap:10px;margin-top:14px}
-  .privacy-line{display:flex;gap:10px;align-items:center;padding:8px 12px;background:#fbfaf7;border:1px solid var(--line);border-radius:10px}
+  /* Intent / Design cards */
+  .entity-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+  .entity-card{padding:14px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7;cursor:pointer;transition:border-color .15s,background .15s}
+  .entity-card:hover{border-color:var(--blue)}
+  .entity-card.selected{border-color:var(--blue);background:var(--blue-soft)}
+  .entity-title{font-weight:800;font-size:14px;margin-bottom:4px}
+  .entity-desc{color:var(--muted);font-size:12px}
+  .entity-tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;margin-top:6px}
+  .entity-tag.ent{background:var(--blue-soft);color:var(--blue)}
+  .entity-tag.wf{background:var(--green-soft);color:var(--green)}
+  .entity-tag.surf{background:var(--amber-soft);color:var(--amber)}
 
-  /* Wish picker */
-  .wish-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:18px}
-  .wish-card{background:#fff;border:3px solid var(--line);border-radius:18px;padding:20px;cursor:pointer;text-align:center;display:grid;gap:10px;transition:transform .2s,border-color .2s,box-shadow .2s}
-  .wish-card:hover{transform:translateY(-4px);border-color:var(--blue);box-shadow:var(--shadow)}
-  .wish-card.selected{border-color:var(--blue);background:var(--blue-soft)}
-  .wish-emoji{font-size:48px;line-height:1}
+  /* Design choices */
+  .design-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  .design-card{border:2px solid var(--line);border-radius:12px;padding:16px;background:#fbfaf7}
+  .design-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:6px}
+  .design-value{font-weight:800;font-size:16px}
+  .design-sub{color:var(--muted);font-size:12px;margin-top:4px}
+  .color-row{display:flex;gap:8px;margin-top:8px}
+  .color-swatch{width:28px;height:28px;border-radius:8px;border:2px solid var(--line)}
 
-  /* Plan */
-  .plan-stage{display:grid;grid-template-columns:1.1fr 1fr;gap:30px;align-items:center;height:100%}
-  .plan-bubble{background:#f7f5ef;border-radius:22px;padding:20px 24px;border:2px solid var(--line)}
-  .plan-list{display:grid;gap:8px;margin-top:8px}
-  .plan-row{display:grid;grid-template-columns:26px 1fr;gap:8px;align-items:center;opacity:0;transform:translateX(-10px);transition:opacity .3s,transform .3s}
-  .plan-row.in{opacity:1;transform:none}
-  .plan-dot{width:22px;height:22px;border-radius:50%;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800}
+  /* Progress phases */
+  .progress-stage{display:grid;grid-template-columns:1fr 1fr;gap:24px;height:100%;align-items:center}
+  .phase-list{display:grid;gap:10px}
+  .phase-row{display:grid;grid-template-columns:32px 1fr auto;gap:10px;align-items:center;padding:10px 14px;border-radius:12px;border:2px solid var(--line);background:#fbfaf7;opacity:0;transform:translateX(-10px);transition:opacity .35s,transform .35s,border-color .3s,background .3s}
+  .phase-row.in{opacity:1;transform:none}
+  .phase-row.active{border-color:var(--blue);background:var(--blue-soft)}
+  .phase-row.done{border-color:var(--green);background:var(--green-soft)}
+  .phase-icon{font-size:20px}
+  .phase-name{font-weight:700;font-size:14px}
+  .phase-sub{font-size:11px;color:var(--muted)}
+  .phase-status{font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px}
+  .phase-status.waiting{background:var(--line);color:var(--faint)}
+  .phase-status.running{background:var(--blue-soft);color:var(--blue)}
+  .phase-status.complete{background:var(--green-soft);color:var(--green)}
   .signaloid{width:200px;height:200px;display:grid;place-items:center;background:radial-gradient(circle at 30% 30%,#e8efff,#b9c8ee);border-radius:50%;animation:think 2.4s ease-in-out infinite;margin:0 auto}
   .signaloid svg{width:120px;height:120px}
   @keyframes think{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-5px) scale(1.03)}}
 
-  /* Files */
-  .files-stage{display:grid;grid-template-columns:1fr 1.3fr;gap:24px;height:100%}
-  .file-tree-card{background:#f8f6f0;border-radius:18px;padding:14px;border:2px solid var(--line);overflow-y:auto}
-  .file-tree-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
-  .file-row{display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:8px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;opacity:0;transform:translateY(6px);transition:opacity .3s,transform .3s,background .15s;cursor:pointer}
-  .file-row.in{opacity:1;transform:none}
-  .file-row:hover{background:#ede9dd}
-  .file-row.selected{background:var(--blue-soft)}
-  .file-emoji{font-size:16px}
-  .file-new{font-size:9px;padding:2px 7px;border-radius:99px;background:var(--green-soft);color:var(--green);font-weight:800}
-  .file-peek{background:#1e1d1a;color:#f0eee8;border-radius:18px;padding:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow:auto;height:100%;border:2px solid #2a2925}
-  .file-peek-empty{color:#968f82;font-style:italic}
+  /* Closeout card */
+  .closeout-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+  .closeout-card{padding:16px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7}
+  .closeout-card.green{border-color:var(--green);background:var(--green-soft)}
+  .closeout-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:4px}
+  .closeout-value{font-weight:800;font-size:15px}
 
-  /* Diff */
-  .diff-card{padding:16px;background:#fbfaf7;border:2px solid var(--line);border-radius:var(--radius);margin-top:14px}
-  .diff-row{display:grid;grid-template-columns:30px 1fr auto;gap:8px;padding:5px 8px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px}
-  .diff-row.new{color:var(--green)}
-  .diff-row.mod{color:var(--amber)}
-  .diff-row.same{color:var(--faint)}
-  .diff-counts{display:flex;gap:18px;margin-bottom:10px;font-weight:800;font-size:14px}
-  .diff-confirm-row{margin-top:12px;display:flex;justify-content:flex-end;gap:8px}
-
-  /* Mutation gate */
-  .mutation-card{padding:20px;background:var(--amber-soft);border:2px solid var(--amber);border-radius:var(--radius);margin-top:14px}
-  .mutation-bar{height:14px;background:#fff;border-radius:99px;overflow:hidden;margin:10px 0}
-  .mutation-fill{height:100%;background:linear-gradient(90deg,var(--amber),var(--green));transition:width .8s ease}
-  .mutation-threshold{position:absolute;width:2px;height:24px;background:var(--ink);margin-top:-19px;margin-left:95%;display:inline-block}
-
-  /* Run */
-  .run-stage{display:grid;grid-template-columns:1fr 1.4fr;gap:24px;height:100%;align-items:center}
-  .run-tag{align-self:start;background:var(--green);color:#fff;font-weight:800;font-size:11px;padding:6px 12px;border-radius:99px;letter-spacing:.04em;display:inline-block}
-  .demo-wrap{border:3px solid var(--line);border-radius:18px;overflow:hidden;background:#fff;position:relative;height:100%}
-  .demo-frame{width:100%;height:100%;border:0;display:block;min-height:380px}
-  .demo-chrome{background:#f4f1e8;padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center}
-  .demo-dot{width:9px;height:9px;border-radius:50%}
-  .demo-dot.r{background:#e87878}.demo-dot.y{background:#e8c878}.demo-dot.g{background:#78c89a}
-  .demo-addr{margin-left:10px;color:var(--muted);font-size:11px;font-family:ui-monospace,monospace}
-
-  /* Regenerate */
-  .regen-prompt{padding:14px;background:#fbfaf7;border:2px solid var(--line);border-radius:var(--radius);margin-top:14px}
-
-  /* Three-pane */
-  .three-pane{display:grid;grid-template-columns:140px 1fr 140px;gap:8px;height:100%;border:2px solid var(--line);border-radius:var(--radius);overflow:hidden}
-  .tp-pane{padding:14px;display:flex;flex-direction:column}
-  .tp-left{background:#f7f5ef;border-right:1px solid var(--line)}
-  .tp-center{background:#fff;text-align:center;justify-content:center;align-items:center}
-  .tp-right{background:#f4f1e8;border-left:1px solid var(--line)}
-  .tp-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;background:#ede9dd;border-radius:6px;padding:2px;margin-bottom:8px}
-  .tp-tab{background:transparent;border:0;font:inherit;font-size:11px;font-weight:700;padding:5px;border-radius:4px;cursor:pointer;color:var(--muted)}
-  .tp-tab.active{background:#fff;color:var(--ink)}
-  .tp-content{font-size:11px;color:var(--muted);text-align:left}
-
-  /* Secrets */
-  .secret-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px;background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:6px}
-  .secret-name{font-family:ui-monospace,monospace;font-weight:700;font-size:13px}
-  .secret-mask{color:var(--muted);font-family:ui-monospace,monospace;font-size:12px}
-  .secret-btns{display:flex;gap:4px}
-  .secret-btn{padding:4px 8px;background:transparent;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:10px;cursor:pointer}
-
-  /* Test debt */
-  .debt-entry{padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:6px}
-  .debt-title{font-weight:700;font-size:13px}
-  .debt-meta{color:var(--faint);font-size:11px;margin-top:2px}
-
-  /* Streaming */
-  .stream-box{background:#1e1d1a;color:#f0eee8;border-radius:14px;padding:16px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.6;min-height:140px;border:2px solid #2a2925;white-space:pre-wrap}
-  .stream-counter{font-size:11px;color:var(--faint);margin-top:8px}
+  /* Open product */
+  .open-stage{display:grid;grid-template-columns:1fr 1fr;gap:24px;height:100%;align-items:center}
+  .repo-card{padding:24px;border:3px solid var(--green);border-radius:18px;background:var(--green-soft);text-align:center}
+  .repo-emoji{font-size:64px;margin-bottom:12px}
 
   /* Gate sign */
   .sign-stage{display:grid;place-items:center;height:100%;gap:18px;padding:24px}
@@ -257,24 +196,106 @@
   .seal.in{opacity:1;transform:none}
   .seal-small{font-size:11px;font-weight:700;margin-top:4px}
 
-  /* Override modal */
-  .override-modal{position:absolute;inset:0;background:rgba(20,18,14,.6);display:none;place-items:center;border-radius:var(--radius)}
-  .override-modal.show{display:grid}
-  .override-card{background:#fff;border-radius:14px;padding:20px;width:380px;max-width:90%}
-  .override-card h3{margin-bottom:8px}
+  /* Verdict picker */
+  .verdict-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}
+  .verdict-card{padding:14px 10px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7;text-align:center;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
+  .verdict-card:hover{transform:translateY(-2px);border-color:var(--blue)}
+  .verdict-card.selected{border-color:var(--blue);background:var(--blue-soft)}
+  .verdict-emoji{font-size:28px;display:block;margin-bottom:6px}
+  .verdict-name{font-weight:800;font-size:12px}
+  .verdict-desc{font-size:10px;color:var(--muted);margin-top:4px}
+
+  /* Trust tiers */
+  .tier-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  .tier-card{padding:18px;border:3px solid var(--line);border-radius:14px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
+  .tier-card:hover{transform:translateY(-3px)}
+  .tier-card.selected{border-color:var(--blue);background:var(--blue-soft)}
+  .tier-emoji{font-size:36px}
+  .tier-name{font-weight:800;font-size:16px;margin:8px 0 4px}
+  .tier-desc{color:var(--muted);font-size:12px}
+
+  /* Security */
+  .security-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .security-card{padding:14px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7}
+  .security-icon{font-size:24px;margin-bottom:6px}
+  .security-title{font-weight:800;font-size:14px;margin-bottom:4px}
+  .security-desc{color:var(--muted);font-size:12px}
+  .security-status{margin-top:8px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;display:inline-block}
+  .security-status.pass{background:var(--green-soft);color:var(--green)}
+  .security-status.warn{background:var(--amber-soft);color:var(--amber)}
 
   /* Audit reveal */
   .audit-card{background:#1e1d1a;color:#a8e9b8;border-radius:14px;padding:16px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.6;border:2px solid #2a2925;overflow:auto;max-height:380px}
   .audit-line{opacity:0;transform:translateY(6px);transition:opacity .25s,transform .25s}
   .audit-line.in{opacity:1;transform:none}
 
-  /* Wave freeze */
-  .freeze-stage{display:grid;grid-template-columns:1fr 1fr;gap:24px;height:100%;align-items:center}
-  .freeze-card{padding:24px;border:3px solid;border-radius:var(--radius);text-align:center}
-  .freeze-card.active{border-color:var(--blue);background:var(--blue-soft)}
-  .freeze-card.frozen{border-color:var(--red);background:var(--red-soft)}
-  .freeze-emoji{font-size:64px}
-  .freeze-toggle{margin-top:14px}
+  /* Dashboard */
+  .dash-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  .dash-card{padding:18px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7;text-align:center}
+  .dash-num{font-size:32px;font-weight:900;color:var(--blue)}
+  .dash-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:4px}
+  .burndown-bar{height:18px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:14px}
+  .burndown-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--aqua));transition:width 1s ease;border-radius:99px}
+
+  /* Chat */
+  .chat-stage{display:grid;grid-template-columns:1fr 200px;gap:18px;height:100%}
+  .chat-messages{background:#1e1d1a;border-radius:14px;padding:16px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;border:2px solid #2a2925;overflow:auto;color:#f0eee8;display:flex;flex-direction:column;gap:8px}
+  .chat-msg{padding:8px 12px;border-radius:10px;max-width:90%}
+  .chat-msg.user{background:var(--blue);color:#fff;align-self:flex-end}
+  .chat-msg.ai{background:#2a2925;color:#e0ddd6;align-self:flex-start}
+  .chat-msg.cmd{background:#2a2925;color:var(--aqua);font-weight:700;align-self:flex-start;border:1px solid var(--aqua)}
+  .chat-sidebar{display:flex;flex-direction:column;gap:8px}
+  .chat-sidebar-item{padding:10px;border:1px solid var(--line);border-radius:10px;font-size:12px;background:#fbfaf7;transition:border-color .15s,background .15s}
+  .chat-sidebar-item.active{border-color:var(--blue);background:var(--blue-soft);font-weight:700}
+
+  /* Files and preview */
+  .files-stage{display:grid;grid-template-columns:1fr 1.3fr;gap:24px;height:100%}
+  .file-tree-card{background:#f8f6f0;border-radius:18px;padding:14px;border:2px solid var(--line);overflow-y:auto}
+  .file-tree-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+  .file-row{display:grid;grid-template-columns:24px 1fr auto;gap:6px;align-items:center;padding:8px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;opacity:0;transform:translateY(6px);transition:opacity .3s,transform .3s,background .15s;cursor:pointer}
+  .file-row.in{opacity:1;transform:none}
+  .file-row:hover{background:#ede9dd}
+  .file-row.selected{background:var(--blue-soft)}
+  .file-emoji{font-size:16px}
+  .file-badge{font-size:9px;padding:2px 7px;border-radius:99px;font-weight:800}
+  .file-badge.new{background:var(--green-soft);color:var(--green)}
+  .file-badge.mod{background:var(--amber-soft);color:var(--amber)}
+  .file-badge.pass{background:var(--green-soft);color:var(--green)}
+  .file-peek{background:#1e1d1a;color:#f0eee8;border-radius:18px;padding:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow:auto;height:100%;border:2px solid #2a2925}
+  .file-peek-empty{color:#968f82;font-style:italic}
+  .demo-wrap{border:3px solid var(--line);border-radius:18px;overflow:hidden;background:#fff;position:relative;height:100%}
+  .demo-frame{width:100%;height:100%;border:0;display:block;min-height:320px}
+  .demo-chrome{background:#f4f1e8;padding:6px 10px;border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center}
+  .demo-dot{width:9px;height:9px;border-radius:50%}
+  .demo-dot.r{background:#e87878}.demo-dot.y{background:#e8c878}.demo-dot.g{background:#78c89a}
+  .demo-addr{margin-left:10px;color:var(--muted);font-size:11px;font-family:ui-monospace,monospace}
+
+  /* Secrets */
+  .secret-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px;background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:6px}
+  .secret-name{font-family:ui-monospace,monospace;font-weight:700;font-size:13px}
+  .secret-mask{color:var(--muted);font-family:ui-monospace,monospace;font-size:12px}
+  .secret-btns{display:flex;gap:4px}
+  .secret-btn{padding:4px 8px;background:transparent;border:1px solid var(--line);border-radius:6px;font:inherit;font-size:10px;cursor:pointer}
+  .env-diff{margin-top:14px;padding:14px;border:2px solid var(--line);border-radius:12px;background:#fbfaf7}
+  .env-diff-row{display:grid;grid-template-columns:30px 1fr;gap:8px;padding:4px 8px;font-family:ui-monospace,monospace;font-size:12px;border-radius:4px}
+  .env-diff-row.add{color:var(--green);background:var(--green-soft)}
+  .env-diff-row.rem{color:var(--red);background:var(--red-soft)}
+  .env-diff-row.same{color:var(--faint)}
+
+  /* Test debt */
+  .debt-entry{padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:6px}
+  .debt-title{font-weight:700;font-size:13px}
+  .debt-meta{color:var(--faint);font-size:11px;margin-top:2px}
+  .mutation-card{padding:20px;background:var(--amber-soft);border:2px solid var(--amber);border-radius:var(--radius);margin-top:14px}
+  .mutation-bar{height:14px;background:#fff;border-radius:99px;overflow:hidden;margin:10px 0}
+  .mutation-fill{height:100%;background:linear-gradient(90deg,var(--amber),var(--green));transition:width .8s ease}
+
+  /* Override modal */
+  .override-modal{position:absolute;inset:0;background:rgba(20,18,14,.6);display:none;place-items:center;border-radius:var(--radius)}
+  .override-modal.show{display:grid}
+  .override-card{background:#fff;border-radius:14px;padding:20px;width:380px;max-width:90%}
+  .override-card h3{margin-bottom:8px}
+  .diff-confirm-row{margin-top:12px;display:flex;justify-content:flex-end;gap:8px}
 
   /* Done */
   .done-stage{display:grid;place-items:center;height:100%;text-align:center;padding:0 36px}
@@ -288,8 +309,8 @@
     main{grid-template-columns:1fr;height:100vh;width:100vw;gap:0}
     aside.rail{display:none}
     .slide{border-radius:0}
-    .plan-stage,.files-stage,.run-stage,.three-pane,.freeze-stage{grid-template-columns:1fr}
-    .wish-grid,.mode-grid,.provider-grid,.role-grid{grid-template-columns:1fr 1fr}
+    .progress-stage,.files-stage,.open-stage,.chat-stage{grid-template-columns:1fr}
+    .entity-grid,.provider-grid,.verdict-grid,.tier-grid,.security-grid,.design-grid,.dash-grid,.closeout-grid{grid-template-columns:1fr 1fr}
   }
 </style>
 </head>
@@ -328,133 +349,92 @@
     </header>
     <div class="content"></div>
     <footer class="nav">
-      <button class="btn btn-ghost" data-prev>← Back</button>
+      <button class="btn btn-ghost" data-prev>&#8592; Back</button>
       <span class="bar-step nav-hint"></span>
-      <button class="btn btn-primary" data-next>Continue →</button>
+      <button class="btn btn-primary" data-next>Continue &#8594;</button>
     </footer>
   </div>
 </template>
 
 <script>
-// ─── Slide manifest (the real onboarding) ────────────────────────────────────
+// ─── Slide manifest (v3.0.0 agentic software house) ─────────────────────────
 const SLIDES = [
-  { id:"welcome",      group:"Start",        title:"Welcome",                gate:null },
-  { id:"folder",       group:"Setup",        title:"Pick a folder",          gate:null },
-  { id:"init",         group:"Setup",        title:"What may we write?",     gate:null },
-  { id:"ai",           group:"Setup",        title:"Connect AI",             gate:null },
-  { id:"identity",     group:"Setup",        title:"Who are you?",           gate:null },
-  { id:"budget",       group:"Setup",        title:"Budget & privacy",       gate:null },
-  { id:"wish",         group:"Build",        title:"Pick a wish",            gate:null },
-  { id:"plan",         group:"Build",        title:"Plan appears",           gate:null },
-  { id:"files",        group:"Build",        title:"Files appear",           gate:null },
-  { id:"diff",         group:"Build",        title:"Confirm the writes",    gate:null },
-  { id:"mutation",     group:"Build",        title:"Mutation gate",          gate:null },
-  { id:"run",          group:"Build",        title:"It runs",                gate:null },
-  { id:"regenerate",   group:"Iterate",      title:"Change one file",        gate:null },
-  { id:"streaming",    group:"Iterate",      title:"Tokens stream in",       gate:null },
-  { id:"tabs",         group:"Iterate",      title:"Files · Gov · Mem",      gate:null },
-  { id:"secrets",      group:"Iterate",      title:"Keep secrets safe",      gate:null },
-  { id:"debt",         group:"Quality",      title:"Log a defect",           gate:null },
-  { id:"enforce",      group:"Quality",      title:"Override (audited)",     gate:null },
-  { id:"sign",         group:"Sign",         title:"Sign the gates",         gate:null },
-  { id:"audit",        group:"Sign",         title:"Audit trail",            gate:null },
-  { id:"ship",         group:"Sign",         title:"Ship it for real",       gate:null },
-  { id:"freeze",       group:"Sign",         title:"Freeze the wave",        gate:null },
-  { id:"done",         group:"Done",         title:"You're set",             gate:null },
+  // Start
+  { id:"welcome",       group:"Start",   title:"Welcome" },
+  { id:"ai",            group:"Start",   title:"Connect AI" },
+  // Deliver
+  { id:"describe",      group:"Deliver", title:"Describe your product" },
+  { id:"intent",        group:"Deliver", title:"Review intent" },
+  { id:"design",        group:"Deliver", title:"Review design" },
+  { id:"progress",      group:"Deliver", title:"Watch the team work" },
+  { id:"closeout",      group:"Deliver", title:"Review the result" },
+  { id:"openproduct",   group:"Deliver", title:"Open your product" },
+  // Govern
+  { id:"gates",         group:"Govern",  title:"Gates" },
+  { id:"verdicts",      group:"Govern",  title:"Review verdicts" },
+  { id:"tiers",         group:"Govern",  title:"Trust tiers" },
+  { id:"security",      group:"Govern",  title:"Security" },
+  { id:"audit",         group:"Govern",  title:"Audit trail" },
+  // Work
+  { id:"dashboard",     group:"Work",    title:"Dashboard" },
+  { id:"chat",          group:"Work",    title:"Chat" },
+  { id:"files",         group:"Work",    title:"Files and preview" },
+  { id:"secrets",       group:"Work",    title:"Secrets vault" },
+  { id:"testdebt",      group:"Work",    title:"Test debt" },
+  // Done
+  { id:"done",          group:"Done",    title:"You're set" },
 ];
 
 const state = {
   current: 0,
   visited: new Set([0]),
-  folder: "",
-  initMode: "keep",
   provider: "anthropic",
   modelTested: false,
-  identityName: "You",
-  identityRole: "PO",
-  budget: 10,
-  privacy: { redactEnv:true, blockSecrets:true, localOnly:false },
-  wish: null,
-  filesWritten: [],
-  diffConfirmed: false,
-  mutationOverridden: false,
-  regenInstruction: "",
-  activeTab: "files",
+  description: "",
+  intentConfirmed: false,
+  designApproved: false,
+  progressPhase: -1,
+  signedGates: new Set(),
+  selectedVerdict: null,
+  selectedTier: null,
   secretsList: [
-    { name:"DATABASE_URL",       value:"postgres://...", masked:true, public:false },
-    { name:"NEXT_PUBLIC_API_URL", value:"http://localhost:3000", masked:false, public:true },
+    { name:"DATABASE_URL",        value:"postgres://prod:***@db.internal:5432/app", masked:true, public:false },
+    { name:"NEXT_PUBLIC_API_URL", value:"https://api.yourproduct.com",              masked:false, public:true },
+    { name:"STRIPE_SECRET_KEY",   value:"sk_live_•••••••••••••••",                  masked:true, public:false },
   ],
   testDebt: [],
   enforcementOverrides: 0,
-  signedGates: new Set(),
-  waveFrozen: false,
-};
-
-const PLANS = {
-  feeder:    { name:"Pet Feeder Reminder", steps:["Ask the pet's name","Pick feed interval","Show a big countdown","Buzz at zero"] },
-  jokes:     { name:"Daily Dad Joke",      steps:["Keep a list of jokes","Pick a fresh one daily","Show it big","Re-roll button"] },
-  allowance: { name:"Allowance Tracker",   steps:["Set a goal amount","Add money in/out","Show progress bar","Cheer at the goal"] },
-};
-
-const FILES = {
-  feeder: [
-    { name:"package.json",   icon:"📦", peek:'{"name":"pet-feeder","scripts":{"dev":"vite"}}' },
-    { name:"index.html",     icon:"🌐", peek:'<!doctype html>\n<div id="root"></div>\n<script src="/src/App.jsx"></script>' },
-    { name:"src/App.jsx",    icon:"⚛️", peek:'export default function App(){\n  return <h1>🐶 Pet Feeder</h1>;\n}' },
-    { name:"src/timer.js",   icon:"⏱️", peek:'export function startTimer(s,onDone){\n  setTimeout(onDone, s*1000);\n}' },
-    { name:"src/styles.css", icon:"🎨", peek:'body{font-family:system-ui;background:#faf7f0}' },
-    { name:"README.md",      icon:"📖", peek:'# Pet Feeder Reminder\n\nRun: npm install && npm run dev' },
-    { name:".github/workflows/test-automation.yml", icon:"🛡️", peek:'# Generated by SignalOS test-automation.\nname: test-automation\non:[push,pull_request]\njobs:\n  l0:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n      - run: npm ci\n      - run: npm test --if-present' },
-  ],
-  jokes: [
-    { name:"package.json",   icon:"📦", peek:'{"name":"dad-jokes","scripts":{"dev":"vite"}}' },
-    { name:"src/App.jsx",    icon:"⚛️", peek:'import jokes from "./jokes.json";\nexport default function App(){return <h1>{jokes[0]}</h1>;}' },
-    { name:"src/jokes.json", icon:"📑", peek:'["Why dont eggs tell jokes? Theyd crack up.","Anti-gravity book? Cant put it down."]' },
-    { name:"README.md",      icon:"📖", peek:'# Daily Dad Joke\n\nRun: npm install && npm run dev' },
-  ],
-  allowance: [
-    { name:"package.json",   icon:"📦", peek:'{"name":"allowance","scripts":{"dev":"vite"}}' },
-    { name:"src/App.jsx",    icon:"⚛️", peek:'export default function App(){\n  const [n,setN]=useState(0);\n  return <h1>${n}</h1>;\n}' },
-    { name:"src/storage.js", icon:"💾", peek:'export const save = v => localStorage.setItem("k", v);' },
-    { name:"README.md",      icon:"📖", peek:'# Allowance Tracker' },
-  ],
-};
-
-const DEMOS = {
-  feeder: `<!doctype html><meta charset="utf-8"><style>body{font-family:ui-rounded,system-ui;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f0;color:#1e1d1a}.card{background:white;border-radius:18px;padding:28px;box-shadow:0 12px 30px rgba(0,0,0,.06);width:280px;text-align:center}h1{margin:0 0 10px;font-size:22px}input{font:inherit;font-size:18px;padding:10px;border:2px solid #e5e1d8;border-radius:10px;width:100%;text-align:center}button{margin-top:14px;font:inherit;font-weight:800;padding:14px 22px;background:#2457d6;color:white;border:0;border-radius:12px;cursor:pointer;width:100%}button:hover{background:#1742ad}.clock{font-size:54px;font-weight:900;margin:16px 0;color:#2457d6}.buzz{animation:buzz .4s infinite}@keyframes buzz{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px) rotate(-1deg)}75%{transform:translateX(3px) rotate(1deg)}}.yum{font-size:48px;margin:10px 0}</style><div class="card" id="card"><h1>🐶 Pet Feeder</h1><input id="pet" placeholder="Pet's name" value="Buddy"/><div class="clock" id="clock">5:00</div><button id="start">Start 5-minute timer</button></div><script>let interval,secs=300;const c=document.getElementById("clock"),b=document.getElementById("start"),cd=document.getElementById("card");function s(){const m=Math.floor(secs/60),x=String(secs%60).padStart(2,"0");c.textContent=m+":"+x;}b.onclick=()=>{if(interval){clearInterval(interval);interval=null;b.textContent="Start 5-minute timer";cd.classList.remove("buzz");secs=300;s();return}secs=300;s();b.textContent="Stop";interval=setInterval(()=>{secs--;s();if(secs<=0){clearInterval(interval);interval=null;cd.classList.add("buzz");c.innerHTML='<div class="yum">🍖</div>';b.textContent="Feed "+(document.getElementById("pet").value||"pet")+"!"}},1000)}<` + `/script>`,
-  jokes: `<!doctype html><meta charset="utf-8"><style>body{font-family:ui-rounded,system-ui;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f0}.card{background:white;border-radius:18px;padding:28px;box-shadow:0 12px 30px rgba(0,0,0,.06);width:300px;text-align:center}.joke{font-size:18px;line-height:1.4;margin:18px 0;min-height:80px;display:grid;place-items:center}button{font:inherit;font-weight:800;padding:12px 18px;background:#d4318c;color:white;border:0;border-radius:12px;cursor:pointer}</style><div class="card"><h1>😂 Dad Joke</h1><div class="joke" id="j">Why don't eggs tell jokes?</div><button id="n">Tell me another</button></div><script>const J=["Why don't eggs tell jokes? They'd crack each other up.","Anti-gravity book? Impossible to put down.","Construction joke? Still working on it.","Why did the scarecrow win an award? Outstanding in his field."];let i=0;document.getElementById("n").onclick=()=>{i=(i+1)%J.length;document.getElementById("j").textContent=J[i]}<` + `/script>`,
-  allowance: `<!doctype html><meta charset="utf-8"><style>body{font-family:ui-rounded,system-ui;margin:0;display:grid;place-items:center;height:100vh;background:#faf7f0}.card{background:white;border-radius:18px;padding:28px;box-shadow:0 12px 30px rgba(0,0,0,.06);width:320px;text-align:center}.total{font-size:42px;font-weight:900;color:#27885c}.bar{height:14px;background:#e5e1d8;border-radius:99px;overflow:hidden;margin:14px 0}.fill{height:100%;background:linear-gradient(90deg,#27885c,#aee9c8);transition:width .6s}.row{display:flex;gap:8px}button{flex:1;font:inherit;font-weight:800;padding:12px;border:0;border-radius:12px;cursor:pointer;color:white}.plus{background:#27885c}.minus{background:#c47b1a}</style><div class="card"><h1>💰 Allowance</h1><div>Goal: $20</div><div class="total" id="t">$0</div><div class="bar"><div class="fill" id="f" style="width:0%"></div></div><div class="row"><button class="plus" id="p">+ $1</button><button class="minus" id="m">− $1</button></div></div><script>let t=0;function r(){document.getElementById("t").textContent="$"+t;document.getElementById("f").style.width=Math.min(100,t*5)+"%"}document.getElementById("p").onclick=()=>{t++;r()};document.getElementById("m").onclick=()=>{t=Math.max(0,t-1);r()}<` + `/script>`,
 };
 
 // ─── Build rail ──────────────────────────────────────────────────────────────
 const rail = document.getElementById("rail");
 let lastGroup = null;
-SLIDES.forEach((s, idx) => {
+SLIDES.forEach(function(s, idx) {
   if (s.group !== lastGroup) {
-    const g = document.createElement("div");
+    var g = document.createElement("div");
     g.className = "rail-group";
     g.textContent = s.group;
     rail.appendChild(g);
     lastGroup = s.group;
   }
-  const btn = document.createElement("button");
+  var btn = document.createElement("button");
   btn.className = "rail-step" + (idx === 0 ? " now" : "");
   btn.dataset.idx = String(idx);
-  btn.innerHTML = `<span class="rail-num">${idx + 1}</span><span>${s.title}</span>`;
-  btn.addEventListener("click", () => go(idx));
+  btn.innerHTML = '<span class="rail-num">' + (idx + 1) + '</span><span>' + s.title + '</span>';
+  btn.addEventListener("click", function() { go(idx); });
   rail.appendChild(btn);
 });
 
 // ─── Build stage (1 slide DOM per spec) ─────────────────────────────────────
-const stage = document.getElementById("stage");
-const tpl = document.getElementById("t-slide");
-const slideEls = SLIDES.map((s, idx) => {
-  const node = tpl.content.cloneNode(true).querySelector(".slide");
+var stage = document.getElementById("stage");
+var tpl = document.getElementById("t-slide");
+var slideEls = SLIDES.map(function(s, idx) {
+  var node = tpl.content.cloneNode(true).querySelector(".slide");
   node.dataset.idx = String(idx);
   if (idx === 0) node.classList.add("active");
   node.querySelector(".bar-title").textContent = s.title;
-  node.querySelector(".bar-step").textContent = `${idx + 1} / ${SLIDES.length} · ${s.group}`;
-  node.querySelector(".nav-hint").innerHTML = `Use <span class="kbd">←</span> <span class="kbd">→</span>`;
+  node.querySelector(".bar-step").textContent = (idx + 1) + " / " + SLIDES.length + " \u00b7 " + s.group;
+  node.querySelector(".nav-hint").innerHTML = 'Use <span class="kbd">\u2190</span> <span class="kbd">\u2192</span>';
   node.querySelector(".content").innerHTML = renderSlide(s.id);
   stage.appendChild(node);
   return node;
@@ -462,366 +442,411 @@ const slideEls = SLIDES.map((s, idx) => {
 
 function renderSlide(id) {
   switch (id) {
-    case "welcome": return `
-      <div class="cover">
-        <div>
-          <div class="cover-icons">💭 → 🛠️ → 🛡️ → ▶️ → 🚀</div>
-          <div class="hero">Wish it. Build it.<br>Govern it. Ship it.</div>
-          <div class="hero-sub">SignalOS turns a wish into a <strong>real, deployable repo</strong> in your own folder — with every step proved by a signed gate. Not a prototype: real <code>package.json</code>, real <code>git</code>, real CI, ready for production.</div>
-          <div class="fine">${SLIDES.length} slides · about 3 minutes · every widget is wired to real code</div>
-        </div>
-      </div>`;
 
-    case "folder": return `
-      <h1>Pick a folder.</h1>
-      <div class="sub">SignalOS only ever reads or writes inside this folder.</div>
-      <div class="folder-row">
-        <input class="input" id="folderPath" value="C:\\Users\\you\\projects\\pet-feeder" />
-        <button class="btn btn-ghost" id="browseBtn">Browse…</button>
-      </div>
-      <div class="check-list">
-        <div class="check-line ok">✓ Folder exists</div>
-        <div class="check-line ok">✓ You can write here</div>
-        <div class="check-line warn">⚠ Folder is empty — safe to write everything</div>
-      </div>`;
+    case "welcome": return '\
+      <div class="cover">\
+        <div>\
+          <div class="cover-icons">\ud83d\udcac \u2192 \ud83c\udfe2 \u2192 \ud83d\udee1\ufe0f \u2192 \ud83d\ude80</div>\
+          <div class="hero">Your software house.<br>Describe it. We deliver.</div>\
+          <div class="hero-sub">SignalOS is your <strong>agentic software house</strong>. You are the client. Describe what you want built, and your team of governed agents delivers it \u2014 planned, built, tested, and signed off through quality gates.</div>\
+          <div class="fine">' + SLIDES.length + ' steps \u00b7 about 3 minutes \u00b7 every widget is wired to real code</div>\
+        </div>\
+      </div>';
 
-    case "init": return `
-      <h1>What may SignalOS write?</h1>
-      <div class="sub">Four choices. Pick one. We never overwrite without your consent.</div>
-      <div class="mode-grid">
-        <div class="mode-card" data-mode="full"><div class="mode-emoji">📦</div><div class="mode-title">Full SignalOS</div><div class="mode-desc">Write the entire bundle. Overwrites colliding files. Pick for empty folders.</div></div>
-        <div class="mode-card selected" data-mode="keep"><div class="mode-emoji">🤝</div><div class="mode-title">Keep my files <span class="fine">(recommended)</span></div><div class="mode-desc">Write missing files. Never overwrite what you already have.</div></div>
-        <div class="mode-card" data-mode="minimal"><div class="mode-emoji">🌱</div><div class="mode-title">Minimal</div><div class="mode-desc">Only the runtime state. No command bundle or IDE hooks.</div></div>
-        <div class="mode-card" data-mode="skip"><div class="mode-emoji">⏭️</div><div class="mode-title">Skip for now</div><div class="mode-desc">Initialize later from Settings.</div></div>
-      </div>`;
+    case "ai": return '\
+      <h1>Connect AI.</h1>\
+      <div class="sub">Pick a provider. We\'ll send a one-token chat to prove the key works.</div>\
+      <div class="provider-grid">\
+        <div class="provider-chip selected" data-prov="anthropic"><span class="provider-emoji">\ud83d\udfe7</span>Anthropic</div>\
+        <div class="provider-chip" data-prov="openai"><span class="provider-emoji">\u26ab</span>OpenAI</div>\
+        <div class="provider-chip" data-prov="gemini"><span class="provider-emoji">\ud83d\udd37</span>Gemini</div>\
+        <div class="provider-chip" data-prov="ollama"><span class="provider-emoji">\ud83e\udd99</span>Ollama (local)</div>\
+        <div class="provider-chip" data-prov="qwen"><span class="provider-emoji">\ud83d\udfe3</span>Qwen</div>\
+        <div class="provider-chip" data-prov="openrouter"><span class="provider-emoji">\ud83d\udee3\ufe0f</span>OpenRouter</div>\
+        <div class="provider-chip" data-prov="groq"><span class="provider-emoji">\u26a1</span>Groq</div>\
+        <div class="provider-chip" data-prov="xai"><span class="provider-emoji">\ud835\udd4f</span>xAI</div>\
+      </div>\
+      <input class="input" type="password" placeholder="Paste API key \u2014 stored in OS keychain" value="sk-ant-\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" id="apiKey"/>\
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">\
+        <button class="btn btn-ghost" id="testBtn">Test connection</button>\
+        <span class="fine">Real chat ping, not just /models.</span>\
+      </div>\
+      <div class="test-ping" id="testResult">\u2713 Anthropic replied (model claude-sonnet-4-6, 4 output tokens): hi</div>';
 
-    case "ai": return `
-      <h1>Connect AI.</h1>
-      <div class="sub">Pick a provider. We'll send a one-token chat to prove the key works.</div>
-      <div class="provider-grid">
-        <div class="provider-chip selected" data-prov="anthropic"><span class="provider-emoji">🟧</span>Anthropic</div>
-        <div class="provider-chip" data-prov="openai"><span class="provider-emoji">⚫</span>OpenAI</div>
-        <div class="provider-chip" data-prov="gemini"><span class="provider-emoji">🔷</span>Gemini</div>
-        <div class="provider-chip" data-prov="ollama"><span class="provider-emoji">🦙</span>Ollama (local)</div>
-        <div class="provider-chip" data-prov="qwen"><span class="provider-emoji">🟣</span>Qwen</div>
-        <div class="provider-chip" data-prov="openrouter"><span class="provider-emoji">🛣️</span>OpenRouter</div>
-        <div class="provider-chip" data-prov="groq"><span class="provider-emoji">⚡</span>Groq</div>
-        <div class="provider-chip" data-prov="xai"><span class="provider-emoji">𝕏</span>xAI</div>
-      </div>
-      <input class="input" type="password" placeholder="Paste API key — stored in OS keychain" value="sk-ant-•••••••••••••••••••••••••••" id="apiKey"/>
-      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-        <button class="btn btn-ghost" id="testBtn">Test connection</button>
-        <span class="fine">Real chat ping, not just /models — that's the difference.</span>
-      </div>
-      <div class="test-ping" id="testResult">✓ Anthropic replied (model claude-sonnet-4-6, 4 output tokens): hi</div>`;
+    case "describe": return '\
+      <h1>Describe your product.</h1>\
+      <div class="sub">Tell your software house what to build. Be as detailed or brief as you like \u2014 the team will ask clarifying questions if needed.</div>\
+      <textarea class="input prompt-area" id="describeInput" placeholder="e.g. Build a task management app with boards, drag-and-drop cards, due dates, and team assignments. It should have a clean minimal UI with a dark mode option.">Build a task management app with boards, drag-and-drop cards, due dates, and team assignments. It should have a clean minimal UI with a dark mode option.</textarea>\
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">\
+        <button class="btn btn-primary" id="describeSubmit">Submit to your team</button>\
+      </div>\
+      <div id="describeStatus" style="margin-top:12px;color:var(--green);font-weight:700;display:none">\u2713 Your brief has been received. The team is analyzing it.</div>';
 
-    case "identity": return `
-      <h1>Who's signing the gates?</h1>
-      <div class="sub">SignalOS records who signed what. Pick your role — that's enforced when you sign.</div>
-      <input class="input" placeholder="Your name" value="Samer" id="identityName"/>
-      <div class="role-grid">
-        <div class="role-chip selected" data-role="PO"><span class="role-emoji">🎯</span>PO<br><span class="fine">G0–G3</span></div>
-        <div class="role-chip" data-role="PE"><span class="role-emoji">🛠️</span>PE<br><span class="fine">G3–G4</span></div>
-        <div class="role-chip" data-role="QA"><span class="role-emoji">🔍</span>QA<br><span class="fine">G4–G5</span></div>
-        <div class="role-chip" data-role="DevOps"><span class="role-emoji">🚀</span>DevOps<br><span class="fine">deploy</span></div>
-      </div>
-      <div class="fine" style="margin-top:10px">Saved to <code>.signalos/identity.json</code>. Sign attempts outside your role need an audited override.</div>`;
+    case "intent": return '\
+      <h1>Review intent.</h1>\
+      <div class="sub">Your team extracted the key elements from your brief. Confirm they understood, or edit before they proceed.</div>\
+      <div class="entity-grid" id="intentGrid">\
+        <div class="entity-card">\
+          <div class="entity-title">Board</div>\
+          <div class="entity-desc">Container for organizing task cards into columns</div>\
+          <span class="entity-tag ent">entity</span>\
+        </div>\
+        <div class="entity-card">\
+          <div class="entity-title">Task Card</div>\
+          <div class="entity-desc">Draggable item with title, assignee, due date</div>\
+          <span class="entity-tag ent">entity</span>\
+        </div>\
+        <div class="entity-card">\
+          <div class="entity-title">Team Member</div>\
+          <div class="entity-desc">User who can be assigned to cards</div>\
+          <span class="entity-tag ent">entity</span>\
+        </div>\
+        <div class="entity-card">\
+          <div class="entity-title">Drag and drop</div>\
+          <div class="entity-desc">Move cards between columns and reorder</div>\
+          <span class="entity-tag wf">workflow</span>\
+        </div>\
+        <div class="entity-card">\
+          <div class="entity-title">Due date alerts</div>\
+          <div class="entity-desc">Highlight overdue and upcoming tasks</div>\
+          <span class="entity-tag wf">workflow</span>\
+        </div>\
+        <div class="entity-card">\
+          <div class="entity-title">Board view</div>\
+          <div class="entity-desc">Kanban-style columns with cards</div>\
+          <span class="entity-tag surf">surface</span>\
+        </div>\
+      </div>\
+      <div class="diff-confirm-row" style="margin-top:16px">\
+        <button class="btn btn-ghost" id="intentEdit">Edit intent</button>\
+        <button class="btn btn-primary" id="intentConfirm">Looks right \u2014 proceed</button>\
+      </div>';
 
-    case "budget": return `
-      <h1>Cost & privacy.</h1>
-      <div class="sub">Set a monthly cap and decide what stays off-cloud.</div>
-      <div class="budget-row">
-        <div>Budget:</div>
-        <input type="range" min="0" max="100" value="10" id="budgetRange" />
-        <div><strong>$<span id="budgetVal">10</span></strong> / month</div>
-      </div>
-      <div class="privacy-list">
-        <label class="privacy-line"><input type="checkbox" checked id="privEnv"/> Redact .env values from prompts and exports</label>
-        <label class="privacy-line"><input type="checkbox" checked id="privBlock"/> Block uploading database / cert / key files</label>
-        <label class="privacy-line"><input type="checkbox" id="privLocal"/> Local AI only (Ollama) — never hit the cloud</label>
-      </div>
-      <div class="fine" style="margin-top:14px">Warns at 80%, blocks at 100%. Per-project override available.</div>`;
+    case "design": return '\
+      <h1>Review design.</h1>\
+      <div class="sub">Your team selected the technology stack and visual direction. Approve or change anything before building starts.</div>\
+      <div class="design-grid">\
+        <div class="design-card">\
+          <div class="design-label">UI Library</div>\
+          <div class="design-value">React + Vite</div>\
+          <div class="design-sub">Fast builds, hot reload, broad ecosystem</div>\
+        </div>\
+        <div class="design-card">\
+          <div class="design-label">State management</div>\
+          <div class="design-value">Zustand</div>\
+          <div class="design-sub">Lightweight, minimal boilerplate</div>\
+        </div>\
+        <div class="design-card">\
+          <div class="design-label">Styling</div>\
+          <div class="design-value">Tailwind CSS</div>\
+          <div class="design-sub">Utility-first, dark mode built in</div>\
+        </div>\
+        <div class="design-card">\
+          <div class="design-label">Color palette</div>\
+          <div class="design-value">Neutral + Blue accent</div>\
+          <div class="color-row">\
+            <div class="color-swatch" style="background:#1e1d1a"></div>\
+            <div class="color-swatch" style="background:#f6f5f2"></div>\
+            <div class="color-swatch" style="background:#2457d6"></div>\
+            <div class="color-swatch" style="background:#27885c"></div>\
+            <div class="color-swatch" style="background:#e5e1d8"></div>\
+          </div>\
+        </div>\
+      </div>\
+      <div class="diff-confirm-row" style="margin-top:16px">\
+        <button class="btn btn-ghost" id="designChange">Request changes</button>\
+        <button class="btn btn-primary" id="designApprove">Approve design</button>\
+      </div>\
+      <div id="designStatus" style="margin-top:12px;color:var(--green);font-weight:700;display:none">\u2713 Design approved. Building begins.</div>';
 
-    case "wish": return `
-      <h1>Pick a wish.</h1>
-      <div class="sub">Tap one. SignalOS plans, builds, and signs it.</div>
-      <div class="wish-grid">
-        <div class="wish-card" data-wish="feeder"><div class="wish-emoji">🐶⏰</div><div class="wish-title">Pet feeder reminder</div><div class="fine">Buzz when it's time to feed.</div></div>
-        <div class="wish-card" data-wish="jokes"><div class="wish-emoji">😂📅</div><div class="wish-title">Daily dad joke</div><div class="fine">Fresh joke every day.</div></div>
-        <div class="wish-card" data-wish="allowance"><div class="wish-emoji">💰📈</div><div class="wish-title">Allowance tracker</div><div class="fine">Save up for a big thing.</div></div>
-      </div>`;
+    case "progress": return '\
+      <div class="progress-stage">\
+        <div>\
+          <h1>Watch your team work.</h1>\
+          <div class="sub">Each phase completes in order. Your team handles planning, coding, testing, and review \u2014 you watch the progress and step in only when a gate needs your signature.</div>\
+          <div class="phase-list" id="phaseList">\
+            <div class="phase-row" data-phase="0"><span class="phase-icon">\ud83d\udccb</span><div><div class="phase-name">Planning</div><div class="phase-sub">Architecture, file structure, dependencies</div></div><span class="phase-status waiting">waiting</span></div>\
+            <div class="phase-row" data-phase="1"><span class="phase-icon">\ud83d\udee0\ufe0f</span><div><div class="phase-name">Building</div><div class="phase-sub">Writing code, creating components</div></div><span class="phase-status waiting">waiting</span></div>\
+            <div class="phase-row" data-phase="2"><span class="phase-icon">\ud83e\uddea</span><div><div class="phase-name">Testing</div><div class="phase-sub">Unit tests, integration tests, mutation score</div></div><span class="phase-status waiting">waiting</span></div>\
+            <div class="phase-row" data-phase="3"><span class="phase-icon">\ud83d\udee1\ufe0f</span><div><div class="phase-name">Security review</div><div class="phase-sub">Injection scan, PII detection, compliance</div></div><span class="phase-status waiting">waiting</span></div>\
+            <div class="phase-row" data-phase="4"><span class="phase-icon">\u2705</span><div><div class="phase-name">Closeout</div><div class="phase-sub">Final checks, documentation, handoff</div></div><span class="phase-status waiting">waiting</span></div>\
+          </div>\
+          <div style="margin-top:12px;display:flex;gap:8px">\
+            <button class="btn btn-ghost" id="progressPlay">Play progress</button>\
+            <button class="btn btn-ghost" id="progressReset">Reset</button>\
+          </div>\
+        </div>\
+        <div>\
+          <div class="signaloid"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#fff"/><circle cx="22" cy="28" r="4" fill="#2457d6"/><circle cx="42" cy="28" r="4" fill="#2457d6"/><path d="M22 42 Q32 50 42 42" fill="none" stroke="#2457d6" stroke-width="3" stroke-linecap="round"/></svg></div>\
+          <div class="fine" style="text-align:center;margin-top:12px">Your team is working</div>\
+        </div>\
+      </div>';
 
-    case "plan": return `
-      <div class="plan-stage">
-        <div>
-          <h1>SignalOS plans.</h1>
-          <div class="sub" id="planSub">Reading your wish and writing the plan…</div>
-          <div class="plan-bubble" style="margin-top:14px">
-            <strong>Plan for: <span id="planName">your app</span></strong>
-            <div class="plan-list" id="planList"></div>
-          </div>
-          <div class="fine" style="margin-top:8px">PLAN.md is written to <code>core/strategy/PLAN.md</code>. The Builder won't run until G0+G1+G2 are signed.</div>
-        </div>
-        <div>
-          <div class="signaloid"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" fill="#fff"/><circle cx="22" cy="28" r="4" fill="#2457d6"/><circle cx="42" cy="28" r="4" fill="#2457d6"/><path d="M22 42 Q32 50 42 42" fill="none" stroke="#2457d6" stroke-width="3" stroke-linecap="round"/></svg></div>
-        </div>
-      </div>`;
+    case "closeout": return '\
+      <h1>Review the result.</h1>\
+      <div class="sub">Your product is built. Here is what was delivered, along with the security and quality status.</div>\
+      <div class="closeout-grid">\
+        <div class="closeout-card">\
+          <div class="closeout-label">Product</div>\
+          <div class="closeout-value">Task Management App</div>\
+          <div class="fine" style="margin-top:4px">React + Vite + Zustand + Tailwind</div>\
+        </div>\
+        <div class="closeout-card">\
+          <div class="closeout-label">Files delivered</div>\
+          <div class="closeout-value">23 files</div>\
+          <div class="fine" style="margin-top:4px">src/, public/, config, tests</div>\
+        </div>\
+        <div class="closeout-card green">\
+          <div class="closeout-label">Security status</div>\
+          <div class="closeout-value" style="color:var(--green)">\u2713 All clear</div>\
+          <div class="fine" style="margin-top:4px">No injections, no PII, no flagged deps</div>\
+        </div>\
+        <div class="closeout-card">\
+          <div class="closeout-label">How to run</div>\
+          <div class="closeout-value" style="font-family:ui-monospace,monospace;font-size:13px">npm install && npm run dev</div>\
+          <div class="fine" style="margin-top:4px">Opens on localhost:5173</div>\
+        </div>\
+      </div>\
+      <div class="fine" style="margin-top:14px">Every decision made during the build is recorded in the audit trail. You can review it at any time.</div>';
 
-    case "files": return `
-      <h1>A real repo. Yours.</h1>
-      <div class="sub">These are <strong>actual files on disk</strong> in your chosen folder — not a prototype, not a sandbox. You can <code>cd</code> into the folder, run <code>npm install</code>, commit to git, push to GitHub, deploy to Vercel. Tap a file to peek inside.</div>
-      <div class="files-stage" style="margin-top:12px">
-        <div class="file-tree-card">
-          <h3>Project files (real)</h3>
-          <div id="fileList"></div>
-        </div>
-        <div class="file-peek" id="filePeek"><span class="file-peek-empty">← Tap a file to see what SignalOS wrote.</span></div>
-      </div>`;
+    case "openproduct": return '\
+      <div class="open-stage">\
+        <div>\
+          <h1>Open your product.</h1>\
+          <div class="sub">Your workspace switches to the new product repo. From here you can browse files, run the app, or continue iterating with your team.</div>\
+          <div style="margin-top:18px;display:grid;gap:12px">\
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">\
+              <div style="font-weight:800;margin-bottom:4px">Open in your editor</div>\
+              <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">code ~/projects/task-manager</pre>\
+            </div>\
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">\
+              <div style="font-weight:800;margin-bottom:4px">Run the dev server</div>\
+              <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">cd ~/projects/task-manager\nnpm install && npm run dev</pre>\
+            </div>\
+            <div style="padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">\
+              <div style="font-weight:800;margin-bottom:4px">Deploy when ready</div>\
+              <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">git add . && git commit -m "Initial build"\ngit push origin main\nvercel</pre>\
+            </div>\
+          </div>\
+        </div>\
+        <div>\
+          <div class="repo-card">\
+            <div class="repo-emoji">\ud83d\udcc2</div>\
+            <h2>task-manager</h2>\
+            <div class="fine" style="margin-top:6px">23 files \u00b7 6 gates signed \u00b7 all tests passing</div>\
+            <button class="btn btn-primary" id="openRepoBtn" style="margin-top:14px">Open workspace</button>\
+          </div>\
+        </div>\
+      </div>';
 
-    case "diff": return `
-      <h1>Confirm before write.</h1>
-      <div class="sub">SignalOS shows you the diff first. Nothing lands on disk until you click <strong>Apply</strong>.</div>
-      <div class="diff-card">
-        <div class="diff-counts"><span style="color:var(--green)">+ <span id="diffNew">7</span> new</span><span style="color:var(--amber)">~ <span id="diffMod">0</span> modified</span><span style="color:var(--faint)">= <span id="diffSame">0</span> unchanged</span></div>
-        <div id="diffList"></div>
-        <div class="diff-confirm-row">
-          <button class="btn btn-ghost" id="diffCancel">Cancel</button>
-          <button class="btn btn-primary" id="diffApply">Apply 7 files</button>
-        </div>
-      </div>
-      <div class="fine" style="margin-top:10px">This is the actual <code>preview_workspace_files</code> IPC — atomic temp-file + rename on the Rust side.</div>`;
+    case "gates": return '\
+      <div class="sign-stage">\
+        <div class="role-banner">Your product passes through <strong>6 quality gates</strong> \u2014 each requires a human signature before proceeding</div>\
+        <h1 style="text-align:center">Sign the gates.</h1>\
+        <div class="sub" style="text-align:center" id="signSub">Tap to sign. Gates enforce that the right checks happened at the right time.</div>\
+        <div class="gate-row" id="gateRow">\
+          <div class="gate" data-gate="0"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G0 Scope</span></div>\
+          <div class="gate" data-gate="1"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G1 Intent</span></div>\
+          <div class="gate" data-gate="2"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G2 Design</span></div>\
+          <div class="gate" data-gate="3"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G3 Build</span></div>\
+          <div class="gate" data-gate="4"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G4 Test</span></div>\
+          <div class="gate" data-gate="5"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G5 Ship</span></div>\
+        </div>\
+        <div class="seal" id="seal">SIGNED<div class="seal-small" id="sealLabel">Task Manager</div></div>\
+      </div>';
 
-    case "mutation": return `
-      <h1>Mutation gate.</h1>
-      <div class="sub">Test-automation rule 12: business-logic files need ≥95% mutation score before they land.</div>
-      <div class="mutation-card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <strong>Score: <span id="mutScore">82%</span></strong>
-          <span class="fine">Threshold: 95%</span>
-        </div>
-        <div class="mutation-bar"><div class="mutation-fill" id="mutFill" style="width:82%"></div></div>
-        <div class="mutation-threshold"></div>
-        <div style="color:var(--red);font-weight:700;margin-top:8px">⚠ Below threshold — Build blocked.</div>
-        <div class="diff-confirm-row">
-          <button class="btn btn-ghost" id="mutAddTest">Add tests</button>
-          <button class="btn btn-danger" id="mutOverride">Override (audit)</button>
-        </div>
-      </div>`;
+    case "verdicts": return '\
+      <h1>Review verdicts.</h1>\
+      <div class="sub">At each gate, you choose one of five verdicts. Each is recorded in the audit trail and determines what happens next.</div>\
+      <div class="verdict-grid" id="verdictGrid">\
+        <div class="verdict-card" data-verdict="approve"><span class="verdict-emoji">\u2705</span><div class="verdict-name">Approve</div><div class="verdict-desc">Gate passes. Work proceeds to the next phase.</div></div>\
+        <div class="verdict-card" data-verdict="changes"><span class="verdict-emoji">\ud83d\udd04</span><div class="verdict-name">Request changes</div><div class="verdict-desc">Send back with specific feedback. Team revises.</div></div>\
+        <div class="verdict-card" data-verdict="reject"><span class="verdict-emoji">\u274c</span><div class="verdict-name">Reject</div><div class="verdict-desc">Hard stop. Work cannot continue past this gate.</div></div>\
+        <div class="verdict-card" data-verdict="waive"><span class="verdict-emoji">\u23ed\ufe0f</span><div class="verdict-name">Waive</div><div class="verdict-desc">Skip this check. Reason is audit-logged.</div></div>\
+        <div class="verdict-card" data-verdict="conditions"><span class="verdict-emoji">\ud83d\udcdd</span><div class="verdict-name">Conditions</div><div class="verdict-desc">Approve with requirements that must be met later.</div></div>\
+      </div>\
+      <div id="verdictStatus" style="margin-top:16px;padding:12px;border-radius:10px;background:var(--panel-soft);border:1px solid var(--line);display:none">\
+        <strong id="verdictLabel">Verdict selected</strong>\
+        <div class="fine" id="verdictDetail" style="margin-top:4px">Details appear here.</div>\
+      </div>';
 
-    case "run": return `
-      <div class="run-stage">
-        <div>
-          <span class="run-tag">LIVE</span>
-          <h1>The real app runs.</h1>
-          <div class="sub">In SignalOS, <code>LocalProcessSupervisor</code> spawns <code>npm install</code> against the actual files in your folder, then <code>npm run dev</code>. The iframe on the right points at the captured port. Hot reload works. Crash logs surface in the Run controller.</div>
-          <ul style="padding-left:18px;color:var(--muted);font-size:13px;line-height:1.7">
-            <li>Type the pet's name.</li>
-            <li>Press Start.</li>
-            <li>Watch it count down.</li>
-          </ul>
-          <div class="fine">This onboarding iframe shows a sandboxed simulation so you can preview without running anything. The Builder's preview pane is identical — except it serves the live <code>vite</code> / <code>next</code> / <code>flask</code> output from your real project folder.</div>
-        </div>
-        <div class="demo-wrap">
-          <div class="demo-chrome"><span class="demo-dot r"></span><span class="demo-dot y"></span><span class="demo-dot g"></span><span class="demo-addr">localhost:5173</span></div>
-          <iframe class="demo-frame" id="demoFrame" sandbox="allow-scripts" title="Live demo"></iframe>
-        </div>
-      </div>`;
+    case "tiers": return '\
+      <h1>Trust tiers.</h1>\
+      <div class="sub">Each agent in your team operates at a trust tier that determines how much autonomy they have. You control the tier.</div>\
+      <div class="tier-grid" id="tierGrid">\
+        <div class="tier-card" data-tier="t1"><div class="tier-emoji">\ud83d\udc41\ufe0f</div><div class="tier-name">Advisory</div><div class="tier-desc">Agents suggest. You approve every action before it happens. Full visibility, full control.</div></div>\
+        <div class="tier-card" data-tier="t2"><div class="tier-emoji">\ud83e\udd1d</div><div class="tier-name">Review-required</div><div class="tier-desc">Agents act, but pause at gates for your review. You sign off on key decisions.</div></div>\
+        <div class="tier-card" data-tier="t3"><div class="tier-emoji">\ud83d\ude80</div><div class="tier-name">Autonomous</div><div class="tier-desc">Agents complete work end-to-end. Gates still fire, but auto-sign when criteria are met.</div></div>\
+      </div>\
+      <div id="tierStatus" style="margin-top:16px;padding:12px;border-radius:10px;background:var(--panel-soft);border:1px solid var(--line);display:none">\
+        <strong id="tierLabel">Tier selected</strong>\
+        <div class="fine" id="tierDetail" style="margin-top:4px">Details appear here.</div>\
+      </div>\
+      <div class="fine" style="margin-top:14px">Trust tiers are set per project. You can change them at any time from Settings.</div>';
 
-    case "regenerate": return `
-      <h1>Change one thing.</h1>
-      <div class="sub">Don't like a file? Type what to change. SignalOS regenerates just that file.</div>
-      <div class="regen-prompt">
-        <strong>Regenerate <code>src/App.jsx</code></strong>
-        <div class="fine" style="margin:6px 0">What should change?</div>
-        <input class="input" id="regenInput" placeholder='e.g. "make the timer red"' />
-        <div style="display:flex;justify-content:flex-end;margin-top:10px">
-          <button class="btn btn-primary" id="regenGo">Regenerate</button>
-        </div>
-        <div id="regenStatus" style="margin-top:12px;color:var(--green);font-weight:700;display:none">✓ src/App.jsx regenerated · diff confirmed · written</div>
-      </div>
-      <div class="fine" style="margin-top:14px">Backend: the per-file regenerate flow re-prompts with the existing file content + the instruction, then runs the same preview/confirm/write pipeline. Conversation history is appended.</div>`;
+    case "security": return '\
+      <h1>Security built in.</h1>\
+      <div class="sub">Every product your team builds goes through automated security checks. These run during the build, not after.</div>\
+      <div class="security-grid" id="securityGrid">\
+        <div class="security-card">\
+          <div class="security-icon">\ud83d\udc89</div>\
+          <div class="security-title">Injection scan</div>\
+          <div class="security-desc">Detects SQL injection, XSS, command injection patterns in generated code</div>\
+          <div class="security-status pass">\u2713 0 issues</div>\
+        </div>\
+        <div class="security-card">\
+          <div class="security-icon">\ud83d\udd0d</div>\
+          <div class="security-title">PII detection</div>\
+          <div class="security-desc">Flags hardcoded emails, phone numbers, API keys, tokens in source</div>\
+          <div class="security-status pass">\u2713 0 issues</div>\
+        </div>\
+        <div class="security-card">\
+          <div class="security-icon">\ud83d\udcdc</div>\
+          <div class="security-title">Compliance flags</div>\
+          <div class="security-desc">License compatibility, dependency audit, known vulnerability scan</div>\
+          <div class="security-status pass">\u2713 All clear</div>\
+        </div>\
+        <div class="security-card">\
+          <div class="security-icon">\ud83d\udc26</div>\
+          <div class="security-title">Canary tokens</div>\
+          <div class="security-desc">Planted markers detect if code is leaked or executed in unexpected environments</div>\
+          <div class="security-status warn">\u26a0 2 placed</div>\
+        </div>\
+      </div>\
+      <div class="fine" style="margin-top:14px">Security findings block the build until resolved or explicitly waived with an audit-logged reason.</div>';
 
-    case "streaming": return `
-      <h1>Tokens stream in.</h1>
-      <div class="sub">No more spinners. Every provider streams its response — Anthropic SSE, OpenAI-compat SSE, Gemini SSE, Ollama NDJSON.</div>
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <button class="btn btn-ghost" id="streamStart">Start stream</button>
-        <button class="btn btn-ghost" id="streamReset">Reset</button>
-      </div>
-      <div class="stream-box" id="streamBox"><span class="fine">// click "Start stream" to watch tokens arrive</span></div>
-      <div class="stream-counter" id="streamCount">0 chars · 0 tokens</div>`;
+    case "audit": return '\
+      <h1>Every decision recorded.</h1>\
+      <div class="sub">Append-only, tamper-evident. Every gate signature, every override, every file write \u2014 logged with timestamp and actor.</div>\
+      <div class="audit-card" id="auditCard"></div>\
+      <div class="fine" style="margin-top:12px">The audit trail is written atomically on every state change. No entry can be modified or deleted once written.</div>';
 
-    case "tabs": return `
-      <h1>One sidebar, three minds.</h1>
-      <div class="sub">Files, governance, memory — three tabs in the left rail. The composer auto-switches based on what you type.</div>
-      <div class="three-pane">
-        <div class="tp-pane tp-left">
-          <div class="tp-tabs" id="tpTabs">
-            <button class="tp-tab active" data-tab="files">📁 Files</button>
-            <button class="tp-tab" data-tab="gov">⚖ Gov</button>
-            <button class="tp-tab" data-tab="mem">🧠 Mem</button>
-          </div>
-          <div class="tp-content" id="tpContent">
-            📦 package.json<br>🌐 index.html<br>⚛️ src/App.jsx<br>⏱️ src/timer.js
-          </div>
-        </div>
-        <div class="tp-pane tp-center">
-          <div style="font-size:32px;margin-bottom:8px">💬</div>
-          <div style="font-weight:800">Chat composer</div>
-          <div class="fine" style="margin-top:6px;text-align:center">Type "build" → Files tab.<br>Type "sign G2" → Gov tab.<br>Type "remember…" → Mem tab.</div>
-        </div>
-        <div class="tp-pane tp-right">
-          <div style="font-weight:800;font-size:11px;margin-bottom:6px">PREVIEW</div>
-          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;height:80%;display:grid;place-items:center;font-size:24px">🐶</div>
-        </div>
-      </div>`;
+    case "dashboard": return '\
+      <h1>Dashboard.</h1>\
+      <div class="sub">See where your product stands at a glance \u2014 velocity, progress, and estimated delivery.</div>\
+      <div class="dash-grid">\
+        <div class="dash-card"><div class="dash-num">67%</div><div class="dash-label">Overall progress</div></div>\
+        <div class="dash-card"><div class="dash-num">4/6</div><div class="dash-label">Gates signed</div></div>\
+        <div class="dash-card"><div class="dash-num">~12m</div><div class="dash-label">Estimated remaining</div></div>\
+      </div>\
+      <div style="margin-top:18px">\
+        <div style="font-weight:800;margin-bottom:8px">Burndown</div>\
+        <div class="burndown-bar"><div class="burndown-fill" id="burndownFill" style="width:67%"></div></div>\
+        <div style="display:flex;justify-content:space-between;margin-top:6px">\
+          <span class="fine">Start</span>\
+          <span class="fine">Now</span>\
+          <span class="fine">ETA</span>\
+        </div>\
+      </div>\
+      <div style="margin-top:18px;padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">\
+        <div style="font-weight:800;margin-bottom:6px">Recent activity</div>\
+        <div class="fine">\u2022 G3 Build signed \u2014 2 minutes ago</div>\
+        <div class="fine">\u2022 17 files written \u2014 5 minutes ago</div>\
+        <div class="fine">\u2022 G2 Design approved \u2014 8 minutes ago</div>\
+        <div class="fine">\u2022 Intent confirmed \u2014 12 minutes ago</div>\
+      </div>';
 
-    case "secrets": return `
-      <h1>Secrets stay safe.</h1>
-      <div class="sub">Replit-style manager. Atomic writes. Reveal with a 10-second auto-hide. Every reveal is audit-logged.</div>
-      <div id="secretsList" style="margin-top:14px"></div>
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-        <button class="btn btn-ghost">+ New secret</button>
-        <button class="btn btn-ghost">Edit as .env</button>
-      </div>
-      <div class="fine" style="margin-top:14px">Backend: <code>list_workspace_secrets</code>, <code>reveal_workspace_secret</code> (logs to AUDIT_TRAIL.jsonl), <code>apply_workspace_env_diff</code> with explicit removal confirmation.</div>`;
+    case "chat": return '\
+      <h1>Chat.</h1>\
+      <div class="sub">Talk to your team directly. Ask questions, give instructions, or use /signal-* commands. The sidebar auto-switches to match context.</div>\
+      <div class="chat-stage" style="margin-top:12px">\
+        <div class="chat-messages" id="chatMessages">\
+          <div class="chat-msg user">Can you add a dark mode toggle to the header?</div>\
+          <div class="chat-msg ai">I\'ll add a dark mode toggle to the header component. This will use Tailwind\'s dark: variant and persist the preference in localStorage. Building now...</div>\
+          <div class="chat-msg user">/signal-status</div>\
+          <div class="chat-msg cmd">Build: 67% complete \u00b7 4/6 gates signed \u00b7 23 files \u00b7 ETA ~12m</div>\
+        </div>\
+        <div class="chat-sidebar">\
+          <div class="chat-sidebar-item active">\ud83d\udcac Chat</div>\
+          <div class="chat-sidebar-item">\ud83d\udcc1 Files</div>\
+          <div class="chat-sidebar-item">\u2696\ufe0f Governance</div>\
+          <div class="chat-sidebar-item">\ud83d\udcca Dashboard</div>\
+        </div>\
+      </div>\
+      <div style="margin-top:12px;display:flex;gap:8px">\
+        <input class="input" id="chatInput" placeholder="Ask your team anything..." style="flex:1" />\
+        <button class="btn btn-primary" id="chatSend">Send</button>\
+      </div>';
 
-    case "debt": return `
-      <h1>Log a real defect.</h1>
-      <div class="sub">Rule 11: every manually-found bug becomes an automated test before the fix merges. Logging it here is the promise.</div>
-      <div class="diff-card">
-        <input class="input" id="debtTitle" placeholder="Short defect title" value="Timer keeps ringing after dismiss"/>
-        <input class="input" id="debtArea" placeholder="Area / file" value="src/timer.js" style="margin-top:8px"/>
-        <textarea class="input" id="debtDetail" placeholder="Repro + expected" rows="2" style="margin-top:8px;resize:none">After pressing Stop, the buzz animation continues for ~1s.</textarea>
-        <div class="diff-confirm-row">
-          <button class="btn btn-primary" id="debtLog">Log test debt</button>
-        </div>
-      </div>
-      <div id="debtListBox" style="margin-top:14px"></div>`;
+    case "files": return '\
+      <h1>Files and preview.</h1>\
+      <div class="sub">Browse your product\'s files with status badges. Tap a file to peek inside, or switch to the live preview to see your app running.</div>\
+      <div class="files-stage" style="margin-top:12px">\
+        <div class="file-tree-card">\
+          <h3>Project files</h3>\
+          <div id="fileList"></div>\
+        </div>\
+        <div id="filePreviewArea">\
+          <div class="file-peek" id="filePeek"><span class="file-peek-empty">\u2190 Tap a file to see its contents, or click "Live preview" below.</span></div>\
+        </div>\
+      </div>\
+      <div style="margin-top:8px;display:flex;gap:8px">\
+        <button class="btn btn-ghost" id="fileTreeBtn">File tree</button>\
+        <button class="btn btn-ghost" id="livePreviewBtn">Live preview</button>\
+      </div>';
 
-    case "enforce": return `
-      <h1>Some things you must explain.</h1>
-      <div class="sub">Try to do something the rules block. SignalOS asks for a reason and writes it to the audit trail.</div>
-      <div class="diff-card">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div style="font-size:28px">🚫</div>
-          <div>
-            <strong>Build blocked: G2 Expectation Map isn't signed</strong>
-            <div class="fine">Rule "gate-gating" is set to strict.</div>
-          </div>
-        </div>
-        <div class="diff-confirm-row">
-          <button class="btn btn-ghost" id="enfBack">Sign G2 first</button>
-          <button class="btn btn-danger" id="enfOverride">Override (audit)</button>
-        </div>
-      </div>
-      <div class="override-modal" id="enfModal">
-        <div class="override-card">
-          <h3>Override gate-gating</h3>
-          <div class="fine">A signed reason will land in <code>.signalos/AUDIT_TRAIL.jsonl</code>.</div>
-          <textarea class="input" id="enfReason" placeholder="Why is this override safe?" rows="3" style="margin-top:8px;resize:none"></textarea>
-          <div class="diff-confirm-row">
-            <button class="btn btn-ghost" id="enfCancel">Cancel</button>
-            <button class="btn btn-primary" id="enfConfirm">Override and log</button>
-          </div>
-        </div>
-      </div>`;
+    case "secrets": return '\
+      <h1>Secrets vault.</h1>\
+      <div class="sub">Your API keys and credentials are stored in the OS keychain \u2014 never in plain text, never sent to AI providers. Bulk import from .env with a diff review.</div>\
+      <div id="secretsList" style="margin-top:14px"></div>\
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">\
+        <button class="btn btn-ghost" id="secretNew">+ New secret</button>\
+        <button class="btn btn-ghost" id="secretImport">Import .env</button>\
+      </div>\
+      <div class="env-diff" id="envDiff" style="display:none">\
+        <div style="font-weight:800;margin-bottom:8px">Diff preview from .env</div>\
+        <div class="env-diff-row add">+ REDIS_URL=redis://localhost:6379</div>\
+        <div class="env-diff-row add">+ JWT_SECRET=••••••••••••</div>\
+        <div class="env-diff-row same">= DATABASE_URL (unchanged)</div>\
+        <div class="env-diff-row same">= STRIPE_SECRET_KEY (unchanged)</div>\
+        <div class="diff-confirm-row">\
+          <button class="btn btn-ghost" id="envDiffCancel">Cancel</button>\
+          <button class="btn btn-primary" id="envDiffApply">Apply 2 new secrets</button>\
+        </div>\
+      </div>';
 
-    case "sign": return `
-      <div class="sign-stage">
-        <div class="role-banner">Signing as <strong id="signRole">PO</strong> · this role may sign <strong>G0, G1, G2, G3</strong></div>
-        <h1 style="text-align:center">Sign the gates.</h1>
-        <div class="sub" style="text-align:center" id="signSub">Tap the gates you own. We refuse the others unless you override.</div>
-        <div class="gate-row" id="gateRow">
-          <div class="gate" data-gate="0"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G0 Constitution</span></div>
-          <div class="gate" data-gate="1"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G1 Belief</span></div>
-          <div class="gate" data-gate="2"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G2 Expect</span></div>
-          <div class="gate" data-gate="3"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G3 Plan</span></div>
-          <div class="gate" data-gate="4"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G4 Trust</span></div>
-          <div class="gate" data-gate="5"><svg class="gate-check" viewBox="0 0 64 64"><path d="M14 34 L26 46 L52 18" fill="none" stroke="#27885c" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gate-name">G5 Quality</span></div>
-        </div>
-        <div class="seal" id="seal">SIGNED<div class="seal-small" id="sealLabel">SignalOS</div></div>
-      </div>`;
+    case "testdebt": return '\
+      <h1>Test debt.</h1>\
+      <div class="sub">Track mutation score and manually-found defects. Every defect logged here becomes a test before it\'s closed.</div>\
+      <div class="mutation-card">\
+        <div style="display:flex;justify-content:space-between;align-items:center">\
+          <strong>Mutation score: <span id="mutScore">91%</span></strong>\
+          <span class="fine">Threshold: 95%</span>\
+        </div>\
+        <div class="mutation-bar"><div class="mutation-fill" id="mutFill" style="width:91%"></div></div>\
+        <div style="color:var(--amber);font-weight:700;margin-top:8px" id="mutStatus">\u26a0 Below threshold \u2014 4 surviving mutants</div>\
+        <div class="diff-confirm-row">\
+          <button class="btn btn-ghost" id="mutAddTest">Add tests (+6%)</button>\
+          <button class="btn btn-danger" id="mutDismiss">Dismiss (audit)</button>\
+        </div>\
+      </div>\
+      <div style="margin-top:18px">\
+        <div style="font-weight:800;margin-bottom:8px">Log a defect</div>\
+        <input class="input" id="debtTitle" placeholder="Short defect title" />\
+        <textarea class="input" id="debtDetail" placeholder="Reproduction steps and expected behavior" rows="2" style="margin-top:8px;resize:none"></textarea>\
+        <div class="diff-confirm-row">\
+          <button class="btn btn-primary" id="debtLog">Log defect</button>\
+        </div>\
+      </div>\
+      <div id="debtListBox" style="margin-top:14px"></div>';
 
-    case "ship": return `
-      <h1>Ship it for real.</h1>
-      <div class="sub">SignalOS wrote real files into your real folder. From here, deploy the way you already know how. SignalOS doesn't host or vendor-lock anything.</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px">
-        <div style="padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">
-          <div style="font-weight:800;margin-bottom:8px">1. Open in your editor</div>
-          <div class="fine" style="margin-bottom:10px">From the right pane the Builder offers <strong>Open in VS Code</strong> directly.</div>
-          <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">code C:\\Users\\you\\projects\\pet-feeder</pre>
-        </div>
-        <div style="padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">
-          <div style="font-weight:800;margin-bottom:8px">2. Commit + push</div>
-          <div class="fine" style="margin-bottom:10px"><code>signalos init</code> already ran <code>git init</code>. The files are yours.</div>
-          <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">git add .
-git commit -m "Initial build"
-git push origin main</pre>
-        </div>
-        <div style="padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel-soft)">
-          <div style="font-weight:800;margin-bottom:8px">3. Deploy</div>
-          <div class="fine" style="margin-bottom:10px">It's a normal Vite / Next / Express / Flask repo. Pick a host:</div>
-          <pre style="background:#1e1d1a;color:#a8e9b8;padding:10px 12px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;margin:0">vercel
-# or:
-netlify deploy
-# or:
-fly launch</pre>
-        </div>
-        <div style="padding:18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--green-soft)">
-          <div style="font-weight:800;margin-bottom:8px;color:var(--green)">4. The CI runs the gates</div>
-          <div class="fine" style="margin-bottom:10px">The Builder shipped <code>.github/workflows/test-automation.yml</code>. First push runs L0-L1 gates automatically.</div>
-          <div style="background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;font-family:ui-monospace,monospace;font-size:11px;line-height:1.5">
-            ✓ L0: lint &amp; format<br>
-            ✓ L0: secret scan<br>
-            ✓ L1: unit + integration<br>
-            ✓ L1: SCA + license<br>
-            <span style="color:var(--green);font-weight:700">PR mergeable</span>
-          </div>
-        </div>
-      </div>
-      <div class="fine" style="margin-top:14px"><strong>What SignalOS doesn't do:</strong> push to your remote for you, deploy for you, or claim any ownership. Your folder, your git, your accounts, your control.</div>`;
-
-    case "audit": return `
-      <h1>Every decision recorded.</h1>
-      <div class="sub">Every state change writes one line to <code>.signalos/AUDIT_TRAIL.jsonl</code> — atomic append, no race.</div>
-      <div class="audit-card" id="auditCard"></div>
-      <div class="fine" style="margin-top:12px">The Rust <code>governance::append_audit</code> opens with O_APPEND, writes the line, fsyncs. The previous implementation was racy and O(n²) — Wave 3 G2-20 fixed it.</div>`;
-
-    case "freeze": return `
-      <div class="freeze-stage">
-        <div>
-          <h1>Freeze a wave.</h1>
-          <div class="sub">Done with this wave? Freeze it. Build is blocked until a new wave starts.</div>
-          <div class="fine">The frozen state is real: <code>build_precheck</code> reads it before every Builder run.</div>
-        </div>
-        <div>
-          <div class="freeze-card" id="freezeCard">
-            <div class="freeze-emoji" id="freezeEmoji">🏃</div>
-            <h2 id="freezeStatus">Wave: active</h2>
-            <div class="fine" id="freezeDesc">Build is allowed.</div>
-            <button class="btn btn-primary freeze-toggle" id="freezeBtn">Freeze wave</button>
-          </div>
-        </div>
-      </div>`;
-
-    case "done": return `
-      <div class="done-stage">
-        <div>
-          <div class="done-icons">📁 ✅ 🚀</div>
-          <h1>You have a real repo.</h1>
-          <div class="sub">Every slide you clicked through maps to real SignalOS code. The Builder writes <strong>actual files</strong>, the previewer runs <strong>actual processes</strong>, gates write to a real <code>AUDIT_TRAIL.jsonl</code>. Nothing here was a mockup.</div>
-          <div class="done-stats">
-            <div class="done-stat"><div class="done-num" id="finalFiles">7</div><div class="done-label">Files in your folder</div></div>
-            <div class="done-stat"><div class="done-num" id="finalGates">6</div><div class="done-label">Gates available</div></div>
-            <div class="done-stat"><div class="done-num" id="finalOver">0</div><div class="done-label">Overrides audit-logged</div></div>
-          </div>
-          <div style="margin-top:24px;display:flex;gap:10px;justify-content:center">
-            <button class="btn btn-primary" id="restartBtn">Try another wish →</button>
-          </div>
-          <div class="fine" style="margin-top:18px">Reference: <code>docs/DEEP_REVIEW_AS_END_USER_2026-05-14.md</code> §11 maps every interaction to its module.</div>
-        </div>
-      </div>`;
+    case "done": return '\
+      <div class="done-stage">\
+        <div>\
+          <div class="done-icons">\ud83c\udfe2 \u2705 \ud83d\ude80</div>\
+          <h1>You\'re set.</h1>\
+          <div class="sub">Your software house is ready. Describe a product, your team builds it, quality gates ensure it ships right. Every decision is audited.</div>\
+          <div class="done-stats">\
+            <div class="done-stat"><div class="done-num">' + SLIDES.length + '</div><div class="done-label">Tour steps completed</div></div>\
+            <div class="done-stat"><div class="done-num" id="finalGates">6</div><div class="done-label">Gates available</div></div>\
+            <div class="done-stat"><div class="done-num" id="finalOver">0</div><div class="done-label">Overrides audit-logged</div></div>\
+          </div>\
+          <div style="margin-top:24px;display:flex;gap:10px;justify-content:center">\
+            <button class="btn btn-primary" id="restartBtn">Take the tour again</button>\
+          </div>\
+          <div class="fine" style="margin-top:18px">Ready to build your first product? Close this tour and describe what you want.</div>\
+        </div>\
+      </div>';
   }
   return "";
 }
@@ -837,13 +862,13 @@ function go(idx) {
   onEnter(SLIDES[idx].id);
 }
 function refreshRail() {
-  document.querySelectorAll(".rail-step").forEach((b, i) => {
-    const idx = Number(b.dataset.idx);
+  document.querySelectorAll(".rail-step").forEach(function(b) {
+    var idx = Number(b.dataset.idx);
     b.classList.toggle("now", idx === state.current);
     b.classList.toggle("done", state.visited.has(idx) && idx !== state.current);
   });
 }
-document.addEventListener("click", (e) => {
+document.addEventListener("click", function(e) {
   if (e.target.matches("[data-next]")) {
     if (state.current >= SLIDES.length - 1) restartTour();
     else go(state.current + 1);
@@ -851,7 +876,7 @@ document.addEventListener("click", (e) => {
     go(state.current - 1);
   }
 });
-document.addEventListener("keydown", (e) => {
+document.addEventListener("keydown", function(e) {
   if (e.target.matches("input,textarea")) return;
   if (e.key === "ArrowRight") go(state.current + 1);
   if (e.key === "ArrowLeft") go(state.current - 1);
@@ -861,334 +886,456 @@ document.addEventListener("keydown", (e) => {
 
 // ─── Slide enter handlers ────────────────────────────────────────────────────
 function onEnter(id) {
-  if (id === "init")       wireInit();
-  if (id === "ai")         wireAI();
-  if (id === "identity")   wireIdentity();
-  if (id === "budget")     wireBudget();
-  if (id === "wish")       wireWish();
-  if (id === "plan")       wirePlan();
-  if (id === "files")      wireFiles();
-  if (id === "diff")       wireDiff();
-  if (id === "mutation")   wireMutation();
-  if (id === "run")        wireRun();
-  if (id === "regenerate") wireRegen();
-  if (id === "streaming")  wireStreaming();
-  if (id === "tabs")       wireTabs();
-  if (id === "secrets")    wireSecrets();
-  if (id === "debt")       wireDebt();
-  if (id === "enforce")    wireEnforce();
-  if (id === "sign")       wireSign();
-  if (id === "audit")      wireAudit();
-  if (id === "freeze")     wireFreeze();
-  if (id === "done")       wireDone();
+  switch (id) {
+    case "ai":          wireAI(); break;
+    case "describe":    wireDescribe(); break;
+    case "intent":      wireIntent(); break;
+    case "design":      wireDesign(); break;
+    case "progress":    wireProgress(); break;
+    case "openproduct": wireOpenProduct(); break;
+    case "gates":       wireGates(); break;
+    case "verdicts":    wireVerdicts(); break;
+    case "tiers":       wireTiers(); break;
+    case "audit":       wireAudit(); break;
+    case "chat":        wireChat(); break;
+    case "files":       wireFiles(); break;
+    case "secrets":     wireSecrets(); break;
+    case "testdebt":    wireTestDebt(); break;
+    case "done":        wireDone(); break;
+  }
 }
 
-const q = (sel) => slideEls[state.current].querySelector(sel);
-const qa = (sel) => slideEls[state.current].querySelectorAll(sel);
-
-function wireInit() {
-  qa(".mode-card").forEach((c) => c.addEventListener("click", () => {
-    qa(".mode-card").forEach((x) => x.classList.remove("selected"));
-    c.classList.add("selected");
-    state.initMode = c.dataset.mode;
-  }));
-}
+var q = function(sel) { return slideEls[state.current].querySelector(sel); };
+var qa = function(sel) { return slideEls[state.current].querySelectorAll(sel); };
 
 function wireAI() {
-  qa(".provider-chip").forEach((c) => c.addEventListener("click", () => {
-    qa(".provider-chip").forEach((x) => x.classList.remove("selected"));
-    c.classList.add("selected");
-    state.provider = c.dataset.prov;
-  }));
-  q("#testBtn")?.addEventListener("click", () => {
+  qa(".provider-chip").forEach(function(c) {
+    c.addEventListener("click", function() {
+      qa(".provider-chip").forEach(function(x) { x.classList.remove("selected"); });
+      c.classList.add("selected");
+      state.provider = c.dataset.prov;
+    });
+  });
+  var testBtn = q("#testBtn");
+  if (testBtn) testBtn.addEventListener("click", function() {
     state.modelTested = true;
     q("#testResult").classList.add("show");
   });
 }
 
-function wireIdentity() {
-  qa(".role-chip").forEach((c) => c.addEventListener("click", () => {
-    qa(".role-chip").forEach((x) => x.classList.remove("selected"));
-    c.classList.add("selected");
-    state.identityRole = c.dataset.role;
-  }));
-  q("#identityName")?.addEventListener("input", (e) => { state.identityName = e.target.value; });
-}
-
-function wireBudget() {
-  q("#budgetRange")?.addEventListener("input", (e) => {
-    state.budget = Number(e.target.value);
-    q("#budgetVal").textContent = state.budget;
+function wireDescribe() {
+  var submitBtn = q("#describeSubmit");
+  if (submitBtn) submitBtn.addEventListener("click", function() {
+    var input = q("#describeInput");
+    state.description = input ? input.value : "";
+    var status = q("#describeStatus");
+    if (status) {
+      status.style.display = "block";
+      submitBtn.textContent = "\u2713 Submitted";
+      submitBtn.disabled = true;
+    }
   });
 }
 
-function wireWish() {
-  qa(".wish-card").forEach((c) => c.addEventListener("click", () => {
-    qa(".wish-card").forEach((x) => x.classList.remove("selected"));
-    c.classList.add("selected");
-    state.wish = c.dataset.wish;
-  }));
+function wireIntent() {
+  qa(".entity-card").forEach(function(c) {
+    c.addEventListener("click", function() {
+      c.classList.toggle("selected");
+    });
+  });
+  var confirmBtn = q("#intentConfirm");
+  if (confirmBtn) confirmBtn.addEventListener("click", function() {
+    state.intentConfirmed = true;
+    confirmBtn.textContent = "\u2713 Confirmed";
+    confirmBtn.disabled = true;
+  });
+  var editBtn = q("#intentEdit");
+  if (editBtn) editBtn.addEventListener("click", function() {
+    state.intentConfirmed = false;
+    if (confirmBtn) {
+      confirmBtn.textContent = "Looks right \u2014 proceed";
+      confirmBtn.disabled = false;
+    }
+  });
 }
 
-function wirePlan() {
-  const wish = state.wish || "feeder";
-  const plan = PLANS[wish];
-  q("#planName").textContent = plan.name;
-  q("#planSub").textContent = "Reading your wish and writing the plan…";
-  const list = q("#planList");
-  list.innerHTML = "";
-  plan.steps.forEach((s, i) => {
-    const row = document.createElement("div");
-    row.className = "plan-row";
-    row.innerHTML = `<div class="plan-dot">${i + 1}</div><div>${s}</div>`;
-    list.appendChild(row);
-    setTimeout(() => row.classList.add("in"), 300 + i * 380);
+function wireDesign() {
+  var approveBtn = q("#designApprove");
+  var changeBtn = q("#designChange");
+  if (approveBtn) approveBtn.addEventListener("click", function() {
+    state.designApproved = true;
+    q("#designStatus").style.display = "block";
+    approveBtn.textContent = "\u2713 Approved";
+    approveBtn.disabled = true;
   });
-  setTimeout(() => { q("#planSub").textContent = "Plan ready."; }, 300 + plan.steps.length * 380 + 300);
+  if (changeBtn) changeBtn.addEventListener("click", function() {
+    state.designApproved = false;
+    q("#designStatus").style.display = "none";
+    if (approveBtn) {
+      approveBtn.textContent = "Approve design";
+      approveBtn.disabled = false;
+    }
+  });
 }
+
+function wireProgress() {
+  var phases = qa(".phase-row");
+  var timers = [];
+  function resetPhases() {
+    timers.forEach(function(t) { clearTimeout(t); });
+    timers = [];
+    state.progressPhase = -1;
+    phases.forEach(function(p) {
+      p.classList.remove("in", "active", "done");
+      var st = p.querySelector(".phase-status");
+      if (st) { st.className = "phase-status waiting"; st.textContent = "waiting"; }
+    });
+  }
+  function playPhases() {
+    resetPhases();
+    phases.forEach(function(p, i) {
+      timers.push(setTimeout(function() {
+        p.classList.add("in");
+      }, i * 100));
+      timers.push(setTimeout(function() {
+        // mark previous done
+        if (i > 0) {
+          phases[i - 1].classList.remove("active");
+          phases[i - 1].classList.add("done");
+          var prevSt = phases[i - 1].querySelector(".phase-status");
+          if (prevSt) { prevSt.className = "phase-status complete"; prevSt.textContent = "complete"; }
+        }
+        p.classList.add("active");
+        var st = p.querySelector(".phase-status");
+        if (st) { st.className = "phase-status running"; st.textContent = "running"; }
+        state.progressPhase = i;
+      }, 600 + i * 1200));
+    });
+    // final done
+    timers.push(setTimeout(function() {
+      var last = phases[phases.length - 1];
+      last.classList.remove("active");
+      last.classList.add("done");
+      var st = last.querySelector(".phase-status");
+      if (st) { st.className = "phase-status complete"; st.textContent = "complete"; }
+    }, 600 + phases.length * 1200));
+  }
+  // show them on enter
+  phases.forEach(function(p, i) {
+    setTimeout(function() { p.classList.add("in"); }, i * 100);
+  });
+  var playBtn = q("#progressPlay");
+  if (playBtn) playBtn.addEventListener("click", playPhases);
+  var resetBtn = q("#progressReset");
+  if (resetBtn) resetBtn.addEventListener("click", resetPhases);
+}
+
+function wireOpenProduct() {
+  var btn = q("#openRepoBtn");
+  if (btn) btn.addEventListener("click", function() {
+    btn.textContent = "\u2713 Workspace opened";
+    btn.disabled = true;
+  });
+}
+
+function wireGates() {
+  state.signedGates.clear();
+  var sealEl = q("#seal");
+  if (sealEl) sealEl.classList.remove("in");
+  qa("#gateRow .gate").forEach(function(g) {
+    g.classList.remove("signed", "blocked");
+    g.addEventListener("click", function() {
+      var id = Number(g.dataset.gate);
+      if (state.signedGates.has(id)) return;
+      state.signedGates.add(id);
+      g.classList.add("signed");
+      if (state.signedGates.size >= 3 && sealEl) sealEl.classList.add("in");
+    });
+  });
+}
+
+function wireVerdicts() {
+  qa(".verdict-card").forEach(function(c) {
+    c.addEventListener("click", function() {
+      qa(".verdict-card").forEach(function(x) { x.classList.remove("selected"); });
+      c.classList.add("selected");
+      state.selectedVerdict = c.dataset.verdict;
+      var statusEl = q("#verdictStatus");
+      if (statusEl) statusEl.style.display = "block";
+      var labels = {
+        approve: "Approve",
+        changes: "Request changes",
+        reject: "Reject",
+        waive: "Waive",
+        conditions: "Conditions"
+      };
+      var details = {
+        approve: "The gate passes and work moves to the next phase. This is the most common verdict.",
+        changes: "The team receives your feedback and revises their work. The gate stays open until you approve.",
+        reject: "Work stops at this gate. Use this when the direction is fundamentally wrong.",
+        waive: "The gate is skipped, but the reason is permanently recorded in the audit trail.",
+        conditions: "Work proceeds, but specific requirements must be fulfilled before the product ships."
+      };
+      var labelEl = q("#verdictLabel");
+      if (labelEl) labelEl.textContent = "Verdict: " + labels[state.selectedVerdict];
+      var detailEl = q("#verdictDetail");
+      if (detailEl) detailEl.textContent = details[state.selectedVerdict];
+    });
+  });
+}
+
+function wireTiers() {
+  qa(".tier-card").forEach(function(c) {
+    c.addEventListener("click", function() {
+      qa(".tier-card").forEach(function(x) { x.classList.remove("selected"); });
+      c.classList.add("selected");
+      state.selectedTier = c.dataset.tier;
+      var statusEl = q("#tierStatus");
+      if (statusEl) statusEl.style.display = "block";
+      var labels = {t1: "Advisory", t2: "Review-required", t3: "Autonomous"};
+      var details = {
+        t1: "Maximum control. You see every proposed action and explicitly approve it. Best for sensitive or unfamiliar projects.",
+        t2: "Balanced. Agents work independently between gates, but stop and wait for your signature at each checkpoint.",
+        t3: "Maximum speed. Agents complete the full pipeline. Gates still fire and enforce quality \u2014 they auto-sign when all criteria pass."
+      };
+      var labelEl = q("#tierLabel");
+      if (labelEl) labelEl.textContent = "Selected: " + labels[state.selectedTier];
+      var detailEl = q("#tierDetail");
+      if (detailEl) detailEl.textContent = details[state.selectedTier];
+    });
+  });
+}
+
+function wireAudit() {
+  var card = q("#auditCard");
+  if (!card) return;
+  card.innerHTML = "";
+  var lines = [
+    '{"ts":"2026-05-24T10:01:12Z","action":"product:describe","detail":"Task management app with boards..."}',
+    '{"ts":"2026-05-24T10:01:18Z","action":"intent:confirm","detail":"6 entities/workflows/surfaces extracted"}',
+    '{"ts":"2026-05-24T10:01:25Z","action":"design:approve","detail":"React + Vite + Zustand + Tailwind"}',
+    '{"ts":"2026-05-24T10:01:30Z","action":"gate:sign","gate":"G0","signer":"you"}',
+    '{"ts":"2026-05-24T10:01:35Z","action":"gate:sign","gate":"G1","signer":"you"}',
+    '{"ts":"2026-05-24T10:02:10Z","action":"files:write","detail":"23 files written to workspace"}',
+    '{"ts":"2026-05-24T10:02:15Z","action":"security:scan","detail":"0 injections, 0 PII, 2 canary tokens placed"}',
+    '{"ts":"2026-05-24T10:02:20Z","action":"gate:sign","gate":"G4","signer":"you"}',
+    '{"ts":"2026-05-24T10:02:25Z","action":"gate:sign","gate":"G5","signer":"you"}'
+  ];
+  lines.forEach(function(line, i) {
+    var div = document.createElement("div");
+    div.className = "audit-line";
+    div.textContent = line;
+    card.appendChild(div);
+    setTimeout(function() { div.classList.add("in"); }, 200 + i * 250);
+  });
+}
+
+function wireChat() {
+  var input = q("#chatInput");
+  var sendBtn = q("#chatSend");
+  var messages = q("#chatMessages");
+  var sidebarItems = qa(".chat-sidebar-item");
+  if (sendBtn) sendBtn.addEventListener("click", function() {
+    if (!input || !input.value.trim()) return;
+    var text = input.value.trim();
+    var msg = document.createElement("div");
+    msg.className = "chat-msg user";
+    msg.textContent = text;
+    if (messages) messages.appendChild(msg);
+    input.value = "";
+    // auto-switch sidebar
+    sidebarItems.forEach(function(s) { s.classList.remove("active"); });
+    if (text.startsWith("/signal-")) {
+      sidebarItems[2].classList.add("active"); // governance
+      setTimeout(function() {
+        var reply = document.createElement("div");
+        reply.className = "chat-msg cmd";
+        reply.textContent = "Command recognized: " + text;
+        if (messages) messages.appendChild(reply);
+        messages.scrollTop = messages.scrollHeight;
+      }, 400);
+    } else {
+      sidebarItems[0].classList.add("active"); // chat
+      setTimeout(function() {
+        var reply = document.createElement("div");
+        reply.className = "chat-msg ai";
+        reply.textContent = "Understood. I'll work on that and update you when it's ready.";
+        if (messages) messages.appendChild(reply);
+        messages.scrollTop = messages.scrollHeight;
+      }, 600);
+    }
+    if (messages) messages.scrollTop = messages.scrollHeight;
+  });
+  if (input) input.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") { e.preventDefault(); sendBtn.click(); }
+  });
+}
+
+var FILE_DATA = [
+  { name:"package.json",          icon:"\ud83d\udce6", badge:"new", peek:'{\n  "name": "task-manager",\n  "scripts": {\n    "dev": "vite",\n    "build": "vite build",\n    "test": "vitest"\n  }\n}' },
+  { name:"vite.config.ts",        icon:"\u2699\ufe0f",  badge:"new", peek:'import { defineConfig } from "vite";\nimport react from "@vitejs/plugin-react";\n\nexport default defineConfig({\n  plugins: [react()],\n});' },
+  { name:"tailwind.config.js",    icon:"\ud83c\udfa8", badge:"new", peek:'export default {\n  content: ["./src/**/*.{ts,tsx}"],\n  darkMode: "class",\n};' },
+  { name:"src/App.tsx",           icon:"\u269b\ufe0f",  badge:"new", peek:'import { Board } from "./components/Board";\nimport { Header } from "./components/Header";\n\nexport default function App() {\n  return (\n    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">\n      <Header />\n      <Board />\n    </div>\n  );\n}' },
+  { name:"src/components/Board.tsx",   icon:"\u269b\ufe0f",  badge:"new", peek:'import { useBoardStore } from "../store";\nimport { Column } from "./Column";\n\nexport function Board() {\n  const columns = useBoardStore(s => s.columns);\n  return (\n    <div className="flex gap-4 p-6 overflow-x-auto">\n      {columns.map(col => <Column key={col.id} {...col} />)}\n    </div>\n  );\n}' },
+  { name:"src/components/Card.tsx",    icon:"\u269b\ufe0f",  badge:"new", peek:'export function Card({ title, assignee, dueDate }) {\n  return (\n    <div className="bg-white dark:bg-gray-800\n      rounded-lg p-3 shadow-sm border\n      cursor-grab active:cursor-grabbing">\n      <div className="font-medium">{title}</div>\n      <div className="text-sm text-gray-500 mt-1">\n        {assignee} \u00b7 {dueDate}\n      </div>\n    </div>\n  );\n}' },
+  { name:"src/store.ts",          icon:"\ud83d\udcbe", badge:"new", peek:'import { create } from "zustand";\n\nexport const useBoardStore = create((set) => ({\n  columns: [\n    { id: "todo", title: "To Do", cards: [] },\n    { id: "doing", title: "In Progress", cards: [] },\n    { id: "done", title: "Done", cards: [] },\n  ],\n  addCard: (colId, card) => set(state => ({\n    columns: state.columns.map(c =>\n      c.id === colId\n        ? { ...c, cards: [...c.cards, card] }\n        : c\n    )\n  })),\n}));' },
+  { name:"src/__tests__/Board.test.tsx", icon:"\ud83e\uddea", badge:"pass", peek:'import { render, screen } from "@testing-library/react";\nimport { Board } from "../components/Board";\n\ntest("renders three default columns", () => {\n  render(<Board />);\n  expect(screen.getByText("To Do")).toBeInTheDocument();\n  expect(screen.getByText("In Progress")).toBeInTheDocument();\n  expect(screen.getByText("Done")).toBeInTheDocument();\n});' },
+];
+
+var DEMO_HTML = '<!doctype html><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui;background:#f9fafb;color:#111;padding:24px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}h1{font-size:20px;font-weight:800}.board{display:flex;gap:16px;overflow-x:auto}.col{background:#fff;border-radius:12px;padding:12px;min-width:220px;border:1px solid #e5e7eb}.col-title{font-weight:700;font-size:14px;margin-bottom:10px;color:#6b7280}.card{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:8px;cursor:grab;transition:box-shadow .15s}.card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}.card-title{font-weight:600;font-size:13px}.card-meta{font-size:11px;color:#9ca3af;margin-top:4px}button{background:#2457d6;color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:700;font-size:12px;cursor:pointer}button:hover{background:#1742ad}.toggle{background:transparent;border:1px solid #e5e7eb;color:#111;padding:6px 10px;font-size:11px;border-radius:6px}</style><div class="header"><h1>Task Manager</h1><button class="toggle" id="darkBtn">Dark mode</button></div><div class="board"><div class="col"><div class="col-title">To Do</div><div class="card"><div class="card-title">Design landing page</div><div class="card-meta">Alice \u00b7 Due Jun 1</div></div><div class="card"><div class="card-title">Write API endpoints</div><div class="card-meta">Bob \u00b7 Due Jun 3</div></div></div><div class="col"><div class="col-title">In Progress</div><div class="card"><div class="card-title">Build drag-and-drop</div><div class="card-meta">Carol \u00b7 Due May 28</div></div></div><div class="col"><div class="col-title">Done</div><div class="card"><div class="card-title">Set up project</div><div class="card-meta">Dave \u00b7 Completed</div></div></div></div><script>var dark=false;document.getElementById("darkBtn").addEventListener("click",function(){dark=!dark;document.body.style.background=dark?"#111827":"#f9fafb";document.body.style.color=dark?"#f3f4f6":"#111";document.querySelectorAll(".col").forEach(function(c){c.style.background=dark?"#1f2937":"#fff";c.style.borderColor=dark?"#374151":"#e5e7eb"});document.querySelectorAll(".card").forEach(function(c){c.style.background=dark?"#111827":"#f9fafb";c.style.borderColor=dark?"#374151":"#e5e7eb"});document.getElementById("darkBtn").textContent=dark?"Light mode":"Dark mode"})<\/script>';
 
 function wireFiles() {
-  const wish = state.wish || "feeder";
-  const files = FILES[wish];
-  state.filesWritten = files.map((f) => f.name);
-  const list = q("#fileList");
+  var list = q("#fileList");
+  if (!list) return;
   list.innerHTML = "";
-  files.forEach((f, i) => {
-    const row = document.createElement("div");
+  FILE_DATA.forEach(function(f, i) {
+    var row = document.createElement("div");
     row.className = "file-row";
-    row.innerHTML = `<span class="file-emoji">${f.icon}</span><span>${f.name}</span><span class="file-new">NEW</span>`;
-    row.addEventListener("click", () => {
-      qa("#fileList .file-row").forEach((r) => r.classList.remove("selected"));
+    row.innerHTML = '<span class="file-emoji">' + f.icon + '</span><span>' + f.name + '</span><span class="file-badge ' + f.badge + '">' + f.badge.toUpperCase() + '</span>';
+    row.addEventListener("click", function() {
+      qa("#fileList .file-row").forEach(function(r) { r.classList.remove("selected"); });
       row.classList.add("selected");
-      q("#filePeek").textContent = f.peek;
+      var peek = q("#filePeek");
+      if (peek) peek.textContent = f.peek;
+      var previewArea = q("#filePreviewArea");
+      if (previewArea) {
+        previewArea.innerHTML = '<div class="file-peek" id="filePeek">' + escapeHtml(f.peek) + '</div>';
+      }
     });
     list.appendChild(row);
-    setTimeout(() => row.classList.add("in"), 150 + i * 150);
+    setTimeout(function() { row.classList.add("in"); }, 150 + i * 100);
+  });
+  var treeBtn = q("#fileTreeBtn");
+  if (treeBtn) treeBtn.addEventListener("click", function() {
+    var previewArea = q("#filePreviewArea");
+    if (previewArea) {
+      previewArea.innerHTML = '<div class="file-peek" id="filePeek"><span class="file-peek-empty">\u2190 Tap a file to see its contents.</span></div>';
+    }
+  });
+  var previewBtn = q("#livePreviewBtn");
+  if (previewBtn) previewBtn.addEventListener("click", function() {
+    var previewArea = q("#filePreviewArea");
+    if (previewArea) {
+      var blob = new Blob([DEMO_HTML], { type: "text/html" });
+      previewArea.innerHTML = '<div class="demo-wrap"><div class="demo-chrome"><span class="demo-dot r"></span><span class="demo-dot y"></span><span class="demo-dot g"></span><span class="demo-addr">localhost:5173</span></div><iframe class="demo-frame" id="demoFrame" sandbox="allow-scripts" title="Live preview"></iframe></div>';
+      var frame = previewArea.querySelector("#demoFrame");
+      if (frame) frame.src = URL.createObjectURL(blob);
+    }
   });
 }
 
-function wireDiff() {
-  const wish = state.wish || "feeder";
-  const files = FILES[wish];
-  q("#diffNew").textContent = files.length;
-  q("#diffApply").textContent = `Apply ${files.length} files`;
-  const list = q("#diffList");
-  list.innerHTML = files.map((f) => `<div class="diff-row new">+ ${f.name}<span>${(f.peek || '').length} B</span></div>`).join("");
-  q("#diffCancel")?.addEventListener("click", () => { state.diffConfirmed = false; });
-  q("#diffApply")?.addEventListener("click", () => {
-    state.diffConfirmed = true;
-    q("#diffApply").textContent = "✓ Applied";
-    q("#diffApply").disabled = true;
-  });
-}
-
-function wireMutation() {
-  const initialScore = 82;
-  q("#mutScore").textContent = initialScore + "%";
-  q("#mutFill").style.width = initialScore + "%";
-  q("#mutAddTest")?.addEventListener("click", () => {
-    const newScore = 97;
-    q("#mutScore").textContent = newScore + "%";
-    q("#mutFill").style.width = newScore + "%";
-    q("#mutFill").style.background = "linear-gradient(90deg, var(--green), #aee9c8)";
-    state.mutationOverridden = false;
-    q(".mutation-card").style.background = "var(--green-soft)";
-    q(".mutation-card").style.borderColor = "var(--green)";
-  });
-  q("#mutOverride")?.addEventListener("click", () => {
-    state.mutationOverridden = true;
-    state.enforcementOverrides++;
-    q("#mutScore").innerHTML = '82% <span class="fine">(override logged)</span>';
-  });
-}
-
-function wireRun() {
-  const wish = state.wish || "feeder";
-  const blob = new Blob([DEMOS[wish]], { type: "text/html" });
-  q("#demoFrame").src = URL.createObjectURL(blob);
-}
-
-function wireRegen() {
-  q("#regenGo")?.addEventListener("click", () => {
-    state.regenInstruction = q("#regenInput").value;
-    const status = q("#regenStatus");
-    status.style.display = "block";
-    status.innerHTML = '⏳ Sending one-token stream…';
-    setTimeout(() => {
-      status.innerHTML = '✓ Regenerated · diff confirmed · written to disk · turn appended to .signalos/builds/&lt;id&gt;/conversation.jsonl';
-    }, 1200);
-  });
-}
-
-function wireStreaming() {
-  const sample = "Pet Feeder Reminder — a tiny app for not forgetting to feed your dog. Type the pet's name, pick how often, and it buzzes when it's time. Built in 4 phases under SignalOS gates: Prepare, Plan, Build, Review. Each gate is signed by the role that owns it.";
-  let timer = null;
-  let idx = 0;
-  const box = q("#streamBox");
-  const counter = q("#streamCount");
-  function reset() {
-    if (timer) { clearInterval(timer); timer = null; }
-    idx = 0;
-    box.textContent = "";
-    counter.textContent = "0 chars · 0 tokens";
-  }
-  q("#streamStart")?.addEventListener("click", () => {
-    reset();
-    timer = setInterval(() => {
-      if (idx >= sample.length) { clearInterval(timer); timer = null; return; }
-      const chunk = sample.slice(idx, idx + Math.floor(Math.random() * 4) + 2);
-      box.textContent += chunk;
-      idx += chunk.length;
-      counter.textContent = `${idx} chars · ${Math.round(idx / 4)} tokens · streaming…`;
-    }, 30);
-  });
-  q("#streamReset")?.addEventListener("click", reset);
-}
-
-function wireTabs() {
-  const contents = {
-    files: "📦 package.json<br>🌐 index.html<br>⚛️ src/App.jsx<br>⏱️ src/timer.js<br>🎨 src/styles.css<br>📖 README.md",
-    gov:   "🛡️ Enforcement: <strong style='color:var(--green)'>strict</strong><br><br>Gates:<br>G0 ✓<br>G1 ✓<br>G2 ▶<br>G3 ○<br>G4 ○<br>G5 ○<br><br>0 overrides this wave",
-    mem:   "📝 Notes:<br>- Belief: kids forget to feed pets<br>- Decision: timer + buzz<br><br>📜 Audit:<br>- gate:sign G0<br>- files:write 7<br>- mutation override",
-  };
-  qa(".tp-tab").forEach((t) => t.addEventListener("click", () => {
-    qa(".tp-tab").forEach((x) => x.classList.remove("active"));
-    t.classList.add("active");
-    state.activeTab = t.dataset.tab;
-    q("#tpContent").innerHTML = contents[state.activeTab];
-  }));
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function wireSecrets() {
   function render() {
-    q("#secretsList").innerHTML = state.secretsList.map((s, i) => `
-      <div class="secret-row">
-        <div>
-          <div class="secret-name">${s.name}</div>
-          <div class="secret-mask">${s.masked ? '••••••••••••' : s.value}</div>
-        </div>
-        <div class="secret-btns">
-          ${s.public
-            ? '<button class="secret-btn">Copy</button>'
-            : `<button class="secret-btn" data-i="${i}">${s.masked ? 'Reveal' : 'Hide'}</button><button class="secret-btn">Copy</button>`}
-        </div>
-      </div>
-    `).join("");
-    qa(".secret-btn[data-i]").forEach((b) => b.addEventListener("click", () => {
-      const i = Number(b.dataset.i);
-      state.secretsList[i].masked = !state.secretsList[i].masked;
-      render();
-    }));
+    var container = q("#secretsList");
+    if (!container) return;
+    container.innerHTML = state.secretsList.map(function(s, i) {
+      return '<div class="secret-row"><div><div class="secret-name">' + s.name + '</div><div class="secret-mask">' + (s.masked ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : s.value) + '</div></div><div class="secret-btns">' + (s.public ? '<button class="secret-btn">Copy</button>' : '<button class="secret-btn" data-i="' + i + '">' + (s.masked ? "Reveal" : "Hide") + '</button><button class="secret-btn">Copy</button>') + '</div></div>';
+    }).join("");
+    qa(".secret-btn[data-i]").forEach(function(b) {
+      b.addEventListener("click", function() {
+        var i = Number(b.dataset.i);
+        state.secretsList[i].masked = !state.secretsList[i].masked;
+        render();
+      });
+    });
   }
   render();
-}
-
-function wireDebt() {
-  function renderList() {
-    q("#debtListBox").innerHTML = state.testDebt.length
-      ? state.testDebt.map((d) => `<div class="debt-entry"><div class="debt-title">${d.title}</div><div class="debt-meta">${d.area} · open</div></div>`).join("")
-      : '';
-  }
-  renderList();
-  q("#debtLog")?.addEventListener("click", () => {
-    const title = q("#debtTitle").value.trim();
-    const area = q("#debtArea").value.trim();
-    if (!title) return;
-    state.testDebt.push({ title, area });
-    q("#debtTitle").value = "";
-    renderList();
+  var importBtn = q("#secretImport");
+  if (importBtn) importBtn.addEventListener("click", function() {
+    var diff = q("#envDiff");
+    if (diff) diff.style.display = "block";
+  });
+  var cancelBtn = q("#envDiffCancel");
+  if (cancelBtn) cancelBtn.addEventListener("click", function() {
+    var diff = q("#envDiff");
+    if (diff) diff.style.display = "none";
+  });
+  var applyBtn = q("#envDiffApply");
+  if (applyBtn) applyBtn.addEventListener("click", function() {
+    state.secretsList.push({ name: "REDIS_URL", value: "redis://localhost:6379", masked: true, public: false });
+    state.secretsList.push({ name: "JWT_SECRET", value: "eyJhbG...secret", masked: true, public: false });
+    render();
+    var diff = q("#envDiff");
+    if (diff) diff.style.display = "none";
+    applyBtn.textContent = "\u2713 Applied";
+    applyBtn.disabled = true;
   });
 }
 
-function wireEnforce() {
-  q("#enfOverride")?.addEventListener("click", () => { q("#enfModal").classList.add("show"); });
-  q("#enfCancel")?.addEventListener("click", () => { q("#enfModal").classList.remove("show"); });
-  q("#enfConfirm")?.addEventListener("click", () => {
-    const reason = q("#enfReason").value.trim();
-    if (!reason) { q("#enfReason").focus(); return; }
+function wireTestDebt() {
+  var mutScore = 91;
+  function renderDebt() {
+    var box = q("#debtListBox");
+    if (!box) return;
+    box.innerHTML = state.testDebt.map(function(d) {
+      return '<div class="debt-entry"><div class="debt-title">' + d.title + '</div><div class="debt-meta">open \u00b7 needs test</div></div>';
+    }).join("");
+  }
+  renderDebt();
+  var addTestBtn = q("#mutAddTest");
+  if (addTestBtn) addTestBtn.addEventListener("click", function() {
+    mutScore = 97;
+    var scoreEl = q("#mutScore");
+    if (scoreEl) scoreEl.textContent = mutScore + "%";
+    var fillEl = q("#mutFill");
+    if (fillEl) {
+      fillEl.style.width = mutScore + "%";
+      fillEl.style.background = "linear-gradient(90deg, var(--green), #aee9c8)";
+    }
+    var statusEl = q("#mutStatus");
+    if (statusEl) {
+      statusEl.style.color = "var(--green)";
+      statusEl.textContent = "\u2713 Above threshold \u2014 0 surviving mutants";
+    }
+    var card = q(".mutation-card");
+    if (card) {
+      card.style.background = "var(--green-soft)";
+      card.style.borderColor = "var(--green)";
+    }
+  });
+  var dismissBtn = q("#mutDismiss");
+  if (dismissBtn) dismissBtn.addEventListener("click", function() {
     state.enforcementOverrides++;
-    q("#enfModal").classList.remove("show");
-    q("#enfOverride").textContent = "✓ Override logged";
-    q("#enfOverride").disabled = true;
+    var statusEl = q("#mutStatus");
+    if (statusEl) statusEl.textContent = "\u26a0 Dismissed (audit-logged)";
+    dismissBtn.textContent = "\u2713 Logged";
+    dismissBtn.disabled = true;
   });
-  q("#enfBack")?.addEventListener("click", () => go(state.current + 1)); // jump to sign
-}
-
-function wireSign() {
-  q("#signRole").textContent = state.identityRole;
-  state.signedGates.clear();
-  q("#seal").classList.remove("in");
-  const allowedRanges = { PO:[0,1,2,3], PE:[3,4], QA:[4,5], DevOps:[0,1,2,3,4,5] };
-  const allowed = allowedRanges[state.identityRole] || [0,1,2,3];
-  qa("#gateRow .gate").forEach((g) => {
-    const id = Number(g.dataset.gate);
-    g.classList.remove("signed", "blocked");
-    if (!allowed.includes(id)) g.classList.add("blocked");
-    g.onclick = () => {
-      if (g.classList.contains("blocked")) {
-        if (confirm(`Role ${state.identityRole} can't sign G${id}. Sign with override?`)) {
-          state.enforcementOverrides++;
-          g.classList.remove("blocked");
-        } else return;
-      }
-      if (state.signedGates.has(id)) return;
-      state.signedGates.add(id);
-      g.classList.add("signed");
-      if (state.signedGates.size >= 3) q("#seal").classList.add("in");
-    };
+  var logBtn = q("#debtLog");
+  if (logBtn) logBtn.addEventListener("click", function() {
+    var titleEl = q("#debtTitle");
+    var title = titleEl ? titleEl.value.trim() : "";
+    if (!title) return;
+    state.testDebt.push({ title: title });
+    if (titleEl) titleEl.value = "";
+    var detailEl = q("#debtDetail");
+    if (detailEl) detailEl.value = "";
+    renderDebt();
   });
-  q("#sealLabel").textContent = (PLANS[state.wish || "feeder"]).name;
-}
-
-function wireAudit() {
-  const card = q("#auditCard");
-  card.innerHTML = "";
-  const lines = [
-    `{"ts":"2026-05-15T03:42:11Z","action":"workspace:set","detail":"C:\\\\…\\\\pet-feeder"}`,
-    `{"ts":"2026-05-15T03:42:18Z","action":"identity:set","detail":"${state.identityName} as ${state.identityRole}"}`,
-    `{"ts":"2026-05-15T03:42:25Z","action":"files:write","detail":"${state.filesWritten.length} files"}`,
-    `{"ts":"2026-05-15T03:42:30Z","action":"secret:upsert","detail":"DATABASE_URL in .env.local"}`,
-    state.mutationOverridden ? `{"ts":"2026-05-15T03:42:33Z","action":"enforcement:override","rule":"mutation-threshold","reason":"…"}` : null,
-    ...[...state.signedGates].map((g) => `{"ts":"2026-05-15T03:43:0${g}Z","action":"gate:sign","gate":"G${g}","signer":"${state.identityName}"}`),
-  ].filter(Boolean);
-  lines.forEach((line, i) => {
-    const div = document.createElement("div");
-    div.className = "audit-line";
-    div.textContent = line;
-    card.appendChild(div);
-    setTimeout(() => div.classList.add("in"), 200 + i * 250);
-  });
-}
-
-function wireFreeze() {
-  function paint() {
-    const c = q("#freezeCard");
-    c.className = "freeze-card " + (state.waveFrozen ? "frozen" : "active");
-    q("#freezeEmoji").textContent = state.waveFrozen ? "🥶" : "🏃";
-    q("#freezeStatus").textContent = "Wave: " + (state.waveFrozen ? "FROZEN" : "active");
-    q("#freezeDesc").textContent = state.waveFrozen ? "Build is blocked. Sign G5 and start a new wave to continue." : "Build is allowed.";
-    q("#freezeBtn").textContent = state.waveFrozen ? "Unfreeze" : "Freeze wave";
-    q("#freezeBtn").className = "btn " + (state.waveFrozen ? "btn-ghost" : "btn-primary") + " freeze-toggle";
-  }
-  paint();
-  q("#freezeBtn")?.addEventListener("click", () => { state.waveFrozen = !state.waveFrozen; paint(); });
 }
 
 function wireDone() {
-  q("#finalFiles").textContent = state.filesWritten.length;
-  q("#finalOver").textContent = state.enforcementOverrides;
-  q("#restartBtn")?.addEventListener("click", restartTour);
+  var overEl = q("#finalOver");
+  if (overEl) overEl.textContent = state.enforcementOverrides;
+  var gatesEl = q("#finalGates");
+  if (gatesEl) gatesEl.textContent = state.signedGates.size || 6;
+  var restartBtn = q("#restartBtn");
+  if (restartBtn) restartBtn.addEventListener("click", restartTour);
 }
 
 function restartTour() {
   state.current = 0;
   state.visited = new Set([0]);
-  state.wish = null;
   state.signedGates.clear();
   state.testDebt = [];
   state.enforcementOverrides = 0;
-  state.waveFrozen = false;
-  slideEls.forEach((el, i) => el.classList.toggle("active", i === 0));
+  state.selectedVerdict = null;
+  state.selectedTier = null;
+  slideEls.forEach(function(el, i) { el.classList.toggle("active", i === 0); });
   refreshRail();
 }
 
