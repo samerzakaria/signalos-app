@@ -550,18 +550,22 @@ fn collect_project_artifacts(workspace: &Path) -> ProjectArtifacts {
             },
         ),
     ];
-    artifacts.extend(shared_gate_artifacts(workspace).into_iter().map(|(gate, spec)| {
-        artifact(
-            &format!("{} {}", gate, spec.label),
-            &spec.rel_path,
-            "file",
-            if workspace.join(&spec.rel_path).exists() {
-                format!("Required {} artifact is present.", gate)
-            } else {
-                format!("Missing required {} artifact.", gate)
-            },
-        )
-    }));
+    artifacts.extend(
+        shared_gate_artifacts(workspace)
+            .into_iter()
+            .map(|(gate, spec)| {
+                artifact(
+                    &format!("{} {}", gate, spec.label),
+                    &spec.rel_path,
+                    "file",
+                    if workspace.join(&spec.rel_path).exists() {
+                        format!("Required {} artifact is present.", gate)
+                    } else {
+                        format!("Missing required {} artifact.", gate)
+                    },
+                )
+            }),
+    );
 
     let initialized = runtime_dir.exists() && plan_file.exists();
     ProjectArtifacts {
@@ -2313,7 +2317,11 @@ mod tests {
         std::fs::write(root.join("core").join("strategy").join("PLAN.md"), "# Plan").unwrap();
 
         let artifacts = collect_project_artifacts(&root);
-        let paths: Vec<String> = artifacts.artifacts.into_iter().map(|item| item.path).collect();
+        let paths: Vec<String> = artifacts
+            .artifacts
+            .into_iter()
+            .map(|item| item.path)
+            .collect();
 
         assert!(paths.contains(&"core/governance/Governance/SOUL-DOCUMENT.md".into()));
         assert!(paths.contains(&"core/governance/QUALITY_CHECK.md".into()));
@@ -2508,6 +2516,10 @@ mod tests {
         assert_eq!(req.command, "signal-velocity");
         assert_eq!(req.args, vec!["--json".to_string()]);
         assert_eq!(req.cwd, cwd);
-        assert!(req.id.starts_with("req-"), "id should be uuid-shaped: {}", req.id);
+        assert!(
+            req.id.starts_with("req-"),
+            "id should be uuid-shaped: {}",
+            req.id
+        );
     }
 }
