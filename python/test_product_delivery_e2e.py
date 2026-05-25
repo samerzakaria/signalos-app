@@ -13,6 +13,7 @@ from pathlib import Path
 
 from signalos_lib.product.delivery import run_delivery
 from signalos_lib.product.lifecycle import load_delivery_state
+from signalos_lib.orchestrator import _SKILL_KEY_TO_PATH
 
 
 class TestDeliveryE2E(unittest.TestCase):
@@ -47,6 +48,13 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue((signalos / "product" / "INTENT.json").exists())
             self.assertTrue((signalos / "product" / "DELIVERY_STATE.json").exists())
             self.assertTrue((signalos / "product" / "ACCEPTANCE_MATRIX.json").exists())
+            self.assertTrue((signalos / "product" / "STRATEGY_REVIEW.yaml").exists())
+            self.assertTrue((signalos / "product" / "SCOPE_DECISIONS.yaml").exists())
+            self.assertTrue((signalos / "product" / "ARCH_REVIEW.yaml").exists())
+            self.assertTrue((signalos / "product" / "REVIEW_READINESS.yaml").exists())
+            self.assertTrue(
+                (signalos / "designs" / "1" / "DESIGN_DECISIONS.yaml").exists()
+            )
             self.assertTrue((signalos / "product" / "CLOSEOUT.json").exists())
             self.assertTrue((signalos / "product" / "CLOSEOUT.md").exists())
             self.assertTrue((signalos / "handoffs").exists())
@@ -301,6 +309,30 @@ class TestDeliveryE2E(unittest.TestCase):
                 packet["schema_version"], "signalos.generation_packet.v1"
             )
             self.assertGreater(len(packet["file_specs"]), 0)
+
+    def test_delivery_writes_agent_packet_with_skills(self):
+        """Generated agent packet exposes full and applicable skill contracts."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "agent-skill-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="agent-skill-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            runs_dir = repo_root / ".signalos" / "product" / "agent-runs"
+            run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()]
+            self.assertEqual(len(run_dirs), 1)
+            scope = json.loads((run_dirs[0] / "scope.json").read_text(encoding="utf-8"))
+            self.assertEqual(scope["schema_version"], "signalos.agent_packet.v1")
+            self.assertEqual(len(scope["skills_catalog"]), len(_SKILL_KEY_TO_PATH))
+            self.assertGreaterEqual(len(scope["applicable_skills"]), 3)
+            self.assertTrue((run_dirs[0] / "skills-catalog.json").exists())
+            self.assertTrue((run_dirs[0] / "applicable-skills.md").exists())
 
     def test_no_application_code_written(self):
         """Delivery does NOT write application source code to disk."""

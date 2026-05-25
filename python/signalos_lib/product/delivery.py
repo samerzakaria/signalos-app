@@ -32,7 +32,13 @@ from .design import (
     scaffold_design_system,
     write_design,
 )
+from .design_decisions import (
+    build_design_decisions,
+    validate_design_decisions,
+    write_design_decisions,
+)
 from .generation import prepare_generation, write_generation_manifest
+from .agent_packets import build_agent_packet, write_agent_packet
 from .assumptions import record_assumptions, write_assumptions
 from .intent import extract_product_intent, refine_intent_with_llm, write_intent
 from .lifecycle import (
@@ -44,9 +50,25 @@ from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
 from .questions import generate_questions
 from .gate_review import classify_review, handle_request_changes, handle_rejection
 from .repair_loop import run_repair_loop
+from .reviews import (
+    build_arch_review,
+    build_review_readiness,
+    validate_arch_review,
+    validate_review_readiness,
+    write_arch_review,
+    write_review_readiness,
+)
 from .scaffold import run_scaffold
 from .security_gate import run_security_gate, write_security_result
 from .stacks import detect_profile
+from .strategy import (
+    build_scope_decisions,
+    build_strategy_review,
+    validate_scope_decisions,
+    validate_strategy_review,
+    write_scope_decisions,
+    write_strategy_review,
+)
 from .validation import (
     build_validation_plan,
     check_product_closure,
@@ -101,6 +123,7 @@ def run_delivery(
 
     signalos_dir = repo_root / ".signalos"
     errors: list[str] = []
+    warnings: list[str] = []
 
     # ------------------------------------------------------------------
     # 1. INTENT phase
@@ -152,6 +175,29 @@ def run_delivery(
             write_assumptions(assumptions, signalos_dir)
     except Exception as exc:
         errors.append(f"HITL questions/assumptions failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # 1c. STRATEGY/SCOPE decision artifacts
+    # ------------------------------------------------------------------
+    try:
+        strategy_review = _build_delivery_strategy_review(
+            prompt=prompt,
+            intent=intent,
+            questions=questions if "questions" in locals() else [],
+            assumptions=assumptions if "assumptions" in locals() else [],
+        )
+        strategy_errors = validate_strategy_review(strategy_review)
+        if strategy_errors:
+            errors.extend(f"strategy review: {err}" for err in strategy_errors)
+        write_strategy_review(strategy_review, signalos_dir)
+
+        scope_decisions = _build_delivery_scope_decisions(strategy_review)
+        scope_errors = validate_scope_decisions(scope_decisions)
+        if scope_errors:
+            errors.extend(f"scope decisions: {err}" for err in scope_errors)
+        write_scope_decisions(scope_decisions, signalos_dir)
+    except Exception as exc:
+        errors.append(f"strategy/scope artifacts failed: {exc}")
 
     # Auto-detect blueprint
     if blueprint == "auto":
@@ -225,6 +271,49 @@ def run_delivery(
     except Exception as exc:
         errors.append(f"design phase failed: {exc}")
 
+    try:
+        design_decisions = build_design_decisions(
+            intent,
+            design,
+            wave="1",
+            taste_findings=_build_default_taste_findings(intent, actual_profile),
+        )
+        design_decision_result = validate_design_decisions(
+            design_decisions,
+            profile=actual_profile,
+            intent=intent,
+            design_system=design,
+        )
+        if not design_decision_result.get("valid", False):
+            errors.extend(
+                f"design decision: {item}"
+                for item in design_decision_result.get("blockers", [])
+            )
+        warnings.extend(
+            f"design decision: {item}"
+            for item in design_decision_result.get("warnings", [])
+        )
+        write_design_decisions(design_decisions, signalos_dir, wave="1")
+    except Exception as exc:
+        errors.append(f"design decision artifact failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # 2c. ARCHITECTURE review artifact
+    # ------------------------------------------------------------------
+    try:
+        arch_review = _build_delivery_arch_review(intent, actual_profile, bp)
+        arch_result = validate_arch_review(arch_review)
+        if not arch_result.get("valid", False):
+            errors.extend(f"arch review: {err}" for err in arch_result.get("errors", []))
+        if arch_result.get("blocked"):
+            errors.extend(
+                f"arch blocker: {item}"
+                for item in arch_result.get("blockers", [])
+            )
+        write_arch_review(arch_review, signalos_dir)
+    except Exception as exc:
+        errors.append(f"architecture review artifact failed: {exc}")
+
     # ------------------------------------------------------------------
     # 3. ACCEPTANCE phase
     # ------------------------------------------------------------------
@@ -245,6 +334,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     manifest = None
     generation_packet = None
+    agent_packet = None
     try:
         # Extract task IDs from acceptance criteria
         task_ids = (
@@ -267,6 +357,21 @@ def run_delivery(
         # Load the manifest that prepare_generation wrote
         from .generation import load_generation_manifest, collect_governance_instructions
         manifest = load_generation_manifest(repo_root / ".signalos")
+
+        tasks = _build_agent_tasks_from_acceptance(acceptance)
+        agent_packet = build_agent_packet(
+            repo_root=repo_root,
+            intent=intent,
+            blueprint=bp,
+            acceptance_matrix=acceptance or {},
+            profile=actual_profile,
+            wave="1",
+            tasks=tasks,
+            allowed_paths=generation_packet.get("allowed_paths", []),
+            forbidden_actions=None,
+            generation_packet=generation_packet,
+        )
+        write_agent_packet(agent_packet, repo_root)
 
         update_delivery_phase(repo_root, "generated", "complete")
     except Exception as exc:
@@ -315,7 +420,7 @@ def run_delivery(
             )
             agent_result = dispatch_build_agent(
                 repo_root=repo_root,
-                packet=generation_packet,
+                packet=agent_packet or generation_packet,
                 governance=governance,
             )
             if agent_result.get("status") == "completed":
@@ -430,12 +535,46 @@ def run_delivery(
             errors.append(f"deploy evidence failed: {exc}")
 
     # ------------------------------------------------------------------
+    # 7b. REVIEW READINESS artifact
+    # ------------------------------------------------------------------
+    try:
+        readiness = _build_delivery_review_readiness(
+            strategy_errors=strategy_errors if "strategy_errors" in locals() else [],
+            scope_errors=scope_errors if "scope_errors" in locals() else [],
+            arch_result=arch_result if "arch_result" in locals() else None,
+            design=design,
+            validation_result=val_result,
+            runtime_proof=runtime_proof if "runtime_proof" in locals() else None,
+            ux_proof=ux_proof if "ux_proof" in locals() else None,
+            deploy_decision=deploy_decision,
+            errors=errors,
+        )
+        readiness_result = validate_review_readiness(readiness)
+        if not readiness_result.get("valid", False):
+            errors.extend(
+                f"review readiness: {err}"
+                for err in readiness_result.get("errors", [])
+            )
+        write_review_readiness(readiness, signalos_dir)
+    except Exception as exc:
+        errors.append(f"review readiness artifact failed: {exc}")
+
+    # ------------------------------------------------------------------
     # 8. CLOSEOUT phase
     # ------------------------------------------------------------------
     try:
         closeout = build_closeout(
             repo_root, product_name, actual_profile, blueprint_id,
         )
+        if "readiness_result" in locals() and not readiness_result.get("ready", False):
+            closeout.setdefault("known_limitations", []).extend(
+                readiness_result.get("errors", [])
+                + readiness_result.get("blockers", [])
+            )
+            if closeout.get("closure_level") == "ready":
+                closeout["closure_level"] = "partial"
+        if errors:
+            closeout.setdefault("known_limitations", []).extend(errors)
         write_closeout(closeout, signalos_dir)
         write_handoff_files(closeout, signalos_dir)
         update_delivery_phase(
@@ -497,6 +636,226 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _build_delivery_strategy_review(
+    *,
+    prompt: str,
+    intent: dict,
+    questions: list[dict],
+    assumptions: list[dict],
+) -> dict:
+    product_name = intent.get("product_name") or "the product"
+    product_type = intent.get("product_type") or "custom product"
+    users = intent.get("target_users") or ["primary users"]
+    workflows = intent.get("primary_workflows") or ["complete the core workflow"]
+
+    return build_strategy_review(
+        product_thesis=(
+            f"{product_name} should solve a focused {product_type} job before "
+            "scope expands beyond proven user value."
+        ),
+        target_user=", ".join(str(user) for user in users),
+        job_to_be_done=", ".join(str(workflow) for workflow in workflows),
+        literal_request_risk=(
+            "Building the prompt literally can miss product tradeoffs, UX "
+            "quality, test scope, security boundaries, and handoff evidence."
+        ),
+        ten_star_options=[
+            {
+                "id": "TSO-001",
+                "title": "Raise the product from literal request to best usable workflow",
+                "user_value": "Forces the agent to look for the highest-value product shape.",
+                "implementation_cost": "Requires explicit scope decision before adoption.",
+                "risk": "Can expand scope if accepted without trace.",
+                "recommendation": "Evaluate before backlog finalization.",
+                "disposition": "deferred",
+            }
+        ],
+        scope_reduction_options=[
+            {
+                "id": "SRO-001",
+                "title": "Keep delivery to the first provable product slice",
+                "tradeoff": "Reduces wow factor but improves build/test/UX proof reliability.",
+                "disposition": "deferred",
+            }
+        ],
+        required_questions=[
+            q.get("question", str(q))
+            for q in questions
+            if isinstance(q, dict)
+        ],
+        assumptions=assumptions,
+    )
+
+
+def _build_delivery_scope_decisions(strategy_review: dict) -> dict:
+    decisions: list[dict[str, Any]] = []
+    for source, items in (
+        ("strategy", strategy_review.get("ten_star_options", [])),
+        ("scope", strategy_review.get("scope_reduction_options", [])),
+    ):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            decisions.append({
+                "id": str(item.get("id", f"SD-{len(decisions) + 1:03d}")),
+                "source": source,
+                "proposal": item.get("title") or item.get("proposal") or "",
+                "impact": item.get("user_value") or item.get("tradeoff") or "",
+                "disposition": item.get("disposition", "deferred"),
+                "tickets": item.get("tickets", []),
+                "acceptance_criteria": item.get("acceptance_criteria", []),
+            })
+    return build_scope_decisions(decisions)
+
+
+def _build_delivery_arch_review(
+    intent: dict,
+    profile: str,
+    blueprint: dict | None,
+) -> dict:
+    entities = intent.get("entities") or ["product entity"]
+    workflows = intent.get("primary_workflows") or ["core workflow"]
+    surfaces = intent.get("ux_surfaces") or []
+    integrations = intent.get("integrations") or []
+
+    return build_arch_review(
+        system_boundaries=[
+            f"profile: {profile}",
+            f"blueprint: {(blueprint or {}).get('id', 'custom')}",
+            f"entities: {', '.join(str(e) for e in entities)}",
+        ],
+        data_flow=[
+            "User workflow input is captured by the product surface, validated, "
+            "stored or represented by the selected stack, and surfaced back in "
+            "runtime/UX proof."
+        ],
+        state_transitions=[
+            f"{workflow}: requested -> validated -> persisted/rendered -> proved"
+            for workflow in workflows
+        ],
+        failure_modes=[
+            "missing toolchain",
+            "invalid generated route/component registration",
+            "validation or UX proof unavailable",
+        ],
+        trust_boundaries=[
+            "user input to generated application",
+            "application code to .signalos governance evidence",
+            "local secrets and environment files remain forbidden",
+        ],
+        edge_cases=[
+            "empty data set",
+            "invalid input",
+            "first-run product with no existing records",
+        ],
+        test_strategy=[
+            "unit/build validation must run",
+            "UI products require UX proof",
+            "accepted scope decisions must trace to acceptance criteria",
+        ],
+        open_risks=[
+            f"integration: {integration}" for integration in integrations
+        ] + ([f"ux surfaces: {', '.join(str(s) for s in surfaces)}"] if surfaces else []),
+        blocking_findings=[],
+    )
+
+
+def _build_default_taste_findings(intent: dict, profile: str) -> list[dict[str, str]]:
+    if profile != "react-vite" and not intent.get("ux_surfaces"):
+        return []
+    return [
+        {
+            "finding": "The UI must prioritize the primary workflow over a generic landing-page composition.",
+            "disposition": "deferred",
+        },
+        {
+            "finding": "The selected variant requires external approval before it can authorize delivery scope.",
+            "disposition": "deferred",
+        },
+    ]
+
+
+def _build_agent_tasks_from_acceptance(acceptance: dict | None) -> list[dict]:
+    criteria = (acceptance or {}).get("criteria", [])
+    tasks: list[dict] = []
+    for index, criterion in enumerate(criteria, start=1):
+        tasks.append({
+            "id": f"T-{index:03d}",
+            "title": criterion.get("description", f"Implement criterion {index}"),
+            "description": criterion.get("description", ""),
+            "acceptance_id": criterion.get("id"),
+            "skills": ["test-driven-development", "test-generation"],
+        })
+    return tasks
+
+
+def _build_delivery_review_readiness(
+    *,
+    strategy_errors: list[str],
+    scope_errors: list[str],
+    arch_result: dict | None,
+    design: dict | None,
+    validation_result: dict | None,
+    runtime_proof: dict | None,
+    ux_proof: dict | None,
+    deploy_decision: dict | None,
+    errors: list[str],
+) -> dict:
+    blocking_items: list[str] = []
+    blocking_items.extend(strategy_errors)
+    blocking_items.extend(scope_errors)
+    if arch_result:
+        blocking_items.extend(arch_result.get("errors", []))
+        blocking_items.extend(arch_result.get("blockers", []))
+    blocking_items.extend(errors)
+
+    validation_closeable = bool(
+        validation_result and validation_result.get("can_close_delivery")
+    )
+    runtime_status = (runtime_proof or {}).get("status", "not_run")
+    ux_status = (ux_proof or {}).get("status", "not_run")
+    deploy_status = (
+        (deploy_decision or {}).get("mode")
+        if deploy_decision is not None
+        else "not_run"
+    )
+
+    ready = (
+        not blocking_items
+        and validation_closeable
+        and runtime_status in {"passed", "skipped"}
+        and ux_status in {"passed", "skipped"}
+    )
+
+    return build_review_readiness(
+        strategy_status="blocked" if strategy_errors else "complete",
+        scope_status="blocked" if scope_errors else "complete",
+        architecture_status=(
+            "blocked"
+            if arch_result and arch_result.get("blocked")
+            else "complete" if arch_result and arch_result.get("valid") else "missing"
+        ),
+        design_status="complete" if design else "not_applicable",
+        build_status=_validation_status(validation_result, "build"),
+        test_status=_validation_status(validation_result, "test"),
+        browser_qa_status=ux_status,
+        security_status=_validation_status(validation_result, "security"),
+        docs_status="complete",
+        handoff_status="pending",
+        blocking_items=blocking_items,
+        ready=ready,
+    )
+
+
+def _validation_status(validation_result: dict | None, key: str) -> str:
+    if not validation_result:
+        return "not_run"
+    return (
+        validation_result.get("results", {})
+        .get(key, {})
+        .get("status", "not_run")
+    )
 
 def _merge_design_deps(repo_root: Path, deps: dict[str, str]) -> None:
     """Merge design-system dependencies into package.json."""
