@@ -274,7 +274,7 @@ function Invoke-SidecarRequest {
   param(
     [System.Diagnostics.Process]$Process,
     [hashtable]$Payload,
-    [int]$TimeoutSeconds = 90
+    [int]$TimeoutSeconds = 300
   )
 
   $json = $Payload | ConvertTo-Json -Compress -Depth 10
