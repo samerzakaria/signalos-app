@@ -141,11 +141,12 @@ class ConstitutionIntegrityValidatorTests(unittest.TestCase):
         self.assertTrue(passed, message)
         self.assertEqual(details["locked_sha256"], details["current_sha256"])
 
-    def test_validator_fails_when_lock_missing(self) -> None:
+    def test_validator_passes_when_lock_missing(self) -> None:
+        """No lock yet means nothing to verify -- pass with advisory message."""
         _seed_constitution(self.tmp)
         passed, message, _details = check_constitution_integrity(self.tmp)
-        self.assertFalse(passed)
-        self.assertIn("lock is missing", message)
+        self.assertTrue(passed)
+        self.assertIn("no constitution lock yet", message)
 
     def test_validator_skips_when_constitution_absent(self) -> None:
         passed, message, _details = check_constitution_integrity(self.tmp)
