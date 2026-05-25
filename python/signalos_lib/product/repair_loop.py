@@ -158,6 +158,7 @@ def run_repair_loop(
                 "cycle": cycle,
                 "failures": failures,
                 "action": "packet_created",
+                "repair_type": packet.get("repair_type"),
                 "packet_path": str(packet_path),
             })
             return {
@@ -191,6 +192,7 @@ def run_repair_loop(
             "cycle": cycle,
             "failures": failures,
             "action": "packet_created",
+            "repair_type": packet.get("repair_type"),
             "packet_path": str(packet_path),
         })
         return {
@@ -230,16 +232,28 @@ def build_repair_packet(
     exactly what to fix.
     """
     run_id = original_packet.get("run_id", str(uuid.uuid4()))
+    forbidden_violated = _has_forbidden_failure(failures)
 
     return {
         "schema_version": "signalos.repair_packet.v1",
         "run_id": run_id,
         "repair_cycle": cycle,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "repair_type": (
+            "regenerate_from_clean_packet"
+            if forbidden_violated
+            else "repair_within_scope"
+        ),
         "profile": original_packet.get("profile", ""),
         "wave": original_packet.get("wave", ""),
         "intent_summary": original_packet.get("intent_summary", {}),
         "tasks": original_packet.get("tasks", []),
+        "success_criteria": original_packet.get("success_criteria", []),
+        "evidence_required": original_packet.get("evidence_required", []),
+        "forbidden_rules": original_packet.get("forbidden_rules", []),
+        "repair_policy": original_packet.get("repair_policy", {}),
+        "escalation_policy": original_packet.get("escalation_policy", []),
+        "source_policy": original_packet.get("source_policy", {}),
         "allowed_paths": original_packet.get("allowed_paths", []),
         "forbidden_paths": original_packet.get("forbidden_paths", []),
         "forbidden_actions": original_packet.get("forbidden_actions", []),
@@ -289,6 +303,27 @@ def _render_repair_md(packet: dict, cycle: int) -> str:
     lines.append(f"**Created:** {packet.get('created_at', '')}")
     lines.append(f"**Profile:** {packet.get('profile', '')}")
     lines.append(f"**Wave:** {packet.get('wave', '')}")
+    lines.append(f"**Repair type:** {packet.get('repair_type', '')}")
+    lines.append("")
+    lines.append("## Success Criteria")
+    lines.append("")
+    for item in packet.get("success_criteria", []):
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("## Evidence Required")
+    lines.append("")
+    for item in packet.get("evidence_required", []):
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("## Forbidden Rules")
+    lines.append("")
+    for item in packet.get("forbidden_rules", []):
+        lines.append(f"- {item}")
+    lines.append("")
+    lines.append("## Repair/Rework Policy")
+    lines.append("")
+    for key, value in packet.get("repair_policy", {}).items():
+        lines.append(f"- **{key}:** {value}")
     lines.append("")
     lines.append("## Failures to Fix")
     lines.append("")
@@ -302,6 +337,26 @@ def _render_repair_md(packet: dict, cycle: int) -> str:
     lines.append("```")
     lines.append("")
     return "\n".join(lines)
+
+
+def _has_forbidden_failure(failures: list[str]) -> bool:
+    markers = (
+        "forbidden path",
+        "forbidden action",
+        "in forbidden paths",
+        "not within allowed paths",
+        "outside allowed paths",
+        ".signalos",
+        ".git",
+        ".env",
+        ".pem",
+        ".key",
+    )
+    for failure in failures:
+        low = failure.lower()
+        if any(marker in low for marker in markers):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

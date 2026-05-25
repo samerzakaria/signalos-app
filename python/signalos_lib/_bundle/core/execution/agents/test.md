@@ -34,6 +34,35 @@ Phase 3 (Build) — triggered by each Build PR's readiness flag; runs before the
 - `core/execution/tests/adversarial/wave-{N}/task-{nn}.spec.ts` — new adversarial cases authored by this agent
 - PR comment with test-run summary (pass/fail counts, coverage delta, adversarial cases added)
 
+## Success criteria
+
+- Every relevant Expectation Map row has direct test coverage or a recorded blocker.
+- Added adversarial tests reproduce meaningful domain, edge-case, regression, or abuse-risk behavior.
+- Full suite execution is reported honestly with pass/fail counts and coverage delta.
+- Red tests block merge instead of being hidden or weakened.
+- No forbidden path, live-system side effect, or fabricated evidence occurs.
+
+## Evidence required
+
+- Test files written under the approved adversarial test path.
+- Full-suite command output or exact sandbox/tooling blocker.
+- Coverage delta for the Build PR task scope.
+- List of added adversarial cases and the acceptance rows they cover.
+
+## Forbidden rules
+
+- Do not modify production code.
+- Do not lower coverage thresholds, skip failing tests, or weaken assertions to pass.
+- Do not touch production databases, live traffic, secrets, or signed governance artifacts.
+- Do not claim coverage for acceptance rows without executable tests or explicit blocker evidence.
+
+## Repair/rework policy
+
+- If generated tests are invalid, flaky, or ungrounded, rework them until they are reproducible.
+- If a forbidden rule is violated, reject the output and regenerate from a clean packet.
+- If expected behavior, fixtures, or sandbox access are missing, stop autonomous action and record the blocker.
+- Keep the PR blocked until test evidence is complete or explicitly escalated.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Expectation Map has rows not yet covered by any test — emit: "Row(s) {#} uncovered. Build agent must add test before Test agent proceeds."

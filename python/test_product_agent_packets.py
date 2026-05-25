@@ -93,7 +93,10 @@ class TestBuildAgentPacket:
     def test_returns_all_required_fields(self, packet):
         required = [
             "schema_version", "run_id", "created_at", "intent_summary",
-            "agent_role", "expertise_frame", "blueprint_id", "profile", "wave", "tasks",
+            "agent_role", "expertise_frame", "quality_bar",
+            "success_criteria", "evidence_required", "forbidden_rules",
+            "repair_policy", "escalation_policy", "source_policy",
+            "blueprint_id", "profile", "wave", "tasks",
             "acceptance_criteria", "allowed_paths", "forbidden_paths",
             "forbidden_actions", "validation_commands", "skills_catalog",
             "applicable_skills", "result_schema",
@@ -141,6 +144,20 @@ class TestBuildAgentPacket:
 
     def test_acceptance_criteria_from_matrix(self, packet, acceptance_matrix):
         assert packet["acceptance_criteria"] == acceptance_matrix["criteria"]
+
+    def test_packet_contract_fields_are_enforced(self, packet):
+        assert packet["quality_bar"]["completion_rule"]
+        assert any("No forbidden" in item for item in packet["success_criteria"])
+        assert any("RESULT.json" in item for item in packet["evidence_required"])
+        assert any("Never write outside" in item for item in packet["forbidden_rules"])
+        assert packet["repair_policy"]["forbidden_violation"].startswith("Reject")
+        assert any("Escalate" in item for item in packet["escalation_policy"])
+        assert "current_external_claims" in packet["source_policy"]
+        assert "validation_results" in packet["result_schema"]["required"]
+
+    def test_success_criteria_include_tasks_and_acceptance(self, packet):
+        assert any("Task T1" in item for item in packet["success_criteria"])
+        assert any("Acceptance AC-001" in item for item in packet["success_criteria"])
 
     def test_blueprint_id_none_when_no_blueprint(self, packet):
         assert packet["blueprint_id"] is None
@@ -251,6 +268,11 @@ class TestWriteAgentPacket:
         assert "## Agent Role" in md
         assert "SignalOS Build agent" in md
         assert "highest-level software engineer ever" in md
+        assert "## Quality Bar" in md
+        assert "## Success Criteria" in md
+        assert "## Evidence Required" in md
+        assert "## Forbidden Rules" in md
+        assert "## Repair/Rework Policy" in md
         assert "## SignalOS Skills Catalog" in md
         assert "`test-driven-development`" in md
         assert "## Applicable SignalOS Skills" in md
@@ -273,12 +295,26 @@ class TestWriteAgentPacket:
         assert "Test-Driven Development" in prompt
         assert "## Available SignalOS Skill Catalog" in prompt
         assert "`verification-before-completion`" in prompt
+        assert "## Success Criteria" in prompt
+        assert "## Evidence Required" in prompt
+        assert "## Forbidden Rules (Hard Walls)" in prompt
+        assert "## Repair/Rework Policy" in prompt
 
     def test_files_allowed_txt(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)
         content = (run_dir / "files-allowed.txt").read_text(encoding="utf-8")
         assert "src/components/*" in content
         assert "src/types.ts" in content
+
+    def test_validation_plan_includes_contract_fields(self, repo, packet):
+        run_dir = write_agent_packet(packet, repo)
+        plan = json.loads(
+            (run_dir / "validation-plan.json").read_text(encoding="utf-8")
+        )
+        assert plan["success_criteria"] == packet["success_criteria"]
+        assert plan["evidence_required"] == packet["evidence_required"]
+        assert plan["forbidden_rules"] == packet["forbidden_rules"]
+        assert plan["repair_policy"] == packet["repair_policy"]
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +333,7 @@ class TestValidateAgentResult:
             "status": "completed",
             "files_written": ["src/components/TaskList.tsx"],
             "actions_taken": [],
+            "validation_results": {},
         }
         (run_dir / "RESULT.json").write_text(
             json.dumps(result), encoding="utf-8"
@@ -304,6 +341,8 @@ class TestValidateAgentResult:
         validation = validate_agent_result(run_dir, repo, None)
         assert validation["valid"] is True
         assert len(validation["violations"]) == 0
+        assert validation["acceptance"] == "accepted"
+        assert validation["next_action"] == "none"
 
     def test_fails_for_result_writing_to_forbidden_paths(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
@@ -312,6 +351,7 @@ class TestValidateAgentResult:
             "status": "completed",
             "files_written": [".signalos/hack.json"],
             "actions_taken": [],
+            "validation_results": {},
         }
         (run_dir / "RESULT.json").write_text(
             json.dumps(result), encoding="utf-8"
@@ -319,6 +359,9 @@ class TestValidateAgentResult:
         validation = validate_agent_result(run_dir, repo, None)
         assert validation["valid"] is False
         assert any(".signalos" in v for v in validation["violations"])
+        assert validation["forbidden_violated"] is True
+        assert validation["acceptance"] == "rejected"
+        assert validation["next_action"] == "regenerate_from_clean_packet"
 
     def test_fails_when_result_json_missing(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
@@ -336,6 +379,21 @@ class TestValidateAgentResult:
         assert validation["valid"] is False
         assert any("invalid" in v.lower() or "JSON" in v for v in validation["violations"])
 
+    def test_fails_when_result_missing_required_evidence_fields(self, repo, packet):
+        run_dir = self._setup_run(repo, packet)
+        result = {
+            "run_id": packet["run_id"],
+            "status": "completed",
+            "files_written": ["src/components/TaskList.tsx"],
+        }
+        (run_dir / "RESULT.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        validation = validate_agent_result(run_dir, repo, None)
+        assert validation["valid"] is False
+        assert any("validation_results" in v for v in validation["violations"])
+        assert validation["next_action"] == "repair_packet"
+
     def test_forbidden_file_modification_rejected(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
         result = {
@@ -343,6 +401,7 @@ class TestValidateAgentResult:
             "status": "completed",
             "files_written": [".git/config", "secret.pem"],
             "actions_taken": [],
+            "validation_results": {},
         }
         (run_dir / "RESULT.json").write_text(
             json.dumps(result), encoding="utf-8"
@@ -351,6 +410,7 @@ class TestValidateAgentResult:
         assert validation["valid"] is False
         # Both .git/ and *.pem should be caught
         assert len(validation["violations"]) >= 2
+        assert validation["next_action"] == "regenerate_from_clean_packet"
 
     def test_forbidden_actions_detected(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
@@ -359,6 +419,7 @@ class TestValidateAgentResult:
             "status": "completed",
             "files_written": ["src/components/Foo.tsx"],
             "actions_taken": ["git push origin main"],
+            "validation_results": {},
         }
         (run_dir / "RESULT.json").write_text(
             json.dumps(result), encoding="utf-8"
@@ -366,6 +427,7 @@ class TestValidateAgentResult:
         validation = validate_agent_result(run_dir, repo, None)
         assert validation["valid"] is False
         assert any("git push" in v for v in validation["violations"])
+        assert validation["forbidden_violated"] is True
 
     def test_env_file_forbidden(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
@@ -374,6 +436,7 @@ class TestValidateAgentResult:
             "status": "completed",
             "files_written": [".env"],
             "actions_taken": [],
+            "validation_results": {},
         }
         (run_dir / "RESULT.json").write_text(
             json.dumps(result), encoding="utf-8"
@@ -381,6 +444,28 @@ class TestValidateAgentResult:
         validation = validate_agent_result(run_dir, repo, None)
         assert validation["valid"] is False
         assert any(".env" in v for v in validation["violations"])
+        assert validation["next_action"] == "regenerate_from_clean_packet"
+
+    def test_fails_when_packet_contract_missing(self, repo, packet):
+        run_dir = self._setup_run(repo, packet)
+        scope_path = run_dir / "scope.json"
+        scope = json.loads(scope_path.read_text(encoding="utf-8"))
+        del scope["success_criteria"]
+        scope_path.write_text(json.dumps(scope), encoding="utf-8")
+        result = {
+            "run_id": packet["run_id"],
+            "status": "completed",
+            "files_written": ["src/components/TaskList.tsx"],
+            "actions_taken": [],
+            "validation_results": {},
+        }
+        (run_dir / "RESULT.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        validation = validate_agent_result(run_dir, repo, None)
+        assert validation["valid"] is False
+        assert any("success_criteria" in v for v in validation["violations"])
+        assert validation["next_action"] == "repair_packet"
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +509,7 @@ class TestRunRepairLoop:
         assert result["cycles_used"] == 1
         assert result["repairs"][0]["action"] == "packet_created"
         assert result["repairs"][0]["packet_path"] is not None
+        assert result["repairs"][0]["repair_type"] == "regenerate_from_clean_packet"
 
     def test_respects_max_cycles_limit(self, repo):
         result = run_repair_loop(

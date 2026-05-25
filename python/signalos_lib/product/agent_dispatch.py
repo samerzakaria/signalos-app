@@ -49,11 +49,13 @@ exactly what the file specs describe, within the design constraints.
 Rules:
 - Write ONLY the files listed in file_specs
 - Follow ALL constraints listed per file
+- Satisfy the packet success criteria before claiming completion
+- Preserve every required evidence item or report the exact blocker
 - Follow the design system (UI library, state management, tokens)
 - Consult applicable SignalOS skills before producing files
 - Write tests FIRST (TDD -- test files before source files)
-- Never write to forbidden paths
-- Never perform forbidden actions
+- Never violate forbidden rules, forbidden paths, or forbidden actions
+- Never fabricate validation results or weaken tests/evidence to pass
 - Use the specified coding standards
 - Every file must be non-empty and syntactically valid
 
@@ -126,6 +128,33 @@ def _build_agent_prompt(
     lines.append(f"# Product: {product}")
     lines.append(f"# Profile: {profile}")
     lines.append("")
+
+    for heading, key in (
+        ("Success Criteria", "success_criteria"),
+        ("Evidence Required", "evidence_required"),
+        ("Forbidden Rules (Hard Walls)", "forbidden_rules"),
+        ("Escalation Policy", "escalation_policy"),
+    ):
+        values = packet.get(key, [])
+        if values:
+            lines.append(f"## {heading}")
+            for item in values:
+                lines.append(f"- {item}")
+            lines.append("")
+
+    repair_policy = packet.get("repair_policy", {})
+    if repair_policy:
+        lines.append("## Repair/Rework Policy")
+        for key, value in repair_policy.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+
+    source_policy = packet.get("source_policy", {})
+    if source_policy:
+        lines.append("## Source Policy")
+        for key, value in source_policy.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
 
     # Design constraints
     dc = gen.get("design_constraints", {})
@@ -237,6 +266,8 @@ def dispatch_build_agent(
         "status": "failed",
         "run_id": run_id,
         "files_written": [],
+        "actions_taken": [],
+        "validation_results": {},
         "errors": [],
         "tokens_in": None,
         "tokens_out": None,
@@ -294,6 +325,7 @@ def dispatch_build_agent(
     # Write files to disk
     written = write_agent_files(repo_root, files)
     result["files_written"] = written
+    result["actions_taken"].append(f"wrote {len(written)} file(s)")
     result["status"] = "completed" if written else "failed"
 
     return result

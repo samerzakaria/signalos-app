@@ -54,6 +54,37 @@ A design-doc is not a wishlist. Sections in this order:
 5. `## Chosen approach` — describe the decision; link to the prototype (or external ref, or no-UI attestation).
 6. `## Open questions` — what the design is leaving for the build-time decision; bound it.
 
+## Success criteria
+
+- The chosen design shape is one of the valid shapes and matches the wave's actual UI surface.
+- Primary workflow, information architecture, empty/loading/error states, accessibility floor, mobile ergonomics, and implementation fit are addressed.
+- Alternatives are recorded with accepted, rejected, or deferred reasoning.
+- Prototype, external reference, or no-UI attestation exists and is inspectable.
+- No production UI code or signed governance artifact is modified by the Design seat.
+
+## Evidence required
+
+- `design-doc.md` SHA.
+- Prototype path, external design reference, or no-UI attestation.
+- Decision rationale with alternatives considered.
+- Open questions bounded for Build rather than hidden.
+- Visual proof or inspectable artifact for UI-bearing waves.
+
+## Forbidden rules
+
+- Do not modify production code from the Design seat.
+- Do not claim UX proof without prototype, screenshot, external reference, or explicit no-UI attestation.
+- Do not choose no-UI attestation when task files include UI surfaces.
+- Do not bypass PO approval before Build dispatch.
+- Do not hide unresolved accessibility, layout, or state-transition risks.
+
+## Repair/rework policy
+
+- If the validator rejects the design shape, rework into a valid shape using the previous failure.
+- If visual proof is absent for a UI wave, regenerate the prototype or record the exact blocker.
+- If a forbidden rule is violated, reject the design and regenerate from the signed Plan and Expectation Map.
+- Continue refinement until PO approves, requests changes, or records a blocker.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - PLAN.md does not exist → refuse: "G3 requires a PLAN.md from Gate 2 — fire the Plan agent first."

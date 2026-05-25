@@ -34,6 +34,36 @@ If either signature is missing → refuse.
 - `core/execution/PLAN.md` (canonical location for this Wave) — follows `core/governance/Templates/plan-template.md`
 - `core/execution/tests/skeletons/wave-{N}/` — one failing-test stub per task
 
+## Success criteria
+
+- PLAN.md decomposes the signed Belief and Expectation Map into bounded, parallelizable tasks.
+- Every task has acceptance trace, owner/seat, Trust Tier, files or surfaces, and test-first expectation.
+- Failing-test skeletons exist for buildable tasks before Build activates.
+- Dependencies and sequencing are explicit enough for parallel dispatch.
+- No production code, signed artifact, or scope expansion is written by the Plan seat.
+
+## Evidence required
+
+- PLAN.md SHA.
+- Task count and parallelization/dependency summary.
+- Test skeleton paths created for each implementation task.
+- Trace from each task to Belief/Expectation Map row.
+- T3-touching tasks called out for human authority.
+
+## Forbidden rules
+
+- Do not modify production code.
+- Do not invent scope beyond the signed Belief and Expectation Map.
+- Do not silently omit acceptance rows or redlines.
+- Do not write gate signatures, signed governance artifacts, secrets, or deploy actions.
+
+## Repair/rework policy
+
+- If tasks are too large, untestable, or untraceable, split and rework until dispatchable.
+- If scope requires human approval or T3 authority, stop autonomous planning and escalate.
+- If a forbidden rule is violated, reject the plan output and regenerate from signed inputs.
+- Keep the wave in planning until PLAN.md and test skeleton evidence satisfy the criteria.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Expectation Map has empty "Redlines surfaced" section with no PO zero-redline note — emit: "Frictionless Expectation Map. PO must confirm or redrive."

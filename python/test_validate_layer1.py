@@ -75,7 +75,7 @@ class ValidateLayer1Tests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "signalos.validate.v1")
         self.assertEqual(payload["group"], "layer1")
         self.assertEqual(payload["status"], "PASS")
-        self.assertEqual(payload["summary"]["total"], 10)
+        self.assertEqual(payload["summary"]["total"], 11)
         self.assertEqual(payload["summary"]["failed"], 0)
         self.assertEqual(
             {result["name"] for result in payload["results"]},
@@ -89,9 +89,32 @@ class ValidateLayer1Tests(unittest.TestCase):
                 "layer1-unknowns",
                 "layer1-profile",
                 "layer1-path-safety",
+                "agent-prompt-contracts",
                 "constitution-integrity",
             },
         )
+
+    def test_layer1_agent_prompt_contracts_fail_when_installed_prompt_incomplete(self) -> None:
+        _make_layer1_repo(self.tmp)
+        _write(
+            self.tmp / "core" / "execution" / "agents" / "build.md",
+            "## Purpose\n",
+        )
+
+        code, payload = self._run_validate([
+            "--repo-root",
+            str(self.tmp),
+            "--group",
+            "layer1",
+            "--validator",
+            "agent-prompt-contracts",
+            "--json",
+        ])
+
+        self.assertEqual(code, 2, payload)
+        self.assertEqual(payload["results"][0]["name"], "agent-prompt-contracts")
+        self.assertEqual(payload["results"][0]["status"], "FAIL")
+        self.assertIn("Success criteria", json.dumps(payload["results"][0]["details"]))
 
     def test_layer1_group_reports_halt_failure_for_missing_runtime(self) -> None:
         code, payload = self._run_validate([

@@ -241,6 +241,7 @@ def _layer1_checks() -> list[Layer1Check]:
         ("layer1-unknowns", "BLOCK_MERGE", _check_unknowns),
         ("layer1-profile", "BLOCK_MERGE", _check_profile),
         ("layer1-path-safety", "HALT", _check_path_safety),
+        ("agent-prompt-contracts", "BLOCK_MERGE", _check_agent_prompt_contracts),
         ("constitution-integrity", "BLOCK_MERGE", _check_constitution_integrity),
     ]
 
@@ -248,6 +249,28 @@ def _layer1_checks() -> list[Layer1Check]:
 def _check_constitution_integrity(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
     from signalos_lib.validators.constitution_integrity import check_constitution_integrity
     return check_constitution_integrity(repo_root)
+
+
+def _check_agent_prompt_contracts(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    from signalos_lib.product.prompt_contracts import validate_agent_prompt_directory
+
+    agent_dir = repo_root / "core" / "execution" / "agents"
+    if not agent_dir.is_dir():
+        return (
+            True,
+            "agent prompt directory not installed in repo",
+            {"agent_dir": str(agent_dir), "present": False},
+        )
+    result = validate_agent_prompt_directory(agent_dir)
+    return (
+        bool(result["valid"]),
+        (
+            "agent prompt contracts satisfy required sections"
+            if result["valid"]
+            else "agent prompt contracts missing required sections"
+        ),
+        result,
+    )
 
 
 def _check_workspace_root(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:

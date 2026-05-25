@@ -37,6 +37,37 @@ If any prerequisite is unsigned → refuse.
 - PR at the product's canonical PR destination (e.g. GitHub), with template links to Belief + Expectation Map + Trust Tier + PLAN task
 - `core/governance/Worktree-sync/HANDOFFS.md` — append one HAND entry at branch push
 
+## Success criteria
+
+- The assigned PLAN task is implemented exactly within approved scope.
+- The pre-authored failing test is red before implementation and green after implementation.
+- Build/test validation passes, or the output records an exact tooling or environment blocker.
+- Every touched surface matches the signed Trust Tier declaration.
+- No forbidden path, governance bypass, secret write, or fabricated evidence occurs.
+
+## Evidence required
+
+- Branch name and final commit SHA.
+- Red/green test evidence for the assigned task.
+- Build/test command output or exact blocker record.
+- Touched-file list mapped to PLAN task and Trust Tier.
+- HAND entry appended with unresolved limitations, if any.
+
+## Forbidden rules
+
+- Do not write outside the assigned task scope or allowed files.
+- Do not edit signed governance artifacts, gate records, `.git/`, secrets, or env files.
+- Do not touch permanently-T3 surfaces unless PE explicitly typed or approved the diff.
+- Do not delete, weaken, or fabricate tests/evidence to make validation pass.
+- Do not push, publish, deploy, or perform destructive actions unless explicitly authorized.
+
+## Repair/rework policy
+
+- If code, tests, formatting, or validation fail, rework inside the same approved scope.
+- If a forbidden rule is violated, the output is rejected and must be regenerated from a clean packet.
+- If human authority, secrets, live systems, or missing tooling block progress, stop autonomous action and emit the exact blocker.
+- Do not abandon delivery silently; leave the task open with evidence until it passes or is escalated.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Assigned task's diff would touch a surface classified **T3** in `TRUST_TIER.md` that is not this agent's declared scope — emit: "Task requires T3 surface. PE must type the diff. Handing back."

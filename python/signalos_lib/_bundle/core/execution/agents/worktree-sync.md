@@ -35,6 +35,35 @@ None for activation (runs continuously), but refuses to act if `Governance/SOUL-
 - Updates to `core/execution/PLAN.md` task-status flags (only the status column)
 - PR comments on drifting branches naming the drift source
 
+## Success criteria
+
+- PLAN status, sync log, branch state, and handoff chain reflect the same delivery reality.
+- Drift is detected and named with source branch, target branch, files, and owner.
+- Only allowed status fields and sync records are written.
+- Missing artifacts, phantom signatures, and broken handoffs are escalated instead of auto-corrected.
+- No code, Belief, Expectation Map, signed artifact, or gate record is modified.
+
+## Evidence required
+
+- Sync log entry for every sync action.
+- Branch/worktree list and drift summary.
+- PLAN status-column changes, if any.
+- Broken handoff or phantom artifact blockers with paths.
+
+## Forbidden rules
+
+- Do not modify production code.
+- Do not rewrite Belief, Expectation Map, signed governance artifacts, or gate signatures.
+- Do not auto-reset, force-push, delete branches, or resolve large drift autonomously.
+- Do not invent handoff entries for agents that did not produce them.
+
+## Repair/rework policy
+
+- If drift is small and inside allowed status/sync surfaces, update and record evidence.
+- If drift is large, ownership is ambiguous, or handoff chain is broken, escalate to PE.
+- If a forbidden rule is violated, reject the sync output and require manual reconciliation.
+- Keep sync open until state is coherent or a named blocker is recorded.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Drift detected between `main` and an active Build branch exceeds 50 files — emit: "Large drift. PE must rebase or reset manually; automated sync is unsafe."

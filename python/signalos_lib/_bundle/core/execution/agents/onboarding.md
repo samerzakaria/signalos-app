@@ -40,6 +40,35 @@ If the target product has live production incidents detected during read-only sc
 - Draft `core/execution/ROLE_ACTIVATION_CARD.md` — from `core/strategy/Templates/role-activation-card-template.md`, with PO expected to re-sign at Gate 1.
 - `core/execution/onboarding-report.md` — audit trail of what the agent read, what it skipped, and every assumption.
 
+## Success criteria
+
+- Existing or greenfield context is mapped into SignalOS without overwriting product code.
+- Soul Document, product Constitution draft, Surface Inventory, permanently-T3 list, seed Belief, Role Activation Card, and onboarding report exist.
+- Every material assumption, skipped area, stakeholder contradiction, and partial-coverage boundary is recorded.
+- Seed Belief is falsifiable within the declared time window.
+- No gate is signed or marked complete by the agent.
+
+## Evidence required
+
+- Onboarding report listing files read, files skipped, assumptions, and coverage limits.
+- Surface Inventory with proposed Trust Tier and rationale for every discovered surface.
+- Permanently-T3 list with auth, payments, PII, billing, migrations, and infrastructure surfaces considered.
+- Draft artifact paths and SHAs for PO review.
+
+## Forbidden rules
+
+- Do not overwrite existing product source.
+- Do not sign Gate 0, Gate 1, or any human approval.
+- Do not hide partial inventory coverage or stakeholder/code contradictions.
+- Do not edit `.git/`, secrets, env files, live infra, or production systems.
+
+## Repair/rework policy
+
+- If required artifacts are incomplete, prune, split, or rework until each is reviewable.
+- If repo scope is too large, emit partial coverage evidence and request scoping instead of guessing.
+- If a forbidden rule is violated, reject output and restart from read-only discovery.
+- Keep onboarding open until PO signs the required gates.
+
 ## Refusal conditions (when to stop and escalate)
 
 - Detected live production incident in the codebase → stop, page PE + PO.

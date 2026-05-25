@@ -48,6 +48,71 @@ _DEFAULT_FORBIDDEN_ACTIONS: list[str] = [
     "rm -rf",
 ]
 
+_DEFAULT_SUCCESS_CRITERIA: list[str] = [
+    "All assigned tasks are completed inside the approved scope.",
+    "Every generated or modified file is non-empty, syntactically valid, and "
+    "listed in the packet file specs or allowed paths.",
+    "Relevant tests are written before implementation for new behavior, or "
+    "the packet records the exact blocker that prevented TDD.",
+    "Validation commands pass, or the result records an exact tooling, "
+    "environment, or human-approval blocker.",
+    "No forbidden path, forbidden action, gate bypass, secret write, or "
+    "fabricated evidence occurs.",
+]
+
+_DEFAULT_EVIDENCE_REQUIRED: list[str] = [
+    "RESULT.json records status, files_written, actions_taken, and validation_results.",
+    "Each changed file traces to an assigned task or acceptance criterion.",
+    "Validation output, skipped-command reason, or blocker evidence is recorded.",
+    "Known limitations are explicit instead of being hidden behind a success status.",
+]
+
+_DEFAULT_FORBIDDEN_RULES: list[str] = [
+    "Never write outside allowed_paths.",
+    "Never write to forbidden_paths, including .signalos/, .git/, env files, "
+    "private keys, or generated secrets.",
+    "Never edit gate signatures, governance records, or audit evidence directly.",
+    "Never remove, weaken, or fabricate tests or validation evidence to make "
+    "the result pass.",
+    "Never perform live deploy, package publish, git push, destructive deletion, "
+    "or network release actions unless the packet explicitly authorizes them.",
+]
+
+_DEFAULT_REPAIR_POLICY: dict[str, Any] = {
+    "quality_failure": (
+        "Create a repair packet and rework within the same approved scope."
+    ),
+    "forbidden_violation": (
+        "Reject the output, do not accept or merge it, and regenerate from a "
+        "clean packet with the violation recorded."
+    ),
+    "human_authority_required": (
+        "Pause autonomous action and request approval; do not guess or forge "
+        "authorization."
+    ),
+    "missing_tooling_or_environment": (
+        "Record the exact blocker and keep delivery open instead of claiming "
+        "success."
+    ),
+}
+
+_DEFAULT_ESCALATION_POLICY: list[str] = [
+    "Escalate when requirements, authority, safety, secrets, live deployment, "
+    "or signed artifacts are ambiguous.",
+    "Escalate when the requested output cannot be produced without violating "
+    "a forbidden rule.",
+    "Escalate when max repair cycles are reached with validation still failing.",
+]
+
+_DEFAULT_SOURCE_POLICY: dict[str, str] = {
+    "repo_facts": "Use repository files and packet artifacts as the source of truth.",
+    "current_external_claims": (
+        "Cite dated sources or record that external verification is required; "
+        "do not invent current market, legal, finance, pricing, or security facts."
+    ),
+    "inference": "Label inferred conclusions separately from observed facts.",
+}
+
 _DEFAULT_AGENT_ROLE = "SignalOS Build agent"
 
 _DEFAULT_EXPERTISE_FRAME = (
@@ -68,6 +133,16 @@ _DEFAULT_PRODUCT_AGENT_SKILLS = [
     "verification-before-completion",
 ]
 
+_REQUIRED_PACKET_CONTRACT_FIELDS = (
+    "quality_bar",
+    "success_criteria",
+    "evidence_required",
+    "forbidden_rules",
+    "repair_policy",
+    "escalation_policy",
+    "source_policy",
+)
+
 _UI_HINTS = {
     "ui", "ux", "screen", "view", "page", "dashboard", "chart", "form",
     "frontend", "component", "tsx", "html", "css", "accessibility",
@@ -86,7 +161,13 @@ _SECURITY_HINTS = {
 _RESULT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "required": ["run_id", "status", "files_written"],
+    "required": [
+        "run_id",
+        "status",
+        "files_written",
+        "actions_taken",
+        "validation_results",
+    ],
     "properties": {
         "run_id": {"type": "string"},
         "status": {
@@ -184,6 +265,13 @@ def build_agent_packet(
         "created_at": now,
         "agent_role": _DEFAULT_AGENT_ROLE,
         "expertise_frame": _DEFAULT_EXPERTISE_FRAME,
+        "quality_bar": _build_quality_bar(profile),
+        "success_criteria": _build_success_criteria(tasks, acceptance_criteria),
+        "evidence_required": list(_DEFAULT_EVIDENCE_REQUIRED),
+        "forbidden_rules": list(_DEFAULT_FORBIDDEN_RULES),
+        "repair_policy": dict(_DEFAULT_REPAIR_POLICY),
+        "escalation_policy": list(_DEFAULT_ESCALATION_POLICY),
+        "source_policy": dict(_DEFAULT_SOURCE_POLICY),
         "intent_summary": intent_summary,
         "blueprint_id": blueprint_id,
         "profile": profile,
@@ -204,6 +292,41 @@ def build_agent_packet(
         packet["generation"] = generation_packet
 
     return packet
+
+
+def _build_quality_bar(profile: str) -> dict[str, Any]:
+    return {
+        "standard": (
+            "Production-quality implementation inside the packet scope, with "
+            "governance, tests, evidence, and handoff honesty preserved."
+        ),
+        "profile": profile,
+        "completion_rule": (
+            "Done means success criteria passed and no forbidden violation is "
+            "present. Partial output must remain partial."
+        ),
+    }
+
+
+def _build_success_criteria(
+    tasks: list[dict],
+    acceptance_criteria: list[dict],
+) -> list[str]:
+    criteria = list(_DEFAULT_SUCCESS_CRITERIA)
+
+    for task in tasks:
+        label = task.get("id") or task.get("title") or task.get("task")
+        title = task.get("title") or task.get("description") or ""
+        if label:
+            criteria.append(f"Task {label}: {title or 'complete assigned work'}")
+
+    for ac in acceptance_criteria:
+        ac_id = ac.get("id")
+        desc = ac.get("description") or ac.get("title") or ""
+        if ac_id:
+            criteria.append(f"Acceptance {ac_id}: {desc or 'satisfied'}")
+
+    return criteria
 
 
 def build_skills_catalog() -> list[dict[str, str]]:
@@ -387,6 +510,11 @@ def write_agent_packet(
     val_plan = {
         "commands": packet.get("validation_commands", []),
         "forbidden_actions": packet.get("forbidden_actions", []),
+        "success_criteria": packet.get("success_criteria", []),
+        "evidence_required": packet.get("evidence_required", []),
+        "forbidden_rules": packet.get("forbidden_rules", []),
+        "repair_policy": packet.get("repair_policy", {}),
+        "escalation_policy": packet.get("escalation_policy", []),
     }
     (run_dir / "validation-plan.json").write_text(
         json.dumps(val_plan, indent=2, ensure_ascii=False) + "\n",
@@ -414,6 +542,17 @@ def _render_packet_md(packet: dict) -> str:
     lines.append(f"**Created:** {packet.get('created_at', '')}")
     lines.append(f"**Profile:** {packet.get('profile', '')}")
     lines.append(f"**Wave:** {packet.get('wave', '')}")
+
+    quality_bar = packet.get("quality_bar", {})
+    if quality_bar:
+        lines.append("")
+        lines.append("## Quality Bar")
+        lines.append("")
+        if quality_bar.get("standard"):
+            lines.append(quality_bar["standard"])
+        if quality_bar.get("completion_rule"):
+            lines.append("")
+            lines.append(f"Completion rule: {quality_bar['completion_rule']}")
 
     lines.append("")
     lines.append("## Agent Role")
@@ -448,6 +587,36 @@ def _render_packet_md(packet: dict) -> str:
             lines.append(f"- **{title}**")
             if desc:
                 lines.append(f"  {desc}")
+
+    for heading, key in (
+        ("Success Criteria", "success_criteria"),
+        ("Evidence Required", "evidence_required"),
+        ("Forbidden Rules", "forbidden_rules"),
+        ("Escalation Policy", "escalation_policy"),
+    ):
+        values = packet.get(key, [])
+        if values:
+            lines.append("")
+            lines.append(f"## {heading}")
+            lines.append("")
+            for item in values:
+                lines.append(f"- {item}")
+
+    repair_policy = packet.get("repair_policy", {})
+    if repair_policy:
+        lines.append("")
+        lines.append("## Repair/Rework Policy")
+        lines.append("")
+        for key, value in repair_policy.items():
+            lines.append(f"- **{key}:** {value}")
+
+    source_policy = packet.get("source_policy", {})
+    if source_policy:
+        lines.append("")
+        lines.append("## Source Policy")
+        lines.append("")
+        for key, value in source_policy.items():
+            lines.append(f"- **{key}:** {value}")
 
     allowed = packet.get("allowed_paths", [])
     if allowed:
@@ -566,13 +735,25 @@ def validate_agent_result(
             "violations": [f"scope.json unreadable: {exc}"],
         }
 
+    contract_violations = _packet_contract_violations(scope)
+    if contract_violations:
+        checks.extend(
+            {
+                "name": "packet_contract",
+                "passed": False,
+                "detail": violation,
+            }
+            for violation in contract_violations
+        )
+        return _validation_result(checks, contract_violations)
+
     # 1. RESULT.json exists and is valid JSON
     result_path = run_dir / "RESULT.json"
     if not result_path.is_file():
         checks.append({"name": "result_exists", "passed": False,
                         "detail": "RESULT.json not found"})
         violations.append("RESULT.json missing")
-        return {"valid": False, "checks": checks, "violations": violations}
+        return _validation_result(checks, violations)
 
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -580,16 +761,41 @@ def validate_agent_result(
         checks.append({"name": "result_valid_json", "passed": False,
                         "detail": f"RESULT.json invalid: {exc}"})
         violations.append(f"RESULT.json invalid JSON: {exc}")
-        return {"valid": False, "checks": checks, "violations": violations}
+        return _validation_result(checks, violations)
 
     if not isinstance(result, dict):
         checks.append({"name": "result_valid_json", "passed": False,
                         "detail": "RESULT.json is not an object"})
         violations.append("RESULT.json is not a JSON object")
-        return {"valid": False, "checks": checks, "violations": violations}
+        return _validation_result(checks, violations)
 
     checks.append({"name": "result_valid_json", "passed": True,
                     "detail": "RESULT.json is valid JSON"})
+
+    required_result_fields = scope.get("result_schema", {}).get("required", [])
+    missing_result_fields = [
+        field for field in required_result_fields
+        if field not in result
+    ]
+    if missing_result_fields:
+        checks.append({
+            "name": "result_required_fields",
+            "passed": False,
+            "detail": (
+                "RESULT.json missing required fields: "
+                + ", ".join(missing_result_fields)
+            ),
+        })
+        violations.append(
+            "RESULT.json missing required fields: "
+            + ", ".join(missing_result_fields)
+        )
+        return _validation_result(checks, violations)
+    checks.append({
+        "name": "result_required_fields",
+        "passed": True,
+        "detail": "RESULT.json contains required fields",
+    })
 
     # 2. files_written within allowed_paths
     files_written = result.get("files_written", [])
@@ -651,8 +857,60 @@ def validate_agent_result(
         ),
     })
 
+    return _validation_result(checks, violations)
+
+
+def _packet_contract_violations(scope: dict) -> list[str]:
+    violations: list[str] = []
+    for field in _REQUIRED_PACKET_CONTRACT_FIELDS:
+        value = scope.get(field)
+        if value is None or value == [] or value == {} or value == "":
+            violations.append(f"scope.json missing required packet contract field: {field}")
+    return violations
+
+
+def _validation_result(
+    checks: list[dict[str, Any]],
+    violations: list[str],
+) -> dict[str, Any]:
+    forbidden_violated = _has_forbidden_violation(violations)
     valid = len(violations) == 0
-    return {"valid": valid, "checks": checks, "violations": violations}
+    return {
+        "valid": valid,
+        "checks": checks,
+        "violations": violations,
+        "forbidden_violated": forbidden_violated,
+        "acceptance": "accepted" if valid else "rejected",
+        "next_action": (
+            "none"
+            if valid
+            else (
+                "regenerate_from_clean_packet"
+                if forbidden_violated
+                else "repair_packet"
+            )
+        ),
+    }
+
+
+def _has_forbidden_violation(violations: list[str]) -> bool:
+    markers = (
+        "forbidden path",
+        "forbidden action",
+        "in forbidden paths",
+        "not within allowed paths",
+        "outside allowed paths",
+        ".signalos",
+        ".git",
+        ".env",
+        ".pem",
+        ".key",
+    )
+    for violation in violations:
+        low = violation.lower()
+        if any(marker in low for marker in markers):
+            return True
+    return False
 
 
 def _path_matches_any(path: str, patterns: list[str]) -> bool:

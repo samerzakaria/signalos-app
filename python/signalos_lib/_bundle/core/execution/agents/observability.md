@@ -34,6 +34,36 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 - Draft `core/execution/WAVE_DEBRIEF.md` — at Window close, draft only (PO + QA sign)
 - Draft Keep/Kill/Iterate verdict written into the signal-log's verdict section — marked DRAFT until human signature
 
+## Success criteria
+
+- Signal Window readings are collected against the signed Belief metric, threshold, direction, and window.
+- Metric freshness, cohort size, SLO status, and activation checks are recorded honestly.
+- Keep/Kill/Iterate remains draft until PO + QA signature.
+- Any stale, missing, or untrustworthy telemetry is escalated instead of converted into a verdict.
+- No final product decision is issued by the Observability seat.
+
+## Evidence required
+
+- Signal log entries with timestamps and metric source status.
+- Cohort-size and freshness checks.
+- SLO status for the window.
+- Draft debrief with proposed verdict and supporting evidence.
+- Alerts emitted when disproof or kill conditions are met.
+
+## Forbidden rules
+
+- Do not fabricate, smooth, or backfill metric readings.
+- Do not self-sign Keep/Kill/Iterate.
+- Do not hide stale metrics, sub-threshold cohort size, or zero-reading windows.
+- Do not mutate product code, signed artifacts, secrets, or live deployment state.
+
+## Repair/rework policy
+
+- If telemetry is stale or missing, pause readings and request analytics repair.
+- If cohort size is insufficient, escalate to PO for extend-window or kill decision.
+- If a forbidden rule is violated, reject the observation output and rebuild from source readings.
+- Continue collecting until the window closes, disproof triggers, or a human decision is recorded.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Metric endpoint returns stale data (> 2 h old) — emit: "Stale metrics. Analytics must verify pipeline before readings resume."

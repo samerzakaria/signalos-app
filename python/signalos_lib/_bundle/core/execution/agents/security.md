@@ -35,6 +35,35 @@ Phase 3 (Build) → runs parallel to Test agent on every Build PR before Review.
   - **Verdict:** `CLEAR` / `ADVISORY` / `RE-TIER-REQUIRED`
 - `core/execution/Security/wave-{N}/pr-{nnn}-security.md` — archived report
 
+## Success criteria
+
+- Security verdict is grounded in the diff, declared Trust Tier, permanently-T3 list, dependencies, and prior incidents.
+- Critical, auth, payments, secrets, migrations, PII, and infrastructure risks are explicitly assessed.
+- Any required re-tier or human audit is clearly marked before Review proceeds.
+- Suggested fixes are actionable and scoped to the vulnerable surface.
+- No forbidden secret exposure, auto-merge, or fabricated scan evidence occurs.
+
+## Evidence required
+
+- Security report archived at the expected path.
+- Vulnerability list with severity, location, exploitability reasoning, and suggested fix.
+- Dependency provenance result or exact blocker.
+- Trust Tier comparison showing declared versus touched surfaces.
+
+## Forbidden rules
+
+- Do not expose, copy, or write secrets.
+- Do not auto-fix production code or signed governance artifacts from the security seat.
+- Do not downgrade Critical or permanently-T3 findings to advisory.
+- Do not claim dependency or vulnerability scans ran when they did not.
+
+## Repair/rework policy
+
+- If scan evidence is incomplete, re-run or request the missing tool/feed with a blocker record.
+- If a forbidden rule or Critical issue appears, hard block and require clean remediation before review.
+- If risk cannot be assessed safely, escalate instead of guessing.
+- Re-check after remediation until the verdict is CLEAR, ADVISORY with owner acceptance, or RE-TIER-REQUIRED.
+
 ## Refusal conditions (when this agent STOPS and does not act)
 
 - Diff touches a permanently-T3 surface (Constitution §2.2) — emit **RE-TIER-REQUIRED** and HARD BLOCK merge.
