@@ -161,8 +161,9 @@ jobs:
         run: cargo test --lib
       - name: python tests
         working-directory: python
+        shell: bash
         run: |
-          python -m pytest test_*.py --ignore=test_product_live_e2e.py -q
+          python -m pytest . --ignore=test_product_live_e2e.py -q
       - uses: actions/setup-node@v5
         with:
           node-version: 20

@@ -53,7 +53,7 @@ class ArtifactMapTests(unittest.TestCase):
 
     def test_resolve_gate_artifacts_stays_under_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()  # resolve symlinks (macOS /var → /private/var)
             resolved = artifacts.resolve_gate_artifacts(root, "G2")
             self.assertEqual(len(resolved), 1)
             self.assertEqual(resolved[0].rel_path, "core/strategy/EXPECTATION_MAP.md")
