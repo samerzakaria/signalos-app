@@ -260,7 +260,7 @@ function Test-MsiExtraction {
 function Read-SidecarLine {
   param(
     [System.Diagnostics.Process]$Process,
-    [int]$TimeoutSeconds = 60
+    [int]$TimeoutSeconds = 180
   )
 
   $task = $Process.StandardOutput.ReadLineAsync()
