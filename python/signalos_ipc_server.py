@@ -3,11 +3,18 @@
 
 from __future__ import annotations
 
-import datetime
 import json
+import sys
+
+# Early diagnostic: if this is the entry point, signal we're alive
+# before any heavy imports. Remove after Release CI is stable.
+if __name__ == "__main__":
+    sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
+    sys.stdout.flush()
+
+import datetime
 import os
 import subprocess
-import sys
 import traceback
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
@@ -1111,7 +1118,9 @@ def err(req_id: str, message: str) -> dict:
 
 
 def main() -> None:
-    print(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}), flush=True)
+    # Ready line is now printed early (before heavy imports) at the top
+    # of the module when __name__ == "__main__". This ensures the smoke
+    # test's ready-wait never times out due to slow import chains.
 
     for raw_line in sys.stdin:
         line = raw_line.strip()
