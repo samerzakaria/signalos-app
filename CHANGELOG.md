@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.1] - 2026-05-26
+
+### Internal release smoke fix
+
+- Bounded best-effort `signalos init` subprocesses so packaged Windows sidecar validation cannot hang indefinitely during git or IDE hook setup.
+- Added sidecar request and progress logging to the unsigned installed-build smoke so future timeouts identify the exact IPC request.
+
 ## [1.1.1] - 2026-05-17
 
 ### Hotfix — v1.1.0 shipped non-interactive on Windows
