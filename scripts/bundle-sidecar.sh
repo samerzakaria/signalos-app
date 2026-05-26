@@ -39,13 +39,10 @@ if [[ ! -f "$IPC_ENTRY" ]]; then
   exit 1
 fi
 
-# Use --onedir (not --onefile) so PyInstaller lays files out on disk
-# without a self-extracting wrapper. Eliminates cold-start extraction
-# penalty entirely. Governance files stay packed — no exclusion needed.
 DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
 
 "$VENV_PYTHON" -m PyInstaller \
-  --onedir \
+  --onefile \
   --name "$SIDECAR_NAME" \
   --distpath "$SIDECAR_DIR" \
   --workpath "$WORK_DIR" \
@@ -58,14 +55,6 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --hidden-import anthropic \
   --hidden-import yaml \
   "$IPC_ENTRY"
-
-# --onedir produces $SIDECAR_DIR/$SIDECAR_NAME/$SIDECAR_NAME
-# Move contents up for Tauri's sidecar resolution
-INNER_DIR="$SIDECAR_DIR/$SIDECAR_NAME"
-if [[ -d "$INNER_DIR" ]]; then
-  mv "$INNER_DIR"/* "$SIDECAR_DIR/" 2>/dev/null || true
-  rmdir "$INNER_DIR" 2>/dev/null || true
-fi
 
 if [[ ! -f "$SIDECAR_DIR/$SIDECAR_NAME" ]]; then
   echo "Sidecar build failed; expected $SIDECAR_DIR/$SIDECAR_NAME"

@@ -45,14 +45,10 @@ $venvPython = if ($isWindows) {
 $entry = Join-Path $root "python\signalos_ipc_server.py"
 $pythonPath = Join-Path $root "python"
 
-# Use --onedir (not --onefile) so PyInstaller lays files out on disk
-# without a self-extracting wrapper. Eliminates cold-start extraction
-# penalty entirely. Tauri manages the sidecar lifecycle — it doesn't
-# need a single exe.
 $dataSpec = "$vendoredCorePath;signalos_lib"
 
 & $venvPython -m PyInstaller `
-  --onedir `
+  --onefile `
   --name $binaryName `
   --distpath $outDir `
   --workpath $workDir `
@@ -65,17 +61,6 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --hidden-import anthropic `
   --hidden-import yaml `
   $entry
-
-# --onedir produces $outDir/$binaryName/$expectedFile
-# Move the binary up to $outDir for Tauri's sidecar resolution
-$innerDir = Join-Path $outDir $binaryName
-$builtInner = Join-Path $innerDir $expectedFile
-if (Test-Path $builtInner) {
-  # Tauri expects the binary at src-tauri/bin/<name>
-  # and the support files alongside it — move everything up
-  Get-ChildItem $innerDir | Move-Item -Destination $outDir -Force
-  Remove-Item $innerDir -Force -ErrorAction SilentlyContinue
-}
 
 $built = Join-Path $outDir $expectedFile
 if (-not (Test-Path $built)) {

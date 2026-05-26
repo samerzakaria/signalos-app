@@ -41,14 +41,12 @@ def _resolve_bundle_root() -> Path:
     """Resolve the governance bundle directory.
 
     In development: signalos_lib/_bundle/ (same tree).
-    In frozen binary (--onedir): PyInstaller places data files relative
-    to sys._MEIPASS or the executable directory.
+    In frozen binary (--onefile): PyInstaller extracts data to
+    sys._MEIPASS temp dir; signalos_lib/_bundle/ lives there.
     """
     import sys
-    if getattr(sys, "frozen", False):
-        # PyInstaller --onedir: data is relative to the exe dir
-        base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).parent
-        frozen_path = base / "signalos_lib" / "_bundle"
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        frozen_path = Path(sys._MEIPASS) / "signalos_lib" / "_bundle"
         if frozen_path.is_dir():
             return frozen_path
     return Path(__file__).resolve().parent.parent / "_bundle"
