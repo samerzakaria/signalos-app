@@ -6,12 +6,6 @@ from __future__ import annotations
 import json
 import sys
 
-# Early diagnostic: if this is the entry point, signal we're alive
-# before any heavy imports. Remove after Release CI is stable.
-if __name__ == "__main__":
-    sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
-    sys.stdout.flush()
-
 import datetime
 import os
 import subprocess
@@ -1118,9 +1112,11 @@ def err(req_id: str, message: str) -> dict:
 
 
 def main() -> None:
-    # Ready line is now printed early (before heavy imports) at the top
-    # of the module when __name__ == "__main__". This ensures the smoke
-    # test's ready-wait never times out due to slow import chains.
+    # Report readiness only after imports, route definitions, and helper
+    # bindings are complete. The desktop runtime and installed-build smoke
+    # treat this as "stdin IPC is live", not merely "the process started".
+    sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
+    sys.stdout.flush()
 
     for raw_line in sys.stdin:
         line = raw_line.strip()

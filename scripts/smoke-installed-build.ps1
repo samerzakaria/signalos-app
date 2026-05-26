@@ -328,10 +328,20 @@ function Test-BundledSidecarProductValidation {
   $process = [System.Diagnostics.Process]::Start($psi)
 
   try {
-    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 120
+    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 300
     $ready = $readyLine | ConvertFrom-Json
     if (-not $ready.ok -or -not $ready.data.ready) {
       throw "Bundled sidecar did not report ready: $readyLine"
+    }
+
+    $ping = Invoke-SidecarRequest -Process $process -Payload @{
+      id = "smoke-ping"
+      command = "ping"
+      args = @()
+      cwd = $target
+    } -TimeoutSeconds 30
+    if (-not $ping.ok -or -not $ping.data.pong) {
+      throw "Bundled sidecar ping failed after ready: $($ping | ConvertTo-Json -Compress -Depth 8)"
     }
 
     $init = Invoke-SidecarRequest -Process $process -Payload @{

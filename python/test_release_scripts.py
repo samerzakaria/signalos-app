@@ -62,7 +62,18 @@ class ReleaseScriptTests(unittest.TestCase):
 
         self.assertIn("[RUN ] Sidecar request:", script)
         self.assertIn("[INFO] Sidecar progress:", script)
+        self.assertIn('id = "smoke-ping"', script)
+        self.assertIn("Bundled sidecar ping failed after ready", script)
         self.assertIn("failed while waiting for output", script)
+
+    def test_sidecar_ready_means_ipc_loop_is_live(self) -> None:
+        server = (ROOT / "python" / "signalos_ipc_server.py").read_text(encoding="utf-8")
+        main_start = server.index("def main() -> None:")
+        loop_start = server.index("for raw_line in sys.stdin:", main_start)
+        ready_start = server.index('"id": "init"', main_start)
+
+        self.assertLess(ready_start, loop_start)
+        self.assertNotIn("Early diagnostic", server[:main_start])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.2] - 2026-05-26
+
+### Internal release sidecar readiness fix
+
+- Moved packaged sidecar readiness reporting until after the IPC loop is ready to receive stdin requests.
+- Added a bundled sidecar ping probe before the heavier `signal-init` smoke so Windows release failures identify transport readiness separately from init work.
+
 ## [3.0.0-internal.1] - 2026-05-26
 
 ### Internal release smoke fix
