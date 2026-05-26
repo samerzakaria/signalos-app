@@ -284,16 +284,28 @@ function Invoke-SidecarRequest {
     [int]$TimeoutSeconds = 300
   )
 
+  $label = "$($Payload.id) / $($Payload.command)"
+  Write-Host "[RUN ] Sidecar request: $label"
+
   $json = $Payload | ConvertTo-Json -Compress -Depth 10
   $Process.StandardInput.WriteLine($json)
   $Process.StandardInput.Flush()
 
   while ($true) {
-    $line = Read-SidecarLine -Process $Process -TimeoutSeconds $TimeoutSeconds
+    try {
+      $line = Read-SidecarLine -Process $Process -TimeoutSeconds $TimeoutSeconds
+    } catch {
+      throw "Sidecar request $label failed while waiting for output: $($_.Exception.Message)"
+    }
     if (-not $line) { continue }
     $response = $line | ConvertFrom-Json
-    if ($response.kind -eq "progress") { continue }
+    if ($response.kind -eq "progress") {
+      $detail = if ($response.detail) { " - $($response.detail)" } else { "" }
+      Write-Host "[INFO] Sidecar progress: $($response.id) $($response.phase)/$($response.substep) $($response.state)$detail"
+      continue
+    }
     if ($response.id -eq $Payload.id) {
+      Write-Host "[PASS] Sidecar request: $label"
       return $response
     }
   }

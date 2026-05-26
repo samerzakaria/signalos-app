@@ -57,6 +57,13 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("smoke-installed-build.ps1", payload["smoke_command"])
         self.assertTrue(all(check["exists"] for check in payload["checks"] if check["required"]))
 
+    def test_installed_smoke_logs_sidecar_request_progress(self) -> None:
+        script = (ROOT / "scripts" / "smoke-installed-build.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[RUN ] Sidecar request:", script)
+        self.assertIn("[INFO] Sidecar progress:", script)
+        self.assertIn("failed while waiting for output", script)
+
 
 if __name__ == "__main__":
     unittest.main()

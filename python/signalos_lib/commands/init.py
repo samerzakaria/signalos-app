@@ -365,12 +365,18 @@ def _git_init(target: Path) -> None:
         subprocess.run(
             ["git", "init", "--quiet"],
             cwd=str(target), check=False,
+            timeout=15,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except (OSError, FileNotFoundError):  # pragma: no cover — git missing
         sys.stderr.write(
             "  warn: `git` not found on PATH; skipping `git init`. "
             "Install git or pass --no-git to silence this warning.\n"
+        )
+    except subprocess.TimeoutExpired:  # pragma: no cover
+        sys.stderr.write(
+            "  warn: `git init` timed out; skipping repository initialization. "
+            "Run `git init` manually or rerun `signalos init --no-git`.\n"
         )
 
 
@@ -445,9 +451,10 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
             subprocess.run(
                 ["bash", register_script.relative_to(target).as_posix()],
                 cwd=str(target), check=False,
+                timeout=15,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-        except (OSError, FileNotFoundError):  # pragma: no cover
+        except (OSError, FileNotFoundError, subprocess.TimeoutExpired):  # pragma: no cover
             # bash disappeared between the check and the call — non-fatal
             pass
 

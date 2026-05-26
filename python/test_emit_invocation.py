@@ -86,6 +86,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
         self.assertTrue(first_argv[1].endswith("register-hooks.sh"),
                         f"first call should target register-hooks.sh, got {first_argv}")
         self.assertEqual(first_kwargs.get("cwd"), str(self.tmp))
+        self.assertEqual(first_kwargs.get("timeout"), 15)
 
         # Call 2: emit.sh with the canonical 5-flag argset
         second_args, second_kwargs = mock_run.call_args_list[1]
@@ -116,7 +117,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
         # cwd is the project root.
         self.assertEqual(second_kwargs.get("cwd"), str(self.tmp))
         # timeout guards against a runaway emitter.
-        self.assertIn("timeout", second_kwargs)
+        self.assertEqual(second_kwargs.get("timeout"), 15)
 
     def test_skips_when_ide_empty(self):
         """Headless install (no IDE) is a no-op for both scripts."""
@@ -156,6 +157,14 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
         # Warning was emitted to stderr.
         self.assertTrue(mock_stderr.write.called,
                         "expected a stderr warning when bash is unavailable")
+
+    def test_git_init_is_bounded(self):
+        """Best-effort git initialization must not hang the sidecar."""
+        with mock.patch.object(init_cmd.subprocess, "run") as mock_run:
+            init_cmd._git_init(self.tmp)
+
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 15)
 
 
 @unittest.skipUnless(_bash_works(), "requires bash on PATH (Git Bash on Windows)")
