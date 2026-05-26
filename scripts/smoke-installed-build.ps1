@@ -265,7 +265,14 @@ function Read-SidecarLine {
 
   $task = $Process.StandardOutput.ReadLineAsync()
   if (-not $task.Wait($TimeoutSeconds * 1000)) {
-    throw "Timed out waiting for bundled sidecar output"
+    # Capture stderr to diagnose why the sidecar is silent
+    $stderr = ""
+    try {
+      $stderrTask = $Process.StandardError.ReadToEndAsync()
+      if ($stderrTask.Wait(3000)) { $stderr = $stderrTask.Result }
+    } catch { }
+    $exitInfo = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { "still running (hung)" }
+    throw "Timed out ($TimeoutSeconds s) waiting for sidecar output. Process $exitInfo. stderr: $stderr"
   }
   return $task.Result
 }
