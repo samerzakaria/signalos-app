@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.8] - 2026-05-26
+
+### Internal release sidecar startup ordering
+
+- Wait for the packaged sidecar `init` readiness JSON before sending Windows release-smoke requests, keeping bounded reads around startup and response handling.
+
 ## [3.0.0-internal.7] - 2026-05-26
 
 ### Internal release sidecar stdin encoding

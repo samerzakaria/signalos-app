@@ -69,6 +69,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("Invoke-SidecarOneShot", script)
         self.assertIn("ConvertTo-SidecarPayloadJson", script)
         self.assertIn("StandardInput.BaseStream.Write", script)
+        self.assertIn("did not report ready before request", script)
         self.assertIn("StandardInput.Close()", script)
         self.assertIn("sidecar one-shot response", script)
         self.assertIn("InstallerTimeoutSeconds", script)
@@ -76,7 +77,6 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("NSIS silent install", script)
         self.assertIn("Frontend interactivity fallback", script)
         self.assertNotIn("[SKIP]", script)
-        self.assertNotIn("ReadLineAsync", script)
 
         sidecar_index = script.rindex("Test-BundledSidecarProductValidation")
         app_launch_index = script.rindex('Test-AppLaunch $ReleaseExe "release executable"')

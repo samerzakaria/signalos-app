@@ -329,6 +329,36 @@ function ConvertTo-SidecarPayloadJson {
     "}"
 }
 
+function Read-SidecarJsonLine {
+  param(
+    [System.Diagnostics.Process]$Process,
+    [string]$Label,
+    [int]$TimeoutSeconds,
+    [System.Collections.Generic.List[string]]$StdoutLines
+  )
+
+  $task = $Process.StandardOutput.ReadLineAsync()
+  if (-not $task.Wait($TimeoutSeconds * 1000)) {
+    throw "Timed out ($TimeoutSeconds s) waiting for sidecar line: $Label"
+  }
+
+  $line = $task.Result
+  if ($null -eq $line) {
+    return $null
+  }
+
+  $StdoutLines.Add($line) | Out-Null
+  if ([string]::IsNullOrWhiteSpace($line)) {
+    return $null
+  }
+
+  try {
+    return $line | ConvertFrom-Json
+  } catch {
+    throw "Sidecar returned non-JSON for ${Label}: $line"
+  }
+}
+
 function Invoke-SidecarOneShot {
   param(
     [hashtable]$Payload,
@@ -341,9 +371,35 @@ function Invoke-SidecarOneShot {
 
   $psi = New-SidecarStartInfo -WorkingDirectory $WorkingDirectory
   $process = [System.Diagnostics.Process]::Start($psi)
+  $stdoutLines = [System.Collections.Generic.List[string]]::new()
+  $readySeen = $false
+  $response = $null
   $stdout = ""
   $stderr = ""
   try {
+    $readyTimeout = [Math]::Min(60, $TimeoutSeconds)
+    $readyDeadline = (Get-Date).AddSeconds($readyTimeout)
+    while (-not $readySeen -and (Get-Date) -lt $readyDeadline) {
+      $remaining = [int][Math]::Ceiling(($readyDeadline - (Get-Date)).TotalSeconds)
+      if ($remaining -lt 1) { break }
+      $item = Read-SidecarJsonLine -Process $process -Label "$label startup" -TimeoutSeconds $remaining -StdoutLines $stdoutLines
+      if (-not $item) { continue }
+      if ($item.kind -eq "progress") {
+        continue
+      }
+      if ($item.id -eq "init" -and $item.ok -and $item.data.ready) {
+        $readySeen = $true
+        break
+      }
+      if ($item.id -eq "parse-error" -or $item.id -eq "runtime-error") {
+        throw "Sidecar failed before request for $label. stdout: $($stdoutLines -join "`n")"
+      }
+    }
+
+    if (-not $readySeen) {
+      throw "Sidecar one-shot did not report ready before request. stdout: $($stdoutLines -join "`n")"
+    }
+
     $json = ConvertTo-SidecarPayloadJson -Payload $Payload
     Write-Host "[INFO] Sidecar request JSON: $json"
     $stdinBytes = [System.Text.Encoding]::UTF8.GetBytes($json + "`n")
@@ -351,49 +407,46 @@ function Invoke-SidecarOneShot {
     $process.StandardInput.BaseStream.Flush()
     $process.StandardInput.Close()
 
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+    $responseDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while (-not $response -and (Get-Date) -lt $responseDeadline) {
+      $remaining = [int][Math]::Ceiling(($responseDeadline - (Get-Date)).TotalSeconds)
+      if ($remaining -lt 1) { break }
+      $item = Read-SidecarJsonLine -Process $process -Label "$label response" -TimeoutSeconds $remaining -StdoutLines $stdoutLines
+      if (-not $item) { continue }
+      if ($item.kind -eq "progress") {
+        $detail = if ($item.detail) { " - $($item.detail)" } else { "" }
+        Write-Host "[INFO] Sidecar progress: $($item.id) $($item.phase)/$($item.substep) $($item.state)$detail"
+        continue
+      }
+      if ($item.id -eq "init" -and $item.ok -and $item.data.ready) {
+        continue
+      }
+      if ($item.id -eq $Payload.id -or $item.id -eq "parse-error" -or $item.id -eq "runtime-error") {
+        $response = $item
+        break
+      }
+    }
+
+    if (-not $process.WaitForExit(5000)) {
       try {
         $process.Kill()
         [void]$process.WaitForExit(5000)
       } catch { }
-      try { $stdout = $process.StandardOutput.ReadToEnd() } catch { }
-      try { $stderr = $process.StandardError.ReadToEnd() } catch { }
-      throw "Timed out ($TimeoutSeconds s) waiting for sidecar one-shot response. stdout: $stdout stderr: $stderr"
     }
 
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stdout = $stdoutLines -join "`n"
+    try { $stderr = $process.StandardError.ReadToEnd() } catch { }
     if ($process.ExitCode -ne 0) {
       throw "Sidecar one-shot exited with code $($process.ExitCode). stdout: $stdout stderr: $stderr"
     }
+    if (-not $response) {
+      throw "Timed out ($TimeoutSeconds s) waiting for sidecar one-shot response for $label. stdout: $stdout stderr: $stderr"
+    }
+    if ($response.id -eq "parse-error" -or $response.id -eq "runtime-error") {
+      throw "Sidecar one-shot failed before matching response for $label. stdout: $stdout stderr: $stderr"
+    }
   } finally {
     if ($process) { $process.Dispose() }
-  }
-
-  $readySeen = $false
-  $response = $null
-  foreach ($line in ($stdout -split "`r?`n")) {
-    if (-not $line.Trim()) { continue }
-    $item = $line | ConvertFrom-Json
-    if ($item.kind -eq "progress") {
-      $detail = if ($item.detail) { " - $($item.detail)" } else { "" }
-      Write-Host "[INFO] Sidecar progress: $($item.id) $($item.phase)/$($item.substep) $($item.state)$detail"
-      continue
-    }
-    if ($item.id -eq "init" -and $item.ok -and $item.data.ready) {
-      $readySeen = $true
-      continue
-    }
-    if ($item.id -eq $Payload.id) {
-      $response = $item
-    }
-  }
-
-  if (-not $readySeen) {
-    throw "Sidecar one-shot did not report ready. stdout: $stdout stderr: $stderr"
-  }
-  if (-not $response) {
-    throw "Sidecar one-shot did not return response for $label. stdout: $stdout stderr: $stderr"
   }
 
   Write-Host "[PASS] Sidecar request: $label"
