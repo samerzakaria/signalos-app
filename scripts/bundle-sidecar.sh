@@ -39,6 +39,8 @@ if [[ ! -f "$IPC_ENTRY" ]]; then
   exit 1
 fi
 
+# Exclude _bundle/ from the binary — it's shipped alongside as a resource.
+# Packing 425 files (2.9MB) into the onefile binary adds cold-start penalty.
 DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
 
 "$VENV_PYTHON" -m PyInstaller \
@@ -51,10 +53,16 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --noconfirm \
   --paths "$ROOT_DIR/python" \
   --add-data "$DATA_SPEC" \
+  --exclude-module signalos_lib._bundle \
   --hidden-import signalos_lib.cli \
   --hidden-import anthropic \
   --hidden-import yaml \
   "$IPC_ENTRY"
+
+# Copy _bundle/ alongside the binary for runtime access
+BUNDLE_OUT="$SIDECAR_DIR/_bundle"
+rm -rf "$BUNDLE_OUT"
+cp -r "$VENDORED_CORE_PATH/_bundle" "$BUNDLE_OUT"
 
 if [[ ! -f "$SIDECAR_DIR/$SIDECAR_NAME" ]]; then
   echo "Sidecar build failed; expected $SIDECAR_DIR/$SIDECAR_NAME"

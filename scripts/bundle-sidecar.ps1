@@ -44,6 +44,13 @@ $venvPython = if ($isWindows) {
 
 $entry = Join-Path $root "python\signalos_ipc_server.py"
 $pythonPath = Join-Path $root "python"
+
+# Exclude _bundle/ from the PyInstaller binary. The governance library
+# (425 files, 2.9MB) is read-only text that the sidecar accesses lazily
+# at agent-dispatch time. Packing it into the onefile binary adds cold-
+# start extraction penalty (~90s on Windows CI). Instead, the _bundle/
+# dir is shipped alongside the binary as a Tauri resource.
+$bundleExclude = Join-Path $vendoredCorePath "_bundle"
 $dataSpec = "$vendoredCorePath;signalos_lib"
 
 & $venvPython -m PyInstaller `
@@ -56,10 +63,16 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --noconfirm `
   --paths $pythonPath `
   --add-data $dataSpec `
+  --exclude-module signalos_lib._bundle `
   --hidden-import signalos_lib.cli `
   --hidden-import anthropic `
   --hidden-import yaml `
   $entry
+
+# Copy _bundle/ alongside the binary for runtime access
+$bundleOut = Join-Path $outDir "_bundle"
+if (Test-Path $bundleOut) { Remove-Item -LiteralPath $bundleOut -Recurse -Force }
+Copy-Item -Path $bundleExclude -Destination $bundleOut -Recurse
 
 $built = Join-Path $outDir $expectedFile
 if (-not (Test-Path $built)) {
