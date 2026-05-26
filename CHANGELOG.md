@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.9] - 2026-05-26
+
+### Internal sidecar stdin normalization
+
+- Normalize BOM/NUL-padded IPC input lines in the Python sidecar before JSON parsing so Windows release smoke cannot fail on redirected stdin encoding artifacts.
+
 ## [3.0.0-internal.8] - 2026-05-26
 
 ### Internal release sidecar startup ordering

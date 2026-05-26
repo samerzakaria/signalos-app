@@ -1119,7 +1119,9 @@ def main() -> None:
     sys.stdout.flush()
 
     for raw_line in sys.stdin:
-        line = raw_line.strip()
+        # Windows PowerShell 5.1 can NUL-pad redirected stdin when driving
+        # a PyInstaller sidecar in release smoke. Normalize before JSON parse.
+        line = raw_line.replace("\x00", "").lstrip("\ufeff").strip()
         if not line:
             continue
 

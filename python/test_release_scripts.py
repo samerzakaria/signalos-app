@@ -102,6 +102,8 @@ class ReleaseScriptTests(unittest.TestCase):
         ready_start = server.index('"id": "init"', main_start)
 
         self.assertLess(ready_start, loop_start)
+        self.assertIn('replace("\\x00", "")', server[loop_start:])
+        self.assertIn('lstrip("\\ufeff")', server[loop_start:])
         self.assertNotIn("Early diagnostic", server[:main_start])
 
 
