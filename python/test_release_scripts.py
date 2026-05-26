@@ -64,7 +64,12 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("[INFO] Sidecar progress:", script)
         self.assertIn('id = "smoke-ping"', script)
         self.assertIn("Bundled sidecar ping failed after ready", script)
+        self.assertIn('EnvironmentVariables.Remove("PYTHONPATH")', script)
         self.assertIn("failed while waiting for output", script)
+
+        sidecar_index = script.rindex("Test-BundledSidecarProductValidation")
+        app_launch_index = script.rindex('Test-AppLaunch $ReleaseExe "release executable"')
+        self.assertLess(sidecar_index, app_launch_index)
 
     def test_sidecar_ready_means_ipc_loop_is_live(self) -> None:
         server = (ROOT / "python" / "signalos_ipc_server.py").read_text(encoding="utf-8")

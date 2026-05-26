@@ -265,11 +265,15 @@ function Read-SidecarLine {
 
   $task = $Process.StandardOutput.ReadLineAsync()
   if (-not $task.Wait($TimeoutSeconds * 1000)) {
-    # Capture stderr to diagnose why the sidecar is silent
+    if (-not $Process.HasExited) {
+      try {
+        $Process.Kill()
+        [void]$Process.WaitForExit(5000)
+      } catch { }
+    }
     $stderr = ""
     try {
-      $stderrTask = $Process.StandardError.ReadToEndAsync()
-      if ($stderrTask.Wait(3000)) { $stderr = $stderrTask.Result }
+      $stderr = $Process.StandardError.ReadToEnd()
     } catch { }
     $exitInfo = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { "still running (hung)" }
     throw "Timed out ($TimeoutSeconds s) waiting for sidecar output. Process $exitInfo. stderr: $stderr"
@@ -325,6 +329,12 @@ function Test-BundledSidecarProductValidation {
   $psi.RedirectStandardError = $true
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
+  [void]$psi.EnvironmentVariables.Remove("PYTHONPATH")
+  [void]$psi.EnvironmentVariables.Remove("PYTHONHOME")
+  $signalKeys = @($psi.EnvironmentVariables.Keys | Where-Object { $_ -like "SIGNALOS_*" })
+  foreach ($key in $signalKeys) {
+    [void]$psi.EnvironmentVariables.Remove($key)
+  }
   $process = [System.Diagnostics.Process]::Start($psi)
 
   try {
@@ -435,8 +445,8 @@ Stop-SignalOSProcesses -AllowClose:$CloseRunning
 if (Test-Path $SmokeRoot) { Remove-Item -LiteralPath $SmokeRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $SmokeRoot -Force | Out-Null
 
-Test-AppLaunch $ReleaseExe "release executable"
 Test-BundledSidecarProductValidation
+Test-AppLaunch $ReleaseExe "release executable"
 Test-MsiExtraction
 if ($InstallNsis) {
   Test-NsisInstall

@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.3] - 2026-05-26
+
+### Internal release Windows smoke isolation
+
+- Run direct sidecar IPC validation before app-launch smoke so a prior WebView2/app shutdown cannot poison the packaged sidecar stdin/stdout check.
+- Scrub Python and SignalOS environment variables before direct sidecar smoke, and kill/read stderr on timeout for actionable Windows CI diagnostics.
+- Resolve Git Bash from standard Windows install paths so emitter integration tests fail instead of skipping when `bash` is not on `PATH`.
+
 ## [3.0.0-internal.2] - 2026-05-26
 
 ### Internal release sidecar readiness fix

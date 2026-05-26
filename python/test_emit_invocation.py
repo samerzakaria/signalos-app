@@ -40,17 +40,8 @@ from signalos_lib.commands import init as init_cmd  # noqa: E402
 
 
 def _bash_works() -> bool:
-    """Return True if a usable `bash` is on PATH (cross-platform check)."""
-    if shutil.which("bash") is None:
-        return False
-    try:
-        proc = subprocess.run(
-            ["bash", "-c", "echo ok"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return proc.returncode == 0 and "ok" in (proc.stdout or "")
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    """Return True if a usable bash executable is available."""
+    return init_cmd._resolve_bash() is not None
 
 
 class RegisterIdeHooksUnitTests(unittest.TestCase):
@@ -71,7 +62,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
 
     def test_invokes_both_scripts_in_order(self):
         """register-hooks.sh fires first, then emit.sh with canonical args."""
-        with mock.patch.object(init_cmd, "_bash_available", return_value=True), \
+        with mock.patch.object(init_cmd, "_resolve_bash", return_value="bash"), \
              mock.patch.object(init_cmd.subprocess, "run") as mock_run:
             init_cmd._register_ide_hooks(self.tmp, self.ide)
 
@@ -128,7 +119,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
     def test_skips_emit_when_only_register_exists(self):
         """If only register-hooks.sh exists, we still run it; emit is skipped."""
         (self.tmp / "core" / "tool-adapters" / "emitters" / self.ide / "emit.sh").unlink()
-        with mock.patch.object(init_cmd, "_bash_available", return_value=True), \
+        with mock.patch.object(init_cmd, "_resolve_bash", return_value="bash"), \
              mock.patch.object(init_cmd.subprocess, "run") as mock_run:
             init_cmd._register_ide_hooks(self.tmp, self.ide)
         self.assertEqual(mock_run.call_count, 1)
@@ -138,7 +129,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
     def test_skips_register_when_only_emit_exists(self):
         """If only emit.sh exists (some IDEs may ship one without the other)."""
         (self.tmp / "core" / "tool-adapters" / "emitters" / self.ide / "register-hooks.sh").unlink()
-        with mock.patch.object(init_cmd, "_bash_available", return_value=True), \
+        with mock.patch.object(init_cmd, "_resolve_bash", return_value="bash"), \
              mock.patch.object(init_cmd.subprocess, "run") as mock_run:
             init_cmd._register_ide_hooks(self.tmp, self.ide)
         self.assertEqual(mock_run.call_count, 1)
@@ -149,7 +140,7 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
         """If bash isn't available, both scripts are skipped (with warning)."""
         # Reset the module-level warned flag so the warning path is exercised.
         init_cmd._BASH_WARNED = False
-        with mock.patch.object(init_cmd, "_bash_available", return_value=False), \
+        with mock.patch.object(init_cmd, "_resolve_bash", return_value=None), \
              mock.patch.object(init_cmd.subprocess, "run") as mock_run, \
              mock.patch.object(init_cmd.sys, "stderr") as mock_stderr:
             init_cmd._register_ide_hooks(self.tmp, self.ide)
@@ -167,11 +158,14 @@ class RegisterIdeHooksUnitTests(unittest.TestCase):
         self.assertEqual(mock_run.call_args.kwargs.get("timeout"), 15)
 
 
-@unittest.skipUnless(_bash_works(), "requires bash on PATH (Git Bash on Windows)")
 class EmitIntegrationTests(unittest.TestCase):
     """Real end-to-end: signalos init populates `.signalos/<ide>/` via emit.sh."""
 
     def setUp(self):
+        self.assertTrue(
+            _bash_works(),
+            "A working bash executable is required; install Git Bash on Windows.",
+        )
         self.tmp = Path(tempfile.mkdtemp(prefix="signalos-emit-int-"))
         self.addCleanup(shutil.rmtree, str(self.tmp), True)
         # Save and restore the IDE env vars so we don't leak into other tests.

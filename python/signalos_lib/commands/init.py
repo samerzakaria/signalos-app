@@ -380,24 +380,61 @@ def _git_init(target: Path) -> None:
         )
 
 
+def _bash_candidates() -> list[str]:
+    """Return candidate bash executables in preferred order."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(candidate: str | None) -> None:
+        if not candidate:
+            return
+        normalized = os.path.normcase(os.path.abspath(candidate))
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(candidate)
+
+    add(shutil.which("bash"))
+    if os.name == "nt":
+        for root in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+        ):
+            if not root:
+                continue
+            add(str(Path(root) / "Git" / "bin" / "bash.exe"))
+            add(str(Path(root) / "Git" / "usr" / "bin" / "bash.exe"))
+    return candidates
+
+
+def _resolve_bash() -> str | None:
+    """Return a working bash executable, or None if none can run scripts."""
+    for candidate in _bash_candidates():
+        if not Path(candidate).is_file() and shutil.which(candidate) is None:
+            continue
+        try:
+            proc = subprocess.run(
+                [candidate, "-c", "echo ok"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode == 0 and "ok" in (proc.stdout or ""):
+            return candidate
+    return None
+
+
 def _bash_available() -> bool:
-    """Return True if `bash` resolves to a working shell on this machine.
+    """Return True if bash resolves to a working shell on this machine.
 
     Mirrors the helper in orchestrator.py — on Windows this typically
     resolves to Git Bash (C:/Program Files/Git/bin/bash.exe). When bash
     is unavailable we silently skip shell-out steps in init rather than
     failing, so headless / Windows-without-Git-Bash installs still work.
     """
-    if shutil.which("bash") is None:
-        return False
-    try:
-        proc = subprocess.run(
-            ["bash", "-c", "echo ok"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return proc.returncode == 0 and "ok" in (proc.stdout or "")
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return _resolve_bash() is not None
 
 
 def _register_ide_hooks(target: Path, ide: str) -> None:
@@ -434,7 +471,8 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
     if not register_script.is_file() and not emit_script.is_file():
         return
 
-    if not _bash_available():
+    bash_cmd = _resolve_bash()
+    if bash_cmd is None:
         if not _BASH_WARNED:
             sys.stderr.write(
                 "  warn: `bash` not available; skipping IDE hook "
@@ -449,7 +487,7 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
     if register_script.is_file():
         try:
             subprocess.run(
-                ["bash", register_script.relative_to(target).as_posix()],
+                [bash_cmd, register_script.relative_to(target).as_posix()],
                 cwd=str(target), check=False,
                 timeout=15,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -468,9 +506,9 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
     # which Claude Code does not scan.
     if emit_script.is_file():
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [
-                    "bash",
+                    bash_cmd,
                     emit_script.relative_to(target).as_posix(),
                     "--commands-json", "core/tool-adapters/_shared/commands.json",
                     "--skills-json",   "core/tool-adapters/_shared/skills.json",
@@ -483,9 +521,56 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
                 capture_output=True,
                 timeout=15,
             )
+            if proc.returncode != 0:
+                _emit_ide_fallback(target, ide)
         except (OSError, FileNotFoundError, subprocess.TimeoutExpired):  # pragma: no cover
             # Non-fatal — the user can rerun manually
             pass
+
+# ---------------------------------------------------------------------------
+# Python fallback emitters
+# ---------------------------------------------------------------------------
+
+def _emit_ide_fallback(target: Path, ide: str) -> bool:
+    """Emit minimal IDE-native files without external jq/python binaries."""
+    if ide != "claude-code":
+        return False
+
+    shared = target / "core" / "tool-adapters" / "_shared"
+    commands_json = shared / "commands.json"
+    preamble = shared / "session-preamble.md"
+    if not commands_json.is_file() or not preamble.is_file():
+        return False
+
+    try:
+        commands = json.loads(commands_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(commands, list):
+        return False
+
+    commands_dir = target / ".claude" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(preamble, target / "CLAUDE.md")
+
+    for item in commands:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        desc = str(item.get("description") or "")
+        source = str(item.get("source") or "")
+        output_file = commands_dir / f"{name}.md"
+        parts = ["---", f"description: {desc}", "---", ""]
+        source_path = target / source
+        if source and source_path.is_file():
+            try:
+                parts.append(source_path.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+        output_file.write_text("\n".join(parts), encoding="utf-8")
+    return True
 
 
 # ---------------------------------------------------------------------------
