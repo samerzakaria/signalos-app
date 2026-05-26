@@ -301,6 +301,34 @@ function New-SidecarStartInfo {
   return $psi
 }
 
+function ConvertTo-JsonString {
+  param([AllowNull()][object]$Value)
+
+  $text = [string]$Value
+  $text = $text.Replace('\', '\\')
+  $text = $text.Replace('"', '\"')
+  $text = $text.Replace("`r", '\r')
+  $text = $text.Replace("`n", '\n')
+  $text = $text.Replace("`t", '\t')
+  return '"' + $text + '"'
+}
+
+function ConvertTo-SidecarPayloadJson {
+  param([hashtable]$Payload)
+
+  $args = @()
+  if ($Payload.ContainsKey("args") -and $Payload.args) {
+    $args = @($Payload.args | ForEach-Object { ConvertTo-JsonString $_ })
+  }
+
+  return "{" +
+    '"id":' + (ConvertTo-JsonString $Payload.id) + "," +
+    '"command":' + (ConvertTo-JsonString $Payload.command) + "," +
+    '"args":[' + ($args -join ",") + "]," +
+    '"cwd":' + (ConvertTo-JsonString $Payload.cwd) +
+    "}"
+}
+
 function Invoke-SidecarOneShot {
   param(
     [hashtable]$Payload,
@@ -316,7 +344,8 @@ function Invoke-SidecarOneShot {
   $stdout = ""
   $stderr = ""
   try {
-    $json = $Payload | ConvertTo-Json -Compress -Depth 10
+    $json = ConvertTo-SidecarPayloadJson -Payload $Payload
+    Write-Host "[INFO] Sidecar request JSON: $json"
     $process.StandardInput.WriteLine($json)
     $process.StandardInput.Close()
 

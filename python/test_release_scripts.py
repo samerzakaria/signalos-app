@@ -67,6 +67,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn('EnvironmentVariables.Remove("PYTHONPATH")', script)
         self.assertIn("Invoke-ProcessWithTimeout", script)
         self.assertIn("Invoke-SidecarOneShot", script)
+        self.assertIn("ConvertTo-SidecarPayloadJson", script)
         self.assertIn("StandardInput.Close()", script)
         self.assertIn("sidecar one-shot response", script)
         self.assertIn("InstallerTimeoutSeconds", script)

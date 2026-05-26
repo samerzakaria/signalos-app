@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.6] - 2026-05-26
+
+### Internal release sidecar JSON serialization
+
+- Replaced PowerShell `ConvertTo-Json` sidecar request serialization in Windows release smoke with a deterministic JSON writer for the simple IPC payload shape.
+- Log the exact sidecar request JSON used by the smoke harness so future hosted-runner failures show the wire payload.
+
 ## [3.0.0-internal.5] - 2026-05-26
 
 ### Internal release sidecar one-shot smoke
