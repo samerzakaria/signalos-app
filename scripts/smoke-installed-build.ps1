@@ -278,73 +278,14 @@ function Test-MsiExtraction {
   Write-Host "[PASS] MSI administrative extraction"
 }
 
-function Read-SidecarLine {
+function New-SidecarStartInfo {
   param(
-    [System.Diagnostics.Process]$Process,
-    [int]$TimeoutSeconds = 180
+    [string]$WorkingDirectory
   )
-
-  $task = $Process.StandardOutput.ReadLineAsync()
-  if (-not $task.Wait($TimeoutSeconds * 1000)) {
-    if (-not $Process.HasExited) {
-      try {
-        $Process.Kill()
-        [void]$Process.WaitForExit(5000)
-      } catch { }
-    }
-    $stderr = ""
-    try {
-      $stderr = $Process.StandardError.ReadToEnd()
-    } catch { }
-    $exitInfo = if ($Process.HasExited) { "exited with code $($Process.ExitCode)" } else { "still running (hung)" }
-    throw "Timed out ($TimeoutSeconds s) waiting for sidecar output. Process $exitInfo. stderr: $stderr"
-  }
-  return $task.Result
-}
-
-function Invoke-SidecarRequest {
-  param(
-    [System.Diagnostics.Process]$Process,
-    [hashtable]$Payload,
-    [int]$TimeoutSeconds = 300
-  )
-
-  $label = "$($Payload.id) / $($Payload.command)"
-  Write-Host "[RUN ] Sidecar request: $label"
-
-  $json = $Payload | ConvertTo-Json -Compress -Depth 10
-  $Process.StandardInput.WriteLine($json)
-  $Process.StandardInput.Flush()
-
-  while ($true) {
-    try {
-      $line = Read-SidecarLine -Process $Process -TimeoutSeconds $TimeoutSeconds
-    } catch {
-      throw "Sidecar request $label failed while waiting for output: $($_.Exception.Message)"
-    }
-    if (-not $line) { continue }
-    $response = $line | ConvertFrom-Json
-    if ($response.kind -eq "progress") {
-      $detail = if ($response.detail) { " - $($response.detail)" } else { "" }
-      Write-Host "[INFO] Sidecar progress: $($response.id) $($response.phase)/$($response.substep) $($response.state)$detail"
-      continue
-    }
-    if ($response.id -eq $Payload.id) {
-      Write-Host "[PASS] Sidecar request: $label"
-      return $response
-    }
-  }
-}
-
-function Test-BundledSidecarProductValidation {
-  Write-Host "[RUN ] Bundled sidecar product validation"
-  $target = Join-Path $SmokeRoot "sidecar-product"
-  if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force }
-  New-Item -ItemType Directory -Path $target -Force | Out-Null
 
   $psi = [System.Diagnostics.ProcessStartInfo]::new()
   $psi.FileName = $SidecarExe
-  $psi.WorkingDirectory = $target
+  $psi.WorkingDirectory = $WorkingDirectory
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
@@ -356,63 +297,123 @@ function Test-BundledSidecarProductValidation {
   foreach ($key in $signalKeys) {
     [void]$psi.EnvironmentVariables.Remove($key)
   }
-  $process = [System.Diagnostics.Process]::Start($psi)
 
+  return $psi
+}
+
+function Invoke-SidecarOneShot {
+  param(
+    [hashtable]$Payload,
+    [string]$WorkingDirectory,
+    [int]$TimeoutSeconds = 300
+  )
+
+  $label = "$($Payload.id) / $($Payload.command)"
+  Write-Host "[RUN ] Sidecar request: $label"
+
+  $psi = New-SidecarStartInfo -WorkingDirectory $WorkingDirectory
+  $process = [System.Diagnostics.Process]::Start($psi)
+  $stdout = ""
+  $stderr = ""
   try {
-    $readyLine = Read-SidecarLine -Process $process -TimeoutSeconds 300
-    $ready = $readyLine | ConvertFrom-Json
-    if (-not $ready.ok -or -not $ready.data.ready) {
-      throw "Bundled sidecar did not report ready: $readyLine"
+    $json = $Payload | ConvertTo-Json -Compress -Depth 10
+    $process.StandardInput.WriteLine($json)
+    $process.StandardInput.Close()
+
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+      try {
+        $process.Kill()
+        [void]$process.WaitForExit(5000)
+      } catch { }
+      try { $stdout = $process.StandardOutput.ReadToEnd() } catch { }
+      try { $stderr = $process.StandardError.ReadToEnd() } catch { }
+      throw "Timed out ($TimeoutSeconds s) waiting for sidecar one-shot response. stdout: $stdout stderr: $stderr"
     }
 
-    $ping = Invoke-SidecarRequest -Process $process -Payload @{
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    if ($process.ExitCode -ne 0) {
+      throw "Sidecar one-shot exited with code $($process.ExitCode). stdout: $stdout stderr: $stderr"
+    }
+  } finally {
+    if ($process) { $process.Dispose() }
+  }
+
+  $readySeen = $false
+  $response = $null
+  foreach ($line in ($stdout -split "`r?`n")) {
+    if (-not $line.Trim()) { continue }
+    $item = $line | ConvertFrom-Json
+    if ($item.kind -eq "progress") {
+      $detail = if ($item.detail) { " - $($item.detail)" } else { "" }
+      Write-Host "[INFO] Sidecar progress: $($item.id) $($item.phase)/$($item.substep) $($item.state)$detail"
+      continue
+    }
+    if ($item.id -eq "init" -and $item.ok -and $item.data.ready) {
+      $readySeen = $true
+      continue
+    }
+    if ($item.id -eq $Payload.id) {
+      $response = $item
+    }
+  }
+
+  if (-not $readySeen) {
+    throw "Sidecar one-shot did not report ready. stdout: $stdout stderr: $stderr"
+  }
+  if (-not $response) {
+    throw "Sidecar one-shot did not return response for $label. stdout: $stdout stderr: $stderr"
+  }
+
+  Write-Host "[PASS] Sidecar request: $label"
+  return $response
+}
+
+function Test-BundledSidecarProductValidation {
+  Write-Host "[RUN ] Bundled sidecar product validation"
+  $target = Join-Path $SmokeRoot "sidecar-product"
+  if (Test-Path $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+  New-Item -ItemType Directory -Path $target -Force | Out-Null
+
+  $ping = Invoke-SidecarOneShot -WorkingDirectory $target -Payload @{
       id = "smoke-ping"
       command = "ping"
       args = @()
       cwd = $target
-    } -TimeoutSeconds 30
-    if (-not $ping.ok -or -not $ping.data.pong) {
-      throw "Bundled sidecar ping failed after ready: $($ping | ConvertTo-Json -Compress -Depth 8)"
-    }
+  } -TimeoutSeconds 60
+  if (-not $ping.ok -or -not $ping.data.pong) {
+    throw "Bundled sidecar ping failed after ready: $($ping | ConvertTo-Json -Compress -Depth 8)"
+  }
 
-    $init = Invoke-SidecarRequest -Process $process -Payload @{
-      id = "smoke-init"
-      command = "signal-init"
-      args = @("--mode", "keep", "--name", "Installed Smoke")
-      cwd = $target
-    }
-    if (-not $init.ok) {
-      throw "Bundled sidecar signal-init failed: $($init | ConvertTo-Json -Compress -Depth 8)"
-    }
+  $init = Invoke-SidecarOneShot -WorkingDirectory $target -Payload @{
+    id = "smoke-init"
+    command = "signal-init"
+    args = @("--mode", "keep", "--name", "Installed Smoke")
+    cwd = $target
+  } -TimeoutSeconds 300
+  if (-not $init.ok) {
+    throw "Bundled sidecar signal-init failed: $($init | ConvertTo-Json -Compress -Depth 8)"
+  }
 
-    $readiness = Invoke-SidecarRequest -Process $process -Payload @{
-      id = "smoke-release-readiness"
-      command = "signal-release-readiness"
-      args = @("--json")
-      cwd = $target
-    }
-    if (-not $readiness.ok) {
-      throw "Bundled sidecar release-readiness command failed: $($readiness | ConvertTo-Json -Compress -Depth 8)"
-    }
+  $readiness = Invoke-SidecarOneShot -WorkingDirectory $target -Payload @{
+    id = "smoke-release-readiness"
+    command = "signal-release-readiness"
+    args = @("--json")
+    cwd = $target
+  } -TimeoutSeconds 180
+  if (-not $readiness.ok) {
+    throw "Bundled sidecar release-readiness command failed: $($readiness | ConvertTo-Json -Compress -Depth 8)"
+  }
 
-    $payload = $readiness.output | ConvertFrom-Json
-    if ($payload.schema_version -ne "signalos.release_readiness.v1") {
-      throw "Unexpected release-readiness schema from bundled sidecar: $($payload.schema_version)"
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos"))) {
-      throw "Bundled sidecar did not initialize .signalos in smoke product"
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos\evidence\release-readiness\release-readiness.json"))) {
-      throw "Bundled sidecar did not write release-readiness evidence"
-    }
-  } finally {
-    if ($process -and -not $process.HasExited) {
-      try { $process.StandardInput.Close() } catch { }
-      if (-not $process.WaitForExit(3000)) {
-        $process.Kill()
-      }
-    }
-    if ($process) { $process.Dispose() }
+  $payload = $readiness.output | ConvertFrom-Json
+  if ($payload.schema_version -ne "signalos.release_readiness.v1") {
+    throw "Unexpected release-readiness schema from bundled sidecar: $($payload.schema_version)"
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos"))) {
+    throw "Bundled sidecar did not initialize .signalos in smoke product"
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $target ".signalos\evidence\release-readiness\release-readiness.json"))) {
+    throw "Bundled sidecar did not write release-readiness evidence"
   }
 
   Write-Host "[PASS] Bundled sidecar product validation"

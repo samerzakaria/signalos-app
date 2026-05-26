@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.5] - 2026-05-26
+
+### Internal release sidecar one-shot smoke
+
+- Replaced the packaged sidecar persistent IPC smoke with one-shot sidecar requests that close stdin after each JSON command.
+- Removed the Windows PowerShell async `ReadLineAsync` path that bypassed request timeouts on hosted runners.
+
 ## [3.0.0-internal.4] - 2026-05-26
 
 ### Internal release CI hardening
