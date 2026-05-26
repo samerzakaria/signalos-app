@@ -2,6 +2,15 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.4] - 2026-05-26
+
+### Internal release CI hardening
+
+- Bound Windows release smoke MSI/NSIS extraction, install, and uninstall waits so CI fails with evidence instead of hanging.
+- Bound the Release workflow Windows smoke step to 20 minutes.
+- Moved L6 nightly deep validation into its own scheduled/manual workflow so normal push CI no longer reports a skipped L6 job.
+- Replaced hosted-runner WebView2 DevTools smoke output with an explicit fallback pass instead of a skipped result.
+
 ## [3.0.0-internal.3] - 2026-05-26
 
 ### Internal release Windows smoke isolation

@@ -1,0 +1,40 @@
+name: nightly-deep-validation
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  l6-nightly:
+    name: L6 deep validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            pkg-config
+      - uses: actions-rs/toolchain@v1
+        with: { toolchain: stable }
+      - name: Ensure sidecar binary exists for target
+        shell: bash
+        run: bash scripts/ensure-sidecar.sh
+      - name: cargo test --release
+        working-directory: src-tauri
+        run: cargo test --release
+      - name: cargo audit strict
+        working-directory: src-tauri
+        run: |
+          cargo install --quiet cargo-audit
+          cargo audit --deny warnings

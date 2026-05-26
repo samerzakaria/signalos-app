@@ -239,6 +239,7 @@ jobs:
 
       - name: Smoke unsigned Windows package
         if: matrix.platform == 'windows'
+        timeout-minutes: 20
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke-installed-build.ps1 -InstallNsis
 

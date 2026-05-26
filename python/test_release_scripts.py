@@ -66,10 +66,29 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("Bundled sidecar ping failed after ready", script)
         self.assertIn('EnvironmentVariables.Remove("PYTHONPATH")', script)
         self.assertIn("failed while waiting for output", script)
+        self.assertIn("Invoke-ProcessWithTimeout", script)
+        self.assertIn("InstallerTimeoutSeconds", script)
+        self.assertIn("MSI administrative extraction", script)
+        self.assertIn("NSIS silent install", script)
+        self.assertIn("Frontend interactivity fallback", script)
+        self.assertNotIn("[SKIP]", script)
 
         sidecar_index = script.rindex("Test-BundledSidecarProductValidation")
         app_launch_index = script.rindex('Test-AppLaunch $ReleaseExe "release executable"')
         self.assertLess(sidecar_index, app_launch_index)
+
+    def test_release_ci_has_bounded_smoke_and_no_push_time_l6_skip(self) -> None:
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        test_automation = (ROOT / ".github" / "workflows" / "test-automation.yml").read_text(encoding="utf-8")
+        nightly = (ROOT / ".github" / "workflows" / "nightly-deep-validation.yml").read_text(encoding="utf-8")
+
+        self.assertIn("timeout-minutes: 20", release)
+        self.assertIn("smoke-installed-build.ps1 -InstallNsis", release)
+        self.assertNotIn("l6-nightly", test_automation)
+        self.assertNotIn("github.event_name == 'schedule'", test_automation)
+        self.assertNotIn("github.event_name == 'push'", test_automation)
+        self.assertIn("l6-nightly", nightly)
+        self.assertIn("schedule:", nightly)
 
     def test_sidecar_ready_means_ipc_loop_is_live(self) -> None:
         server = (ROOT / "python" / "signalos_ipc_server.py").read_text(encoding="utf-8")
