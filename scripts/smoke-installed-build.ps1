@@ -346,7 +346,9 @@ function Invoke-SidecarOneShot {
   try {
     $json = ConvertTo-SidecarPayloadJson -Payload $Payload
     Write-Host "[INFO] Sidecar request JSON: $json"
-    $process.StandardInput.WriteLine($json)
+    $stdinBytes = [System.Text.Encoding]::UTF8.GetBytes($json + "`n")
+    $process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)
+    $process.StandardInput.BaseStream.Flush()
     $process.StandardInput.Close()
 
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {

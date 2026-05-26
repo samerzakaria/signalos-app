@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.7] - 2026-05-26
+
+### Internal release sidecar stdin encoding
+
+- Write Windows release-smoke sidecar requests as explicit UTF-8 bytes to redirected stdin so PowerShell 5.1 cannot corrupt the JSON payload encoding.
+
 ## [3.0.0-internal.6] - 2026-05-26
 
 ### Internal release sidecar JSON serialization
