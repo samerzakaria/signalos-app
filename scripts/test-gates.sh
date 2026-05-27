@@ -87,11 +87,20 @@ run_gate "L0: secret scan"       secret_scan
 if [[ "$LAYER" == "L1" ]]; then
     cargo_test_release() { command -v cargo >/dev/null || return 0; (cd src-tauri && cargo test --release); }
     cargo_audit()        {
-        command -v cargo-audit >/dev/null || { echo "  (install: cargo install cargo-audit)"; return 0; }
-        (cd src-tauri && cargo audit)
+        local py
+        py="$(command -v python3 || command -v python)" || {
+            echo "  (install Python 3 to validate RustSec exceptions)"
+            return 1
+        }
+        command -v cargo-audit >/dev/null || {
+            echo "  (install: cargo install cargo-audit --locked)"
+            return 1
+        }
+        "$py" scripts/validate-rustsec-exceptions.py --cargo-dir src-tauri &&
+            (cd src-tauri && cargo audit --deny warnings)
     }
                   run_gate "L1: cargo test --release"  cargo_test_release
-    OPTIONAL=1    run_gate "L1: cargo audit"           cargo_audit
+                  run_gate "L1: cargo audit policy"    cargo_audit
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────

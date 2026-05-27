@@ -27,6 +27,8 @@ jobs:
             pkg-config
       - uses: actions-rs/toolchain@v1
         with: { toolchain: stable }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
       - name: Ensure sidecar binary exists for target
         shell: bash
         run: bash scripts/ensure-sidecar.sh
@@ -36,5 +38,6 @@ jobs:
       - name: cargo audit strict
         working-directory: src-tauri
         run: |
-          cargo install --quiet cargo-audit
+          python ../scripts/validate-rustsec-exceptions.py --cargo-dir .
+          cargo install --quiet cargo-audit --locked
           cargo audit --deny warnings

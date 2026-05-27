@@ -9,7 +9,7 @@
 #   L1 (CI build + verify):
 #     - Compilation (cargo check, npm build)
 #     - Full unit tests
-#     - SCA (npm audit, cargo audit if installed)
+#     - SCA (npm audit, blocking cargo audit policy)
 #     - License check
 #     - Mutation testing (if `mutmut` / `stryker` present)
 #
@@ -147,16 +147,24 @@ if ($Layer -eq "L1") {
         return $rc
     }
     Run-Gate "L1: cargo audit" {
+        if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+            Write-Host "  (install Python 3 to validate RustSec exceptions)"
+            return 1
+        }
         if (-not (Get-Command cargo-audit -ErrorAction SilentlyContinue)) {
-            Write-Host "  (install: cargo install cargo-audit)"
-            return 0
+            Write-Host "  (install: cargo install cargo-audit --locked)"
+            return 1
+        }
+        python scripts/validate-rustsec-exceptions.py --cargo-dir src-tauri
+        if ($LASTEXITCODE -ne 0) {
+            return $LASTEXITCODE
         }
         Set-Location "$RepoRoot\src-tauri"
-        cargo audit
+        cargo audit --deny warnings
         $rc = $LASTEXITCODE
         Set-Location $RepoRoot
         return $rc
-    } -Optional
+    }
 }
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

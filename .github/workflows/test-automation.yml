@@ -50,6 +50,13 @@ jobs:
       - name: cargo clippy (-D warnings)
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+      - name: Validate RustSec exception policy
+        run: python scripts/validate-rustsec-exceptions.py --cargo-dir src-tauri
+      - name: cargo audit policy
+        working-directory: src-tauri
+        run: |
+          cargo install --quiet cargo-audit --locked
+          cargo audit --deny warnings
       - name: secret scan (gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -138,12 +145,6 @@ jobs:
           npm run test
       - name: npm build
         run: npm run build
-      - name: cargo audit advisory
-        working-directory: src-tauri
-        run: |
-          cargo install --quiet cargo-audit || true
-          cargo audit || true
-        continue-on-error: true
 
   l2-installer-smoke:
     name: L2 installer smoke

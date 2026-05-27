@@ -19,8 +19,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  rustsec-audit:
+    name: RustSec audit policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate RustSec exception policy
+        run: python scripts/validate-rustsec-exceptions.py --cargo-dir src-tauri
+      - name: cargo audit policy
+        working-directory: src-tauri
+        run: |
+          cargo install --quiet cargo-audit --locked
+          cargo audit --deny warnings
+
   build:
     name: Build (${{ matrix.platform }})
+    needs: rustsec-audit
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
