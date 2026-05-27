@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.10] - 2026-05-26
+
+### Internal workflow skip hardening
+
+- Replaced GitHub Actions step-level OS/channel `if:` skips with explicit platform dispatchers that succeed or fail inside the step, so required CI no longer reports skipped conditional steps.
+
 ## [3.0.0-internal.9] - 2026-05-26
 
 ### Internal sidecar stdin normalization

@@ -74,9 +74,13 @@ jobs:
         with:
           targets: ${{ matrix.rust-target }}
 
-      - name: Install Linux system deps
-        if: matrix.platform == 'linux'
+      - name: Install platform system deps
+        shell: bash
         run: |
+          if [ "${{ matrix.platform }}" != "linux" ]; then
+            echo "No platform system deps required for ${{ matrix.platform }}."
+            exit 0
+          fi
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev \
@@ -107,15 +111,14 @@ jobs:
         working-directory: src-tauri
         run: cargo tauri icon icons/icon.svg
 
-      - name: Bundle Python sidecar (Windows)
-        if: matrix.platform == 'windows'
-        shell: powershell
-        run: .\scripts\bundle-sidecar.ps1 -Python "python"
-
-      - name: Bundle Python sidecar (Linux / macOS)
-        if: matrix.platform != 'windows'
+      - name: Bundle Python sidecar
         shell: bash
-        run: bash ./scripts/bundle-sidecar.sh
+        run: |
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/bundle-sidecar.ps1 -Python "python"
+          else
+            bash ./scripts/bundle-sidecar.sh
+          fi
 
       # Build in debug mode (no signing, no bundling) — just verifies compilation
       - name: Cargo check (fast)
@@ -126,20 +129,15 @@ jobs:
       - name: Build debug binary
         run: cargo tauri build --debug --no-bundle ${{ matrix.args }}
 
-      - name: Verify binary exists (Linux / macOS)
-        if: matrix.platform != 'windows'
+      - name: Verify binary exists
         shell: bash
         run: |
-          BIN=$(find src-tauri/target -name "signalos-desktop" -type f | head -1)
-          if [ -z "$BIN" ]; then
-            echo "ERROR: binary not found"; exit 1
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            powershell -NoProfile -Command '$bin = Get-ChildItem -Recurse src-tauri\target -Filter "signalos-desktop.exe" | Select-Object -First 1; if (-not $bin) { Write-Error "Binary not found"; exit 1 }; Write-Host "Binary: $($bin.FullName) ($([math]::Round($bin.Length/1MB,1)) MB)"'
+          else
+            BIN=$(find src-tauri/target -name "signalos-desktop" -type f | head -1)
+            if [ -z "$BIN" ]; then
+              echo "ERROR: binary not found"; exit 1
+            fi
+            echo "Binary: $BIN ($(du -sh "$BIN" | cut -f1))"
           fi
-          echo "Binary: $BIN ($(du -sh "$BIN" | cut -f1))"
-
-      - name: Verify binary exists (Windows)
-        if: matrix.platform == 'windows'
-        shell: powershell
-        run: |
-          $bin = Get-ChildItem -Recurse src-tauri\target -Filter "signalos-desktop.exe" | Select-Object -First 1
-          if (-not $bin) { Write-Error "Binary not found"; exit 1 }
-          Write-Host "Binary: $($bin.FullName) ($([math]::Round($bin.Length/1MB,1)) MB)"
