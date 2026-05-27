@@ -96,7 +96,7 @@ const PHASE_LABELS: Record<string, string> = {
   closed: 'Closeout',
 };
 
-const DELIVERY_TIMEOUT_MS = 45 * 60 * 1000;
+const DELIVERY_TIMEOUT_MS = 0;
 
 const phaseLabel = (phase: unknown): string => {
   const raw = String(phase ?? '').trim();
@@ -107,7 +107,7 @@ const phaseLabel = (phase: unknown): string => {
 
 const friendlyError = (message: string): string => {
   if (/timed out waiting for run_signal_command/i.test(message)) {
-    return 'Delivery is still running longer than expected. Check Terminal for live logs, then retry from this screen if it stops updating.';
+    return 'SignalOS stopped receiving a response from Core before this step finished. Restart the engine and retry from this screen.';
   }
   if (/No workspace selected/i.test(message)) {
     return 'No product workspace is selected. Finish onboarding or open a project before running this action.';
@@ -795,7 +795,7 @@ export function DeliverView() {
             <i className="ti ti-alert-triangle"></i>
             <div>
               <strong>{state.error}</strong>
-              <p>Open Terminal for command output, or start over after fixing the reported blocker.</p>
+              <p>Review the live evidence above, then start over after fixing the reported blocker.</p>
               <div className="deliver-actions">
                 <button className="btn btn-soft" onClick={handleReset}>
                   <i className="ti ti-arrow-left"></i> Start over

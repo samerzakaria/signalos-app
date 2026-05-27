@@ -200,10 +200,57 @@ describe('DeliverView', () => {
       expect(screen.getByTestId('deliver-step-closeout')).toBeInTheDocument();
     }, { timeout: 5000 });
 
+    const deliverCall = (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .find((call) => call[0] === 'deliver');
+    expect(deliverCall?.[2]).toBe(0);
     expect(screen.getByText('my-kanban')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-closure').textContent).toBe('full');
     expect(screen.getByText('12 files')).toBeInTheDocument();
     expect(screen.getByText('No dark mode yet')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-open-btn')).toBeInTheDocument();
+  });
+
+  it('does not tell users to leave Deliver for Terminal on a sidecar timeout', async () => {
+    mockRunOnce({
+      entities: ['Task'],
+      workflows: ['Add task'],
+      surfaces: ['Board view'],
+      questions: [],
+      assumptions: [],
+    });
+    mockRunOnce({
+      ui_library: 'Tailwind',
+      tokens: { color: '#2563eb', typography: 'Inter' },
+      state_management: 'Zustand',
+      data_layer: 'Local storage',
+      form_handling: 'Native forms',
+    });
+    mockRunOnce({ preview_html: '<html><body>Preview</body></html>' });
+    mockRunError('Timed out waiting for run_signal_command');
+
+    render(<DeliverView />);
+
+    fireEvent.input(screen.getByTestId('deliver-prompt-input'), {
+      target: { value: 'Build a todo product' },
+    });
+    fireEvent.click(screen.getByTestId('deliver-start-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-intent')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('deliver-continue-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-design')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId('deliver-approve-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-error')).toBeInTheDocument();
+    });
+
+    const text = screen.getByTestId('deliver-error').textContent ?? '';
+    expect(text).toContain('SignalOS stopped receiving a response');
+    expect(text).not.toMatch(/Terminal|retry from this screen if it stops updating/i);
   });
 });

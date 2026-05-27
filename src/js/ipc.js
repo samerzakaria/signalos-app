@@ -37,6 +37,18 @@ if (IS_TAURI && typeof listenTauri === "function") {
       pending.bump();
     }
   });
+
+  listenTauri("sidecar:error", (e) => {
+    const message = typeof e.payload === "string"
+      ? e.payload
+      : "SignalOS Core reported an engine error.";
+    rejectPendingSidecars(message);
+  });
+
+  listenTauri("sidecar:terminated", (e) => {
+    const code = e.payload == null ? "unknown" : String(e.payload);
+    rejectPendingSidecars(`SignalOS Core stopped before the command finished (exit code: ${code}).`);
+  });
 }
 
 async function invoke(cmd, args = {}) {
@@ -67,7 +79,9 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
 
   return new Promise((resolve, reject) => {
     let timer;
+    const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
     const armTimer = () => {
+      if (!hasTimeout) return;
       clearTimeout(timer);
       timer = setTimeout(() => {
         pendingSidecar.delete(id);
