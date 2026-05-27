@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.14] - 2026-05-27
+
+### Internal release lockfile hardening
+
+- Commit the Tauri `Cargo.lock` so release CI validates RustSec policy against the same locked dependency graph used by shipped builds.
+
 ## [3.0.0-internal.13] - 2026-05-27
 
 ### Internal release security gate hardening
