@@ -1268,6 +1268,27 @@ async function finishOnboarding() {
   const projectsRoot = (state.projectsRoot || "").trim();
 
   try {
+    // Onboarding chooses the root folder where SignalOS will place product
+    // repos. The app still needs one active workspace after setup, so create
+    // a single starter workspace under that root and initialize it like any
+    // other product repo before writing identity/governance files.
+    if (!projectsRoot) {
+      throw new Error("Choose a projects root folder.");
+    }
+    let folder = "";
+    try {
+      folder = await ipc.workspace.ensureDefault("SignalOS Workspace", projectsRoot);
+      state.workspace = folder;
+    } catch (e) {
+      throw new Error(`Workspace setup failed: ${errorMessage(e)}`);
+    }
+
+    try {
+      await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
+    } catch (e) {
+      throw new Error(`Workspace initialization failed: ${errorMessage(e)}`);
+    }
+
     await ipc.identity.set(name, role);
     state.userName = name;
     state.userRole = role;
@@ -1295,27 +1316,6 @@ async function finishOnboarding() {
     if (budget > 0) {
       await ipc.provider.setBudget(budget);
       state.monthlyCap = budget;
-    }
-
-    // Onboarding chooses the root folder where SignalOS will place product
-    // repos. The app still needs one active workspace after setup, so create
-    // a single starter workspace under that root and initialize it like any
-    // other product repo.
-    if (!projectsRoot) {
-      throw new Error("Choose a projects root folder.");
-    }
-    let folder = "";
-    try {
-      folder = await ipc.workspace.ensureDefault("SignalOS Workspace", projectsRoot);
-      state.workspace = folder;
-    } catch (e) {
-      throw new Error(`Workspace setup failed: ${errorMessage(e)}`);
-    }
-
-    try {
-      await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
-    } catch (e) {
-      throw new Error(`Workspace initialization failed: ${errorMessage(e)}`);
     }
 
     if (folder) {

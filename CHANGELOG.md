@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.18] - 2026-05-27
+
+### Onboarding workspace order hotfix
+
+- Create and initialize the selected projects-root starter workspace before writing the onboarding identity file.
+- Add a regression cage that fails if onboarding identity writes move ahead of workspace setup again.
+
 ## [3.0.0-internal.17] - 2026-05-27
 
 ### Internal managed workspace onboarding
