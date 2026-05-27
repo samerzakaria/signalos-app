@@ -1562,8 +1562,9 @@ fn resolve_model(
         .get(provider_id)
         .map(|cfg| cfg.model.trim().to_string())
         .filter(|m| !m.is_empty());
-    configured
-        .ok_or_else(|| format!("No model is configured for {provider_id}. Fetch models and select one."))
+    configured.ok_or_else(|| {
+        format!("No model is configured for {provider_id}. Fetch models and select one.")
+    })
 }
 
 fn record_chat_cost(
