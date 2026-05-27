@@ -1,28 +1,79 @@
 [[set]]
 identifier = "workspace-core"
-description = "Workspace core commands for active workspace lifecycle state."
+description = "SignalOS desktop application commands exposed to the main window."
 permissions = [
-    "allow-clear-workspace",
-    "allow-get-workspace-status",
-    "allow-get-velocity-metrics",
+    "allow-app-commands",
 ]
 
 [[permission]]
-identifier = "allow-clear-workspace"
-description = "Allows clearing the active workspace selection."
-commands.allow = ["clear_workspace"]
-
-[[permission]]
-identifier = "allow-get-workspace-status"
-description = "Allows reading composed active workspace status."
-commands.allow = ["get_workspace_status"]
-
-# Phase 13 — wave-velocity metrics surfaced on the dashboard sidebar.
-# Read-only: dispatches `signal-velocity --json` against the sidecar and
-# returns the request id. The sidecar spawn itself is governed by the
-# existing shell:allow-spawn grant in capabilities/default.json; this
-# permission gates the Tauri-side invoke handler.
-[[permission]]
-identifier = "allow-get-velocity-metrics"
-description = "Allows reading wave-velocity metrics for the dashboard sidebar."
-commands.allow = ["get_velocity_metrics"]
+identifier = "allow-app-commands"
+description = "Allows the main SignalOS window to invoke registered application commands."
+commands.allow = [
+    "add_brain_entry",
+    "add_test_debt",
+    "apply_workspace_env_diff",
+    "build_precheck",
+    "check_for_updates",
+    "check_mutation_threshold",
+    "check_role_for_gate",
+    "check_test_first",
+    "clear_workspace",
+    "delete_api_key",
+    "delete_workspace_secret",
+    "fetch_provider_models",
+    "freeze_wave",
+    "get_active_provider",
+    "get_audit_trail",
+    "get_brain_entries",
+    "get_cost_state",
+    "get_cost_summary",
+    "get_enforcement_state",
+    "get_gate_status",
+    "get_git_status",
+    "get_identity",
+    "get_preview",
+    "get_project_artifacts",
+    "get_sidecar_status",
+    "get_velocity_metrics",
+    "get_wave_state",
+    "get_workspace",
+    "get_workspace_status",
+    "has_api_key",
+    "list_previews",
+    "list_providers",
+    "list_test_debt",
+    "list_workspace_dir",
+    "list_workspace_secrets",
+    "open_workspace_path",
+    "override_rule",
+    "preview_workspace_files",
+    "probe_node",
+    "read_mutation_score",
+    "read_workspace_file",
+    "record_token_usage",
+    "reset_session_cost",
+    "resolve_test_debt",
+    "restart_python_sidecar",
+    "reveal_workspace_secret",
+    "run_signal_command",
+    "send_provider_message",
+    "send_provider_message_stream",
+    "set_active_provider",
+    "set_identity",
+    "set_monthly_budget",
+    "set_provider_model",
+    "set_provider_pricing",
+    "set_rule_mode",
+    "set_workspace",
+    "sign_gate",
+    "start_preview",
+    "start_workspace_watch",
+    "stop_preview",
+    "store_api_key",
+    "test_provider_connection",
+    "unfreeze_wave",
+    "upsert_workspace_secret",
+    "validate_workspace_write",
+    "write_workspace_export",
+    "write_workspace_files",
+]

@@ -135,6 +135,12 @@ Run-Gate "L0: secret scan (regex)" {
     return 0
 }
 
+Run-Gate "L0: Tauri command ACL" {
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) { return 1 }
+    python scripts/validate-tauri-acl.py
+    return $LASTEXITCODE
+}
+
 # ─── L1 — CI build + verify ───────────────────────────────────────────────────
 
 if ($Layer -eq "L1") {

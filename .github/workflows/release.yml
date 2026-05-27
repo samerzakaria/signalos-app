@@ -29,6 +29,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Validate Tauri command ACL
+        run: python scripts/validate-tauri-acl.py
       - name: Validate RustSec exception policy
         run: python scripts/validate-rustsec-exceptions.py --cargo-dir src-tauri
       - name: cargo audit policy

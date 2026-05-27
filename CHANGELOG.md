@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.16] - 2026-05-27
+
+### Internal onboarding ACL fix
+
+- Permit the registered provider/model commands through the Tauri capability ACL so onboarding can fetch live provider models.
+- Add a blocking ACL parity check across release, CI, and local test gates so registered commands cannot ship without active permissions again.
+
 ## [3.0.0-internal.15] - 2026-05-27
 
 ### Internal release manifest hardening

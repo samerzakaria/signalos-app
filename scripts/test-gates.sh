@@ -74,6 +74,11 @@ secret_scan()       {
     done < <(git ls-files)
     [[ "$bad" == "0" ]]
 }
+tauri_acl()         {
+    local py
+    py="$(command -v python3 || command -v python)" || return 1
+    "$py" scripts/validate-tauri-acl.py
+}
 
 run_gate "L0: cargo fmt check"   cargo_fmt_check
 run_gate "L0: cargo clippy"      cargo_clippy
@@ -81,6 +86,7 @@ run_gate "L0: cargo check"       cargo_check_gate
 run_gate "L0: cargo test lib"    cargo_test_lib
 run_gate "L0: python tests"      python_tests
 run_gate "L0: secret scan"       secret_scan
+run_gate "L0: Tauri command ACL" tauri_acl
 
 # ─── L1 ──────────────────────────────────────────────────────────────────────
 
