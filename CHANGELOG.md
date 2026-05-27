@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.15] - 2026-05-27
+
+### Internal release manifest hardening
+
+- Retry and rebase the release manifest push so transient remote rejections do not leave an otherwise complete release workflow red.
+- Skip the manifest push entirely when the generated manifest has no changes.
+
 ## [3.0.0-internal.14] - 2026-05-27
 
 ### Internal release lockfile hardening

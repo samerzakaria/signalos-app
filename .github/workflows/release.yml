@@ -555,10 +555,24 @@ jobs:
 
       - name: Commit manifests
         run: |
+          set -e
           git config user.email "actions@github.com"
           git config user.name  "GitHub Actions"
           git add distribution/update-manifest/
-          git diff --cached --quiet || \
-            git commit -m "chore: update manifests to v${{ steps.meta.outputs.version }} [${{ steps.meta.outputs.channel }}]"
+          if git diff --cached --quiet; then
+            echo "No manifest changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update manifests to v${{ steps.meta.outputs.version }} [${{ steps.meta.outputs.channel }}]"
           # Tags check out in detached-HEAD state — push explicitly to main
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Manifest push failed on attempt ${attempt}; retrying after refresh."
+            git fetch origin main
+            git rebase origin/main
+            sleep $((attempt * 10))
+          done
           git push origin HEAD:main
