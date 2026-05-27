@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.13] - 2026-05-27
+
+### Internal release security gate hardening
+
+- Promote RustSec dependency audit from advisory telemetry to blocking CI and release policy.
+- Require explicit, expiring RustSec exception evidence before any advisory can be ignored.
+- Install and run the same strict audit policy from test automation, L6, local L1 gates, and release CI.
+
 ## [3.0.0-internal.12] - 2026-05-27
 
 ### Internal release cleanup
