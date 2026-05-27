@@ -1,9 +1,9 @@
 /// provider.rs — Multi-provider LLM routing
 ///
-/// Model names and pricing are NEVER hardcoded here.
-/// They live in ~/.config/signalos/providers.json, which is written on first
-/// launch with safe defaults and can be edited freely by the user or updated
-/// via the Settings UI without reinstalling the app.
+/// Model names and pricing live in ~/.config/signalos/providers.json after
+/// first launch. Bootstrap defaults only keep first-run config usable; the UI
+/// fetches provider model lists live so retired model IDs do not require a new
+/// app release.
 ///
 /// Adding a new model or a new provider = edit providers.json. No recompile.
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-20250514";
 
 // Wave 4 / G3-1: every HTTP call goes through this client so it gets a
 // real timeout. The previous implementation created `reqwest::Client::new()`
@@ -42,8 +44,7 @@ mod max_tokens_tests {
 
     #[test]
     fn sonnet_4_gets_32k() {
-        assert_eq!(anthropic_max_tokens_for("claude-sonnet-4-6"), 32_000);
-        assert_eq!(anthropic_max_tokens_for("claude-sonnet-4-7"), 32_000);
+        assert_eq!(anthropic_max_tokens_for("claude-sonnet-4-20250514"), 32_000);
     }
 
     #[test]
@@ -231,7 +232,7 @@ impl Provider {
 pub struct ProviderConfig {
     /// The model string sent to the API — user sets this, we never hardcode it.
     /// Ollama: whatever the user has pulled (e.g. "llama3.2", "mistral", "phi4").
-    /// Cloud providers: whatever the user wants (e.g. "claude-opus-4-6", "gpt-4o-mini").
+    /// Cloud providers: whatever the user wants (e.g. "claude-sonnet-4-20250514", "gpt-4o-mini").
     pub model: String,
 
     /// USD per 1M input tokens. User can update when providers change pricing.
@@ -243,17 +244,16 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     /// Wave 1 / G0-4: refreshed defaults to current-generation, cost-efficient
-    /// models per provider. Anthropic stays on Sonnet 4.6 (current Sonnet
-    /// generation, cost-balanced for Builder JSON output); OpenAI defaults to
-    /// gpt-4o-mini (10x cheaper than gpt-4o for similar Builder reliability);
-    /// Gemini defaults to 2.5-flash (current Gemini generation). Users can
-    /// upgrade per provider via the model picker.
+    /// models per provider. Anthropic uses the stable Sonnet 4 snapshot API ID;
+    /// OpenAI defaults to gpt-4o-mini (10x cheaper than gpt-4o for similar
+    /// Builder reliability); Gemini defaults to 2.5-flash. Users can upgrade
+    /// per provider via the model picker.
     fn defaults() -> HashMap<String, ProviderConfig> {
         [
             (
                 "anthropic",
                 ProviderConfig {
-                    model: "claude-sonnet-4-6".into(),
+                    model: DEFAULT_ANTHROPIC_MODEL.into(),
                     price_in_1m: 3.00,
                     price_out_1m: 15.00,
                 },
@@ -1311,8 +1311,8 @@ pub async fn send_provider_message(
 
 #[derive(Serialize, Clone)]
 pub struct FetchedModel {
-    pub id: String,   // the string sent to the API (e.g. "claude-sonnet-4-6")
-    pub name: String, // human display name (e.g. "Claude Sonnet 4.6")
+    pub id: String,   // the string sent to the API (e.g. "claude-sonnet-4-20250514")
+    pub name: String, // human display name returned by the provider
 }
 
 /// Fetch available models from the selected provider's API.
@@ -1562,9 +1562,8 @@ fn resolve_model(
         .get(provider_id)
         .map(|cfg| cfg.model.trim().to_string())
         .filter(|m| !m.is_empty());
-    configured.ok_or_else(|| {
-        format!("No model is configured for {provider_id}. Fetch models or choose Other model.")
-    })
+    configured
+        .ok_or_else(|| format!("No model is configured for {provider_id}. Fetch models and select one."))
 }
 
 fn record_chat_cost(

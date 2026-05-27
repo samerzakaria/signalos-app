@@ -18,6 +18,23 @@ export function showError(msg) {
   setTimeout(() => { if (t.parentElement) t.remove(); }, 4000);
 }
 
+export function errorMessage(error, fallback = "Unknown error") {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (typeof error === "number" || typeof error === "boolean") return String(error);
+  if (error && typeof error === "object") {
+    for (const key of ["message", "error", "detail", "reason"]) {
+      const value = error[key];
+      if (typeof value === "string" && value.trim()) return value;
+    }
+    try {
+      const json = JSON.stringify(error);
+      if (json && json !== "{}") return json;
+    } catch {}
+  }
+  return fallback;
+}
+
 export function formatTs(ts) {
   if (!ts) return "";
   try {

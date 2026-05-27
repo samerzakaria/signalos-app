@@ -18,7 +18,7 @@ This guide is for a user who has only the installed SignalOS App and a project f
 3. Select an AI provider.
 4. Paste the API key once, or select Ollama for local AI.
 5. Fetch models.
-6. Select a fetched model, or choose Other model and type one.
+6. Select a fetched model from the model list.
 7. Save and test the AI connection.
 8. Open Build.
 9. Choose the app stack, such as React / Vite, Next.js, Express, Flask, plain HTML, or Auto.
@@ -88,7 +88,7 @@ Use Ollama if you want local-only drafting:
 1. Install and start Ollama.
 2. Pull a model in Ollama.
 3. Select Ollama in SignalOS.
-4. Fetch models or type the local model name.
+4. Fetch models and select the local model.
 5. Save and test.
 
 Local privacy mode still depends on what you type or attach. Avoid adding secrets to chat.

@@ -13,7 +13,7 @@ export interface Provider {
 export const tab = signal<string>("dashboard");
 export const sbTab = signal<string>("projects");
 export const ai = signal<string>("anthropic");
-export const aiModel = signal<string>("claude-sonnet-4-6");
+export const aiModel = signal<string>("");
 export const userName = signal<string>("");
 export const userRole = signal<string>("");
 export const waveFrozen = signal<boolean>(false);
@@ -307,3 +307,5 @@ export interface ProviderModel {
   name: string;
 }
 export const providerModels = signal<ProviderModel[]>([]);
+export const providerModelsLoading = signal<boolean>(false);
+export const providerModelsError = signal<string | null>(null);

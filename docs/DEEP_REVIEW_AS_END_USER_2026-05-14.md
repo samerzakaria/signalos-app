@@ -88,11 +88,11 @@ For Gemini, the API key is embedded in the URL query string ([provider.rs:787](.
 
 **End-user effect:** "AI is connected" pill turns green; the user pastes a query; the first real chat fails with a 403/404. Diagnostics will say "AI connected", because the connection status was set by the `/models` call that succeeded.
 
-### 2.4 Default Anthropic model is stale and lower than capability
+### 2.4 Model selection can go stale if it is not fetched live
 
-[provider.rs:150-156](../src-tauri/src/provider.rs#L150-L156): default Anthropic model is `claude-sonnet-4-6`. As of 2026-05 the Claude family ships 4.7. Any user with a key minted *after* their first launch of SignalOS sees the older default and has to know to "Fetch models" → pick the new one. The Builder workflow includes a strict JSON contract ([app.js:2294-2317](../src/js/app.js#L2294-L2317)) which is more reliable on 4.6/4.7 than 4.5; users will see flaky Build runs if they accept the stale default.
+[provider.rs:150-156](../src-tauri/src/provider.rs#L150-L156): provider defaults are only bootstrap values. The user-facing setup flow must fetch the provider's live model list and make the user choose from a select control before testing that connection. Otherwise a retired model ID can survive in local config and force an app release just to recover.
 
-The OpenAI default is `gpt-4o` (similar staleness story — `o4-mini`/`o3` are now usually a better Builder choice). Gemini default is `2.0-flash`, also generation behind.
+The same rule applies to OpenAI, Gemini, and OpenAI-compatible providers: the picker should present what the provider currently returns, not ask the app bundle to keep chasing renamed model IDs.
 
 ### 2.5 Builder JSON requires a wall of constraints — fragile against any provider
 
@@ -378,7 +378,7 @@ See §3.7. The end user sees a friendly "no update available" toast because the 
 
 ### 7.3 User connects Anthropic (cloud)
 
-1. Sidebar Project → AI panel. Provider dropdown defaults to Anthropic. Model defaults to `claude-sonnet-4-6` (stale, §2.4).
+1. Sidebar Project → AI panel. Provider dropdown defaults to Anthropic. Model selection must be loaded from the provider's live model list (see §2.4).
 2. Paste key. Click **Save connection**.
 3. `saveProvider()` stores in keychain → calls `validateProviderConnection({ silentSuccess: true })` → which calls `fetch_provider_models` (NOT a real chat) → if it returns >0 models, pill goes green "Anthropic Claude connected."
 4. Engine pill stays unchanged.
@@ -437,7 +437,7 @@ See §3.7. The end user sees a friendly "no update available" toast because the 
 ### P1 — broken promises or silent failure
 
 4. **Validate AI by sending one message, not by listing models.** Change `test_provider_connection` to do a tiny `send_provider_message("ping")` and verify the chat path. Update the friendly error mapping.
-5. **Refresh provider defaults to current model generations.** Anthropic 4.7, OpenAI o4-mini/o3, Gemini 2.0/2.5. The shipped `providers.json` defaults set the user up to fail Build until they manually Fetch+select.
+5. **Treat live provider model fetch as required setup.** Bootstrap defaults are not enough; the setup path must fetch the provider's current model list and require a selected model before connection proof.
 6. **Apply `redact_text` to issue-report and handoff Markdown** on the Rust side before write, or move the report generation into the Python sidecar.
 7. **Make Stop actually stop.** Either send a cancel message into the sidecar that interrupts the running CLI, or do not pretend to stop. Today's behavior is misleading.
 8. **Set HTTP timeouts on every reqwest call** in `provider.rs` (chat: 60s, models: 15s).
@@ -545,7 +545,7 @@ signalos-app/
 
 3. **"Secret summary that shows risky file names and variable names without exposing values."**  ← True for `.env*` files. Does not detect or summarize secrets stored elsewhere (e.g. inline in `config.json`, in scripts under `bin/`).
 
-4. **"Multi-provider AI setup with model fetch, model picker, and manual Other model entry."**  ← True. Solid.
+4. **"Multi-provider AI setup with model fetch and model picker."**  ← True. Solid.
 
 5. **"Engine diagnostics with ping, status, restart, and redacted diagnostic copy."**  ← True for ping/status/restart. "Redacted diagnostic copy" copies `JSON.stringify(diagnosticsPayload())` which includes `state.log[-12]`. No redaction is applied on the JS side. **Same gap as #2.**
 

@@ -11,6 +11,7 @@
  */
 
 import * as ipc from "./ipc.js";
+import { errorMessage } from "./util.js";
 
 const LS_WIZARD = "signalos.onboarding.wizard.v1";
 // v2: bumped because WebView2 persists localStorage per app identifier
@@ -32,6 +33,7 @@ export const wizardState = {
     provider: "anthropic",
     apiKey: "",
     model: "",
+    models: [],
     tested: false,
     testMessage: "",
   },
@@ -68,7 +70,12 @@ function save() {
     current: wizardState.current,
     folder: wizardState.folder,
     initMode: wizardState.initMode,
-    ai: { provider: wizardState.ai.provider, model: wizardState.ai.model, tested: wizardState.ai.tested },
+    ai: {
+      provider: wizardState.ai.provider,
+      model: wizardState.ai.model,
+      models: wizardState.ai.models,
+      tested: wizardState.ai.tested,
+    },
     budgetUsd: wizardState.budgetUsd,
     privacy: wizardState.privacy,
     finishedAt: wizardState.completedSteps.includes("done") ? new Date().toISOString() : null,
@@ -278,9 +285,13 @@ function initOption(value, label, desc) {
 function renderAIStep() {
   const selected = wizardState.ai.provider;
   const provInfo = providers.find((p) => p.id === selected) || providers[0] || { id: selected, name: selected, needs_key: true, model: "" };
+  const models = Array.isArray(wizardState.ai.models) ? wizardState.ai.models : [];
   const opts = providers.map((p) =>
     `<option value="${escapeAttr(p.id)}" ${p.id === selected ? "selected" : ""}>${escapeHtml(p.name)}</option>`
   ).join("");
+  const modelOpts = models.length
+    ? models.map((m) => `<option value="${escapeAttr(m.id)}" ${m.id === wizardState.ai.model ? "selected" : ""}>${escapeHtml(m.name || m.id)}</option>`).join("")
+    : `<option value="">Fetch models first</option>`;
   return `
     <h2>Connect AI</h2>
     <div class="wizard-field">
@@ -296,10 +307,10 @@ function renderAIStep() {
     <div class="wizard-field">
       <label for="wiz-model">Model</label>
       <div class="wizard-row">
-        <input id="wiz-model" type="text" placeholder="${escapeAttr(provInfo.model || "model id")}" value="${escapeAttr(wizardState.ai.model)}" />
+        <select id="wiz-model" ${models.length ? "" : "disabled"}>${modelOpts}</select>
         <button class="secondary small" type="button" id="wiz-fetch">Fetch models</button>
       </div>
-      <div class="fine-print" id="wiz-model-help">Leave blank to use the provider default (${escapeHtml(provInfo.model || "none")}).</div>
+      <div class="fine-print" id="wiz-model-help">${models.length ? `${models.length} models available from ${escapeHtml(provInfo.name || selected)}.` : "Fetch models from the selected provider before testing."}</div>
     </div>
     <div class="wizard-row">
       <button class="secondary" type="button" id="wiz-test">Test connection</button>
@@ -380,7 +391,8 @@ function wireStepEvents(step) {
     host.querySelector("#wiz-provider")?.addEventListener("change", async (e) => {
       wizardState.ai.provider = e.target.value;
       wizardState.ai.tested = false;
-      wizardState.ai.model = providers.find((p) => p.id === e.target.value)?.model || "";
+      wizardState.ai.model = "";
+      wizardState.ai.models = [];
       // Refresh saved-key info
       wizardState.ai.apiKey = "";
       save();
@@ -391,7 +403,7 @@ function wireStepEvents(step) {
       wizardState.ai.tested = false;
       refreshNextEnabled(step);
     });
-    host.querySelector("#wiz-model")?.addEventListener("input", (e) => {
+    host.querySelector("#wiz-model")?.addEventListener("change", (e) => {
       wizardState.ai.model = e.target.value;
       wizardState.ai.tested = false;
       save();
@@ -402,6 +414,8 @@ function wireStepEvents(step) {
     host.querySelector("#wiz-local")?.addEventListener("click", () => {
       wizardState.ai.provider = "ollama";
       wizardState.ai.tested = false;
+      wizardState.ai.model = "";
+      wizardState.ai.models = [];
       wizardState.privacy.localOnly = true;
       save();
       render();
@@ -456,32 +470,37 @@ async function validateFolder() {
       error: null,
     };
   } catch (e) {
-    wizardState.folderCheck = { exists: false, writable: false, empty: true, entries: [], error: String(e?.message || e) };
+    wizardState.folderCheck = { exists: false, writable: false, empty: true, entries: [], error: errorMessage(e) };
   }
 }
 
 async function onFetchModels() {
   const btn = host.querySelector("#wiz-fetch");
   if (btn) { btn.disabled = true; btn.textContent = "Fetching…"; }
+  let shouldRender = false;
   try {
     const models = await ipc.provider.fetchModels(wizardState.ai.provider, wizardState.ai.apiKey || null);
     const help = host.querySelector("#wiz-model-help");
     if (Array.isArray(models) && models.length) {
-      if (help) help.textContent = `${models.length} models found. Type the id of one (e.g. ${models[0].id}).`;
-      if (!wizardState.ai.model) {
+      wizardState.ai.models = models;
+      if (!models.some((model) => model.id === wizardState.ai.model)) {
         wizardState.ai.model = models[0].id;
-        const input = host.querySelector("#wiz-model");
-        if (input) input.value = wizardState.ai.model;
       }
+      if (help) help.textContent = `${models.length} models found. Select one before testing.`;
+      shouldRender = true;
     } else {
-      if (help) help.textContent = "Provider returned no models. Type a model id manually.";
+      wizardState.ai.models = [];
+      wizardState.ai.model = "";
+      if (help) help.textContent = "Provider returned no models.";
+      shouldRender = true;
     }
   } catch (e) {
     const help = host.querySelector("#wiz-model-help");
-    if (help) help.textContent = `Could not fetch models: ${e?.message || e}`;
+    if (help) help.textContent = `Could not fetch models: ${errorMessage(e)}`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Fetch models"; }
     save();
+    if (shouldRender) render();
     refreshNextEnabled("ai");
   }
 }
@@ -515,7 +534,7 @@ async function onTestAI() {
     }
   } catch (e) {
     wizardState.ai.tested = false;
-    wizardState.ai.testMessage = String(e?.message || e);
+    wizardState.ai.testMessage = errorMessage(e);
     if (result) result.innerHTML = `<div class="wizard-error">${escapeHtml(wizardState.ai.testMessage)}</div>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Test connection"; }
@@ -568,7 +587,7 @@ async function onNext() {
         throw new Error(msg);
       }
     } catch (e) {
-      const errMsg = `Init (${wizardState.initMode}) failed: ${e?.message || e}`;
+      const errMsg = `Init (${wizardState.initMode}) failed: ${errorMessage(e)}`;
       if (result) result.innerHTML = `<div class="wizard-error">${escapeHtml(errMsg)}</div>`;
       // Block forward navigation: re-add the step to the list of incomplete.
       wizardState.completedSteps = wizardState.completedSteps.filter((s) => s !== "init");

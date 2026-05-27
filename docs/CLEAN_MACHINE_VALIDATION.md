@@ -32,29 +32,28 @@ The installer-only runtime smoke proves the bundled engine can set up and inspec
 5. Connect AI.
 6. Fetch models.
 7. Select a fetched model.
-8. Choose Other model and confirm manual entry works.
-9. Send a plain chat message.
-10. Run `/signal-init`.
-11. Confirm `.signalos/` exists.
-12. Confirm `core/strategy/PLAN.md` exists.
-13. Confirm Project result shows created files.
-14. Run `/signal-status`.
-15. Open Dashboard.
-16. Confirm first-project checklist updates.
-17. Save a Note.
-18. Sign a gate if available.
-19. Export an issue report.
-20. Export a team handoff.
-21. Open Settings.
-22. Test engine.
-23. Restart engine.
-24. Delete or replace saved key.
-25. Restart SignalOS.
-26. Confirm project/provider/model state persists.
-27. Confirm raw key stays hidden.
-28. Run update check.
-29. Upgrade over the installed build when another build is available.
-30. Uninstall normally.
+8. Send a plain chat message.
+9. Run `/signal-init`.
+10. Confirm `.signalos/` exists.
+11. Confirm `core/strategy/PLAN.md` exists.
+12. Confirm Project result shows created files.
+13. Run `/signal-status`.
+14. Open Dashboard.
+15. Confirm first-project checklist updates.
+16. Save a Note.
+17. Sign a gate if available.
+18. Export an issue report.
+19. Export a team handoff.
+20. Open Settings.
+21. Test engine.
+22. Restart engine.
+23. Delete or replace saved key.
+24. Restart SignalOS.
+25. Confirm project/provider/model state persists.
+26. Confirm raw key stays hidden.
+27. Run update check.
+28. Upgrade over the installed build when another build is available.
+29. Uninstall normally.
 
 ## Pass Criteria
 

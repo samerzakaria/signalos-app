@@ -1,13 +1,31 @@
 import {
-  userName, userRole, ai, aiModel, providerModels, currentCost,
+  userName, userRole, ai, aiModel, providerModels, providerModelsError,
+  providerModelsLoading, currentCost,
   workspacePath, monthlyCap, engineRunning, engineTestState,
   engineRestartState, updateCheck, updateChannel,
   productProfiles, recentWorkspaces, selectedProductProfile,
 } from '../../state';
+import { loadProviderModels } from '../../services/providerModels';
+
+const PROVIDERS = [
+  { id: 'anthropic', label: 'Claude (Anthropic)' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'gemini', label: 'Gemini (Google)' },
+  { id: 'qwen', label: 'Qwen' },
+  { id: 'ollama', label: 'Ollama (local)' },
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'deepseek', label: 'DeepSeek' },
+  { id: 'mistral', label: 'Mistral' },
+  { id: 'groq', label: 'Groq' },
+  { id: 'cerebras', label: 'Cerebras' },
+  { id: 'together', label: 'Together AI' },
+  { id: 'xai', label: 'xAI' },
+];
 
 export function SettingsView() {
   const models = providerModels.value;
   const selectedModel = aiModel.value;
+  const modelSelectValue = models.some((model) => model.id === selectedModel) ? selectedModel : '';
   const provider = ai.value || 'anthropic';
   const role = userRole.value || 'PO';
   const cap = monthlyCap.value;
@@ -114,21 +132,24 @@ export function SettingsView() {
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Provider</strong><span>Current AI brain</span></div>
                 <select className="select-input" id="settingsProvider" value={provider} onInput={(e) => { ai.value = (e.target as HTMLSelectElement).value; }} onChange={() => window.changeProvider()} style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }}>
-                  <option value="anthropic">Claude (Anthropic)</option>
-                  <option value="openai">GPT-4o (OpenAI)</option>
-                  <option value="gemini">Gemini (Google)</option>
-                  <option value="ollama">Ollama (local)</option>
+                  {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Model</strong><span>Specific version to use</span></div>
-                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} value={selectedModel} onInput={(e) => { aiModel.value = (e.target as HTMLSelectElement).value; }} onChange={() => window.changeModel()}>
+                <select className="select-input" id="settingsModel" style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }} value={modelSelectValue} disabled={models.length === 0} onInput={(e) => { aiModel.value = (e.target as HTMLSelectElement).value; }} onChange={() => window.changeModel()}>
                   {models.length === 0 ? (
-                    <option value={selectedModel}>{selectedModel || 'No models loaded'}</option>
+                    <option value="">{providerModelsLoading.value ? 'Loading models...' : 'No models loaded'}</option>
                   ) : (
                     models.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)
                   )}
                 </select>
+              </div>
+              <div className="settings-row">
+                <div className="settings-row-tx"><strong>Refresh models</strong><span>{providerModelsError.value || (models.length > 0 ? `${models.length} available` : 'Fetch from the selected provider')}</span></div>
+                <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => { void loadProviderModels(provider, null, { persistSelection: true }); }} disabled={providerModelsLoading.value}>
+                  <i className={`ti ${providerModelsLoading.value ? 'ti-loader-2' : 'ti-refresh'}`} style={providerModelsLoading.value ? { animation: 'spin 1s linear infinite' } : undefined}></i> Fetch models
+                </button>
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>API key</strong><span>Stored in OS keychain</span></div>

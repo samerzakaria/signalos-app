@@ -2,6 +2,15 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.11] - 2026-05-27
+
+### Internal onboarding model picker fix
+
+- Replaced onboarding and settings model typing paths with fetched-provider model selects.
+- Fetch provider models before onboarding connection tests so retired model IDs do not force a new app release.
+- Normalize Tauri string/object rejections so setup failures show the real error instead of `undefined`.
+- Fill the selected provider radio circle instead of only highlighting the provider card.
+
 ## [3.0.0-internal.10] - 2026-05-26
 
 ### Internal workflow skip hardening

@@ -23,12 +23,12 @@ import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamEr
 
 import { state } from "./state.js";
 
-import { esc, showError } from "./util.js";
+import { esc, errorMessage, showError } from "./util.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
-  boot().catch((e) => showError("Boot failed: " + e.message));
+  boot().catch((e) => showError("Boot failed: " + errorMessage(e)));
 });
 
 async function boot() {
@@ -56,7 +56,7 @@ async function bootApp() {
       if (signName) signName.value = state.userName;
     }
   } catch (e) {
-    console.warn("Could not load identity:", e.message);
+    console.warn("Could not load identity:", errorMessage(e));
   }
 
   try {
@@ -68,14 +68,14 @@ async function bootApp() {
       // Reactive state handles Titlebar updates natively.
     }
   } catch (e) {
-    console.warn("Could not load provider:", e.message);
+    console.warn("Could not load provider:", errorMessage(e));
   }
 
   try {
     const cost = await ipc.provider.getCost();
     updateCostDisplay(cost);
   } catch (e) {
-    console.warn("Could not load cost:", e.message);
+    console.warn("Could not load cost:", errorMessage(e));
   }
 
   try {
@@ -92,13 +92,13 @@ async function bootApp() {
     }
     applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
   } catch (e) {
-    console.warn("Could not load workspace:", e.message);
+    console.warn("Could not load workspace:", errorMessage(e));
   }
 
   try {
     await ipc.workspace.startWatch();
   } catch (e) {
-    console.warn("Could not start workspace watch:", e.message);
+    console.warn("Could not start workspace watch:", errorMessage(e));
   }
 
   bootListeners();
@@ -203,7 +203,7 @@ async function switchTab(tab) {
     };
     if (loaders[tab]) await loaders[tab]();
   } catch (e) {
-    console.warn("Tab load error for", tab, e.message);
+      console.warn("Tab load error for", tab, errorMessage(e));
   }
 }
 
@@ -241,7 +241,7 @@ export async function loadEnforcement() {
     state.enforcementRules = enfState?.rules || [];
     state.waveFrozen = Boolean(enfState?.wave_frozen);
   } catch (e) {
-    console.warn("Could not load enforcement state:", e.message);
+    console.warn("Could not load enforcement state:", errorMessage(e));
   }
 }
 
@@ -252,7 +252,7 @@ async function freezeWave() {
     addAIBubble("Wave frozen. No AI file writes allowed until you unfreeze.");
     switchTab("build");
   } catch (e) {
-    showError("Could not freeze wave: " + e.message);
+    showError("Could not freeze wave: " + errorMessage(e));
   }
 }
 window.freezeWave = freezeWave;
@@ -264,7 +264,7 @@ async function unfreezeWave() {
     addAIBubble("Wave unfrozen. Enforcement rules still active — proceed carefully.");
     switchTab("build");
   } catch (e) {
-    showError("Could not unfreeze wave: " + e.message);
+    showError("Could not unfreeze wave: " + errorMessage(e));
   }
 }
 window.unfreezeWave = unfreezeWave;
@@ -303,7 +303,7 @@ async function confirmOverride() {
     await loadEnforcement();
     switchTab("build");
   } catch (e) {
-    showError("Override failed: " + e.message);
+    showError("Override failed: " + errorMessage(e));
   }
 }
 window.confirmOverride = confirmOverride;
@@ -385,7 +385,7 @@ async function openGate() {
     await loadGovPanel().catch(() => {});
     await loadDashboard();
   } catch (e) {
-    showError("Gate sign failed: " + e.message);
+    showError("Gate sign failed: " + errorMessage(e));
   }
 }
 window.openGate = openGate;
@@ -455,7 +455,7 @@ async function loadGovPanel() {
       state.auditTrail = auditData.value.slice(0, 6);
     }
   } catch (e) {
-    console.warn("Gov panel load error:", e.message);
+    console.warn("Gov panel load error:", errorMessage(e));
   }
 }
 
@@ -466,8 +466,8 @@ async function loadBrain() {
     const entries = await ipc.brain.search("");
     state.brainEntries = entries || [];
   } catch (e) {
-    console.warn("Brain load error:", e.message);
-    showError("Could not load Brain: " + e.message);
+    console.warn("Brain load error:", errorMessage(e));
+    showError("Could not load Brain: " + errorMessage(e));
   }
 }
 
@@ -486,7 +486,7 @@ async function addBrainEntry() {
     await ipc.brain.add(text, type);
     await loadBrain();
   } catch (e) {
-    showError("Could not add brain entry: " + e.message);
+    showError("Could not add brain entry: " + errorMessage(e));
   }
 }
 window.addBrainEntry = addBrainEntry;
@@ -499,7 +499,7 @@ function filterBrain(_el, type) {
       const filtered = type === "all" ? entries : entries.filter((e) => (e.entry_type || e.type || "").toLowerCase() === type);
       state.brainEntries = filtered || [];
     })
-    .catch((e) => console.warn("Brain filter error:", e.message));
+    .catch((e) => console.warn("Brain filter error:", errorMessage(e)));
 }
 window.filterBrain = filterBrain;
 
@@ -510,8 +510,8 @@ async function loadVault() {
     const list = await ipc.secrets.list();
     state.secrets = list || [];
   } catch (e) {
-    console.warn("Vault load error:", e.message);
-    showError("Could not load Vault: " + e.message);
+    console.warn("Vault load error:", errorMessage(e));
+    showError("Could not load Vault: " + errorMessage(e));
   }
 }
 
@@ -536,7 +536,7 @@ async function toggleSecret(name) {
       }
     }, 30000);
   } catch (e) {
-    showError("Could not reveal secret: " + e.message);
+    showError("Could not reveal secret: " + errorMessage(e));
   }
 }
 window.toggleSecret = toggleSecret;
@@ -551,7 +551,7 @@ async function copySecret(name) {
       if (state.copiedSecret === name) state.copiedSecret = null;
     }, 1500);
   } catch (e) {
-    showError("Could not copy secret: " + e.message);
+    showError("Could not copy secret: " + errorMessage(e));
   }
 }
 window.copySecret = copySecret;
@@ -563,7 +563,7 @@ async function deleteSecret(name) {
     await ipc.secrets.delete(name);
     await loadVault();
   } catch (e) {
-    showError("Could not delete secret: " + e.message);
+    showError("Could not delete secret: " + errorMessage(e));
   }
 }
 window.deleteSecret = deleteSecret;
@@ -602,7 +602,7 @@ async function saveSecret() {
     if (valueInput) valueInput.value = "";
     await loadVault();
   } catch (e) {
-    showError("Could not save secret: " + e.message);
+    showError("Could not save secret: " + errorMessage(e));
   }
 }
 window.saveSecret = saveSecret;
@@ -618,8 +618,8 @@ async function loadHistory() {
     state.auditTrail = entries || [];
     if (cost) updateCostDisplay(cost);
   } catch (e) {
-    console.warn("History load error:", e.message);
-    showError("Could not load History: " + e.message);
+    console.warn("History load error:", errorMessage(e));
+    showError("Could not load History: " + errorMessage(e));
   }
 }
 
@@ -643,7 +643,7 @@ async function exportHandoff(btn) {
       }, 2000);
     }
   } catch (e) {
-    showError("Export failed: " + e.message);
+    showError("Export failed: " + errorMessage(e));
     if (btn) {
       btn.innerHTML = origHTML;
       btn.disabled = false;
@@ -683,7 +683,7 @@ async function exportReport(btn) {
       }, 2000);
     }
   } catch (e) {
-    showError("Report failed: " + e.message);
+    showError("Report failed: " + errorMessage(e));
     if (btn) {
       btn.innerHTML = origHTML;
       btn.disabled = false;
@@ -728,7 +728,7 @@ async function loadSettings() {
       // Engine status not critical
     }
   } catch (e) {
-    console.warn("Settings load error:", e.message);
+    console.warn("Settings load error:", errorMessage(e));
   }
 }
 
@@ -739,7 +739,7 @@ async function saveIdentity() {
   try {
     await ipc.identity.set(name, role);
   } catch (e) {
-    showError("Could not save identity: " + e.message);
+    showError("Could not save identity: " + errorMessage(e));
   }
 }
 window.saveIdentity = saveIdentity;
@@ -750,7 +750,7 @@ async function saveBudget() {
   try {
     await ipc.provider.setBudget(val);
   } catch (e) {
-    showError("Could not save budget: " + e.message);
+    showError("Could not save budget: " + errorMessage(e));
   }
 }
 window.saveBudget = saveBudget;
@@ -761,7 +761,7 @@ async function resetSessionCost() {
     const cost = await ipc.provider.getCost();
     updateCostDisplay(cost);
   } catch (e) {
-    showError("Could not reset session: " + e.message);
+    showError("Could not reset session: " + errorMessage(e));
   }
 }
 window.resetSessionCost = resetSessionCost;
@@ -771,8 +771,16 @@ async function changeProvider() {
   if (!p) return;
   try {
     await ipc.provider.setActive(p);
+    const models = await ipc.provider.fetchModels(p, null).catch(() => []);
+    if (Array.isArray(models) && models.length > 0) {
+      state.providerModels = models;
+      if (!models.some((model) => model.id === state.aiModel)) {
+        state.aiModel = models[0].id;
+        await ipc.provider.setModel(p, state.aiModel);
+      }
+    }
   } catch (e) {
-    showError("Could not change provider: " + e.message);
+    showError("Could not change provider: " + errorMessage(e));
   }
 }
 window.changeProvider = changeProvider;
@@ -783,22 +791,36 @@ async function changeModel() {
   try {
     await ipc.provider.setModel(state.ai, model);
   } catch (e) {
-    showError("Could not change model: " + e.message);
+    showError("Could not change model: " + errorMessage(e));
   }
 }
 window.changeModel = changeModel;
+
+async function refreshCurrentProviderModels(apiKey) {
+  const models = await ipc.provider.fetchModels(state.ai, apiKey || null);
+  if (!Array.isArray(models) || models.length === 0) {
+    throw new Error(`No models were returned for ${state.ai}.`);
+  }
+  state.providerModels = models;
+  if (!models.some((model) => model.id === state.aiModel)) {
+    state.aiModel = models[0].id;
+  }
+  return models;
+}
 
 async function replaceApiKey() {
   const key = prompt("Enter new API key:");
   if (!key) return;
   try {
     await ipc.keychain.store(state.ai, key);
+    await refreshCurrentProviderModels(key);
+    await ipc.provider.setModel(state.ai, state.aiModel);
     const result = await ipc.provider.test(state.ai, key, state.aiModel);
     if (result?.ok || result === true) {
       addAIBubble("API key updated and verified successfully.");
     }
   } catch (e) {
-    showError("Could not update API key: " + e.message);
+    showError("Could not update API key: " + errorMessage(e));
   }
 }
 window.replaceApiKey = replaceApiKey;
@@ -812,7 +834,7 @@ async function switchWorkspace(path) {
     applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
     await bootApp();
   } catch (e) {
-    showError("Could not switch workspace: " + e.message);
+    showError("Could not switch workspace: " + errorMessage(e));
   }
 }
 window.switchWorkspace = switchWorkspace;
@@ -824,7 +846,7 @@ async function forgetWorkspace() {
     state.workspace = "";
     applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
   } catch (e) {
-    showError("Could not forget workspace: " + e.message);
+    showError("Could not forget workspace: " + errorMessage(e));
   }
 }
 window.forgetWorkspace = forgetWorkspace;
@@ -838,7 +860,7 @@ async function testEngine() {
   } catch (e) {
     state.engineTestState = "failed";
     setTimeout(() => { state.engineTestState = "idle"; }, 2000);
-    showError("Engine test failed: " + e.message);
+    showError("Engine test failed: " + errorMessage(e));
   }
 }
 window.testEngine = testEngine;
@@ -851,7 +873,7 @@ async function restartEngine() {
     state.engineRunning = true;
   } catch (e) {
     state.engineRestartState = "idle";
-    showError("Engine restart failed: " + e.message);
+    showError("Engine restart failed: " + errorMessage(e));
   }
 }
 window.restartEngine = restartEngine;
@@ -914,7 +936,7 @@ async function termExecReal(cmd) {
     // Drop trailing loading line, append output
     state.terminalLines = state.terminalLines.slice(0, -1).concat(outputLines);
   } catch (e) {
-    state.terminalLines = state.terminalLines.slice(0, -1).concat([{ kind: "error", text: e.message || "Command failed" }]);
+    state.terminalLines = state.terminalLines.slice(0, -1).concat([{ kind: "error", text: errorMessage(e, "Command failed") }]);
   }
 }
 
@@ -960,7 +982,7 @@ async function refreshFileTree() {
     const entries = await ipc.project.listDir(".");
     renderFileTree(entries || []);
   } catch (e) {
-    console.warn("File tree load error:", e.message);
+    console.warn("File tree load error:", errorMessage(e));
   }
 }
 
@@ -995,7 +1017,7 @@ async function openFile(path) {
     const content = await ipc.project.readFile(path);
     showFileViewer(path, content);
   } catch (e) {
-    showError("Could not open file: " + e.message);
+    showError("Could not open file: " + errorMessage(e));
   }
 }
 window.openFile = openFile;
@@ -1105,7 +1127,7 @@ async function createProject() {
       showError("Project was created, but Gate 0 was not signed automatically. Check governance status before building.");
     }
   } catch (e) {
-    const message = e?.message || String(e);
+    const message = errorMessage(e);
     setNewProjectStatus("Could not create project: " + message);
     showError("Could not create project: " + message);
   } finally {
@@ -1229,8 +1251,20 @@ async function finishOnboarding() {
     state.userRole = role;
 
     if (apiKey) {
-      await ipc.keychain.store(state.ai, apiKey);
-      await ipc.provider.test(state.ai, apiKey, state.aiModel);
+      try {
+        await ipc.keychain.store(state.ai, apiKey);
+        await refreshCurrentProviderModels(apiKey);
+        await ipc.provider.test(state.ai, apiKey, state.aiModel);
+      } catch (e) {
+        throw new Error(`Provider connection failed: ${errorMessage(e)}`);
+      }
+    } else if (state.ai === "ollama") {
+      try {
+        await refreshCurrentProviderModels(null);
+        await ipc.provider.test(state.ai, null, state.aiModel);
+      } catch (e) {
+        throw new Error(`Ollama connection failed: ${errorMessage(e)}`);
+      }
     }
 
     await ipc.provider.setActive(state.ai);
@@ -1254,18 +1288,18 @@ async function finishOnboarding() {
         await ipc.workspace.set(folder);
         state.workspace = folder;
       } catch (e) {
-        console.warn("workspace.set at onboarding failed:", e?.message || e);
+        console.warn("workspace.set at onboarding failed:", errorMessage(e));
       }
       try {
         await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
       } catch (e) {
-        console.warn("signal-init at onboarding failed:", e?.message || e);
+        console.warn("signal-init at onboarding failed:", errorMessage(e));
       }
       if (typeof window.instantiateGovernanceAndSignG0 === "function") {
         // fire-and-forget; the chat preamble's protocol context will
         // pick up the filled docs on its next reload
         window.instantiateGovernanceAndSignG0().catch((e) =>
-          console.warn("governance instantiation failed:", e?.message || e)
+          console.warn("governance instantiation failed:", errorMessage(e))
         );
       }
     }
@@ -1289,7 +1323,7 @@ async function finishOnboarding() {
 
     await bootApp();
   } catch (e) {
-    showError("Setup failed: " + e.message);
+    showError("Setup failed: " + errorMessage(e));
   }
 }
 window.finishOnboarding = finishOnboarding;

@@ -1,4 +1,20 @@
-import { userName, userRole, ai, obStep, provMoreOpen, keyLabel, keyVisible, apiKeyInput, budgetInputValue, workspacePath } from '../state';
+import {
+  userName,
+  userRole,
+  ai,
+  aiModel,
+  obStep,
+  provMoreOpen,
+  keyLabel,
+  keyVisible,
+  apiKeyInput,
+  budgetInputValue,
+  workspacePath,
+  providerModels,
+  providerModelsError,
+  providerModelsLoading,
+} from '../state';
+import { loadProviderModels } from '../services/providerModels';
 
 const OB_TAGS = [
   <>Every great thing starts with a spark.</>,
@@ -18,6 +34,25 @@ export function Onboarding() {
   const moreBtnLabel = provMoreOpen.value ? 'Show fewer' : '7 more providers';
   const keyVis = keyVisible.value;
   const keyTogIcon = keyVis ? 'ti-eye-off' : 'ti-eye';
+  const models = providerModels.value;
+  const selectedModel = aiModel.value;
+  const modelSelectValue = models.some((model) => model.id === selectedModel) ? selectedModel : '';
+  const modelHelp = providerModelsLoading.value
+    ? 'Fetching models from the selected provider...'
+    : providerModelsError.value
+    ? providerModelsError.value
+    : models.length > 0
+    ? `${models.length} models available from ${provider}.`
+    : 'Fetch models after entering the provider key.';
+
+  const chooseProvider = (providerId: string, label: string) => {
+    window.selectProv(providerId, '', label);
+    void loadProviderModels(providerId, apiKeyInput.value.trim() || null);
+  };
+
+  const fetchModels = () => {
+    void loadProviderModels(provider, apiKeyInput.value.trim() || null);
+  };
 
   return (
     <>
@@ -95,21 +130,21 @@ export function Onboarding() {
       <div className="ob-body">
         <div className="prov-label">Popular</div>
         <div className="prov-grid" id="provGrid">
-          <div className={provCardCls('anthropic')} data-ai="anthropic" data-model="claude-sonnet-4-6" data-key-label="Anthropic API key" onClick={() => window.selectProv('anthropic', 'claude-sonnet-4-6', 'Anthropic API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-asterisk"></i></div><div className="prov-tx"><div className="prov-nm">Claude</div><div className="prov-ds">Anthropic · sonnet-4-6</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('openai')} data-ai="openai" data-model="gpt-4o-mini" data-key-label="OpenAI API key" onClick={() => window.selectProv('openai', 'gpt-4o-mini', 'OpenAI API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-circle-dot"></i></div><div className="prov-tx"><div className="prov-nm">OpenAI</div><div className="prov-ds">OpenAI · gpt-4o-mini</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('gemini')} data-ai="gemini" data-model="gemini-2.5-flash" data-key-label="Gemini API key" onClick={() => window.selectProv('gemini', 'gemini-2.5-flash', 'Gemini API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-diamond"></i></div><div className="prov-tx"><div className="prov-nm">Gemini</div><div className="prov-ds">Google · 2.5 flash</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('qwen')} data-ai="qwen" data-model="qwen-plus" data-key-label="Qwen API key" onClick={() => window.selectProv('qwen', 'qwen-plus', 'Qwen API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-sparkles"></i></div><div className="prov-tx"><div className="prov-nm">Qwen</div><div className="prov-ds">Alibaba · qwen-plus</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('ollama')} data-ai="ollama" data-model="" data-key-label="Model name (e.g. llama3)" onClick={() => window.selectProv('ollama', '', 'Model name (e.g. llama3)')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink-2)' }}><i className="ti ti-cpu"></i></div><div className="prov-tx"><div className="prov-nm">Ollama</div><div className="prov-ds">Local · no key needed</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('anthropic')} data-ai="anthropic" data-key-label="Anthropic API key" onClick={() => chooseProvider('anthropic', 'Anthropic API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-asterisk"></i></div><div className="prov-tx"><div className="prov-nm">Claude</div><div className="prov-ds">Anthropic</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('openai')} data-ai="openai" data-key-label="OpenAI API key" onClick={() => chooseProvider('openai', 'OpenAI API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-circle-dot"></i></div><div className="prov-tx"><div className="prov-nm">OpenAI</div><div className="prov-ds">OpenAI</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('gemini')} data-ai="gemini" data-key-label="Gemini API key" onClick={() => chooseProvider('gemini', 'Gemini API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-diamond"></i></div><div className="prov-tx"><div className="prov-nm">Gemini</div><div className="prov-ds">Google</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('qwen')} data-ai="qwen" data-key-label="Qwen API key" onClick={() => chooseProvider('qwen', 'Qwen API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-sparkles"></i></div><div className="prov-tx"><div className="prov-nm">Qwen</div><div className="prov-ds">Alibaba</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('ollama')} data-ai="ollama" data-key-label="Ollama does not need an API key" onClick={() => chooseProvider('ollama', 'Ollama does not need an API key')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink-2)' }}><i className="ti ti-cpu"></i></div><div className="prov-tx"><div className="prov-nm">Ollama</div><div className="prov-ds">Local</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
         </div>
         <button className={moreBtnCls} id="provMoreBtn" onClick={() => window.toggleMoreProvs()}><i className={`ti ${moreBtnIcon}`}></i> {moreBtnLabel}</button>
         <div className="prov-grid" id="provMore" style={{ display: moreDisplay }}>
-          <div className={provCardCls('openrouter')} data-ai="openrouter" data-model="qwen/qwen-plus" data-key-label="OpenRouter API key" onClick={() => window.selectProv('openrouter', 'qwen/qwen-plus', 'OpenRouter API key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent)' }}><i className="ti ti-route"></i></div><div className="prov-tx"><div className="prov-nm">OpenRouter</div><div className="prov-ds">Multi-model gateway</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('deepseek')} data-ai="deepseek" data-model="deepseek-chat" data-key-label="DeepSeek API key" onClick={() => window.selectProv('deepseek', 'deepseek-chat', 'DeepSeek API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-search"></i></div><div className="prov-tx"><div className="prov-nm">DeepSeek</div><div className="prov-ds">deepseek-chat</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('mistral')} data-ai="mistral" data-model="mistral-large-latest" data-key-label="Mistral API key" onClick={() => window.selectProv('mistral', 'mistral-large-latest', 'Mistral API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-wind"></i></div><div className="prov-tx"><div className="prov-nm">Mistral</div><div className="prov-ds">mistral-large</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('groq')} data-ai="groq" data-model="llama-3.3-70b-versatile" data-key-label="Groq API key" onClick={() => window.selectProv('groq', 'llama-3.3-70b-versatile', 'Groq API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-bolt"></i></div><div className="prov-tx"><div className="prov-nm">Groq</div><div className="prov-ds">llama-3.3-70b · fast</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('cerebras')} data-ai="cerebras" data-model="llama-4-scout-17b-16e-instruct" data-key-label="Cerebras API key" onClick={() => window.selectProv('cerebras', 'llama-4-scout-17b-16e-instruct', 'Cerebras API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-brain"></i></div><div className="prov-tx"><div className="prov-nm">Cerebras</div><div className="prov-ds">llama-4 scout</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('together')} data-ai="together" data-model="meta-llama/Llama-3.3-70B-Instruct-Turbo" data-key-label="Together AI key" onClick={() => window.selectProv('together', 'meta-llama/Llama-3.3-70B-Instruct-Turbo', 'Together AI key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent-deep)' }}><i className="ti ti-topology-star"></i></div><div className="prov-tx"><div className="prov-nm">Together AI</div><div className="prov-ds">Llama-3.3-70B turbo</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
-          <div className={provCardCls('xai')} data-ai="xai" data-model="grok-4" data-key-label="xAI API key" onClick={() => window.selectProv('xai', 'grok-4', 'xAI API key')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink)' }}><i className="ti ti-x"></i></div><div className="prov-tx"><div className="prov-nm">xAI</div><div className="prov-ds">Grok 4</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('openrouter')} data-ai="openrouter" data-key-label="OpenRouter API key" onClick={() => chooseProvider('openrouter', 'OpenRouter API key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent)' }}><i className="ti ti-route"></i></div><div className="prov-tx"><div className="prov-nm">OpenRouter</div><div className="prov-ds">Multi-model gateway</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('deepseek')} data-ai="deepseek" data-key-label="DeepSeek API key" onClick={() => chooseProvider('deepseek', 'DeepSeek API key')}><div className="prov-ic" style={{ 'background': 'var(--info-soft)', 'color': 'var(--info-deep)' }}><i className="ti ti-search"></i></div><div className="prov-tx"><div className="prov-nm">DeepSeek</div><div className="prov-ds">DeepSeek</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('mistral')} data-ai="mistral" data-key-label="Mistral API key" onClick={() => chooseProvider('mistral', 'Mistral API key')}><div className="prov-ic" style={{ 'background': 'var(--clay-soft)', 'color': 'var(--clay-deep)' }}><i className="ti ti-wind"></i></div><div className="prov-tx"><div className="prov-nm">Mistral</div><div className="prov-ds">Mistral</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('groq')} data-ai="groq" data-key-label="Groq API key" onClick={() => chooseProvider('groq', 'Groq API key')}><div className="prov-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success-deep)' }}><i className="ti ti-bolt"></i></div><div className="prov-tx"><div className="prov-nm">Groq</div><div className="prov-ds">Groq</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('cerebras')} data-ai="cerebras" data-key-label="Cerebras API key" onClick={() => chooseProvider('cerebras', 'Cerebras API key')}><div className="prov-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-brain"></i></div><div className="prov-tx"><div className="prov-nm">Cerebras</div><div className="prov-ds">Cerebras</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('together')} data-ai="together" data-key-label="Together AI key" onClick={() => chooseProvider('together', 'Together AI key')}><div className="prov-ic" style={{ 'background': 'var(--accent-soft)', 'color': 'var(--accent-deep)' }}><i className="ti ti-topology-star"></i></div><div className="prov-tx"><div className="prov-nm">Together AI</div><div className="prov-ds">Together</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
+          <div className={provCardCls('xai')} data-ai="xai" data-key-label="xAI API key" onClick={() => chooseProvider('xai', 'xAI API key')}><div className="prov-ic" style={{ 'background': 'var(--surface-deep)', 'color': 'var(--ink)' }}><i className="ti ti-x"></i></div><div className="prov-tx"><div className="prov-nm">xAI</div><div className="prov-ds">xAI</div></div><div className="ai-rd"><i className="ti ti-check"></i></div></div>
         </div>
         <div className="ob-divider"></div>
         <label className="field-label" id="keyLabel">{keyLabel.value}</label>
@@ -124,6 +159,27 @@ export function Onboarding() {
           />
           <button className="key-tog" onClick={() => window.toggleKey()} id="keyTog" aria-label="Show or hide key"><i className={`ti ${keyTogIcon}`}></i></button>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '7px' }}>
+          <label className="field-label" style={{ marginBottom: 0 }}>Model</label>
+          <button className="btn btn-soft btn-compact" type="button" onClick={fetchModels} disabled={providerModelsLoading.value}>
+            <i className={`ti ${providerModelsLoading.value ? 'ti-loader-2' : 'ti-refresh'}`} style={providerModelsLoading.value ? { animation: 'spin 1s linear infinite' } : undefined}></i>
+            Fetch models
+          </button>
+        </div>
+        <select
+          className="select-input"
+          value={modelSelectValue}
+          disabled={models.length === 0}
+          onInput={(e) => { aiModel.value = (e.target as HTMLSelectElement).value; }}
+          style={{ marginBottom: '6px' }}
+        >
+          {models.length === 0 ? (
+            <option value="">{providerModelsLoading.value ? 'Loading models...' : 'No models loaded'}</option>
+          ) : (
+            models.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)
+          )}
+        </select>
+        <div className="hint" style={{ marginBottom: '12px' }}><i className="ti ti-info-circle"></i> {modelHelp}</div>
         <label className="field-label">Monthly spend cap <span style={{ 'fontWeight': '400', 'color': 'var(--ink-3)' }}>(optional)</span></label>
         <div className="budget-wrap">
           <span className="budget-prefix">$</span>

@@ -16,7 +16,7 @@ The app-side journey now exists:
 
 - Choose a project folder.
 - Connect AI with a saved key or local Ollama.
-- Fetch model names and select one, or choose "Other model" and type it.
+- Fetch model names and select one from the provider list.
 - Chat with the selected AI provider.
 - Run `/signal-*` commands through the bundled engine.
 - Set up and check a project.
@@ -51,7 +51,7 @@ These were the major product gaps found during the installed-app review:
 
 - The main screen could feel locked because the workspace did not scroll correctly.
 - The old Guide kept previous phases taking most of the screen instead of behaving like tabs.
-- Model names had to be typed manually instead of fetched and selected.
+- Model names were not consistently fetched and selected from provider lists.
 - Settings looked read-only and did not expose enough operational controls.
 - Users could not easily find where secrets or saved AI key state lived.
 - A saved key could look connected even when the provider was not actually tested.
@@ -96,7 +96,7 @@ Completed in `signalos-app` on 2026-05-14:
 - Dashboard is now a real view with project, AI, engine, next action, gates, and files.
 - Help/Guide is available in-app for first-run and recovery.
 - Gate signing is visible in the UI and accepts a signer name.
-- AI setup supports provider selection, key save, fetched models, model picker, and manual "Other model" entry.
+- AI setup supports provider selection, key save, fetched models, and model selection from the fetched provider list.
 - AI readiness requires a real provider test.
 - Settings exposes provider, model, key replacement, saved-key delete, engine diagnostics, updates, and budget controls.
 - Secrets has a dedicated page for saving `.env.local`, `.env`, or `.env.development` values without exposing raw values.
@@ -286,7 +286,7 @@ Pass criteria:
 - Choose a fresh project folder.
 - Connect AI.
 - Fetch models.
-- Select a model or type "Other model".
+- Select a fetched model.
 - Send a plain chat message.
 - Run `/signal-init`.
 - Confirm created files are visible in the app.
@@ -342,7 +342,7 @@ For cloud AI:
 2. Select the AI service.
 3. Paste the API key once.
 4. Fetch models.
-5. Select a fetched model, or choose "Other model" and type one.
+5. Select a fetched model.
 6. Save and test the connection.
 
 Expected result:
@@ -356,7 +356,7 @@ For local AI:
 1. Install and start Ollama.
 2. Pull a model in Ollama.
 3. Select Ollama in SignalOS.
-4. Fetch models or type the local model name.
+4. Fetch models and select the local model.
 5. Save and test.
 
 ### 4. Chat
@@ -484,7 +484,7 @@ A saved key is not enough. Run provider test again:
 
 ### Model Is Not Listed
 
-Choose "Other model" and type the model name manually.
+Fetch the provider model list and select the model from the list.
 
 ### Setup Says Done But Nothing Is Visible
 
@@ -567,7 +567,7 @@ Before sharing externally, all of these must pass:
 - App launches without source repos.
 - Project selection works.
 - AI setup works with fetched model selection.
-- Manual "Other model" works.
+- Model selection works from fetched provider lists.
 - Plain chat works.
 - `/signal-init` works.
 - `/signal-status` works.
