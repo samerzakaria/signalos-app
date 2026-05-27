@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.12] - 2026-05-27
+
+### Internal release cleanup
+
+- Include the post-release Rust formatting fix and secret-scanner false-positive cleanup in the release tag.
+
 ## [3.0.0-internal.11] - 2026-05-27
 
 ### Internal onboarding model picker fix
