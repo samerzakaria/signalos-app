@@ -15,6 +15,7 @@ import {
   providerModelsLoading,
 } from '../state';
 import { loadProviderModels } from '../services/providerModels';
+import { stageClass } from './viewShell';
 
 const OB_TAGS = [
   <>Every great thing starts with a spark.</>,
@@ -75,7 +76,7 @@ export function Onboarding() {
 
   return (
     <>
-<div id="onboarding" className="stage active">
+<div id="onboarding" className={stageClass('onboarding')}>
   <div className="ob-panel">
     <div className="ob-brand">
       <div className="ob-brand-mark">

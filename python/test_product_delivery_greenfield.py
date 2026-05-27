@@ -243,7 +243,7 @@ class TestAutoProfileDetection:
 
         assert result["profile"] == "react-vite"
 
-    def test_selects_generic_for_empty_repo(self, tmp_path):
+    def test_selects_react_vite_for_empty_greenfield_repo(self, tmp_path):
         with mock.patch(
             "signalos_lib.product.scaffold.lifecycle.init_product_repo",
             side_effect=_mock_init_success,
@@ -256,7 +256,7 @@ class TestAutoProfileDetection:
                 mode="greenfield",
             )
 
-        assert result["profile"] == "generic"
+        assert result["profile"] == "react-vite"
 
 
 # ---------------------------------------------------------------------------

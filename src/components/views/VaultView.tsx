@@ -1,5 +1,6 @@
 import { secretsList, revealedSecrets, copiedSecret, bulkImportOpen, bulkImportText, bulkImportDiff, bulkImportError, bulkImportAllowRemovals, BulkDiffResult } from '../../state';
 import { secrets } from '../../js/ipc.js';
+import { viewClass } from '../viewShell';
 
 function BulkImportModal() {
   const open = bulkImportOpen.value;
@@ -56,47 +57,50 @@ function BulkImportModal() {
   };
 
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeBulk(); }}>
-      <div className="modal-box" style={{ maxWidth: '560px' }}>
+    <div
+      className="modal-overlay open bulk-import-overlay"
+      data-testid="bulk-import-modal"
+      onClick={(e) => { if (e.target === e.currentTarget) closeBulk(); }}
+    >
+      <div className="modal bulk-import-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-import-title">
         <div className="modal-head">
-          <h3>Import .env</h3>
+          <h3 id="bulk-import-title">Import .env</h3>
           <button className="ico" onClick={closeBulk} aria-label="Close"><i className="ti ti-x"></i></button>
         </div>
-        <div className="modal-body" style={{ padding: '16px' }}>
-          <p style={{ fontSize: '13px', color: 'var(--ink-3)', marginBottom: '12px' }}>
+        <div className="modal-body bulk-import-body">
+          <p className="bulk-import-copy">
             Paste a <code>.env</code> block below. SignalOS diffs it against the current file and shows what will change. Nothing is written until you confirm.
           </p>
           <textarea
             className="env-textarea"
-            style={{ width: '100%', minHeight: '140px', fontFamily: 'var(--mono)', fontSize: '12px', padding: '10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--ink-1)', resize: 'vertical' }}
             placeholder={'DATABASE_URL=postgres://...\nSTRIPE_SECRET_KEY=sk_test_...\nNEXT_PUBLIC_API_URL=http://localhost:3000'}
             value={text}
             onInput={(e) => { bulkImportText.value = (e.target as HTMLTextAreaElement).value; }}
           />
-          <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+          <div className="bulk-import-actions">
             <button className="btn btn-soft" onClick={computeDiff}>Compute diff</button>
           </div>
 
           {error && (
-            <div style={{ marginTop: '10px', padding: '8px 12px', background: 'var(--red-bg, #ffeaea)', color: 'var(--red, #c00)', borderRadius: '6px', fontSize: '12px' }}>
+            <div className="bulk-import-error">
               {error}
             </div>
           )}
 
           {diff && (
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ display: 'grid', gap: '4px', fontSize: '12px', fontFamily: 'var(--mono)' }}>
-                {diff.added.map((n) => <div key={n} style={{ color: 'var(--green, #2a7)' }}>+ {n}</div>)}
-                {diff.changed.map((n) => <div key={n} style={{ color: 'var(--amber, #c80)' }}>~ {n}</div>)}
-                {diff.unchanged.map((n) => <div key={n} style={{ color: 'var(--ink-3)' }}>= {n}</div>)}
-                {diff.removed.map((n) => <div key={n} style={{ color: 'var(--red, #c00)' }}>- {n} (will be removed)</div>)}
+            <div className="bulk-import-diff">
+              <div className="bulk-import-diff-list">
+                {diff.added.map((n) => <div className="bulk-diff-row added" key={n}>+ {n}</div>)}
+                {diff.changed.map((n) => <div className="bulk-diff-row changed" key={n}>~ {n}</div>)}
+                {diff.unchanged.map((n) => <div className="bulk-diff-row unchanged" key={n}>= {n}</div>)}
+                {diff.removed.map((n) => <div className="bulk-diff-row removed" key={n}>- {n} (will be removed)</div>)}
                 {diff.added.length === 0 && diff.changed.length === 0 && diff.removed.length === 0 && (
-                  <div style={{ color: 'var(--ink-3)' }}>No changes.</div>
+                  <div className="bulk-diff-row unchanged">No changes.</div>
                 )}
               </div>
 
               {diff.removed.length > 0 && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '10px', fontSize: '12px', cursor: 'pointer' }}>
+                <label className="bulk-import-removal">
                   <input
                     type="checkbox"
                     checked={allowRemovals}
@@ -106,7 +110,7 @@ function BulkImportModal() {
                 </label>
               )}
 
-              <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <div className="bulk-import-footer">
                 <button className="btn btn-ghost" onClick={closeBulk}>Cancel</button>
                 <button className="btn btn-primary" onClick={applyBulk}>Apply changes</button>
               </div>
@@ -127,7 +131,7 @@ export function VaultView() {
 
   return (
     <>
-<div className="view" data-view="vault">
+<div className={viewClass('vault')} data-view="vault">
         <div className="page-head">
           <h1>The Vault</h1>
           <p>Every secret key, sealed tight. Not even SignalOS can read them.</p>

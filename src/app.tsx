@@ -21,6 +21,7 @@ import { AddSecretModal } from './components/AddSecretModal';
 import { NewProjectModal } from './components/NewProjectModal';
 import { OverrideModal } from './components/OverrideModal';
 import { ExitModal } from './components/ExitModal';
+import { stageClass } from './components/viewShell';
 
 export function App() {
   return (
@@ -28,7 +29,7 @@ export function App() {
       <Titlebar />
       <div className="window-body">
         <Onboarding />
-        <div id="app" className="stage">
+        <div id="app" className={stageClass('app')}>
           <Sidebar />
           <section className="main">
             <Toolbar />

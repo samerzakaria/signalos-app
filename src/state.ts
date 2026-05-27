@@ -12,6 +12,8 @@ export interface Provider {
 
 export const tab = signal<string>("dashboard");
 export const sbTab = signal<string>("projects");
+export const onboardingVisible = signal<boolean>(true);
+export const appVisible = signal<boolean>(false);
 export const ai = signal<string>("anthropic");
 export const aiModel = signal<string>("");
 export const userName = signal<string>("");

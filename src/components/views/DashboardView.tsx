@@ -16,6 +16,7 @@ import {
   isGateSigned,
 } from '../GateTimeline';
 import { VelocityPanel } from './VelocityPanel';
+import { viewClass } from '../viewShell';
 
 export function DashboardView() {
   const gates = govGatesList.value;
@@ -96,7 +97,7 @@ export function DashboardView() {
 
   return (
     <>
-<div className="view active" data-view="dashboard">
+<div className={viewClass('dashboard')} data-view="dashboard">
         <div className="page-head">
           <h1>Where we are</h1>
           <p>SignalOS breaks each build into gates. A gate opens only when its work is done, its checks pass, and you sign it.</p>

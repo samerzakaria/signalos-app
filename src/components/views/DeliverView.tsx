@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { onSidecarProgress, signal as signalIpc } from '../../js/ipc.js';
 import { workspace } from '../../js/ipc.js';
+import { viewClass } from '../viewShell';
 
 type DeliveryStep = 'prompt' | 'intent' | 'design' | 'progress' | 'closeout';
 
@@ -47,7 +48,7 @@ const INITIAL_STATE: DeliverState = {
   step: 'prompt',
   prompt: '',
   name: '',
-  profile: 'auto',
+  profile: 'react-vite',
   mode: 'auto',
   deploy: 'none',
   loading: false,
@@ -119,7 +120,20 @@ const friendlyError = (message: string): string => {
 
 const parseIpcJson = (raw: unknown): any => {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch (firstError) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(text.slice(start, end + 1));
+      } catch {
+        // Fall through to the original parse error; it points to the real payload.
+      }
+    }
+    throw firstError;
+  }
 };
 
 const textItems = (items: unknown): string[] => {
@@ -425,8 +439,8 @@ export function DeliverView() {
             onChange={(e) => updateState({ profile: (e.target as HTMLSelectElement).value })}
             data-testid="deliver-profile-select"
           >
-            <option value="auto">Auto-detect</option>
             <option value="react-vite">React + Vite</option>
+            <option value="auto">Auto-detect</option>
             <option value="generic">Generic</option>
           </select>
         </div>
@@ -886,7 +900,7 @@ export function DeliverView() {
   };
 
   return (
-    <div className="view" data-view="deliver" data-testid="deliver-view">
+    <div className={viewClass('deliver')} data-view="deliver" data-testid="deliver-view">
       {renderPhaseStrip()}
       <div className="deliver-content">
         {state.step === 'prompt' ? renderPromptStep() : null}

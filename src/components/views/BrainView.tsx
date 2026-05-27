@@ -1,4 +1,5 @@
 import { brainList, brainFilter } from '../../state';
+import { viewClass } from '../viewShell';
 
 export function BrainView() {
   const entries = brainList.value;
@@ -7,7 +8,7 @@ export function BrainView() {
 
   return (
     <>
-<div className="view" data-view="brain">
+<div className={viewClass('brain')} data-view="brain">
         <div className="page-head">
           <h1>Brain</h1>
           <p>Notes, decisions, and artifacts saved across your project.</p>

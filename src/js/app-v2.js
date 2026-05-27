@@ -34,11 +34,15 @@ document.addEventListener("DOMContentLoaded", () => {
 async function boot() {
   if (wizardFinished()) {
     // Skip onboarding — go straight to app
+    state.onboardingVisible = false;
+    state.appVisible = true;
     document.getElementById("onboarding").classList.remove("active");
     document.getElementById("app").classList.add("active");
     await bootApp();
   } else {
     // Show onboarding
+    state.onboardingVisible = true;
+    state.appVisible = false;
     document.getElementById("onboarding").classList.add("active");
     document.getElementById("app").classList.remove("active");
     initOnboarding();
@@ -182,6 +186,7 @@ async function switchTab(tab) {
   );
   // Update breadcrumb view name
   const names = {
+    deliver: "Deliver",
     build: "Build",
     preview: "Preview",
     terminal: "Terminal",
@@ -1424,6 +1429,8 @@ async function finishOnboarding() {
       finishedAt: new Date().toISOString(),
     }));
 
+    state.onboardingVisible = false;
+    state.appVisible = true;
     document.getElementById("onboarding").classList.remove("active");
     document.getElementById("app").classList.add("active");
 

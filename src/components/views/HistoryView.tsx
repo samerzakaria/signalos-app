@@ -1,11 +1,12 @@
 import { auditList } from '../../state';
+import { viewClass } from '../viewShell';
 
 export function HistoryView() {
   const entries = auditList.value;
 
   return (
     <>
-<div className="view" data-view="history">
+<div className={viewClass('history')} data-view="history">
         <div className="page-head">
           <h1>History</h1>
           <p>Every build run, gate signing, and audit event for this project.</p>

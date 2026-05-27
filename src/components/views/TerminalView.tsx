@@ -1,4 +1,5 @@
 import { engineRunning, workspacePath, terminalLines, termInputValue } from '../../state';
+import { viewClass } from '../viewShell';
 
 export function TerminalView() {
   const running = engineRunning.value;
@@ -16,7 +17,7 @@ export function TerminalView() {
 
   return (
     <>
-<div className="view" data-view="terminal">
+<div className={viewClass('terminal')} data-view="terminal">
         <div className="term-wrap">
           <div className={bannerCls}>
             <i className={`ti ${bannerIcon}`}></i>

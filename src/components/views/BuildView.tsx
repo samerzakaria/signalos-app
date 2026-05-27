@@ -3,6 +3,7 @@ import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../sta
 import { TestDebtPanel } from '../TestDebtPanel';
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
+import { viewClass } from '../viewShell';
 
 export function BuildView() {
   const bubbles = chatBubbles.value;
@@ -12,7 +13,7 @@ export function BuildView() {
 
   return (
     <>
-<div className="view" data-view="build">
+<div className={viewClass('build')} data-view="build">
 
         <div className="phase-strip">
           <div className="phase-node">

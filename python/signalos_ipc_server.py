@@ -152,6 +152,31 @@ def handle(req: dict) -> dict:
 
 
 def route(req_id: str, command: str, args: list[str], project_id: str = "default") -> dict:
+    terminal_alias = command.strip().lower()
+    if terminal_alias in {"help", "signalos help"}:
+        return ok(req_id, output=terminal_help_text())
+
+    if terminal_alias in {"signalos status", "/signal-status"}:
+        return ok(req_id, output=dispatch_cli("signal-status", args, req_id, project_id=project_id))
+
+    if terminal_alias in {"signalos check", "/signal-release-readiness"}:
+        return ok(req_id, output=dispatch_cli("signal-release-readiness", args, req_id, project_id=project_id))
+
+    if terminal_alias in {"signalos gates", "/state:gates"}:
+        return ok(req_id, output=json.dumps(get_gate_states(project_id=project_id), indent=2))
+
+    if terminal_alias == "git status":
+        return ok(req_id, output=git_status_text(Path.cwd()))
+
+    if terminal_alias == "npm run dev":
+        return ok(
+            req_id,
+            output=(
+                "Use the Preview tab to start the product dev server. "
+                "SignalOS runs npm through the governed preview runner, not this diagnostic terminal."
+            ),
+        )
+
     direct_cli_commands = {"deliver", "deliver-intent", "deliver-design", "deliver-design-preview"}
     if command in direct_cli_commands or command.startswith("/signal-") or command.startswith("signal-"):
         return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id, project_id=project_id))
@@ -306,6 +331,46 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
         ))
 
     return err(req_id, f"Unknown command: {command}")
+
+
+def terminal_help_text() -> str:
+    return "\n".join([
+        "Supported commands:",
+        "  help              show this list",
+        "  signalos status   show governance/workspace status",
+        "  signalos check    run release-readiness checks",
+        "  signalos gates    show gate status",
+        "  npm run dev       start the Preview tab dev server",
+        "  git status        show branch and working tree status",
+        "  clear             clear terminal output",
+        "",
+        "This terminal is a governed SignalOS command surface, not an unrestricted OS shell.",
+    ])
+
+
+def git_status_text(repo_root: Path) -> str:
+    if not (repo_root / ".git").exists():
+        return "No git repository is active for this workspace."
+
+    def _git(*argv: str) -> str:
+        proc = subprocess.run(
+            ["git", *argv],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            return (proc.stderr or proc.stdout or "").strip()
+        return (proc.stdout or "").strip()
+
+    branch = _git("branch", "--show-current") or "(detached)"
+    short = _git("status", "--short")
+    return "\n".join([
+        f"branch: {branch}",
+        "clean: yes" if not short else "clean: no",
+        short or "working tree clean",
+    ])
 
 
 def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: str = "default") -> str:

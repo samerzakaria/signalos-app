@@ -27,6 +27,10 @@ function mockRunOnce(payload: unknown) {
   );
 }
 
+function mockRunRaw(raw: string) {
+  (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(raw);
+}
+
 function mockRunError(message: string) {
   (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
     new Error(message),
@@ -103,9 +107,26 @@ describe('DeliverView', () => {
     const select = screen.getByTestId('deliver-profile-select') as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
     const values = options.map((o) => o.value);
+    expect(select.value).toBe('react-vite');
     expect(values).toContain('auto');
     expect(values).toContain('react-vite');
     expect(values).toContain('generic');
+  });
+
+  it('parses JSON even when a backend command prints setup logs first', async () => {
+    mockRunRaw('SignalOS setup complete\n{"entities":["Task"],"workflows":["Add task"],"surfaces":[],"questions":[],"assumptions":[]}');
+
+    render(<DeliverView />);
+
+    fireEvent.input(screen.getByTestId('deliver-prompt-input'), {
+      target: { value: 'Build a task app' },
+    });
+    fireEvent.click(screen.getByTestId('deliver-start-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-intent')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Task')).toBeInTheDocument();
   });
 
   it('mode selector has auto, greenfield, and adopt options', () => {

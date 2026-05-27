@@ -215,12 +215,23 @@ def run_scaffold(
     if resolved_mode == "auto":
         resolved_mode = lifecycle.detect_mode(repo_root)
 
+    # For a brand-new product, "auto" must choose a runnable product shell.
+    # Detecting an empty directory as generic only produces governance files,
+    # which is correct for adoption safety but wrong for greenfield delivery.
+    profile_detected = False
+    if resolved_profile == "auto":
+        if resolved_mode == "greenfield":
+            resolved_profile = "react-vite"
+        else:
+            resolved_profile = stacks.detect_profile(repo_root)
+            profile_detected = True
+
     # 2. Init product repo
     try:
         init_result = lifecycle.init_product_repo(
             repo_root=repo_root,
             mode=resolved_mode,
-            profile=resolved_profile if resolved_profile != "auto" else "generic",
+            profile=resolved_profile,
             product_name=product_name,
         )
         if not init_result["success"]:
@@ -262,12 +273,6 @@ def run_scaffold(
     # 4. Match or use provided blueprint
     if resolved_blueprint is None:
         resolved_blueprint = blueprint_registry.match_blueprint(product_intent)
-
-    # 5. Detect or use provided profile
-    profile_detected = False
-    if resolved_profile == "auto":
-        resolved_profile = stacks.detect_profile(repo_root)
-        profile_detected = True
 
     # 6. Run adapter scaffold (skip for adopt mode - preserve existing files)
     if resolved_mode != "adopt":

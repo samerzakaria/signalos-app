@@ -1,4 +1,5 @@
 import { previewDevice, previewUrl, previewStatus, workspacePath } from '../../state';
+import { viewClass } from '../viewShell';
 
 export function PreviewView() {
   const device = previewDevice.value;
@@ -17,7 +18,7 @@ export function PreviewView() {
 
   return (
     <>
-<div className="view" data-view="preview">
+<div className={viewClass('preview')} data-view="preview">
         <div className="page-head">
           <h1>Live preview</h1>
           <p>See your app the way other people will. It updates as we build.</p>

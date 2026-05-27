@@ -6,6 +6,7 @@ import {
   productProfiles, recentWorkspaces, selectedProductProfile,
 } from '../../state';
 import { loadProviderModels } from '../../services/providerModels';
+import { viewClass } from '../viewShell';
 
 const PROVIDERS = [
   { id: 'anthropic', label: 'Claude (Anthropic)' },
@@ -65,7 +66,7 @@ export function SettingsView() {
 
   return (
     <>
-<div className="view" data-view="settings">
+<div className={viewClass('settings')} data-view="settings">
         <div className="page-head">
           <h1>Settings</h1>
           <p>Workspace, AI, spend cap, and engine diagnostics.</p>

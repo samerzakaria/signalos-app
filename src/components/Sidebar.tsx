@@ -1,5 +1,6 @@
 import { userName, userRole, govGatesList, auditList, fileTreeEntries, recentlyChangedFiles, workspacePath } from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
+import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
 
 export function Sidebar() {
   const tree = fileTreeEntries.value;
@@ -17,21 +18,21 @@ export function Sidebar() {
 
     
     <div className="sb-tabs">
-      <div className="sb-tab active" onClick={() => window.switchSbTab('projects')}>Projects</div>
-      <div className="sb-tab" onClick={() => window.switchSbTab('files')}>Files</div>
-      <div className="sb-tab" onClick={() => window.switchSbTab('gov')}>Gov</div>
+      <div className={sidebarTabClass('projects')} onClick={() => window.switchSbTab('projects')}>Projects</div>
+      <div className={sidebarTabClass('files')} onClick={() => window.switchSbTab('files')}>Files</div>
+      <div className={sidebarTabClass('gov')} onClick={() => window.switchSbTab('gov')}>Gov</div>
     </div>
 
     
-    <div className="sb-panel active" id="sb-projects">
+    <div className={sidebarPanelClass('projects')} id="sb-projects">
       <div className="nav accent" onClick={() => window.openNewProject()}><i className="ti ti-plus"></i> New project</div>
       <div className="sb-label">Tools</div>
-      <div className="nav" onClick={() => window.switchTab('vault')}><i className="ti ti-shield-lock"></i> Vault</div>
-      <div className="nav" onClick={() => window.switchTab('brain')}><i className="ti ti-brain"></i> Brain</div>
-      <div className="nav" onClick={() => window.switchTab('history')}><i className="ti ti-history"></i> History</div>
+      <div className={sidebarNavClass('vault')} data-tab="vault" onClick={() => window.switchTab('vault')}><i className="ti ti-shield-lock"></i> Vault</div>
+      <div className={sidebarNavClass('brain')} data-tab="brain" onClick={() => window.switchTab('brain')}><i className="ti ti-brain"></i> Brain</div>
+      <div className={sidebarNavClass('history')} data-tab="history" onClick={() => window.switchTab('history')}><i className="ti ti-history"></i> History</div>
       <div className="sb-label">Account</div>
-      <div className="nav" onClick={() => window.switchTab('settings')}><i className="ti ti-settings"></i> Settings</div>
-      <div className="nav" onClick={() => window.switchTab('help')}><i className="ti ti-help-circle"></i> Help</div>
+      <div className={sidebarNavClass('settings')} data-tab="settings" onClick={() => window.switchTab('settings')}><i className="ti ti-settings"></i> Settings</div>
+      <div className={sidebarNavClass('help')} data-tab="help" onClick={() => window.switchTab('help')}><i className="ti ti-help-circle"></i> Help</div>
       <div className="sb-user" style={{ 'marginTop': '8px' }}>
         <div className="sb-av" id="sbAvatar">{userName.value ? userName.value[0].toUpperCase() : 'D'}</div>
         <div className="sb-ui">
@@ -42,7 +43,7 @@ export function Sidebar() {
     </div>
 
     
-    <div className="sb-panel" id="sb-files">
+    <div className={sidebarPanelClass('files')} id="sb-files">
       <div className="sb-search">
         <i className="ti ti-search"></i>
         <input placeholder="Filter files…"/>
@@ -74,7 +75,7 @@ export function Sidebar() {
     </div>
 
     
-    <div className="sb-panel" id="sb-gov">
+    <div className={sidebarPanelClass('gov')} id="sb-gov">
       <div className="gov-wave">
         <div className="gov-wave-label">Current wave</div>
         <div className="gov-wave-name">{govGatesList.value.length > 0 ? 'Active' : 'No wave loaded'}</div>

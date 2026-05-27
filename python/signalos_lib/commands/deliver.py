@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
@@ -145,23 +147,35 @@ def cmd_deliver_design_preview(args: argparse.Namespace) -> int:
 
 def cmd_deliver(args: argparse.Namespace) -> int:
     """Execute the deliver command."""
+    import json as _json
+
     from ..product.delivery import run_delivery
 
-    closeout = run_delivery(
-        prompt=args.prompt,
-        name=args.name,
-        repo_root=Path(args.repo_root) if args.repo_root else None,
-        target_root=Path(args.target_root) if args.target_root else None,
-        mode=args.mode,
-        profile=args.profile,
-        blueprint=args.blueprint,
-        deploy=args.deploy,
-        yes=args.yes,
-        dry_run=args.dry_run,
-        max_repair_cycles=args.max_repair_cycles,
-        agent_mode=args.agent,
-        json_output=args.as_json,
-    )
+    def _run() -> dict:
+        return run_delivery(
+            prompt=args.prompt,
+            name=args.name,
+            repo_root=Path(args.repo_root) if args.repo_root else None,
+            target_root=Path(args.target_root) if args.target_root else None,
+            mode=args.mode,
+            profile=args.profile,
+            blueprint=args.blueprint,
+            deploy=args.deploy,
+            yes=args.yes,
+            dry_run=args.dry_run,
+            max_repair_cycles=args.max_repair_cycles,
+            agent_mode=args.agent,
+            json_output=args.as_json,
+        )
+
+    if args.as_json:
+        captured = StringIO()
+        with redirect_stdout(captured):
+            closeout = _run()
+        _json.dump(closeout, sys.stdout, indent=2, ensure_ascii=False)
+        print()
+    else:
+        closeout = _run()
 
     level = closeout.get("closure_level", "unknown")
     if not args.as_json:

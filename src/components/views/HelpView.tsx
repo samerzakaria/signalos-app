@@ -1,7 +1,9 @@
+import { viewClass } from '../viewShell';
+
 export function HelpView() {
   return (
     <>
-<div className="view" data-view="help">
+<div className={viewClass('help')} data-view="help">
         <div className="page-head">
           <h1>Help &amp; Reference</h1>
           <p>Quick-start guides, slash commands, and the gate model explained.</p>

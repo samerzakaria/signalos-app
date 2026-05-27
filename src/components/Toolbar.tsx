@@ -1,4 +1,5 @@
-import { enforcementRules, enfOpen, waveFrozen } from '../state';
+import { enforcementRules, enfOpen, tab, waveFrozen } from '../state';
+import { topTabClass } from './viewShell';
 
 export function Toolbar() {
   const rules = enforcementRules.value;
@@ -23,6 +24,19 @@ export function Toolbar() {
   const freezeLabel = waveFrozen.value ? 'Unfreeze wave' : 'Freeze wave';
   const freezeIcon = waveFrozen.value ? 'ti-sun' : 'ti-snowflake';
   const freezeHandler = waveFrozen.value ? () => window.unfreezeWave() : () => window.freezeWave();
+  const activeTab = tab.value;
+  const viewNames: Record<string, string> = {
+    deliver: 'Deliver',
+    build: 'Build',
+    preview: 'Preview',
+    terminal: 'Terminal',
+    dashboard: 'Dashboard',
+    vault: 'Vault',
+    settings: 'Settings',
+    help: 'Help',
+    history: 'History',
+    brain: 'Brain',
+  };
 
   const popSub = rules.length === 0
     ? 'No rules loaded'
@@ -35,14 +49,14 @@ export function Toolbar() {
         <i className="ti ti-pizza"></i>
         <strong>My pizza game</strong>
         <i className="ti ti-chevron-right"></i>
-        <span id="viewName">Dashboard</span>
+        <span id="viewName">{viewNames[activeTab] || activeTab}</span>
       </div>
       <div className="seg">
-        <div className="seg-i" data-tab="deliver" onClick={() => window.switchTab('deliver')}><i className="ti ti-rocket"></i> Deliver</div>
-        <div className="seg-i" data-tab="build" onClick={() => window.switchTab('build')}><i className="ti ti-message-circle-2"></i> Build</div>
-        <div className="seg-i" data-tab="preview" onClick={() => window.switchTab('preview')}><i className="ti ti-device-desktop"></i> Preview</div>
-        <div className="seg-i" data-tab="terminal" onClick={() => window.switchTab('terminal')}><i className="ti ti-terminal-2"></i> Terminal</div>
-        <div className="seg-i active" data-tab="dashboard" onClick={() => window.switchTab('dashboard')}><i className="ti ti-layout-dashboard"></i> Dashboard</div>
+        <div className={topTabClass('deliver')} data-tab="deliver" onClick={() => window.switchTab('deliver')}><i className="ti ti-rocket"></i> Deliver</div>
+        <div className={topTabClass('build')} data-tab="build" onClick={() => window.switchTab('build')}><i className="ti ti-message-circle-2"></i> Build</div>
+        <div className={topTabClass('preview')} data-tab="preview" onClick={() => window.switchTab('preview')}><i className="ti ti-device-desktop"></i> Preview</div>
+        <div className={topTabClass('terminal')} data-tab="terminal" onClick={() => window.switchTab('terminal')}><i className="ti ti-terminal-2"></i> Terminal</div>
+        <div className={topTabClass('dashboard')} data-tab="dashboard" onClick={() => window.switchTab('dashboard')}><i className="ti ti-layout-dashboard"></i> Dashboard</div>
       </div>
       <div className="toolbar-right">
 
