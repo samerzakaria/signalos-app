@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/preact';
 
 vi.mock('../../js/ipc.js', () => ({
+  onSidecarProgress: vi.fn(() => () => {}),
   signal: { runAndWait: vi.fn() },
   workspace: { set: vi.fn() },
 }));

@@ -915,19 +915,100 @@ function pushTermLine(line) {
   state.terminalLines = [...state.terminalLines, line];
 }
 
+function termOutput(text) {
+  const raw = Array.isArray(text)
+    ? text
+    : String(text ?? "").split("\n");
+  return raw
+    .filter((line, i) => !(i === 0 && !line) || raw.length > 1)
+    .map((line) => ({ kind: "output", text: line }));
+}
+
+function prettyJson(value) {
+  return JSON.stringify(value ?? {}, null, 2);
+}
+
+async function runTerminalCommand(cmd) {
+  const normalized = cmd.trim().replace(/\s+/g, " ");
+  const lower = normalized.toLowerCase();
+
+  if (lower === "help") {
+    return [
+      "Supported commands:",
+      "  help              show this list",
+      "  signalos status   show governance/workspace status",
+      "  signalos check    run release-readiness checks",
+      "  signalos gates    show gate status",
+      "  npm run dev       start the Preview tab dev server",
+      "  git status        show branch, cleanliness, and worktrees",
+      "  clear             clear terminal output",
+      "",
+      "This terminal is a governed SignalOS command surface, not an unrestricted OS shell.",
+    ];
+  }
+
+  if (lower === "signalos status" || lower === "/signal-status") {
+    return await ipc.signal.runAndWait("signal-status", [], 60000);
+  }
+
+  if (lower === "signalos check" || lower === "/signal-release-readiness") {
+    return await ipc.signal.runAndWait("signal-release-readiness", [], 120000);
+  }
+
+  if (lower === "signalos gates" || lower === "/state:gates") {
+    const gates = await ipc.signal.runAndWait("state:gates", [], 60000);
+    return prettyJson(gates);
+  }
+
+  if (lower === "git status") {
+    const git = await ipc.git.status();
+    return [
+      `branch: ${git.branch || "(unknown)"}`,
+      `clean: ${git.is_clean ? "yes" : "no"}`,
+      `ahead/behind: ${git.ahead || 0}/${git.behind || 0}`,
+      `last sync: ${git.last_sync || "(none)"}`,
+      `worktrees: ${(git.worktrees || []).length}`,
+    ];
+  }
+
+  if (lower === "npm run dev") {
+    if (!state.workspace) {
+      throw new Error("No workspace selected. Open or create a product before starting Preview.");
+    }
+    window.switchTab?.("preview");
+    if (typeof window.previewRun === "function") {
+      window.previewRun();
+      return "Preview starting. Open the Preview tab for server status and app output.";
+    }
+    return "Preview tab is available, but the dev-server runner is not loaded yet.";
+  }
+
+  if (normalized.startsWith("/signal-")) {
+    const tokens = normalized.replace(/^\//, "").split(/\s+/).filter(Boolean);
+    return await ipc.signal.runAndWait(tokens[0], tokens.slice(1), 120000);
+  }
+
+  if (lower.startsWith("signalos ")) {
+    throw new Error(`Unsupported SignalOS command: ${normalized}. Type help for supported commands.`);
+  }
+
+  throw new Error(`Unsupported command: ${normalized}. Type help for supported commands.`);
+}
+
 async function termExecReal(cmd) {
   const pathName = state.workspace ? state.workspace.replace(/\\/g, "/").split("/").filter(Boolean).pop() || state.workspace : "signalos";
+  const cleaned = String(cmd || "").trim();
 
-  pushTermLine({ kind: "echo", text: cmd, pathName });
+  pushTermLine({ kind: "echo", text: cleaned, pathName });
 
-  if (!cmd.trim()) return;
+  if (!cleaned) return;
 
-  if (state.termHistory[state.termHistory.length - 1] !== cmd) {
-    state.termHistory.push(cmd);
+  if (state.termHistory[state.termHistory.length - 1] !== cleaned) {
+    state.termHistory.push(cleaned);
   }
   state.termHistIdx = -1;
 
-  if (cmd === "clear" || cmd === "cls") {
+  if (cleaned === "clear" || cleaned === "cls") {
     state.terminalLines = [];
     return;
   }
@@ -935,10 +1016,10 @@ async function termExecReal(cmd) {
   pushTermLine({ kind: "loading", text: "Running…" });
 
   try {
-    const result = await ipc.signal.runAndWait(cmd.replace(/^\//, ""), []);
-    const raw = typeof result === "string" ? result.split("\n") : (result?.output || result?.lines || [String(result)]);
-    const outputLines = raw.filter((line, i) => !(i === 0 && !line) || raw.length > 1).map((line) => ({ kind: "output", text: line }));
-    // Drop trailing loading line, append output
+    const result = await runTerminalCommand(cleaned);
+    const outputLines = termOutput(
+      typeof result === "string" || Array.isArray(result) ? result : prettyJson(result),
+    );
     state.terminalLines = state.terminalLines.slice(0, -1).concat(outputLines);
   } catch (e) {
     state.terminalLines = state.terminalLines.slice(0, -1).concat([{ kind: "error", text: errorMessage(e, "Command failed") }]);

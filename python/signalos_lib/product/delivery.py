@@ -12,7 +12,9 @@ from __future__ import annotations
 __all__ = ["run_delivery"]
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +79,29 @@ from .validation import (
 )
 
 
+def _emit_progress(
+    phase: str,
+    substep: str,
+    state: str,
+    detail: str | None = None,
+) -> None:
+    req_id = os.environ.get("SIGNALOS_PROGRESS_REQ_ID", "").strip()
+    if not req_id:
+        return
+    payload = {
+        "id": req_id,
+        "kind": "progress",
+        "phase": phase,
+        "substep": substep,
+        "state": state,
+        "detail": detail,
+        "ts": int(time.time() * 1000),
+    }
+    stream = getattr(sys, "__stdout__", sys.stdout)
+    stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    stream.flush()
+
+
 def run_delivery(
     prompt: str,
     name: str | None = None,
@@ -128,10 +153,13 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 1. INTENT phase
     # ------------------------------------------------------------------
+    _emit_progress("intent", "extract", "running", "Extracting product intent")
     try:
         intent = extract_product_intent(prompt)
+        _emit_progress("intent", "extract", "done", "Intent extracted")
     except Exception as exc:
         errors.append(f"intent extraction failed: {exc}")
+        _emit_progress("intent", "extract", "error", str(exc))
         intent = {"product_name": "", "entities": [], "primary_workflows": [],
                   "ux_surfaces": [], "product_type": "custom"}
 
@@ -151,6 +179,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 1b. HITL: Check if intent needs clarification
     # ------------------------------------------------------------------
+    _emit_progress("intent", "questions", "running", "Checking required questions")
     try:
         questions = generate_questions(intent)
         blocking = [q for q in questions if q.get("blocking")]
@@ -173,12 +202,15 @@ def run_delivery(
         assumptions = record_assumptions(intent)
         if assumptions:
             write_assumptions(assumptions, signalos_dir)
+        _emit_progress("intent", "questions", "done", "Questions and assumptions recorded")
     except Exception as exc:
         errors.append(f"HITL questions/assumptions failed: {exc}")
+        _emit_progress("intent", "questions", "error", str(exc))
 
     # ------------------------------------------------------------------
     # 1c. STRATEGY/SCOPE decision artifacts
     # ------------------------------------------------------------------
+    _emit_progress("intent", "scope", "running", "Building scope decisions")
     try:
         strategy_review = _build_delivery_strategy_review(
             prompt=prompt,
@@ -196,8 +228,10 @@ def run_delivery(
         if scope_errors:
             errors.extend(f"scope decisions: {err}" for err in scope_errors)
         write_scope_decisions(scope_decisions, signalos_dir)
+        _emit_progress("intent", "scope", "done", "Scope decisions written")
     except Exception as exc:
         errors.append(f"strategy/scope artifacts failed: {exc}")
+        _emit_progress("intent", "scope", "error", str(exc))
 
     # Auto-detect blueprint
     if blueprint == "auto":
@@ -212,6 +246,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 2. SCAFFOLD phase
     # ------------------------------------------------------------------
+    _emit_progress("scaffold", "create", "running", "Creating product workspace and project files")
     try:
         scaffold_result = run_scaffold(
             repo_root=repo_root,
@@ -221,8 +256,10 @@ def run_delivery(
             blueprint_id=blueprint_id,
             mode=mode,
         )
+        _emit_progress("scaffold", "create", "done", "Scaffold completed")
     except Exception as exc:
         errors.append(f"scaffold failed: {exc}")
+        _emit_progress("scaffold", "create", "error", str(exc))
         scaffold_result = {"success": False, "profile": profile, "mode": mode}
 
     actual_profile = scaffold_result.get("profile", profile)
@@ -254,6 +291,7 @@ def run_delivery(
     scaffold_status = "complete" if scaffold_result.get("success") else "partial"
     try:
         update_delivery_phase(repo_root, "scaffolded", scaffold_status)
+        _emit_progress("scaffold", "postflight", "done", f"Scaffold status: {scaffold_status}")
     except Exception:
         pass  # state file may not exist if everything failed
 
@@ -262,6 +300,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     design = None
     design_deps: dict[str, str] = {}
+    _emit_progress("design", "select_system", "running", "Selecting product design system")
     try:
         design = build_design_system(intent, actual_profile, bp)
         write_design(design, signalos_dir)
@@ -277,8 +316,10 @@ def run_delivery(
             )
         except Exception:
             pass  # Preview is optional
+        _emit_progress("design", "select_system", "done", "Design system selected")
     except Exception as exc:
         errors.append(f"design phase failed: {exc}")
+        _emit_progress("design", "select_system", "error", str(exc))
 
     try:
         design_decisions = build_design_decisions(
@@ -326,12 +367,15 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 3. ACCEPTANCE phase
     # ------------------------------------------------------------------
+    _emit_progress("acceptance", "matrix", "running", "Building acceptance matrix")
     try:
         acceptance = build_acceptance_matrix(intent, bp, actual_profile)
         write_acceptance_matrix(acceptance, signalos_dir)
         update_delivery_phase(repo_root, "acceptance", "complete")
+        _emit_progress("acceptance", "matrix", "done", "Acceptance matrix written")
     except Exception as exc:
         errors.append(f"acceptance phase failed: {exc}")
+        _emit_progress("acceptance", "matrix", "error", str(exc))
         acceptance = None
         try:
             update_delivery_phase(repo_root, "acceptance", "partial")
@@ -344,6 +388,7 @@ def run_delivery(
     manifest = None
     generation_packet = None
     agent_packet = None
+    _emit_progress("generation", "manifest", "running", "Preparing generation manifest")
     try:
         # Extract task IDs from acceptance criteria
         task_ids = (
@@ -383,8 +428,10 @@ def run_delivery(
         write_agent_packet(agent_packet, repo_root)
 
         update_delivery_phase(repo_root, "generated", "complete")
+        _emit_progress("generation", "manifest", "done", "Generation packet and manifest written")
     except Exception as exc:
         errors.append(f"generation phase failed: {exc}")
+        _emit_progress("generation", "manifest", "error", str(exc))
         try:
             update_delivery_phase(repo_root, "generated", "partial")
         except Exception:
@@ -419,6 +466,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     agent_result = None
     if generation_packet and agent_mode != "none":
+        _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
             from .agent_dispatch import dispatch_build_agent
             governance = collect_governance_instructions(
@@ -438,14 +486,17 @@ def run_delivery(
                 warnings.append("No API key — agent not dispatched. Packet written for external execution.")
             else:
                 errors.extend(agent_result.get("errors", []))
+            _emit_progress("generation", "packet", "done", agent_result.get("status", "agent finished"))
         except Exception as exc:
             errors.append(f"agent dispatch failed: {exc}")
+            _emit_progress("generation", "packet", "error", str(exc))
 
     # ------------------------------------------------------------------
     # 5. VALIDATION phase
     # ------------------------------------------------------------------
     val_result = None
     closure = {"level": "not_started", "closeable": False, "blockers": []}
+    _emit_progress("validation", "run_checks", "running", "Running product validation")
     try:
         val_plan = build_validation_plan(repo_root, actual_profile)
         val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
@@ -469,8 +520,10 @@ def run_delivery(
         update_delivery_phase(
             repo_root, "validated", closure.get("level", "partial"),
         )
+        _emit_progress("validation", "run_checks", "done", f"Validation level: {closure.get('level', 'partial')}")
     except Exception as exc:
         errors.append(f"validation phase failed: {exc}")
+        _emit_progress("validation", "run_checks", "error", str(exc))
         try:
             update_delivery_phase(repo_root, "validated", "partial")
         except Exception:
@@ -479,6 +532,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 5b. SECURITY phase - injection scan, threat model, GDPR detection
     # ------------------------------------------------------------------
+    _emit_progress("security", "scan", "running", "Running product security gate")
     try:
         gen_files = (
             [f["path"] for f in manifest.get("files", [])]
@@ -492,22 +546,30 @@ def run_delivery(
             profile=actual_profile,
         )
         write_security_result(security_result, signalos_dir)
+        _emit_progress("security", "scan", "done", security_result.get("status", "Security gate complete"))
     except Exception as exc:
         errors.append(f"security gate failed: {exc}")
+        _emit_progress("security", "scan", "error", str(exc))
 
     # ------------------------------------------------------------------
     # 6. PROOF phase
     # ------------------------------------------------------------------
+    _emit_progress("proof", "runtime", "running", "Running runtime proof")
     try:
         runtime_proof = run_runtime_proof(repo_root, actual_profile)
+        _emit_progress("proof", "runtime", "done", runtime_proof.get("status", "Runtime proof complete"))
     except Exception as exc:
         errors.append(f"runtime proof failed: {exc}")
+        _emit_progress("proof", "runtime", "error", str(exc))
         runtime_proof = {"status": "blocked", "errors": [str(exc)]}
 
+    _emit_progress("proof", "ux", "running", "Running UX proof")
     try:
         ux_proof = run_ux_proof(repo_root, actual_profile)
+        _emit_progress("proof", "ux", "done", ux_proof.get("status", "UX proof complete"))
     except Exception as exc:
         errors.append(f"ux proof failed: {exc}")
+        _emit_progress("proof", "ux", "error", str(exc))
         ux_proof = {"status": "blocked", "errors": [str(exc)]}
 
     try:
@@ -528,20 +590,26 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 7. DEPLOY phase
     # ------------------------------------------------------------------
+    _emit_progress("deploy", "decision", "running", "Recording deploy decision")
     try:
         deploy_decision = make_deploy_decision(deploy, closure, repo_root)
         write_deploy_decision(deploy_decision, signalos_dir)
+        _emit_progress("deploy", "decision", "done", deploy_decision.get("status", deploy))
     except Exception as exc:
         errors.append(f"deploy decision failed: {exc}")
+        _emit_progress("deploy", "decision", "error", str(exc))
         deploy_decision = None
 
     if deploy == "prepare":
+        _emit_progress("deploy", "package", "running", "Preparing deploy evidence")
         try:
             prepare_deploy_evidence(
                 repo_root, deploy_decision or {}, product_name, actual_profile,
             )
+            _emit_progress("deploy", "package", "done", "Deploy package prepared")
         except Exception as exc:
             errors.append(f"deploy evidence failed: {exc}")
+            _emit_progress("deploy", "package", "error", str(exc))
 
     # ------------------------------------------------------------------
     # 7b. REVIEW READINESS artifact
@@ -571,6 +639,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 8. CLOSEOUT phase
     # ------------------------------------------------------------------
+    _emit_progress("closeout", "handoff", "running", "Writing closeout and handoff")
     try:
         closeout = build_closeout(
             repo_root, product_name, actual_profile, blueprint_id,
@@ -589,8 +658,10 @@ def run_delivery(
         update_delivery_phase(
             repo_root, "closed", closeout.get("closure_level", "partial"),
         )
+        _emit_progress("closeout", "handoff", "done", closeout.get("closure_level", "Closeout written"))
     except Exception as exc:
         errors.append(f"closeout phase failed: {exc}")
+        _emit_progress("closeout", "handoff", "error", str(exc))
         closeout = {
             "product_name": product_name,
             "profile": actual_profile,

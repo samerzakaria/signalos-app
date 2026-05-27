@@ -297,6 +297,20 @@ export function TestDebtPanel() {
         >
           Loading test debt…
         </div>
+      ) : err ? (
+        <div
+          data-testid="td-unavailable"
+          style={{
+            padding: '14px 12px',
+            textAlign: 'center',
+            color: 'var(--ink-3)',
+            fontSize: '12.5px',
+            border: '1px dashed var(--line)',
+            borderRadius: 'var(--r-sm)',
+          }}
+        >
+          Test-debt evidence is unavailable for this workspace.
+        </div>
       ) : entries.length === 0 ? (
         <div
           data-testid="td-empty"

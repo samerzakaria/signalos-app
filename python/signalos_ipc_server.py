@@ -110,6 +110,18 @@ PHASE_CONTRACTS = {
         ("read",    ["load_plan", "load_gates", "load_audit"]),
         ("render",  ["compose_card"]),
     ],
+    "deliver": [
+        ("intent",     ["extract", "questions", "scope"]),
+        ("scaffold",   ["create", "postflight"]),
+        ("design",     ["select_system", "preview"]),
+        ("acceptance", ["matrix"]),
+        ("generation", ["manifest", "packet"]),
+        ("validation", ["run_checks", "repair"]),
+        ("security",   ["scan"]),
+        ("proof",      ["runtime", "ux"]),
+        ("deploy",     ["decision", "package"]),
+        ("closeout",   ["handoff"]),
+    ],
 }
 
 
@@ -339,7 +351,7 @@ def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: st
             emitter.begin("prepare", "consent_mode", "Init mode chosen")
             emitter.done()
             emitter.begin("write", "copy_bundle", "Copying SignalOS files")
-        rc, out, err_text = run_core_cli(argv)
+        rc, out, err_text = run_core_cli(argv, req_id=req_id)
         text = redact_text((out or err_text).strip())
         if emitter and command == "signal-init":
             if rc == 0:
@@ -474,7 +486,7 @@ def strip_context_arg(args: list[str]) -> list[str]:
     return args
 
 
-def run_core_cli(argv: list[str]) -> tuple[int, str, str]:
+def run_core_cli(argv: list[str], req_id: str = "") -> tuple[int, str, str]:
     try:
         from signalos_lib.cli import main as core_main
     except ImportError as exc:
@@ -485,13 +497,23 @@ def run_core_cli(argv: list[str]) -> tuple[int, str, str]:
             f"Rebuild the sidecar with scripts/bundle-sidecar.ps1. ({exc})",
         )
 
+    previous_progress_req = os.environ.get("SIGNALOS_PROGRESS_REQ_ID")
+    if req_id:
+        os.environ["SIGNALOS_PROGRESS_REQ_ID"] = req_id
+
     out = StringIO()
     err_buf = StringIO()
-    with redirect_stdout(out), redirect_stderr(err_buf):
-        try:
-            rc = core_main(["signalos", *argv])
-        except SystemExit as exc:
-            rc = int(exc.code or 0) if isinstance(exc.code, int) else 1
+    try:
+        with redirect_stdout(out), redirect_stderr(err_buf):
+            try:
+                rc = core_main(["signalos", *argv])
+            except SystemExit as exc:
+                rc = int(exc.code or 0) if isinstance(exc.code, int) else 1
+    finally:
+        if previous_progress_req is None:
+            os.environ.pop("SIGNALOS_PROGRESS_REQ_ID", None)
+        else:
+            os.environ["SIGNALOS_PROGRESS_REQ_ID"] = previous_progress_req
     return rc, out.getvalue(), err_buf.getvalue()
 
 

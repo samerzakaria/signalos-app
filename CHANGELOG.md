@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.19] - 2026-05-27
+
+### Internal usability recovery
+
+- Add scoped Deliver styling, live delivery phase progress, and a longer activity-aware delivery wait.
+- Route Terminal chips to supported SignalOS, git, and preview actions instead of raw unknown command strings.
+- Replace ambiguous chat/test-debt failure states with actionable workspace/provider/evidence messages.
+
 ## [3.0.0-internal.18] - 2026-05-27
 
 ### Onboarding workspace order hotfix

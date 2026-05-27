@@ -29,6 +29,14 @@ if (IS_TAURI && typeof listenTauri === "function") {
       pending.reject(new Error(resp.error || "SignalOS sidecar command failed"));
     }
   });
+
+  listenTauri("sidecar:progress", (e) => {
+    const progress = e.payload || {};
+    const pending = pendingSidecar.get(progress.id);
+    if (pending && typeof pending.bump === "function") {
+      pending.bump();
+    }
+  });
 }
 
 async function invoke(cmd, args = {}) {
@@ -58,12 +66,19 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
   }
 
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pendingSidecar.delete(id);
-      reject(new Error(`Timed out waiting for ${cmd}`));
-    }, timeoutMs);
+    let timer;
+    const armTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        pendingSidecar.delete(id);
+        reject(new Error(`Timed out waiting for ${cmd}`));
+      }, timeoutMs);
+    };
+
+    armTimer();
 
     pendingSidecar.set(id, {
+      bump: armTimer,
       resolve: (value) => {
         clearTimeout(timer);
         resolve(value);

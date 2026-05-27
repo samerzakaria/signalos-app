@@ -469,11 +469,15 @@ export function finaliseStream(streamId) {
 }
 
 export function showStreamError(streamId, msg) {
+  const raw = String(msg || '').trim();
+  const helpful = raw && raw !== 'undefined'
+    ? raw
+    : 'Chat provider did not return a usable response. Open Settings, select a provider and model, then retry.';
   state.chatBubbles = state.chatBubbles.map((b) =>
-    b.id === streamId ? { ...b, kind: 'error', text: 'Error: ' + (msg || 'Stream failed') } : b
+    b.id === streamId ? { ...b, kind: 'error', text: 'Error: ' + helpful } : b
   );
   streamPrompts.delete(streamId);
-  showError(msg || 'Chat stream error');
+  showError(helpful);
 }
 
 function composerInput(_e) {

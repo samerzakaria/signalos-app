@@ -7,11 +7,20 @@
 // CSP rules: handlers are Preact `onClick={}` (CSP-safe). No inline
 // `onclick=` / `style=` attributes in hand-written HTML.
 
-import { useState } from 'preact/hooks';
-import { signal as signalIpc } from '../../js/ipc.js';
+import { useEffect, useState } from 'preact/hooks';
+import { onSidecarProgress, signal as signalIpc } from '../../js/ipc.js';
 import { workspace } from '../../js/ipc.js';
 
 type DeliveryStep = 'prompt' | 'intent' | 'design' | 'progress' | 'closeout';
+
+interface DeliveryProgressEvent {
+  id?: string;
+  phase?: string;
+  substep?: string;
+  state?: 'running' | 'done' | 'error' | string;
+  detail?: string | null;
+  ts?: number;
+}
 
 interface DeliverState {
   step: DeliveryStep;
@@ -29,6 +38,9 @@ interface DeliverState {
   questions: any[] | null;
   currentPhase: string | null;
   completedPhases: string[];
+  runId: string | null;
+  progressEvents: DeliveryProgressEvent[];
+  startedAt: number | null;
 }
 
 const INITIAL_STATE: DeliverState = {
@@ -47,6 +59,9 @@ const INITIAL_STATE: DeliverState = {
   questions: null,
   currentPhase: null,
   completedPhases: [],
+  runId: null,
+  progressEvents: [],
+  startedAt: null,
 };
 
 const PHASES = [
@@ -61,6 +76,46 @@ const PHASES = [
   'Deploy',
   'Closeout',
 ];
+
+const PHASE_LABELS: Record<string, string> = {
+  intent: 'Intent',
+  scaffold: 'Scaffold',
+  scaffolded: 'Scaffold',
+  design: 'Design',
+  acceptance: 'Acceptance',
+  generated: 'Generation',
+  generation: 'Generation',
+  validation: 'Validation',
+  validated: 'Validation',
+  security: 'Security',
+  proof: 'Proof',
+  proved: 'Proof',
+  deploy: 'Deploy',
+  closeout: 'Closeout',
+  closed: 'Closeout',
+};
+
+const DELIVERY_TIMEOUT_MS = 45 * 60 * 1000;
+
+const phaseLabel = (phase: unknown): string => {
+  const raw = String(phase ?? '').trim();
+  if (!raw) return '';
+  const key = raw.toLowerCase();
+  return PHASE_LABELS[key] ?? raw.charAt(0).toUpperCase() + raw.slice(1);
+};
+
+const friendlyError = (message: string): string => {
+  if (/timed out waiting for run_signal_command/i.test(message)) {
+    return 'Delivery is still running longer than expected. Check Terminal for live logs, then retry from this screen if it stops updating.';
+  }
+  if (/No workspace selected/i.test(message)) {
+    return 'No product workspace is selected. Finish onboarding or open a project before running this action.';
+  }
+  if (/undefined/i.test(message)) {
+    return 'Setup failed without a useful backend message. Please retry after selecting or creating a workspace.';
+  }
+  return message;
+};
 
 const parseIpcJson = (raw: unknown): any => {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
@@ -115,6 +170,34 @@ const normalizeDesignPayload = (payload: any): any => {
 export function DeliverView() {
   const [state, setState] = useState<DeliverState>(INITIAL_STATE);
 
+  useEffect(() => {
+    const maybeUnlisten = onSidecarProgress((payload: unknown) => {
+      const event = payload as DeliveryProgressEvent;
+      setState((prev) => {
+        if (!event || !event.id || event.id !== prev.runId) return prev;
+
+        const label = phaseLabel(event.phase);
+        const completed = new Set(prev.completedPhases);
+        if (label && event.state === 'done') completed.add(label);
+
+        return {
+          ...prev,
+          currentPhase: label && event.state !== 'done' ? label : prev.currentPhase,
+          completedPhases: Array.from(completed),
+          progressEvents: [...prev.progressEvents, event].slice(-80),
+        };
+      });
+    }) as unknown as (() => void) | Promise<() => void>;
+
+    return () => {
+      if (typeof maybeUnlisten === 'function') {
+        maybeUnlisten();
+      } else if (maybeUnlisten && typeof (maybeUnlisten as Promise<() => void>).then === 'function') {
+        (maybeUnlisten as Promise<() => void>).then((unlisten) => unlisten?.()).catch(() => {});
+      }
+    };
+  }, []);
+
   const updateState = (patch: Partial<DeliverState>) => {
     setState((prev) => ({ ...prev, ...patch }));
   };
@@ -122,7 +205,16 @@ export function DeliverView() {
   const handleStartDelivery = async () => {
     if (!state.prompt.trim()) return;
 
-    updateState({ loading: true, error: null, step: 'intent', currentPhase: 'Intent', completedPhases: [] });
+    updateState({
+      loading: true,
+      error: null,
+      step: 'intent',
+      currentPhase: 'Intent',
+      completedPhases: [],
+      progressEvents: [],
+      runId: null,
+      startedAt: Date.now(),
+    });
 
     try {
       // Step 1: Get intent preview
@@ -143,13 +235,13 @@ export function DeliverView() {
         currentPhase: null,
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyError(err instanceof Error ? err.message : String(err));
       updateState({ loading: false, error: message, step: 'prompt' });
     }
   };
 
   const handleContinueToDesign = async () => {
-    updateState({ loading: true, error: null, step: 'design', currentPhase: 'Design' });
+    updateState({ loading: true, error: null, step: 'design', currentPhase: 'Design', startedAt: Date.now() });
 
     try {
       const designRaw = await signalIpc.runAndWait('deliver-design', [
@@ -188,13 +280,21 @@ export function DeliverView() {
         currentPhase: null,
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyError(err instanceof Error ? err.message : String(err));
       updateState({ loading: false, error: message });
     }
   };
 
   const handleApproveDesign = async () => {
-    updateState({ loading: true, error: null, step: 'progress', currentPhase: 'Acceptance' });
+    updateState({
+      loading: true,
+      error: null,
+      step: 'progress',
+      currentPhase: 'Acceptance',
+      progressEvents: [],
+      runId: null,
+      startedAt: Date.now(),
+    });
 
     try {
       const raw = await signalIpc.runAndWait('deliver', [
@@ -204,7 +304,20 @@ export function DeliverView() {
         '--mode', state.mode,
         '--deploy', state.deploy,
         '--json',
-      ], 300000); // 5 minute timeout for full delivery
+      ], DELIVERY_TIMEOUT_MS, (id: string) => {
+        updateState({
+          runId: id,
+          currentPhase: 'Intent',
+          progressEvents: [{
+            id,
+            phase: 'intent',
+            substep: 'queued',
+            state: 'running',
+            detail: 'Delivery request accepted by SignalOS Core.',
+            ts: Date.now(),
+          }],
+        });
+      });
 
       const closeout = parseIpcJson(raw);
 
@@ -216,7 +329,7 @@ export function DeliverView() {
         currentPhase: null,
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = friendlyError(err instanceof Error ? err.message : String(err));
       updateState({ loading: false, error: message });
     }
   };
@@ -263,6 +376,13 @@ export function DeliverView() {
         })}
       </div>
     );
+  };
+
+  const renderEventText = (event: DeliveryProgressEvent): string => {
+    const phase = phaseLabel(event.phase) || 'Delivery';
+    const substep = event.substep ? String(event.substep).replace(/_/g, ' ') : '';
+    const detail = event.detail ? ` - ${event.detail}` : '';
+    return `${phase}${substep ? ` / ${substep}` : ''}${detail}`;
   };
 
   const renderPromptStep = () => (
@@ -594,47 +714,85 @@ export function DeliverView() {
     </div>
   );
 
-  const renderProgressStep = () => (
-    <div className="deliver-step" data-testid="deliver-step-progress">
-      <div className="deliver-step-head">
-        <h2>Building your product</h2>
-        <p>SignalOS is generating, validating, and packaging your product. This may take a few minutes.</p>
-      </div>
+  const renderProgressStep = () => {
+    const completedCount = state.completedPhases.length;
+    const pct = Math.min(100, Math.round((completedCount / PHASES.length) * 100));
+    const latestEvents = state.progressEvents.slice(-8).reverse();
 
-      <div className="deliver-phases">
-        {PHASES.map((phase) => {
-          const done = state.completedPhases.includes(phase);
-          const active = state.currentPhase === phase;
-          let icon = 'ti-circle';
-          let cls = 'deliver-phase';
-          if (done) {
-            icon = 'ti-circle-check';
-            cls = 'deliver-phase done';
-          } else if (active) {
-            icon = 'ti-loader-2';
-            cls = 'deliver-phase active';
-          }
-          return (
-            <div className={cls} key={phase} data-testid={`deliver-phase-${phase.toLowerCase()}`}>
-              <i className={`ti ${icon}`}></i>
-              <span>{phase}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {state.error ? (
-        <div className="deliver-error" data-testid="deliver-error">
-          <i className="ti ti-alert-triangle"></i> {state.error}
-          <div className="deliver-actions" style={{ marginTop: '12px' }}>
-            <button className="btn btn-soft" onClick={handleReset}>
-              <i className="ti ti-arrow-left"></i> Start over
-            </button>
+    return (
+      <div className="deliver-step deliver-step-wide" data-testid="deliver-step-progress">
+        <div className="deliver-progress-hero">
+          <div>
+            <div className="deliver-kicker">Product delivery</div>
+            <h2>{state.error ? 'Delivery needs attention' : 'Building your product'}</h2>
+            <p>
+              {state.error
+                ? 'SignalOS stopped before closeout. Review the failure and retry from a clear workspace state.'
+                : 'SignalOS is scaffolding, generating, validating, and packaging the product. This screen updates as each phase reports evidence.'}
+            </p>
+            {state.runId ? <code className="deliver-run-id">{state.runId}</code> : null}
+          </div>
+          <div className="deliver-progress-meter" aria-label={`${pct}% complete`}>
+            <span>{pct}%</span>
+            <div><i style={{ width: `${pct}%` }}></i></div>
           </div>
         </div>
-      ) : null}
-    </div>
-  );
+
+        <div className="deliver-phases">
+          {PHASES.map((phase) => {
+            const done = state.completedPhases.includes(phase);
+            const active = state.currentPhase === phase;
+            let icon = 'ti-circle';
+            let cls = 'deliver-phase';
+            if (done) {
+              icon = 'ti-circle-check';
+              cls = 'deliver-phase done';
+            } else if (active) {
+              icon = 'ti-loader-2';
+              cls = 'deliver-phase active';
+            }
+            return (
+              <div className={cls} key={phase} data-testid={`deliver-phase-${phase.toLowerCase()}`}>
+                <i className={`ti ${icon}`}></i>
+                <span>{phase}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="deliver-section deliver-live-log" data-testid="deliver-progress-log">
+          <h3><i className="ti ti-activity"></i> Live evidence</h3>
+          {latestEvents.length ? (
+            <ol>
+              {latestEvents.map((event, i) => (
+                <li key={`${event.ts ?? i}-${event.phase}-${event.substep}`} className={`deliver-event ${event.state || 'running'}`}>
+                  <span>{event.state || 'running'}</span>
+                  <p>{renderEventText(event)}</p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="deliver-meta">Waiting for SignalOS Core to report the first phase.</p>
+          )}
+        </div>
+
+        {state.error ? (
+          <div className="deliver-error" data-testid="deliver-error">
+            <i className="ti ti-alert-triangle"></i>
+            <div>
+              <strong>{state.error}</strong>
+              <p>Open Terminal for command output, or start over after fixing the reported blocker.</p>
+              <div className="deliver-actions">
+                <button className="btn btn-soft" onClick={handleReset}>
+                  <i className="ti ti-arrow-left"></i> Start over
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   const renderCloseoutStep = () => {
     const c = state.closeout || {};
