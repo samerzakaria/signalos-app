@@ -20,6 +20,7 @@ commands.allow = [
     "clear_workspace",
     "delete_api_key",
     "delete_workspace_secret",
+    "ensure_default_workspace",
     "fetch_provider_models",
     "freeze_wave",
     "get_active_provider",

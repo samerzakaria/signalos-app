@@ -191,6 +191,14 @@ impl WorkspaceSettingsState {
         *self.settings.lock().unwrap() = next_settings;
         Ok(())
     }
+
+    fn default_projects_root(&self) -> Result<PathBuf, String> {
+        let config_dir = self
+            .settings_path
+            .parent()
+            .ok_or_else(|| "Could not resolve app config folder".to_string())?;
+        Ok(config_dir.join("projects"))
+    }
 }
 
 /// Set the active workspace root. All agent writes are sandboxed to this path.
@@ -211,6 +219,43 @@ pub fn set_workspace(
     // state-mutating action (init / file write / secret / gate sign / etc.)
     // — i.e. the same moment SignalOS first writes anything else.
     Ok(())
+}
+
+/// Create/select the internal SignalOS workspace used when the user has not
+/// chosen an external product repo.
+#[tauri::command]
+pub fn ensure_default_workspace(
+    product_name: Option<String>,
+    projects_root: Option<String>,
+    state: State<WorkspaceState>,
+    settings: State<WorkspaceSettingsState>,
+) -> Result<String, String> {
+    let root = match projects_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(root) => PathBuf::from(root),
+        None => settings.default_projects_root()?,
+    };
+    if root.exists() && !root.is_dir() {
+        return Err(format!(
+            "Projects root is not a directory: {}",
+            root.display()
+        ));
+    }
+    std::fs::create_dir_all(&root).map_err(|e| format!("Could not create projects root: {e}"))?;
+
+    let workspace_name = safe_workspace_dir_name(product_name.as_deref());
+    let workspace = root.join(workspace_name);
+    std::fs::create_dir_all(&workspace)
+        .map_err(|e| format!("Could not create managed workspace: {e}"))?;
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve managed workspace: {e}"))?;
+    settings.set_active_workspace(&workspace)?;
+    *state.0.lock().unwrap() = Some(workspace.clone());
+    Ok(workspace.to_string_lossy().to_string())
 }
 
 /// Clear the active workspace without treating an empty string as a path.
@@ -1962,6 +2007,28 @@ fn workspace_display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
+fn safe_workspace_dir_name(name: Option<&str>) -> String {
+    let raw = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("SignalOS Workspace");
+    let sanitized = raw
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
+            ch if ch.is_control() => '-',
+            ch => ch,
+        })
+        .collect::<String>()
+        .trim_matches([' ', '.'])
+        .to_string();
+    if sanitized.is_empty() {
+        "SignalOS Workspace".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn paths_equal_for_settings(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
@@ -2280,6 +2347,19 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(cfg);
+    }
+
+    #[test]
+    fn safe_workspace_dir_name_creates_valid_child_folder_names() {
+        assert_eq!(
+            safe_workspace_dir_name(Some("Finance: Dashboard/2026?")),
+            "Finance- Dashboard-2026-"
+        );
+        assert_eq!(
+            safe_workspace_dir_name(Some("   ...   ")),
+            "SignalOS Workspace"
+        );
+        assert_eq!(safe_workspace_dir_name(None), "SignalOS Workspace");
     }
 
     #[test]

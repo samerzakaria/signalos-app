@@ -9,7 +9,7 @@ import {
   keyVisible,
   apiKeyInput,
   budgetInputValue,
-  workspacePath,
+  projectsRoot,
   providerModels,
   providerModelsError,
   providerModelsLoading,
@@ -52,6 +52,25 @@ export function Onboarding() {
 
   const fetchModels = () => {
     void loadProviderModels(provider, apiKeyInput.value.trim() || null);
+  };
+
+  const browseProjectsRoot = async () => {
+    const tauri = window.__TAURI__;
+    const dialog = tauri?.dialog;
+    if (!dialog?.open) {
+      const fallback = window.prompt('Projects root folder path');
+      if (fallback) projectsRoot.value = fallback;
+      return;
+    }
+    const result = await dialog.open({
+      directory: true,
+      multiple: false,
+      title: 'Choose projects root',
+    });
+    const path = Array.isArray(result) ? result[0] : result;
+    if (path && typeof path === 'string') {
+      projectsRoot.value = path;
+    }
   };
 
   return (
@@ -235,21 +254,21 @@ export function Onboarding() {
             </select>
           </div>
         </div>
-        <label className="field-label" style={{ marginTop: '12px' }}>Project folder</label>
+        <label className="field-label" style={{ marginTop: '12px' }}>Projects root</label>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch' }}>
           <input
             type="text"
             className="plain-input"
             id="identFolder"
-            placeholder="~/projects/my-app"
-            value={workspacePath.value}
-            onInput={(e) => { workspacePath.value = (e.target as HTMLInputElement).value; }}
+            placeholder="C:\\Users\\you\\SignalOS Projects"
+            value={projectsRoot.value}
+            onInput={(e) => { projectsRoot.value = (e.target as HTMLInputElement).value; }}
             style={{ flex: 1, fontFamily: 'var(--f-mono)', fontSize: '12px' }}
           />
-          <button className="btn btn-soft" onClick={() => window.pickWorkspaceFolder()} style={{ flexShrink: 0 }}><i className="ti ti-folder-open"></i> Browse</button>
+          <button className="btn btn-soft" onClick={browseProjectsRoot} style={{ flexShrink: 0 }}><i className="ti ti-folder-open"></i> Browse</button>
         </div>
         <div className="hint" style={{ marginTop: '6px' }}>
-          <i className="ti ti-info-circle"></i> SignalOS will scaffold a <code style={{ fontFamily: 'var(--f-mono)', fontSize: '11px' }}>.signalos/</code> folder inside it on first run.
+          <i className="ti ti-info-circle"></i> SignalOS will create one folder per product inside this root.
         </div>
         <div className="callout success" style={{ marginTop: '14px' }}>
           <i className="ti ti-shield-check"></i>

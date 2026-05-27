@@ -76,6 +76,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // â”€â”€ Workspace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             ipc::set_workspace,
+            ipc::ensure_default_workspace,
             ipc::clear_workspace,
             ipc::get_workspace,
             ipc::get_workspace_status,

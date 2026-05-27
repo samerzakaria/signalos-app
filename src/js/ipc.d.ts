@@ -30,6 +30,7 @@ export const engine: {
 
 export const workspace: {
   set(path: string): Promise<unknown>;
+  ensureDefault(name?: string, projectsRoot?: string): Promise<unknown>;
   clear(): Promise<unknown>;
   get(): Promise<unknown>;
   status(): Promise<unknown>;

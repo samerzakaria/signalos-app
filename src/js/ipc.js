@@ -87,6 +87,8 @@ function rejectPendingSidecars(message = "Command stopped by user.") {
 
 export const workspace = {
   set:      (path)         => invoke("set_workspace",           { path }),
+  ensureDefault: (name, projectsRoot) =>
+    invoke("ensure_default_workspace", { product_name: name || null, projects_root: projectsRoot || null }),
   clear:    ()             => invoke("clear_workspace"),
   get:      ()             => invoke("get_workspace"),
   status:   ()             => invoke("get_workspace_status"),

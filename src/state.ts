@@ -24,6 +24,7 @@ export const enfOpen = signal<boolean>(false);
 export const keyVisible = signal<boolean>(false);
 export const updateChannel = signal<string>("beta");
 export const workspacePath = signal<string>("");
+export const projectsRoot = signal<string>("");
 export interface RecentWorkspace {
   path: string;
   name: string;

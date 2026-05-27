@@ -1,4 +1,4 @@
-import { modalOpen, productProfiles, selectedProductProfile, workspacePath } from '../state';
+import { modalOpen, productProfiles, projectsRoot, selectedProductProfile, workspacePath } from '../state';
 
 async function browseNewProjectFolder() {
   const previousWorkspace = workspacePath.value;
@@ -22,9 +22,9 @@ export function NewProjectModal() {
     <div className="modal-body">
       <label className="field-label" htmlFor="newProjName">Project name</label>
       <input type="text" className="plain-input" placeholder="My awesome app" id="newProjName" style={{ 'marginBottom': '14px' }}/>
-      <label className="field-label" htmlFor="newProjPath">Folder path</label>
+      <label className="field-label" htmlFor="newProjPath">Folder path <span style={{ 'fontWeight': '400', 'color': 'var(--ink-3)' }}>(optional)</span></label>
       <div style={{ 'display': 'flex', 'gap': '8px', 'marginBottom': '8px' }}>
-        <input type="text" className="plain-input" placeholder="~/projects/my-awesome-app" id="newProjPath" style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '12px' }}/>
+        <input type="text" className="plain-input" placeholder={projectsRoot.value ? `${projectsRoot.value}\\<project-name>` : '~/projects/my-awesome-app'} id="newProjPath" style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '12px' }}/>
         <button className="btn btn-soft" onClick={() => browseNewProjectFolder()} title="Browse project folder" aria-label="Browse project folder" style={{ 'padding': '10px 13px', 'flexShrink': '0' }}><i className="ti ti-folder-open"></i></button>
       </div>
       <label className="field-label" htmlFor="newProjProfile">Product profile</label>
@@ -33,7 +33,7 @@ export function NewProjectModal() {
           <option key={profile.id} value={profile.id}>{profile.name}</option>
         ))}
       </select>
-      <div className="hint"><i className="ti ti-info-circle"></i> SignalOS will create a <code style={{ 'fontFamily': 'var(--f-mono)', 'fontSize': '11px' }}>.signalos/</code> folder inside it</div>
+      <div className="hint"><i className="ti ti-info-circle"></i> Leave blank to create it under your projects root. SignalOS initializes each product folder separately.</div>
       <div className="hint" id="newProjStatus" role="status" aria-live="polite" style={{ 'marginTop': '10px' }}></div>
     </div>
     <div className="modal-foot">

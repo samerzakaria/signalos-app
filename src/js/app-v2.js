@@ -47,6 +47,11 @@ async function boot() {
 
 async function bootApp() {
   try {
+    const saved = JSON.parse(localStorage.getItem("signalos.onboarding.wizard.v1") || "{}");
+    if (saved?.projectsRoot) state.projectsRoot = saved.projectsRoot;
+  } catch {}
+
+  try {
     // Identity
     const id = await ipc.identity.get();
     if (id) {
@@ -1097,12 +1102,29 @@ function setCreateProjectBusy(busy) {
   btn.disabled = Boolean(busy);
 }
 
+function safeProjectFolderName(name) {
+  return String(name || "Project")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+    .replace(/[. ]+$/g, "")
+    || "Project";
+}
+
+function joinPath(root, child) {
+  const sep = String(root || "").includes("\\") ? "\\" : "/";
+  return `${String(root).replace(/[\\/]+$/g, "")}${sep}${child}`;
+}
+
 async function createProject() {
   if (creatingProject) return;
   const name = document.getElementById("newProjName")?.value.trim();
-  const path = document.getElementById("newProjPath")?.value.trim();
+  let path = document.getElementById("newProjPath")?.value.trim();
   const profile = document.getElementById("newProjProfile")?.value || state.selectedProductProfile || "generic";
-  if (!name || !path) { showError("Name and folder path are required"); return; }
+  if (!name) { showError("Project name is required"); return; }
+  if (!path && state.projectsRoot) {
+    path = joinPath(state.projectsRoot, safeProjectFolderName(name));
+  }
+  if (!path) { showError("Choose a projects root in onboarding or enter a folder path"); return; }
 
   if (typeof window.createSignalosProject !== "function") {
     showError("Project setup is not ready. Reload SignalOS and try again.");
@@ -1243,7 +1265,7 @@ async function finishOnboarding() {
   const role = state.userRole || "PO";
   const apiKey = (state.apiKeyInput || "").trim();
   const budget = parseFloat(state.budgetInputValue) || 0;
-  const folder = (state.workspacePath || "").trim();
+  const projectsRoot = (state.projectsRoot || "").trim();
 
   try {
     await ipc.identity.set(name, role);
@@ -1275,26 +1297,28 @@ async function finishOnboarding() {
       state.monthlyCap = budget;
     }
 
-    // Set workspace + scaffold .signalos/ + governance docs + sign Gate 0.
-    // Each step is best-effort; one failure shouldn't block the rest of
-    // onboarding. The order matters: workspace.set -> signal-init (which
-    // creates .signalos/, copies the bundle including the governance
-    // templates, runs `git init`) -> instantiateGovernanceAndSignG0
-    // (fills the {Product Name} / [DATE] placeholders in
-    // Governance/SOUL-DOCUMENT.md / CONSTITUTION.md / DECISION-DNA.md
-    // and signs G0).
+    // Onboarding chooses the root folder where SignalOS will place product
+    // repos. The app still needs one active workspace after setup, so create
+    // a single starter workspace under that root and initialize it like any
+    // other product repo.
+    if (!projectsRoot) {
+      throw new Error("Choose a projects root folder.");
+    }
+    let folder = "";
+    try {
+      folder = await ipc.workspace.ensureDefault("SignalOS Workspace", projectsRoot);
+      state.workspace = folder;
+    } catch (e) {
+      throw new Error(`Workspace setup failed: ${errorMessage(e)}`);
+    }
+
+    try {
+      await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
+    } catch (e) {
+      throw new Error(`Workspace initialization failed: ${errorMessage(e)}`);
+    }
+
     if (folder) {
-      try {
-        await ipc.workspace.set(folder);
-        state.workspace = folder;
-      } catch (e) {
-        console.warn("workspace.set at onboarding failed:", errorMessage(e));
-      }
-      try {
-        await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
-      } catch (e) {
-        console.warn("signal-init at onboarding failed:", errorMessage(e));
-      }
       if (typeof window.instantiateGovernanceAndSignG0 === "function") {
         // fire-and-forget; the chat preamble's protocol context will
         // pick up the filled docs on its next reload
@@ -1311,6 +1335,7 @@ async function finishOnboarding() {
       completedSteps: ["welcome", "folder", "init", "identity", "ai", "budget", "done"],
       current: 6,
       folder: state.workspace,
+      projectsRoot,
       initMode: "keep",
       ai: { provider: state.ai, model: state.aiModel, tested: Boolean(apiKey) },
       budgetUsd: budget,

@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.17] - 2026-05-27
+
+### Internal managed workspace onboarding
+
+- Replace first-run product-folder selection with one projects-root folder, then create a starter SignalOS workspace underneath it.
+- Keep per-project `signal-init --mode keep` behavior unchanged for explicit product repos, generated products, and adoption flows.
+- Fail setup immediately on workspace initialization errors instead of booting into a broken app state.
+
 ## [3.0.0-internal.16] - 2026-05-27
 
 ### Internal onboarding ACL fix
