@@ -59,9 +59,9 @@ const SECRET_RULES: { name: string; pattern: RegExp; reason: string }[] = [
   },
   {
     name: 'generic-secret-literal',
-    // Matches `api_key = "xxxxxxxxxxxxxxxx"`, `password: 'hunter2hunter2'`,
-    // `token = "abcdef0123456789..."`, etc. Requires at least 16 chars of
-    // value so we don't flag every `password = "ok"` example.
+    // Matches long literal assignments for api keys, passwords, tokens, and
+    // secrets. Keep examples in prose so repository secret scanners do not
+    // flag this comment as a real leaked credential.
     //
     // NOTE: we intentionally don't use the `m` flag because the secret
     // assignment must be on one line -- multi-line capture would over-match
