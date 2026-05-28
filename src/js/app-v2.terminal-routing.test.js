@@ -12,6 +12,8 @@ describe('app-v2 terminal routing', () => {
 
     const router = source.slice(start, end);
     expect(router).toContain('lower === "help"');
+    expect(router).toContain('inStarterWorkspace()');
+    expect(router).toContain('You are in the starter workspace, not a product repo.');
     expect(router).toContain('lower === "signalos status"');
     expect(router).toContain('ipc.signal.runAndWait("signal-status"');
     expect(router).toContain('lower === "signalos check"');

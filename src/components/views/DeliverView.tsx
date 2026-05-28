@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { onSidecarProgress, signal as signalIpc } from '../../js/ipc.js';
 import { workspace } from '../../js/ipc.js';
+import { projectsRoot, workspacePath } from '../../state';
 import { viewClass } from '../viewShell';
 
 type DeliveryStep = 'prompt' | 'intent' | 'design' | 'progress' | 'closeout';
@@ -34,9 +35,10 @@ interface DeliverState {
   error: string | null;
   intent: any | null;
   design: any | null;
-  designPreviewUrl: string | null;
+  designPreviewHtml: string | null;
   closeout: any | null;
   questions: any[] | null;
+  repoRoot: string | null;
   currentPhase: string | null;
   completedPhases: string[];
   runId: string | null;
@@ -55,9 +57,10 @@ const INITIAL_STATE: DeliverState = {
   error: null,
   intent: null,
   design: null,
-  designPreviewUrl: null,
+  designPreviewHtml: null,
   closeout: null,
   questions: null,
+  repoRoot: null,
   currentPhase: null,
   completedPhases: [],
   runId: null,
@@ -97,6 +100,89 @@ const PHASE_LABELS: Record<string, string> = {
 };
 
 const DELIVERY_COMMAND_TIMEOUT_MS = 0;
+const INTERNAL_WORKSPACE_NAME = 'SignalOS Workspace';
+const WIZARD_STORAGE_KEY = 'signalos.onboarding.wizard.v1';
+const TECHNICAL_QUESTION_RE = /\b(api|backend|frontend|framework|library|stack|database|dbms|sql|postgres|mysql|sqlite|docker|kubernetes|deploy|deployment|cloud|vercel|netlify|fly|render|railway|react|vite|angular|vue|svelte|zustand|jotai|redux|tanstack|swr|mantine|shadcn|tailwind|graphql|websocket|rest)\b/i;
+
+const readStoredProjectsRoot = (): string => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WIZARD_STORAGE_KEY) || 'null');
+    return String(saved?.projectsRoot || '').trim();
+  } catch {
+    return '';
+  }
+};
+
+const resolveProjectsRoot = (): string => {
+  const root = (projectsRoot.value || '').trim() || readStoredProjectsRoot();
+  if (root && projectsRoot.value !== root) projectsRoot.value = root;
+  return root;
+};
+
+const safeProductName = (value: string): string => {
+  return String(value || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .replace(/\s+/g, '-')
+    || 'NewProduct';
+};
+
+const deriveProductName = (state: DeliverState): string => {
+  if (state.name.trim()) return safeProductName(state.name);
+  const words = state.prompt
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((word) => !/^(i|we|want|need|to|build|create|make|an?|the|for|my|our)$/i.test(word))
+    .slice(0, 3);
+  return safeProductName(words.join('-') || 'NewProduct');
+};
+
+const isTechnicalQuestion = (question: string): boolean => {
+  return TECHNICAL_QUESTION_RE.test(question);
+};
+
+const technicalDecisionLabel = (question: string): string => {
+  if (/\b(database|dbms|sql|postgres|mysql|sqlite|data source|data comes from)\b/i.test(question)) {
+    return 'Data storage and API shape';
+  }
+  if (/\b(deploy|deployment|cloud|docker|vercel|netlify|fly|render|railway)\b/i.test(question)) {
+    return 'Packaging and deployment path';
+  }
+  if (/\b(ui|frontend|framework|library|react|vite|angular|vue|svelte|mantine|shadcn|tailwind)\b/i.test(question)) {
+    return 'Frontend and visual implementation choices';
+  }
+  return 'Technical implementation choice';
+};
+
+const resolveDeliveryWorkspace = async (state: DeliverState): Promise<string> => {
+  if (state.repoRoot) {
+    await workspace.set(state.repoRoot);
+    workspacePath.value = state.repoRoot;
+    return state.repoRoot;
+  }
+
+  if (state.mode === 'adopt' && workspacePath.value.trim()) {
+    return workspacePath.value.trim();
+  }
+
+  const root = resolveProjectsRoot();
+  if (!root) {
+    throw new Error('Choose a projects root folder in onboarding or Settings before starting delivery.');
+  }
+
+  const productName = deriveProductName(state);
+  if (productName === INTERNAL_WORKSPACE_NAME) {
+    throw new Error('Choose a product name. SignalOS Workspace is only the starter workspace, not a product.');
+  }
+
+  const repoRoot = await workspace.ensureDefault(productName, root);
+  const repoPath = String(repoRoot || '').trim();
+  if (!repoPath) throw new Error('SignalOS could not create the product workspace.');
+  workspacePath.value = repoPath;
+  return repoPath;
+};
 
 const phaseLabel = (phase: unknown): string => {
   const raw = String(phase ?? '').trim();
@@ -231,10 +317,13 @@ export function DeliverView() {
     });
 
     try {
+      const repoRoot = await resolveDeliveryWorkspace(state);
+      updateState({ repoRoot });
+
       // Step 1: Get intent preview
       const intentRaw = await signalIpc.runAndWait('deliver-intent', [
         '--prompt', state.prompt,
-        '--name', state.name || 'untitled',
+        '--name', deriveProductName(state),
         '--json',
       ], DELIVERY_COMMAND_TIMEOUT_MS);
 
@@ -258,9 +347,12 @@ export function DeliverView() {
     updateState({ loading: true, error: null, step: 'design', currentPhase: 'Design', startedAt: Date.now() });
 
     try {
+      const repoRoot = await resolveDeliveryWorkspace(state);
+      updateState({ repoRoot });
+
       const designRaw = await signalIpc.runAndWait('deliver-design', [
         '--prompt', state.prompt,
-        '--name', state.name || 'untitled',
+        '--name', deriveProductName(state),
         '--profile', state.profile,
         '--json',
       ], DELIVERY_COMMAND_TIMEOUT_MS);
@@ -268,19 +360,19 @@ export function DeliverView() {
       const design = normalizeDesignPayload(parseIpcJson(designRaw));
 
       // Fetch design preview HTML
-      let designPreviewUrl: string | null = null;
+      let designPreviewHtml: string | null = null;
       try {
         const previewRaw = await signalIpc.runAndWait('deliver-design-preview', [
           '--prompt', state.prompt,
-          '--name', state.name || 'untitled',
+          '--name', deriveProductName(state),
           '--profile', state.profile,
+          '--repo-root', repoRoot,
           '--json',
         ], DELIVERY_COMMAND_TIMEOUT_MS);
         const previewPayload = parseIpcJson(previewRaw);
         const html = previewPayload?.preview_html;
         if (html) {
-          const blob = new Blob([html], { type: 'text/html' });
-          designPreviewUrl = URL.createObjectURL(blob);
+          designPreviewHtml = String(html);
         }
       } catch (_previewErr) {
         // Preview is optional — design step still works without it
@@ -289,7 +381,7 @@ export function DeliverView() {
       updateState({
         loading: false,
         design,
-        designPreviewUrl,
+        designPreviewHtml,
         completedPhases: ['Intent', 'Scaffold', 'Design'],
         currentPhase: null,
       });
@@ -311,9 +403,13 @@ export function DeliverView() {
     });
 
     try {
+      const repoRoot = await resolveDeliveryWorkspace(state);
+      updateState({ repoRoot });
+
       const raw = await signalIpc.runAndWait('deliver', [
         '--prompt', state.prompt,
-        '--name', state.name || 'untitled',
+        '--name', deriveProductName(state),
+        '--repo-root', repoRoot,
         '--profile', state.profile,
         '--mode', state.mode,
         '--deploy', state.deploy,
@@ -403,7 +499,7 @@ export function DeliverView() {
     <div className="deliver-step" data-testid="deliver-step-prompt">
       <div className="deliver-step-head">
         <h2>New product delivery</h2>
-        <p>Describe what you want to build. SignalOS will extract intent, choose a design system, generate code, validate it, and produce a ready-to-run product.</p>
+        <p>Describe the product in your own words. SignalOS will choose the technical setup, explain the plan, build it, validate it, and package it.</p>
       </div>
 
       <div className="deliver-field">
@@ -430,49 +526,52 @@ export function DeliverView() {
         />
       </div>
 
-      <div className="deliver-row">
-        <div className="deliver-field">
-          <label className="deliver-label">Profile</label>
-          <select
-            className="deliver-select"
-            value={state.profile}
-            onChange={(e) => updateState({ profile: (e.target as HTMLSelectElement).value })}
-            data-testid="deliver-profile-select"
-          >
-            <option value="react-vite">React + Vite</option>
-            <option value="auto">Auto-detect</option>
-            <option value="generic">Generic</option>
-          </select>
-        </div>
+      <details className="deliver-advanced" data-testid="deliver-advanced-options">
+        <summary><i className="ti ti-adjustments"></i> Advanced options</summary>
+        <div className="deliver-row">
+          <div className="deliver-field">
+            <label className="deliver-label">App profile</label>
+            <select
+              className="deliver-select"
+              value={state.profile}
+              onChange={(e) => updateState({ profile: (e.target as HTMLSelectElement).value })}
+              data-testid="deliver-profile-select"
+            >
+              <option value="react-vite">React + Vite</option>
+              <option value="auto">Auto-detect</option>
+              <option value="generic">Generic</option>
+            </select>
+          </div>
 
-        <div className="deliver-field">
-          <label className="deliver-label">Mode</label>
-          <select
-            className="deliver-select"
-            value={state.mode}
-            onChange={(e) => updateState({ mode: (e.target as HTMLSelectElement).value })}
-            data-testid="deliver-mode-select"
-          >
-            <option value="auto">Auto</option>
-            <option value="greenfield">Greenfield</option>
-            <option value="adopt">Adopt existing</option>
-          </select>
-        </div>
+          <div className="deliver-field">
+            <label className="deliver-label">Project mode</label>
+            <select
+              className="deliver-select"
+              value={state.mode}
+              onChange={(e) => updateState({ mode: (e.target as HTMLSelectElement).value })}
+              data-testid="deliver-mode-select"
+            >
+              <option value="auto">Auto</option>
+              <option value="greenfield">Greenfield</option>
+              <option value="adopt">Adopt existing</option>
+            </select>
+          </div>
 
-        <div className="deliver-field">
-          <label className="deliver-label">Deploy</label>
-          <select
-            className="deliver-select"
-            value={state.deploy}
-            onChange={(e) => updateState({ deploy: (e.target as HTMLSelectElement).value })}
-            data-testid="deliver-deploy-select"
-          >
-            <option value="none">No deploy</option>
-            <option value="prepare">Prepare only</option>
-            <option value="live">Live deploy</option>
-          </select>
+          <div className="deliver-field">
+            <label className="deliver-label">Deployment</label>
+            <select
+              className="deliver-select"
+              value={state.deploy}
+              onChange={(e) => updateState({ deploy: (e.target as HTMLSelectElement).value })}
+              data-testid="deliver-deploy-select"
+            >
+              <option value="none">No deploy</option>
+              <option value="prepare">Prepare only</option>
+              <option value="live">Live deploy</option>
+            </select>
+          </div>
         </div>
-      </div>
+      </details>
 
       {state.error ? (
         <div className="deliver-error" data-testid="deliver-error">
@@ -495,7 +594,15 @@ export function DeliverView() {
     </div>
   );
 
-  const renderIntentStep = () => (
+  const renderIntentStep = () => {
+    const userQuestions = (state.questions || []).filter((q: string) => !isTechnicalQuestion(q));
+    const technicalDecisions = Array.from(new Set(
+      (state.questions || [])
+        .filter((q: string) => isTechnicalQuestion(q))
+        .map((q: string) => technicalDecisionLabel(q)),
+    ));
+
+    return (
     <div className="deliver-step" data-testid="deliver-step-intent">
       <div className="deliver-step-head">
         <h2>Intent extracted</h2>
@@ -535,12 +642,24 @@ export function DeliverView() {
         </div>
       ) : null}
 
-      {state.questions && state.questions.length > 0 ? (
+      {userQuestions.length > 0 ? (
         <div className="deliver-section">
-          <h3><i className="ti ti-help-circle"></i> Questions</h3>
+          <h3><i className="ti ti-help-circle"></i> Questions for you</h3>
           <ul className="deliver-list">
-            {state.questions.map((q: string, i: number) => (
+            {userQuestions.map((q: string, i: number) => (
               <li key={i}>{q}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {technicalDecisions.length > 0 ? (
+        <div className="deliver-section deliver-decision-note" data-testid="deliver-technical-decisions">
+          <h3><i className="ti ti-sparkles"></i> Decisions SignalOS will handle</h3>
+          <p className="deliver-meta">These are implementation choices. SignalOS will choose sensible defaults and show the result for approval.</p>
+          <ul className="deliver-list">
+            {technicalDecisions.map((decision, i) => (
+              <li key={i}>{decision}</li>
             ))}
           </ul>
         </div>
@@ -581,7 +700,8 @@ export function DeliverView() {
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   const handleDesignOverride = (field: string, value: string) => {
     if (!state.design) return;
@@ -592,21 +712,26 @@ export function DeliverView() {
   const renderDesignStep = () => (
     <div className="deliver-step" data-testid="deliver-step-design">
       <div className="deliver-step-head">
-        <h2>Design selected</h2>
-        <p>Review and modify the design decisions below. Nothing is built until you approve.</p>
+        <h2>Build plan selected</h2>
+        <p>Review the product experience SignalOS will build. Technical choices are handled for you unless you open Advanced controls.</p>
       </div>
 
       <div className="deliver-section">
-        <h3><i className="ti ti-palette"></i> UI library</h3>
-        <select
-          className="deliver-select"
-          value={state.design?.ui_library || ''}
-          onChange={(e) => handleDesignOverride('ui_library', (e.target as HTMLSelectElement).value)}
-          data-testid="deliver-design-ui-select"
-        >
-          <option value="@mantine/core">Mantine (forms, tables, dates)</option>
-          <option value="shadcn/ui">shadcn/ui (composable, lightweight)</option>
-        </select>
+        <h3><i className="ti ti-layout-dashboard"></i> Product experience</h3>
+        <div className="deliver-decision-grid">
+          <div>
+            <strong>Interface foundation</strong>
+            <p>{state.design?.ui_library || 'Accessible component system'} selected for fast, consistent screens.</p>
+          </div>
+          <div>
+            <strong>Data behavior</strong>
+            <p>{state.design?.data_layer || 'Local product state'} with {state.design?.state_management || 'simple state management'}.</p>
+          </div>
+          <div>
+            <strong>Forms and input</strong>
+            <p>{state.design?.form_handling || 'Clear form handling'} for validation and user feedback.</p>
+          </div>
+        </div>
         {state.design?.ui_reason ? <div className="deliver-meta">{state.design.ui_reason}</div> : null}
       </div>
 
@@ -644,6 +769,22 @@ export function DeliverView() {
           </div>
         </div>
       ) : null}
+
+      <details className="deliver-advanced" data-testid="deliver-design-advanced">
+        <summary><i className="ti ti-adjustments"></i> Advanced technical controls</summary>
+
+      <div className="deliver-section">
+        <h3><i className="ti ti-palette"></i> UI library</h3>
+        <select
+          className="deliver-select"
+          value={state.design?.ui_library || ''}
+          onChange={(e) => handleDesignOverride('ui_library', (e.target as HTMLSelectElement).value)}
+          data-testid="deliver-design-ui-select"
+        >
+          <option value="@mantine/core">Mantine (forms, tables, dates)</option>
+          <option value="shadcn/ui">shadcn/ui (composable, lightweight)</option>
+        </select>
+      </div>
 
       <div className="deliver-section">
         <h3><i className="ti ti-database"></i> State management</h3>
@@ -687,14 +828,16 @@ export function DeliverView() {
         </select>
       </div>
 
-      {state.designPreviewUrl ? (
+      </details>
+
+      {state.designPreviewHtml ? (
         <div className="deliver-section">
           <h3><i className="ti ti-eye"></i> Visual preview</h3>
           <p className="deliver-meta">This is how your product will look with the selected design.</p>
           <div className="deliver-preview-frame" data-testid="deliver-design-preview">
             <iframe
-              src={state.designPreviewUrl}
-              sandbox="allow-scripts"
+              srcDoc={state.designPreviewHtml}
+              sandbox=""
               title="Design preview"
               style={{ width: '100%', height: '480px', border: '1px solid var(--border, #dee2e6)', borderRadius: '8px', background: '#fff' }}
             />

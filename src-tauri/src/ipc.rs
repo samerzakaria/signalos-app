@@ -230,13 +230,22 @@ pub fn ensure_default_workspace(
     state: State<WorkspaceState>,
     settings: State<WorkspaceSettingsState>,
 ) -> Result<String, String> {
+    let requested_name = product_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let root = match projects_root
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         Some(root) => PathBuf::from(root),
-        None => settings.default_projects_root()?,
+        None if requested_name.is_none() || requested_name == Some("SignalOS Workspace") => {
+            settings.default_projects_root()?
+        }
+        None => {
+            return Err("Projects root is required before creating a product workspace".to_string())
+        }
     };
     if root.exists() && !root.is_dir() {
         return Err(format!(

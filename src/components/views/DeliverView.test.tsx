@@ -15,10 +15,14 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/preact';
 vi.mock('../../js/ipc.js', () => ({
   onSidecarProgress: vi.fn(() => () => {}),
   signal: { runAndWait: vi.fn() },
-  workspace: { set: vi.fn() },
+  workspace: {
+    set: vi.fn(),
+    ensureDefault: vi.fn(async (name: string, root: string) => `${root}/${name}`),
+  },
 }));
 
 const ipc = await import('../../js/ipc.js');
+const { projectsRoot, workspacePath } = await import('../../state');
 const { DeliverView } = await import('./DeliverView');
 
 function mockRunOnce(payload: unknown) {
@@ -40,6 +44,9 @@ function mockRunError(message: string) {
 describe('DeliverView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    projectsRoot.value = 'C:/Products';
+    workspacePath.value = '';
+    localStorage.clear();
     (window as any).switchTab = vi.fn();
   });
 
@@ -62,7 +69,10 @@ describe('DeliverView', () => {
       entities: ['Recipe', 'Tag'],
       workflows: ['Add recipe', 'Search recipes'],
       surfaces: ['List view', 'Detail view'],
-      questions: ['Should recipes support images?'],
+      questions: [
+        'Should recipes support images?',
+        'Do you want React, Vue, or Angular for the frontend?',
+      ],
       assumptions: ['Single user, no auth needed'],
     });
 
@@ -82,6 +92,8 @@ describe('DeliverView', () => {
     expect(screen.getByText('Tag')).toBeInTheDocument();
     expect(screen.getByText('Add recipe')).toBeInTheDocument();
     expect(screen.getByText('Should recipes support images?')).toBeInTheDocument();
+    expect(screen.queryByText('Do you want React, Vue, or Angular for the frontend?')).not.toBeInTheDocument();
+    expect(screen.getByTestId('deliver-technical-decisions')).toHaveTextContent('Frontend and visual implementation choices');
   });
 
   it('shows error state when sidecar call fails (no crash)', async () => {
@@ -102,8 +114,9 @@ describe('DeliverView', () => {
     expect(screen.getByTestId('deliver-step-prompt')).toBeInTheDocument();
   });
 
-  it('profile selector has auto, react-vite, and generic options', () => {
+  it('keeps technical setup controls inside Advanced options', () => {
     render(<DeliverView />);
+    expect(screen.getByTestId('deliver-advanced-options')).toBeInTheDocument();
     const select = screen.getByTestId('deliver-profile-select') as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
     const values = options.map((o) => o.value);
@@ -129,8 +142,9 @@ describe('DeliverView', () => {
     expect(screen.getByText('Task')).toBeInTheDocument();
   });
 
-  it('mode selector has auto, greenfield, and adopt options', () => {
+  it('mode selector has auto, greenfield, and adopt options inside Advanced', () => {
     render(<DeliverView />);
+    expect(screen.getByTestId('deliver-advanced-options')).toBeInTheDocument();
     const select = screen.getByTestId('deliver-mode-select') as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
     const values = options.map((o) => o.value);
@@ -208,6 +222,9 @@ describe('DeliverView', () => {
       ['deliver-design-preview', 0],
       ['deliver', 0],
     ]);
+    expect(ipc.workspace.ensureDefault).toHaveBeenCalledWith('my-kanban', 'C:/Products');
+    expect((ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls[2][1]).toContain('--repo-root');
+    expect((ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls[3][1]).toContain('--repo-root');
     expect(screen.getByText('my-kanban')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-closure').textContent).toBe('full');
     expect(screen.getByText('12 files')).toBeInTheDocument();

@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.24] - 2026-05-28
+
+### Internal product workspace and delivery UX recovery
+
+- Route Deliver greenfield products into the user's selected projects root instead of the internal starter workspace.
+- Hide technical design questions from non-technical users and show SignalOS-managed implementation decisions in plain language.
+- Keep Deliver previews inside the app without blob navigation failures or blocked preview pages.
+- Replace raw provider/model authorization failures with repairable setup messages and clear rejected keys.
+- Block starter-workspace governance commands from showing product release-readiness failures before a product repo exists.
+
 ## [3.0.0-internal.23] - 2026-05-28
 
 ### Internal onboarding provider hardening

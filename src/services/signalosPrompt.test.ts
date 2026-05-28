@@ -260,6 +260,13 @@ describe('wrapWithSignalosContext (AMD-CORE-102: always-wrap)', () => {
     expect(wrapped).toMatch(/test-generation/);
     expect(wrapped).toMatch(/comprehensive-code-review/);
   });
+
+  it('tells agents to protect non-technical users from implementation questions', () => {
+    const wrapped = wrapWithSignalosContext('build a team task app');
+    expect(wrapped).toMatch(/The user may be non-technical/);
+    expect(wrapped).toMatch(/Do not ask them to choose frameworks, libraries, databases/);
+    expect(wrapped).toMatch(/Make technical decisions yourself/);
+  });
 });
 
 // --------------------------------------------------------------------------

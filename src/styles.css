@@ -724,6 +724,17 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 .deliver-textarea:focus,.deliver-input:focus,.deliver-select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .deliver-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .deliver-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+.deliver-advanced{border:0.5px solid var(--line-2);border-radius:var(--r);background:var(--surface);padding:0;box-shadow:var(--sh-sm)}
+.deliver-advanced summary{list-style:none;display:flex;align-items:center;gap:8px;padding:13px 15px;font-size:12.5px;font-weight:700;color:var(--ink-2);cursor:pointer}
+.deliver-advanced summary::-webkit-details-marker{display:none}
+.deliver-advanced[open]{padding-bottom:14px}
+.deliver-advanced[open] summary{border-bottom:0.5px solid var(--line);margin-bottom:14px}
+.deliver-advanced .deliver-row,.deliver-advanced .deliver-section{margin:0 14px 10px}
+.deliver-decision-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:4px}
+.deliver-decision-grid div{border:0.5px solid var(--line);border-radius:var(--r-sm);background:var(--surface-warm);padding:12px}
+.deliver-decision-grid strong{display:block;font-size:12px;color:var(--ink);margin-bottom:4px}
+.deliver-decision-grid p{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+.deliver-decision-note{border-color:rgba(79,70,199,.20);background:var(--accent-softer)}
 .deliver-section{background:var(--surface);border:0.5px solid var(--line-2);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh-sm)}
 .deliver-section h3{font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .deliver-section h3 i{font-size:17px;color:var(--accent)}
@@ -765,6 +776,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 @media (max-width:900px){
   .deliver-content{padding:22px 18px 32px}
   .deliver-row,.deliver-progress-hero{grid-template-columns:1fr}
+  .deliver-decision-grid{grid-template-columns:1fr}
   .deliver-phases{grid-template-columns:repeat(2,minmax(0,1fr))}
   .deliver-token-row{grid-template-columns:1fr auto}
   .deliver-token-value{grid-column:1 / -1}

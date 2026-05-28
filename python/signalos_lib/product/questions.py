@@ -22,13 +22,13 @@ _CRITICAL_FIELDS: list[tuple[str, str]] = [
 # Fields that are nice to know - non-blocking questions.
 _OPTIONAL_FIELDS: list[tuple[str, str]] = [
     ("target_users", "Who are the primary users of this product?"),
-    ("entities", "What are the main data objects? (e.g. projects, tasks, users, invoices)"),
-    ("ux_surfaces", "What UI views do you envision? (e.g. dashboard, forms, tables, kanban board)"),
-    ("api_surfaces", "Does this product need an API? If so, what kind? (REST, GraphQL, WebSocket)"),
-    ("data_sources", "Where does the data come from? (database, CSV, external API)"),
-    ("auth_requirements", "Does this product require authentication or authorization?"),
-    ("deployment_intent", "How will this product be deployed? (Docker, cloud, self-hosted)"),
-    ("stack_preferences", "Do you have any technology preferences? (React, Python, etc.)"),
+    ("entities", "What information should users save, see, or manage?"),
+    ("ux_surfaces", "Which main screens should users have? (for example: overview, detail page, form, board, or report)"),
+    ("api_surfaces", "Should anything else need to connect to this product later?"),
+    ("data_sources", "Where should the product get its information from?"),
+    ("auth_requirements", "Who should be allowed to access or change things?"),
+    ("deployment_intent", "Where do you expect people to use this product? (personal computer, team workspace, public website, or internal company app)"),
+    ("stack_preferences", "Are there any company rules or existing tools SignalOS must respect?"),
 ]
 
 
@@ -56,6 +56,9 @@ domain.
 Rules:
 - Look at what fields are empty or ambiguous in the intent
 - Ask domain-specific questions, not generic ones
+- The user may be non-technical. Ask in product and business language.
+- Do NOT ask the user to choose frameworks, libraries, databases, hosting providers, CI tools, or implementation architecture.
+- If a technical choice is needed, decide it yourself and phrase any approval in outcome terms.
 - Classify each question as "blocking" (cannot proceed without answer) or non-blocking
 - Blocking: product_name, product_type, primary_workflows
 - Non-blocking: target_users, entities, ux_surfaces, api_surfaces, data_sources, etc.

@@ -11,7 +11,7 @@
  */
 
 import * as ipc from "./ipc.js";
-import { errorMessage } from "./util.js";
+import { errorMessage, isProviderAuthFailure, providerConnectionMessage } from "./util.js";
 
 const LS_WIZARD = "signalos.onboarding.wizard.v1";
 // v2: bumped because WebView2 persists localStorage per app identifier
@@ -496,7 +496,10 @@ async function onFetchModels() {
     }
   } catch (e) {
     const help = host.querySelector("#wiz-model-help");
-    if (help) help.textContent = `Could not fetch models: ${errorMessage(e)}`;
+    if (isProviderAuthFailure(e)) {
+      try { await ipc.keychain.delete(wizardState.ai.provider); } catch {}
+    }
+    if (help) help.textContent = providerConnectionMessage(e, providerName(wizardState.ai.provider));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Fetch models"; }
     save();
@@ -511,11 +514,6 @@ async function onTestAI() {
   if (btn) { btn.disabled = true; btn.textContent = "Testing…"; }
   if (result) result.innerHTML = `<div class="fine-print">Sending a real chat ping…</div>`;
   try {
-    // Save the key (if any) and set provider active so test_provider_connection
-    // can also resolve the key from keychain on subsequent runs.
-    if (wizardState.ai.apiKey && providers.find((p) => p.id === wizardState.ai.provider)?.needs_key) {
-      await ipc.keychain.store(wizardState.ai.provider, wizardState.ai.apiKey);
-    }
     await ipc.provider.setActive(wizardState.ai.provider);
     if (wizardState.ai.model) {
       await ipc.provider.setModel(wizardState.ai.provider, wizardState.ai.model);
@@ -527,14 +525,20 @@ async function onTestAI() {
     );
     wizardState.ai.tested = Boolean(res?.ok);
     wizardState.ai.testMessage = res?.message || "Provider responded.";
+    if (wizardState.ai.tested && wizardState.ai.apiKey && providers.find((p) => p.id === wizardState.ai.provider)?.needs_key) {
+      await ipc.keychain.store(wizardState.ai.provider, wizardState.ai.apiKey);
+    }
     if (result) {
       result.innerHTML = wizardState.ai.tested
         ? `<div class="wizard-check-line ok">✓ ${escapeHtml(wizardState.ai.testMessage)}</div>`
         : `<div class="wizard-error">${escapeHtml(wizardState.ai.testMessage)}</div>`;
     }
   } catch (e) {
+    if (isProviderAuthFailure(e)) {
+      try { await ipc.keychain.delete(wizardState.ai.provider); } catch {}
+    }
     wizardState.ai.tested = false;
-    wizardState.ai.testMessage = errorMessage(e);
+    wizardState.ai.testMessage = providerConnectionMessage(e, providerName(wizardState.ai.provider));
     if (result) result.innerHTML = `<div class="wizard-error">${escapeHtml(wizardState.ai.testMessage)}</div>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "Test connection"; }

@@ -23,7 +23,7 @@ import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamEr
 
 import { state } from "./state.js";
 
-import { esc, errorMessage, showError, showWarning } from "./util.js";
+import { esc, errorMessage, isProviderAuthFailure, providerConnectionMessage, showError, showWarning } from "./util.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -822,15 +822,18 @@ async function replaceApiKey() {
   const key = prompt("Enter new API key:");
   if (!key) return;
   try {
-    await ipc.keychain.store(state.ai, key);
     await refreshCurrentProviderModels(key);
     await ipc.provider.setModel(state.ai, state.aiModel);
     const result = await ipc.provider.test(state.ai, key, state.aiModel);
     if (result?.ok || result === true) {
+      await ipc.keychain.store(state.ai, key);
       addAIBubble("API key updated and verified successfully.");
     }
   } catch (e) {
-    showError("Could not update API key: " + errorMessage(e));
+    if (isProviderAuthFailure(e)) {
+      try { await ipc.keychain.delete(state.ai); } catch {}
+    }
+    showError("Could not update API key: " + providerConnectionMessage(e, state.ai));
   }
 }
 window.replaceApiKey = replaceApiKey;
@@ -933,6 +936,13 @@ function prettyJson(value) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
+function inStarterWorkspace() {
+  const name = state.workspace
+    ? state.workspace.replace(/\\/g, "/").split("/").filter(Boolean).pop()
+    : "";
+  return name === "SignalOS Workspace";
+}
+
 async function runTerminalCommand(cmd) {
   const normalized = cmd.trim().replace(/\s+/g, " ");
   const lower = normalized.toLowerCase();
@@ -949,6 +959,20 @@ async function runTerminalCommand(cmd) {
       "  clear             clear terminal output",
       "",
       "This terminal is a governed SignalOS command surface, not an unrestricted OS shell.",
+    ];
+  }
+
+  if (inStarterWorkspace() && (
+    lower === "signalos status" ||
+    lower === "/signal-status" ||
+    lower === "signalos check" ||
+    lower === "/signal-release-readiness" ||
+    lower === "signalos gates" ||
+    lower === "/state:gates"
+  )) {
+    return [
+      "You are in the starter workspace, not a product repo.",
+      "Start delivery or open a product from the Projects list, then run this command there.",
     ];
   }
 
@@ -1388,9 +1412,8 @@ async function finishOnboarding() {
         await ipc.keychain.store(state.ai, apiKey);
         providerReady = true;
       } catch (e) {
-        const message = errorMessage(e);
-        providerWarning = `${state.ai} is not connected yet: ${message}. SignalOS setup continued; update the key in Settings when ready.`;
-        if (/401|unauthori[sz]ed|invalid api key|invalid key/i.test(message)) {
+        providerWarning = providerConnectionMessage(e, state.ai);
+        if (isProviderAuthFailure(e)) {
           try { await ipc.keychain.delete(state.ai); } catch {}
         }
       }
@@ -1400,7 +1423,7 @@ async function finishOnboarding() {
         await ipc.provider.test(state.ai, null, state.aiModel);
         providerReady = true;
       } catch (e) {
-        providerWarning = `Ollama is not reachable yet: ${errorMessage(e)}. SignalOS setup continued; start Ollama or change provider in Settings.`;
+        providerWarning = providerConnectionMessage(e, "Ollama");
       }
     }
 

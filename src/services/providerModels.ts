@@ -31,6 +31,23 @@ function isExpectedMissingKey(message: string): boolean {
   return /requires an api key|api key.*not found|no api key/i.test(message);
 }
 
+function isProviderAuthFailure(message: string): boolean {
+  return /401|unauthori[sz]ed|invalid api key|invalid key|forbidden/i.test(message);
+}
+
+function providerConnectionMessage(provider: string, message: string): string {
+  if (isProviderAuthFailure(message)) {
+    return `${provider} rejected the API key. Replace it in Settings, then refresh models.`;
+  }
+  if (isExpectedMissingKey(message)) {
+    return `${provider} needs an API key before models can be fetched.`;
+  }
+  if (/model list|fetch.*models|returned no models|no models/i.test(message)) {
+    return `${provider} models could not be loaded right now. Refresh again later or replace the key.`;
+  }
+  return message || `${provider} models could not be loaded right now.`;
+}
+
 interface LoadProviderModelsOptions {
   persistSelection?: boolean;
   quietMissingKey?: boolean;
@@ -67,7 +84,17 @@ export async function loadProviderModels(
   } catch (e) {
     const message = messageFrom(e);
     providerModels.value = [];
-    providerModelsError.value = options.quietMissingKey && isExpectedMissingKey(message) ? null : message;
+    if (isProviderAuthFailure(message)) {
+      try {
+        await tauriInvoke('delete_api_key', { provider });
+      } catch {
+        // Clearing a stale rejected key is best effort; the visible failure is
+        // still the provider auth problem.
+      }
+    }
+    providerModelsError.value = options.quietMissingKey && isExpectedMissingKey(message)
+      ? null
+      : providerConnectionMessage(provider, message);
     if (!options.quietMissingKey || !isExpectedMissingKey(message)) {
       console.warn('Could not load provider models:', e);
     }
