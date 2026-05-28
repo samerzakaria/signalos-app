@@ -1,4 +1,16 @@
-import { userName, userRole, govGatesList, auditList, fileTreeEntries, recentlyChangedFiles, workspacePath } from '../state';
+import {
+  userName,
+  userRole,
+  govGatesList,
+  auditList,
+  fileTreeEntries,
+  recentlyChangedFiles,
+  workspacePath,
+  recentWorkspaces,
+  modalOpen,
+  sbTab,
+  tab,
+} from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
 import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
 
@@ -6,6 +18,38 @@ export function Sidebar() {
   const tree = fileTreeEntries.value;
   const flashed = recentlyChangedFiles.value;
   const ws = workspacePath.value;
+  const recents = recentWorkspaces.value;
+
+  const switchPanel = (id: string) => {
+    sbTab.value = id;
+    try { window.switchSbTab?.(id); } catch {}
+  };
+
+  const navigate = (id: string) => {
+    tab.value = id;
+    try { void window.switchTab?.(id); } catch {}
+  };
+
+  const openProjectModal = () => {
+    modalOpen.value = 'newProjectModal';
+    try { window.openNewProject?.(); } catch {}
+  };
+
+  const openWorkspace = (path: string) => {
+    const target = path.trim();
+    if (!target) return;
+    if (target === ws) {
+      navigate('dashboard');
+      return;
+    }
+    if (typeof window.switchWorkspace === 'function') {
+      try { void window.switchWorkspace(target); } catch {}
+      return;
+    }
+    workspacePath.value = target;
+    navigate('dashboard');
+  };
+
   return (
     <>
 <aside className="sidebar">
@@ -18,21 +62,46 @@ export function Sidebar() {
 
     
     <div className="sb-tabs">
-      <div className={sidebarTabClass('projects')} onClick={() => window.switchSbTab('projects')}>Projects</div>
-      <div className={sidebarTabClass('files')} onClick={() => window.switchSbTab('files')}>Files</div>
-      <div className={sidebarTabClass('gov')} onClick={() => window.switchSbTab('gov')}>Gov</div>
+      <button type="button" className={sidebarTabClass('projects')} onClick={() => switchPanel('projects')}>Projects</button>
+      <button type="button" className={sidebarTabClass('files')} onClick={() => switchPanel('files')}>Files</button>
+      <button type="button" className={sidebarTabClass('gov')} onClick={() => switchPanel('gov')}>Gov</button>
     </div>
 
     
     <div className={sidebarPanelClass('projects')} id="sb-projects">
-      <div className="nav accent" onClick={() => window.openNewProject()}><i className="ti ti-plus"></i> New project</div>
+      <button type="button" className="nav accent" onClick={openProjectModal} data-testid="sidebar-new-project"><i className="ti ti-plus"></i> New project</button>
+      <div className="sb-label">Projects</div>
+      {recents.length > 0 ? (
+        recents.map((project) => {
+          const active = project.path === ws;
+          const missing = project.exists === false;
+          const cls = active ? 'nav active' : 'nav';
+          return (
+            <button
+              type="button"
+              className={cls}
+              key={project.path}
+              title={project.path}
+              onClick={() => openWorkspace(project.path)}
+              disabled={missing}
+              data-testid="sidebar-recent-project"
+            >
+              <i className={`ti ${missing ? 'ti-alert-triangle' : active ? 'ti-folder-check' : 'ti-folder'}`}></i>
+              <span className="nav-text">{project.name || project.path}</span>
+              {missing ? <span className="nav-tag">Missing</span> : null}
+            </button>
+          );
+        })
+      ) : (
+        <div className="sb-empty">No projects yet.</div>
+      )}
       <div className="sb-label">Tools</div>
-      <div className={sidebarNavClass('vault')} data-tab="vault" onClick={() => window.switchTab('vault')}><i className="ti ti-shield-lock"></i> Vault</div>
-      <div className={sidebarNavClass('brain')} data-tab="brain" onClick={() => window.switchTab('brain')}><i className="ti ti-brain"></i> Brain</div>
-      <div className={sidebarNavClass('history')} data-tab="history" onClick={() => window.switchTab('history')}><i className="ti ti-history"></i> History</div>
+      <button type="button" className={sidebarNavClass('vault')} data-tab="vault" onClick={() => navigate('vault')}><i className="ti ti-shield-lock"></i> Vault</button>
+      <button type="button" className={sidebarNavClass('brain')} data-tab="brain" onClick={() => navigate('brain')}><i className="ti ti-brain"></i> Brain</button>
+      <button type="button" className={sidebarNavClass('history')} data-tab="history" onClick={() => navigate('history')}><i className="ti ti-history"></i> History</button>
       <div className="sb-label">Account</div>
-      <div className={sidebarNavClass('settings')} data-tab="settings" onClick={() => window.switchTab('settings')}><i className="ti ti-settings"></i> Settings</div>
-      <div className={sidebarNavClass('help')} data-tab="help" onClick={() => window.switchTab('help')}><i className="ti ti-help-circle"></i> Help</div>
+      <button type="button" className={sidebarNavClass('settings')} data-tab="settings" onClick={() => navigate('settings')}><i className="ti ti-settings"></i> Settings</button>
+      <button type="button" className={sidebarNavClass('help')} data-tab="help" onClick={() => navigate('help')}><i className="ti ti-help-circle"></i> Help</button>
       <div className="sb-user" style={{ 'marginTop': '8px' }}>
         <div className="sb-av" id="sbAvatar">{userName.value ? userName.value[0].toUpperCase() : 'D'}</div>
         <div className="sb-ui">

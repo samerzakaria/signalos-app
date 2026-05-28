@@ -200,9 +200,14 @@ describe('DeliverView', () => {
       expect(screen.getByTestId('deliver-step-closeout')).toBeInTheDocument();
     }, { timeout: 5000 });
 
-    const deliverCall = (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .find((call) => call[0] === 'deliver');
-    expect(deliverCall?.[2]).toBe(0);
+    const deliverCalls = (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call) => String(call[0]).startsWith('deliver'));
+    expect(deliverCalls.map((call) => [call[0], call[2]])).toEqual([
+      ['deliver-intent', 0],
+      ['deliver-design', 0],
+      ['deliver-design-preview', 0],
+      ['deliver', 0],
+    ]);
     expect(screen.getByText('my-kanban')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-closure').textContent).toBe('full');
     expect(screen.getByText('12 files')).toBeInTheDocument();

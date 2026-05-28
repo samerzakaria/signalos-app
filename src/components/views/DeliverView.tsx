@@ -96,7 +96,7 @@ const PHASE_LABELS: Record<string, string> = {
   closed: 'Closeout',
 };
 
-const DELIVERY_TIMEOUT_MS = 0;
+const DELIVERY_COMMAND_TIMEOUT_MS = 0;
 
 const phaseLabel = (phase: unknown): string => {
   const raw = String(phase ?? '').trim();
@@ -236,7 +236,7 @@ export function DeliverView() {
         '--prompt', state.prompt,
         '--name', state.name || 'untitled',
         '--json',
-      ], 30000);
+      ], DELIVERY_COMMAND_TIMEOUT_MS);
 
       const payload = parseIpcJson(intentRaw);
       const intent = normalizeIntentPayload(payload);
@@ -263,7 +263,7 @@ export function DeliverView() {
         '--name', state.name || 'untitled',
         '--profile', state.profile,
         '--json',
-      ], 30000);
+      ], DELIVERY_COMMAND_TIMEOUT_MS);
 
       const design = normalizeDesignPayload(parseIpcJson(designRaw));
 
@@ -275,7 +275,7 @@ export function DeliverView() {
           '--name', state.name || 'untitled',
           '--profile', state.profile,
           '--json',
-        ], 30000);
+        ], DELIVERY_COMMAND_TIMEOUT_MS);
         const previewPayload = parseIpcJson(previewRaw);
         const html = previewPayload?.preview_html;
         if (html) {
@@ -318,7 +318,7 @@ export function DeliverView() {
         '--mode', state.mode,
         '--deploy', state.deploy,
         '--json',
-      ], DELIVERY_TIMEOUT_MS, (id: string) => {
+      ], DELIVERY_COMMAND_TIMEOUT_MS, (id: string) => {
         updateState({
           runId: id,
           currentPhase: 'Intent',
