@@ -23,7 +23,7 @@ import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamEr
 
 import { state } from "./state.js";
 
-import { esc, errorMessage, showError } from "./util.js";
+import { esc, errorMessage, showError, showWarning } from "./util.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -1352,6 +1352,8 @@ async function finishOnboarding() {
   const apiKey = (state.apiKeyInput || "").trim();
   const budget = parseFloat(state.budgetInputValue) || 0;
   const projectsRoot = (state.projectsRoot || "").trim();
+  let providerReady = false;
+  let providerWarning = "";
 
   try {
     // Onboarding chooses the root folder where SignalOS will place product
@@ -1381,23 +1383,33 @@ async function finishOnboarding() {
 
     if (apiKey) {
       try {
-        await ipc.keychain.store(state.ai, apiKey);
         await refreshCurrentProviderModels(apiKey);
         await ipc.provider.test(state.ai, apiKey, state.aiModel);
+        await ipc.keychain.store(state.ai, apiKey);
+        providerReady = true;
       } catch (e) {
-        throw new Error(`Provider connection failed: ${errorMessage(e)}`);
+        const message = errorMessage(e);
+        providerWarning = `${state.ai} is not connected yet: ${message}. SignalOS setup continued; update the key in Settings when ready.`;
+        if (/401|unauthori[sz]ed|invalid api key|invalid key/i.test(message)) {
+          try { await ipc.keychain.delete(state.ai); } catch {}
+        }
       }
     } else if (state.ai === "ollama") {
       try {
         await refreshCurrentProviderModels(null);
         await ipc.provider.test(state.ai, null, state.aiModel);
+        providerReady = true;
       } catch (e) {
-        throw new Error(`Ollama connection failed: ${errorMessage(e)}`);
+        providerWarning = `Ollama is not reachable yet: ${errorMessage(e)}. SignalOS setup continued; start Ollama or change provider in Settings.`;
       }
     }
 
-    await ipc.provider.setActive(state.ai);
-    if (state.aiModel) await ipc.provider.setModel(state.ai, state.aiModel);
+    try {
+      await ipc.provider.setActive(state.ai);
+      if (state.aiModel) await ipc.provider.setModel(state.ai, state.aiModel);
+    } catch (e) {
+      providerWarning = providerWarning || `Provider preferences were not saved: ${errorMessage(e)}. You can set them again in Settings.`;
+    }
 
     if (budget > 0) {
       await ipc.provider.setBudget(budget);
@@ -1423,7 +1435,7 @@ async function finishOnboarding() {
       folder: state.workspace,
       projectsRoot,
       initMode: "keep",
-      ai: { provider: state.ai, model: state.aiModel, tested: Boolean(apiKey) },
+      ai: { provider: state.ai, model: state.aiModel, tested: providerReady },
       budgetUsd: budget,
       privacy: { redactEnv: true, blockSecretFiles: true, localOnly: false },
       finishedAt: new Date().toISOString(),
@@ -1435,6 +1447,9 @@ async function finishOnboarding() {
     document.getElementById("app").classList.add("active");
 
     await bootApp();
+    if (providerWarning) {
+      showWarning(providerWarning);
+    }
   } catch (e) {
     showError("Setup failed: " + errorMessage(e));
   }

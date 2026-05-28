@@ -7,15 +7,26 @@ export function esc(s) {
 
 export function showError(msg) {
   console.error("[SignalOS]", msg);
+  showToast(msg, "var(--danger)", "#fff");
+}
+
+export function showWarning(msg) {
+  console.warn("[SignalOS]", msg);
+  showToast(msg, "var(--amber-soft)", "var(--amber-deep)", "warningToast", 7000);
+}
+
+function showToast(msg, background, color, id = "errorToast", timeout = 4000) {
   const existing = document.getElementById("errorToast");
   if (existing) existing.remove();
+  const existingWarning = document.getElementById("warningToast");
+  if (existingWarning) existingWarning.remove();
   const t = document.createElement("div");
-  t.id = "errorToast";
+  t.id = id;
   t.style.cssText =
-    "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--danger);color:#fff;border-radius:var(--r);padding:11px 18px;font-size:13px;font-weight:600;z-index:9999;box-shadow:var(--sh-lg);animation:rise 0.3s var(--ease)";
+    `position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:${background};color:${color};border-radius:var(--r);padding:11px 18px;font-size:13px;font-weight:600;z-index:9999;box-shadow:var(--sh-lg);animation:rise 0.3s var(--ease);max-width:min(760px,calc(100vw - 48px));line-height:1.45;text-align:center`;
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => { if (t.parentElement) t.remove(); }, 4000);
+  setTimeout(() => { if (t.parentElement) t.remove(); }, timeout);
 }
 
 export function errorMessage(error, fallback = "Unknown error") {
