@@ -1,23 +1,23 @@
 {
-  "version": "3.0.0-internal.23",
-  "notes":   " ### Internal onboarding provider hardening  ",
-  "pub_date": "2026-05-28T18:18:35Z",
+  "version": "3.0.0-internal.24",
+  "notes":   " ### Internal product workspace and delivery UX recovery  ",
+  "pub_date": "2026-05-28T20:40:52Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.23/SignalOS_3.0.0-internal.23_aarch64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM25NSWlHalBBOU1peUw0anlBbWFycnFXbDl3alc0YmR4YU00a3J2cTRSZDNRdWNZelg5Y1NFODQ2amsyVVhQQ2tSRS80UzlGRnE0eVRQM1BrNVh5elFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTkxNjM3CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5nego1ckhMbi9HMFo3TmJabVQyNlJNQ0luRWVrQ1Y0VGhoVTZMOWJHNnhMenJ6Ukt5YmNBcERQYzJnUVgza3BNbHlhbm03SEFYQ1N6blRrV3p2TlRoanNDQT09Cg=="
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.24/SignalOS_3.0.0-internal.24_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2tZUXpHb0duazlyTjRzVDBaaVZZRU1FMTYwMzQyRyt3ejZZVlA5c1c3ZHlZdUVyZ2xJL2lNQ0hrRmcyWFJQRFh4RElYYVJPMGkzS2pnSzRLNjlGN2dNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTk5OTA5CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negp3YXhTRFZ1bnRzSmcxVUtzVzJFWE9sUnR4ZzFFVGtGZXlRZnZLQVp1c1p0NFdWcW41eTZNNUhUTXU0WmMrZkxINkluTTg0V0V1L2tKVExiYkUxKzZCZz09Cg=="
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.23/SignalOS_3.0.0-internal.23_x64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3ZaeENPMzJzcmRjUXljSG5QczhNbzlBaDFoY0wwTlM2WWM1ZVM3Zk5YTFA2bEpoTUk3SkRNTXczamdSa2I4aXNZdXFBb1JyNzdpVUd3dVp1UXpZaVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTkyMjQxCWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpvUkJ1SGU5ZENsUFZEYnpYb0FlWHk3dzlrcnlwVjNvd2M5Y2EwZitrSis2SXI3SGNDNTNnQ0cyRWVIbFY4aUZEbmc1aU5KRlRENUVuNVhCZFkybVhDdz09Cg=="
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.24/SignalOS_3.0.0-internal.24_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2tteFhIVlBMVllyV2dCNk9LOXlUMVZVSFkwMlpIU1Uvc3hJTW5GVlowak83NllRUTRSQ3J2OVp0Z0lPYkNMbHlXNDB5WUVGV1VFY0daazFsNWlnVkFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMDAwNzM5CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpRR05hQVVHMU5BR0pnRmZOdjJIdUhOTVBQVEZQZlhPbkxVMUFLdGhvME9POG9vaXJCdFdrV1VjdjZ2aHNiSGdhNlVNSFR0ZlN5eVdqNHdPdVBOaHBBQT09Cg=="
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.23/SignalOS_3.0.0-internal.23_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3Rzd0lraUpsZzBxSjBEdWZXQkRlTUhSZUJ3Sm83YU5ZOUN3eklybW80dEtiRFlIZ1JmY3dlWkZ0M3IvWHRLTEpOQS9ic1pqMWVBbFMrWERXZ3dQMFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTkyMDkxCWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjNfeDY0LXNldHVwLmV4ZQpsWjhwc1ZUVUswYnIxZzFFcXBuaWZpRWVEZjhSaytGL1pDS1pWVmh5TVNnWWxXcXVwOU1JQnp6NExRSVgxMzFtTjREQ2YrSHlYWENXanIrK0JVQ3hDQT09Cg=="
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.24/SignalOS_3.0.0-internal.24_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3R5a21RSmg0ZE43dkpGRTU4QVRIa2lxcnNWQ09vQ2ROMWMrVFRYVzE0NTd3blQvNXJibmVWazdBbmJzZW53emdicmYwWHZab0NxSGl4MmZENXorbVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTk5OTM4CWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjRfeDY0LXNldHVwLmV4ZQppdCs3ZW9HY1FzRlQzT3JEeVM0MXlZNVBzS3kveTJ4dVNURUNoMFBURGRhNTA4S1hiNi9kSzg0WW9zenNjTXNsbDh4QVZhTW9QaXN2djloSXRYbzhDQT09Cg=="
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.23/SignalOS_3.0.0-internal.23_amd64.AppImage",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2tUMTlQSXdyVmRybldLanM1Z255OCtTaXpTcVBVVSsyN2JtYWVoVDBja0IvUXVRZUlMOFdRWWQrVXpWUU5ENWFqUjQyM0prd2prK2RYM0Z2SnpDZEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzc5OTkxNzM5CWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjNfYW1kNjQuQXBwSW1hZ2UKd09PUm9UZVlPSkhWaVQ4WERLdGdCVUdldStrZTU5RFBuNVlFdERrdDV2TGh0SklVaktqb1FIVk1oSmxlL212bTdVQ20yY0ZjeEduR1RFdldwTWIxRFE9PQo="
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.24/SignalOS_3.0.0-internal.24_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM25OSkE5K1BlWnlrcENUb2dLWTFPTnE4QXVJb2FDbFN3S1JNMmpORldEWC8wV0w5eUJuRmdiR1NlaEFpVGxBbk81YlhNRDRNQXdQK2o1Q3NTZ2NjY1FvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMDAwMDQ5CWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjRfYW1kNjQuQXBwSW1hZ2UKMDl4bTVDamVpT0EvbEZtUEpTM0dRK3ArS21lbUlkSG9SZ0hVdGJqNDlTWUdPRUt2cHRYQzdPY3dTRnNGMHhOQlJ4ODJtcUtFZUZkZCtGanhmTm9hQmc9PQo="
     }
   }
 }
