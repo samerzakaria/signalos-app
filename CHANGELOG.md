@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.23] - 2026-05-28
+
+### Internal onboarding provider hardening
+
+- Let first-run setup complete when provider validation rejects a typed API key, showing a repair warning instead of failing the workspace setup.
+- Validate provider access before saving the typed key, and clear rejected keys on unauthorized responses.
+- Record onboarding provider status as tested only after a successful provider round-trip.
+
 ## [3.0.0-internal.19] - 2026-05-27
 
 ### Internal usability recovery
