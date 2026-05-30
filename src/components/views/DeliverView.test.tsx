@@ -56,6 +56,8 @@ describe('DeliverView', () => {
     expect(screen.getByTestId('deliver-step-prompt')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-prompt-input')).toBeInTheDocument();
     expect(screen.getByTestId('deliver-name-input')).toBeInTheDocument();
+    expect(screen.getByTestId('deliver-ownership')).toHaveTextContent('SignalOS team');
+    expect(screen.getByTestId('deliver-projects-root')).toHaveTextContent('C:/Products');
     expect(screen.getByTestId('deliver-start-btn')).toBeInTheDocument();
   });
 
@@ -275,6 +277,7 @@ describe('DeliverView', () => {
 
     const text = screen.getByTestId('deliver-error').textContent ?? '';
     expect(text).toContain('SignalOS stopped receiving a response');
+    expect(text).toContain('Retry delivery');
     expect(text).not.toMatch(/Terminal|retry from this screen if it stops updating/i);
   });
 });

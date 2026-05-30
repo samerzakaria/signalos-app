@@ -103,6 +103,23 @@ const DELIVERY_COMMAND_TIMEOUT_MS = 0;
 const INTERNAL_WORKSPACE_NAME = 'SignalOS Workspace';
 const WIZARD_STORAGE_KEY = 'signalos.onboarding.wizard.v1';
 const TECHNICAL_QUESTION_RE = /\b(api|backend|frontend|framework|library|stack|database|dbms|sql|postgres|mysql|sqlite|docker|kubernetes|deploy|deployment|cloud|vercel|netlify|fly|render|railway|react|vite|angular|vue|svelte|zustand|jotai|redux|tanstack|swr|mantine|shadcn|tailwind|graphql|websocket|rest)\b/i;
+const DELIVERY_OWNERSHIP = [
+  {
+    icon: 'ti-message',
+    title: 'You',
+    text: 'Describe the outcome and approve the build plan.',
+  },
+  {
+    icon: 'ti-shield-check',
+    title: 'SignalOS',
+    text: 'Creates the product repo, gates scope, records evidence, and blocks unsafe release claims.',
+  },
+  {
+    icon: 'ti-users',
+    title: 'SignalOS team',
+    text: 'Designs, builds, tests, repairs, and hands off the product under SignalOS governance.',
+  },
+];
 
 const readStoredProjectsRoot = (): string => {
   try {
@@ -512,15 +529,15 @@ export function DeliverView() {
   const renderPromptStep = () => (
     <div className="deliver-step" data-testid="deliver-step-prompt">
       <div className="deliver-step-head">
-        <h2>New product delivery</h2>
-        <p>Describe the product in your own words. SignalOS will choose the technical setup, explain the plan, build it, validate it, and package it.</p>
+        <h2>Build a product</h2>
+        <p>Write what you need in plain language. SignalOS will turn it into a repo, assign its team, run checks, and show evidence before handoff.</p>
       </div>
 
       <div className="deliver-field">
         <label className="deliver-label">What are you building?</label>
         <textarea
           className="deliver-textarea"
-          placeholder="A recipe manager that lets me save, tag, and search my favorite recipes..."
+          placeholder="I want to do a task management system to manage my team's tasks, utilization, workload and their KPIs"
           value={state.prompt}
           onInput={(e) => updateState({ prompt: (e.target as HTMLTextAreaElement).value })}
           rows={4}
@@ -529,16 +546,33 @@ export function DeliverView() {
       </div>
 
       <div className="deliver-field">
-        <label className="deliver-label">Product name</label>
+        <label className="deliver-label">Product name <span>optional</span></label>
         <input
           className="deliver-input"
           type="text"
-          placeholder="my-recipe-app"
+          placeholder="TeamOps"
           value={state.name}
           onInput={(e) => updateState({ name: (e.target as HTMLInputElement).value })}
           data-testid="deliver-name-input"
         />
       </div>
+
+      <div className="deliver-ownership-grid" data-testid="deliver-ownership">
+        {DELIVERY_OWNERSHIP.map((item) => (
+          <div className="deliver-ownership-card" key={item.title}>
+            <i className={`ti ${item.icon}`}></i>
+            <strong>{item.title}</strong>
+            <p>{item.text}</p>
+          </div>
+        ))}
+      </div>
+
+      {resolveProjectsRoot() ? (
+        <div className="deliver-root-note" data-testid="deliver-projects-root">
+          <i className="ti ti-folder"></i>
+          <span>Products will be created under <code>{resolveProjectsRoot()}</code>.</span>
+        </div>
+      ) : null}
 
       <details className="deliver-advanced" data-testid="deliver-advanced-options">
         <summary><i className="ti ti-adjustments"></i> Advanced options</summary>
@@ -602,7 +636,7 @@ export function DeliverView() {
         {state.loading ? (
           <><i className="ti ti-loader-2"></i> Analyzing...</>
         ) : (
-          <>Start delivery <i className="ti ti-arrow-right"></i></>
+          <>Review build plan <i className="ti ti-arrow-right"></i></>
         )}
       </button>
     </div>
@@ -619,8 +653,8 @@ export function DeliverView() {
     return (
     <div className="deliver-step" data-testid="deliver-step-intent">
       <div className="deliver-step-head">
-        <h2>Intent extracted</h2>
-        <p>Here is what we understood from your description. Review and continue, or go back to edit.</p>
+        <h2>Product intent</h2>
+        <p>Review what SignalOS understood. User-facing unknowns stay here; technical decisions stay with the SignalOS team.</p>
       </div>
 
       {state.intent?.entities && state.intent.entities.length > 0 ? (
@@ -726,8 +760,8 @@ export function DeliverView() {
   const renderDesignStep = () => (
     <div className="deliver-step" data-testid="deliver-step-design">
       <div className="deliver-step-head">
-        <h2>Build plan selected</h2>
-        <p>Review the product experience SignalOS will build. Technical choices are handled for you unless you open Advanced controls.</p>
+        <h2>Build plan</h2>
+        <p>Review the product experience and approve the SignalOS team to build, test, and package it.</p>
       </div>
 
       <div className="deliver-section">
@@ -954,6 +988,11 @@ export function DeliverView() {
               <strong>{state.error}</strong>
               <p>Review the live evidence above, then start over after fixing the reported blocker.</p>
               <div className="deliver-actions">
+                {state.design ? (
+                  <button className="btn btn-primary" onClick={handleApproveDesign} disabled={state.loading}>
+                    <i className="ti ti-refresh"></i> Retry delivery
+                  </button>
+                ) : null}
                 <button className="btn btn-soft" onClick={handleReset}>
                   <i className="ti ti-arrow-left"></i> Start over
                 </button>
