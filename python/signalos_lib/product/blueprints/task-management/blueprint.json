@@ -6,6 +6,51 @@
     "entities": ["task", "project"],
     "keywords": ["todo", "kanban", "board", "assign"]
   },
+  "intent_defaults": {
+    "product_type": "task-management",
+    "product_name": "Team Task Operations",
+    "target_users": ["team managers", "team members"],
+    "primary_workflows": [
+      "manage team tasks",
+      "assign tasks to team members",
+      "balance workload across the team",
+      "track utilization by team member",
+      "review team KPIs",
+      "monitor overdue work and delivery health",
+      "export workload and KPI reports"
+    ],
+    "entities": [
+      "Task",
+      "Project",
+      "Team",
+      "TeamMember",
+      "TaskAssignment",
+      "WorkloadSnapshot",
+      "KpiMetric"
+    ],
+    "entity_relationships": [
+      "Task belongs to Project",
+      "TaskAssignment links Task to TeamMember",
+      "WorkloadSnapshot summarizes TeamMember capacity and assigned work",
+      "KpiMetric measures team, project, and team-member outcomes"
+    ],
+    "ux_surfaces": ["dashboard", "chart", "report", "kanban", "table", "detail"],
+    "api_surfaces": ["rest-api"],
+    "data_sources": ["database"],
+    "auth_requirements": ["login", "rbac"],
+    "permissions": ["admin", "manager", "team-member", "viewer"],
+    "audit_requirements": ["audit-trail", "change-history"],
+    "security_constraints": ["role-based-access", "tenant-isolation", "auditability"],
+    "performance_expectations": [
+      "Dashboard summary loads in under 2 seconds for 10000 active tasks",
+      "Task filtering responds in under 500 milliseconds for normal team views"
+    ],
+    "deployment_intent": "docker",
+    "assumptions": [
+      "Enterprise defaults apply: authenticated users, manager/member roles, audit trail, and deployable packaging.",
+      "SignalOS chooses the implementation stack and asks the user only for product/domain decisions."
+    ]
+  },
   "required_intent_fields": ["product_name", "entities"],
   "entities": [
     {"name": "Task", "fields": ["id", "title", "description", "status", "priority", "assignee_id", "due_date", "project_id", "estimated_hours", "actual_hours"]},

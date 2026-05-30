@@ -6,6 +6,9 @@
     "entities": ["revenue", "churn", "metric", "subscription"],
     "keywords": ["revenue", "churn", "runway", "finance", "saas", "metrics", "dashboard"]
   },
+  "intent_defaults": {
+    "product_type": "financial-dashboard"
+  },
   "required_intent_fields": ["product_name", "entities"],
   "entities": [
     {"name": "Metric", "fields": ["id", "name", "value", "unit", "timestamp", "category"]},

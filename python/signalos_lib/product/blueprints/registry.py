@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "apply_blueprint_intent_defaults",
     "load_registry",
     "load_blueprint",
     "list_blueprints",
@@ -50,6 +51,32 @@ _REQUIRED_KEYS = frozenset({
 
 # Valid profile_support values (must match stack adapter ids)
 _VALID_PROFILES = frozenset({"react-vite", "generic", "existing-repo"})
+
+_DEFAULTABLE_LIST_FIELDS = frozenset({
+    "target_users",
+    "primary_workflows",
+    "entities",
+    "entity_relationships",
+    "ux_surfaces",
+    "api_surfaces",
+    "data_sources",
+    "integrations",
+    "auth_requirements",
+    "permissions",
+    "audit_requirements",
+    "security_constraints",
+    "performance_expectations",
+    "stack_preferences",
+    "unknowns",
+    "assumptions",
+    "out_of_scope",
+})
+
+_DEFAULTABLE_STRING_FIELDS = frozenset({
+    "product_name",
+    "product_type",
+    "deployment_intent",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +250,65 @@ def validate_blueprint(blueprint: dict[str, Any]) -> list[str]:
                 if ps not in _VALID_PROFILES:
                     errors.append(f"invalid profile_support value: {ps}")
 
+    # Validate optional intent defaults.  Domain defaults belong in blueprint
+    # data so adding a product type does not require core delivery code edits.
+    defaults = blueprint.get("intent_defaults")
+    if defaults is not None:
+        if not isinstance(defaults, dict):
+            errors.append("intent_defaults must be a dict")
+        else:
+            allowed = _DEFAULTABLE_LIST_FIELDS | _DEFAULTABLE_STRING_FIELDS
+            for key, val in defaults.items():
+                if key not in allowed:
+                    errors.append(f"intent_defaults.{key} is not supported")
+                    continue
+                if key in _DEFAULTABLE_LIST_FIELDS and not isinstance(val, list):
+                    errors.append(f"intent_defaults.{key} must be a list")
+                if key in _DEFAULTABLE_STRING_FIELDS and not isinstance(val, str):
+                    errors.append(f"intent_defaults.{key} must be a string")
+
     return errors
+
+
+def apply_blueprint_intent_defaults(
+    intent: dict[str, Any],
+    blueprint: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply data-driven intent defaults from a matched blueprint.
+
+    This is intentionally generic.  The core extractor may identify a product
+    type, but product-specific enterprise scope, roles, workflow defaults,
+    surfaces, security posture, and assumptions must live in blueprint data.
+    """
+    enriched = _clone_intent(intent)
+    defaults = blueprint.get("intent_defaults") if blueprint else None
+    if not isinstance(defaults, dict):
+        return enriched
+
+    for key in _DEFAULTABLE_LIST_FIELDS:
+        current = enriched.setdefault(key, [])
+        if not isinstance(current, list):
+            current = []
+            enriched[key] = current
+        values = defaults.get(key)
+        if isinstance(values, list):
+            _append_missing(current, [str(value) for value in values])
+
+    for key in _DEFAULTABLE_STRING_FIELDS:
+        value = defaults.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        current = enriched.get(key)
+        if key == "deployment_intent":
+            if not current or current == "none":
+                enriched[key] = value
+        elif key == "product_type":
+            if not current or current == "custom":
+                enriched[key] = value
+        elif not current:
+            enriched[key] = value
+
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +317,22 @@ def validate_blueprint(blueprint: dict[str, Any]) -> list[str]:
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _clone_intent(intent: dict[str, Any]) -> dict[str, Any]:
+    cloned: dict[str, Any] = {}
+    for key, value in intent.items():
+        cloned[key] = list(value) if isinstance(value, list) else value
+    return cloned
+
+
+def _append_missing(target: list[str], values: list[str]) -> None:
+    existing = {str(item).lower() for item in target}
+    for value in values:
+        key = value.lower()
+        if key not in existing:
+            target.append(value)
+            existing.add(key)
 
 
 def _find_entry(registry: dict[str, Any], blueprint_id: str) -> dict[str, Any] | None:

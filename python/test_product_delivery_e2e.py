@@ -72,11 +72,18 @@ class TestDeliveryE2E(unittest.TestCase):
                 name=None,
                 repo_root=repo_root,
                 mode="greenfield",
-                profile="generic",
+                profile="auto",
                 blueprint="auto",
                 deploy="prepare",
                 dry_run=True,
             )
+
+            self.assertTrue((repo_root / ".git").exists())
+            self.assertTrue((repo_root / "package.json").exists())
+            self.assertTrue((repo_root / "vite.config.ts").exists())
+            self.assertTrue((repo_root / "src" / "App.tsx").exists())
+            self.assertTrue((repo_root / "src" / "App.test.tsx").exists())
+            self.assertEqual(closeout["profile"], "react-vite")
 
             signalos = repo_root / ".signalos"
             intent = json.loads(
@@ -88,6 +95,11 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertIn("KpiMetric", intent["entities"])
             self.assertIn("rbac", intent["auth_requirements"])
             self.assertIn("audit-trail", intent["audit_requirements"])
+
+            questions = json.loads(
+                (signalos / "product" / "QUESTIONS.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(questions["blocking"], [])
 
             acceptance = json.loads(
                 (signalos / "product" / "ACCEPTANCE_MATRIX.json").read_text(encoding="utf-8")
@@ -105,6 +117,10 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertIn("signalos-system", owners)
             self.assertIn("signalos-agent-team", owners)
             self.assertTrue(ownership["minimum_prompt_contract"]["accepted_minimum_prompt"])
+            self.assertEqual(
+                ownership["minimum_prompt_contract"]["technical_choices_owned_by"],
+                "signalos-system",
+            )
 
             runs_dir = signalos / "product" / "agent-runs"
             run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()]
@@ -112,7 +128,17 @@ class TestDeliveryE2E(unittest.TestCase):
             scope = json.loads((run_dirs[0] / "scope.json").read_text(encoding="utf-8"))
             self.assertIn("delivery_ownership", scope)
             self.assertEqual(scope["delivery_ownership"]["product_type"], "task-management")
+            self.assertIn(".signalos/", scope["forbidden_paths"])
+            self.assertIn(".git/", scope["forbidden_paths"])
+            self.assertTrue(scope["allowed_paths"])
+            self.assertFalse(
+                any(path.startswith(".signalos") for path in scope["allowed_paths"])
+            )
+            self.assertTrue((run_dirs[0] / "PACKET.md").exists())
+            self.assertTrue((run_dirs[0] / "validation-plan.json").exists())
             self.assertEqual(closeout["delivery_ownership"]["product_type"], "task-management")
+            self.assertEqual(closeout["deploy_status"], "prepare")
+            self.assertNotEqual(closeout["closure_level"], "ready")
 
     def test_greenfield_generic_known_limitations(self):
         """Generic profile reports known limitations."""

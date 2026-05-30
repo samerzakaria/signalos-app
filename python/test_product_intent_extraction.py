@@ -17,6 +17,11 @@ from signalos_lib.product.intent import (
 )
 from signalos_lib.product.questions import generate_questions
 from signalos_lib.product.assumptions import record_assumptions, write_assumptions
+from signalos_lib.product.blueprints.registry import (
+    apply_blueprint_intent_defaults,
+    load_blueprint,
+    match_blueprint,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +60,9 @@ class TestMinimumEnterpriseTaskPrompt:
 
     def test_minimum_prompt_expands_to_enterprise_task_operations(self):
         intent = extract_product_intent(self.PROMPT)
+        blueprint_id = match_blueprint(intent)
+        intent = apply_blueprint_intent_defaults(intent, load_blueprint(blueprint_id))
+
         assert intent["product_type"] == "task-management"
         assert intent["product_name"] == "Team Task Operations"
 

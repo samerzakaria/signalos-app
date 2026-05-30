@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from signalos_lib.product.blueprints.registry import (
     _BLUEPRINTS_DIR,
+    apply_blueprint_intent_defaults,
     load_blueprint,
     load_registry,
     list_blueprints,
@@ -68,6 +70,38 @@ class TestLoadBlueprint:
             "audit-trail",
         ):
             assert expected in text
+
+    def test_task_management_intent_defaults_are_blueprint_data(self):
+        bp = load_blueprint("task-management")
+        assert bp is not None
+        intent = {
+            "product_name": "",
+            "product_type": "task-management",
+            "target_users": [],
+            "primary_workflows": [],
+            "entities": [],
+            "entity_relationships": [],
+            "ux_surfaces": [],
+            "api_surfaces": [],
+            "data_sources": [],
+            "integrations": [],
+            "auth_requirements": [],
+            "permissions": [],
+            "audit_requirements": [],
+            "security_constraints": [],
+            "performance_expectations": [],
+            "deployment_intent": "none",
+            "stack_preferences": [],
+            "unknowns": [],
+            "assumptions": [],
+            "out_of_scope": [],
+        }
+        enriched = apply_blueprint_intent_defaults(intent, bp)
+        assert enriched["product_name"] == "Team Task Operations"
+        assert "WorkloadSnapshot" in enriched["entities"]
+        assert "KpiMetric" in enriched["entities"]
+        assert "rbac" in enriched["auth_requirements"]
+        assert enriched["deployment_intent"] == "docker"
 
     def test_financial_dashboard_loads(self):
         bp = load_blueprint("financial-dashboard")
@@ -190,6 +224,13 @@ class TestValidateBlueprint:
         errors = validate_blueprint(bad)
         assert any("invalid profile_support" in e for e in errors)
 
+    def test_invalid_intent_defaults_rejected(self):
+        bp = load_blueprint("task-management")
+        assert bp is not None
+        bad = {**bp, "intent_defaults": {"entities": "Task"}}
+        errors = validate_blueprint(bad)
+        assert any("intent_defaults.entities must be a list" in e for e in errors)
+
 
 # ---------------------------------------------------------------------------
 # Cross-contamination checks
@@ -223,6 +264,24 @@ class TestNoCrossContamination:
             assert term not in text, (
                 f"financial-dashboard blueprint contains task term: {term}"
             )
+
+    def test_task_enterprise_defaults_not_hardcoded_in_core_modules(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        core_files = [
+            repo_root / "python" / "signalos_lib" / "product" / "intent.py",
+            repo_root / "python" / "signalos_lib" / "product" / "ownership.py",
+            repo_root / "python" / "signalos_lib" / "product" / "delivery.py",
+        ]
+        text = "\n".join(path.read_text(encoding="utf-8") for path in core_files)
+        for term in (
+            "Team Task Operations",
+            "WorkloadSnapshot",
+            "KpiMetric",
+            "balance workload",
+            "track utilization by team member",
+            "team managers",
+        ):
+            assert term not in text, f"{term!r} belongs in blueprint data"
 
 
 # ---------------------------------------------------------------------------

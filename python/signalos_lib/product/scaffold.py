@@ -186,6 +186,7 @@ def run_scaffold(
     prompt: str,
     blueprint_id: str | None = None,
     mode: str = "auto",
+    product_intent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the full scaffold phase.
 
@@ -260,19 +261,31 @@ def run_scaffold(
         )
 
     # 3. Extract and write product intent
-    product_intent = intent_mod.extract_product_intent(prompt)
+    if product_intent is None:
+        product_intent = intent_mod.extract_product_intent(prompt)
     if product_name and not product_intent.get("product_name"):
         product_intent["product_name"] = product_name
+
+    # 4. Match or use provided blueprint
+    if resolved_blueprint is None:
+        resolved_blueprint = blueprint_registry.match_blueprint(product_intent)
+    bp = (
+        blueprint_registry.load_blueprint(resolved_blueprint)
+        if resolved_blueprint
+        else None
+    )
+    product_intent = blueprint_registry.apply_blueprint_intent_defaults(
+        product_intent, bp,
+    )
+    if product_name:
+        product_intent["product_name"] = product_name
+
     signalos_dir = repo_root / ".signalos"
     try:
         intent_mod.write_intent(product_intent, signalos_dir)
         scaffold_files.append(".signalos/product/INTENT.json")
     except Exception as exc:
         warnings.append(f"intent write failed: {exc}")
-
-    # 4. Match or use provided blueprint
-    if resolved_blueprint is None:
-        resolved_blueprint = blueprint_registry.match_blueprint(product_intent)
 
     # 6. Run adapter scaffold (skip for adopt mode - preserve existing files)
     if resolved_mode != "adopt":

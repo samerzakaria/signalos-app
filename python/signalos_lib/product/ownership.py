@@ -77,14 +77,14 @@ def build_delivery_ownership_map(
                 "step": "domain_analysis",
                 "owner": "signalos-agent-team",
                 "team": "Domain Analysis Agent",
-                "responsibility": "Pressure-test workflows, KPI definitions, workload rules, edge cases, and domain assumptions.",
+                "responsibility": "Pressure-test product workflows, data rules, metrics, edge cases, and domain assumptions.",
                 "human_action": "Approve or correct business meaning, not technical stack details.",
             },
             {
                 "step": "ux_and_product_design",
                 "owner": "signalos-agent-team",
                 "team": "Product Design Agent",
-                "responsibility": "Design the manager dashboard, task board, workload view, KPI reporting, empty states, and accessibility behavior.",
+                "responsibility": "Design the product screens, workflow states, empty states, reporting surfaces, and accessibility behavior.",
                 "human_action": "Approve the experience direction.",
             },
             {
@@ -98,7 +98,7 @@ def build_delivery_ownership_map(
                 "step": "implementation",
                 "owner": "signalos-agent-team",
                 "team": "Build Agent Team",
-                "responsibility": "Implement product code inside allowed files only, including task, workload, utilization, KPI, RBAC, and reporting behavior.",
+                "responsibility": "Implement product code inside allowed files only, covering the approved entities, workflows, roles, reporting, and security behavior.",
                 "human_action": "No action unless scope changes are requested.",
             },
             {
@@ -140,19 +140,26 @@ def build_delivery_ownership_map(
 
 
 def _enterprise_slice(intent: dict[str, Any]) -> list[str]:
-    values = [
-        "task and project management",
-        "team member assignment",
-        "workload and capacity tracking",
-        "utilization reporting",
-        "KPI dashboard",
-        "role-based access",
-        "audit trail",
-        "deployable package",
-    ]
-    if intent.get("product_type") != "task-management":
-        return values[:1]
-    return values
+    values: list[str] = []
+    field_labels = (
+        ("primary_workflows", "approved workflows"),
+        ("entities", "domain entities"),
+        ("target_users", "target users"),
+        ("ux_surfaces", "user experience surfaces"),
+        ("permissions", "permission model"),
+        ("security_constraints", "security constraints"),
+        ("audit_requirements", "audit requirements"),
+    )
+    for field, label in field_labels:
+        raw = intent.get(field)
+        if isinstance(raw, list) and raw:
+            values.append(f"{label}: {', '.join(str(item) for item in raw[:8])}")
+
+    deployment = intent.get("deployment_intent")
+    if deployment and deployment != "none":
+        values.append(f"deployment intent: {deployment}")
+
+    return values or ["blueprint-approved product scope"]
 
 
 def write_delivery_ownership_map(ownership: dict[str, Any], signalos_dir: Path) -> Path:

@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from .acceptance import build_acceptance_matrix, write_acceptance_matrix
-from .blueprints.registry import load_blueprint, match_blueprint
+from .blueprints.registry import (
+    apply_blueprint_intent_defaults,
+    load_blueprint,
+    match_blueprint,
+)
 from .closeout import build_closeout, write_closeout, write_handoff_files
 from datetime import datetime, timezone
 from .deploy import (
@@ -164,10 +168,6 @@ def run_delivery(
         intent = {"product_name": "", "entities": [], "primary_workflows": [],
                   "ux_surfaces": [], "product_type": "custom"}
 
-    if name:
-        intent["product_name"] = name
-    product_name = intent.get("product_name") or name or repo_root.name
-
     # LLM refinement -- cleans up entities/roles/qualifiers
     from .llm_provider import is_llm_available
     if is_llm_available():
@@ -177,6 +177,21 @@ def run_delivery(
         except Exception as exc:
             warnings.append(f"LLM intent refinement failed: {exc}")
             _emit_progress("intent", "refine", "error", f"AI refinement failed: {exc}")
+
+    # Match the blueprint before questions so non-technical users get
+    # blueprint-owned product defaults instead of technical interrogation.
+    if blueprint == "auto":
+        blueprint_id = match_blueprint(intent)
+    elif blueprint == "none":
+        blueprint_id = None
+    else:
+        blueprint_id = blueprint
+
+    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    intent = apply_blueprint_intent_defaults(intent, bp)
+    if name:
+        intent["product_name"] = name
+    product_name = intent.get("product_name") or name or repo_root.name
 
     # ------------------------------------------------------------------
     # 1b. HITL: Check if intent needs clarification
@@ -235,16 +250,6 @@ def run_delivery(
         errors.append(f"strategy/scope artifacts failed: {exc}")
         _emit_progress("intent", "scope", "error", str(exc))
 
-    # Auto-detect blueprint
-    if blueprint == "auto":
-        blueprint_id = match_blueprint(intent)
-    elif blueprint == "none":
-        blueprint_id = None
-    else:
-        blueprint_id = blueprint
-
-    bp = load_blueprint(blueprint_id) if blueprint_id else None
-
     # ------------------------------------------------------------------
     # 2. SCAFFOLD phase
     # ------------------------------------------------------------------
@@ -257,6 +262,7 @@ def run_delivery(
             prompt=prompt,
             blueprint_id=blueprint_id,
             mode=mode,
+            product_intent=intent,
         )
         _emit_progress("scaffold", "create", "done", "Scaffold completed")
     except Exception as exc:
