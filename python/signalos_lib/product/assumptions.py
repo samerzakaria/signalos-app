@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from .llm_provider import is_llm_available
 
 
 # Non-critical fields and their safe defaults when the user opts for speed.
@@ -218,7 +219,7 @@ def record_assumptions(intent: dict[str, Any]) -> list[dict[str, str]]:
     Only fields that are currently empty/default get an assumption recorded.
     """
     # Try LLM first
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+    if is_llm_available():
         llm_result = record_assumptions_with_llm(intent)
         if llm_result is not None:
             return llm_result

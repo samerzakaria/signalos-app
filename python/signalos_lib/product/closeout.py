@@ -26,6 +26,7 @@ from .acceptance import load_acceptance_matrix, check_closure_readiness
 from .deploy import load_deploy_decision
 from .generation import load_generation_manifest
 from .lifecycle import capture_git_state, load_delivery_state
+from .ownership import load_delivery_ownership_map
 from .proof import check_proof_completeness
 from .security_gate import load_security_result
 from .validation import load_validation_result, check_product_closure
@@ -144,6 +145,9 @@ def build_closeout(
         closure, proof, acceptance_matrix, deploy_decision, profile,
     )
 
+    # --- Ownership map ---
+    delivery_ownership = load_delivery_ownership_map(signalos_dir)
+
     # --- How to run ---
     how_to_run = _build_how_to_run(profile, str(repo_root))
 
@@ -165,6 +169,7 @@ def build_closeout(
         "ux_status": ux_status,
         "security_status": security_status,
         "deploy_status": deploy_status,
+        "delivery_ownership": delivery_ownership,
         "acceptance_summary": acceptance_summary,
         "known_limitations": known_limitations,
         "how_to_run": how_to_run,
@@ -394,6 +399,24 @@ def generate_closeout_markdown(closeout: dict[str, Any]) -> str:
         )
         lines.append("")
 
+    ownership = closeout.get("delivery_ownership") or {}
+    steps = ownership.get("ownership", []) if isinstance(ownership, dict) else []
+    if steps:
+        lines.append("## Delivery Ownership")
+        lines.append("")
+        lines.append("| Step | Owner | Team | Human action |")
+        lines.append("|------|-------|------|--------------|")
+        for step in steps:
+            lines.append(
+                "| {step} | {owner} | {team} | {human} |".format(
+                    step=step.get("step", ""),
+                    owner=step.get("owner", ""),
+                    team=step.get("team", ""),
+                    human=step.get("human_action", ""),
+                )
+            )
+        lines.append("")
+
     # Known limitations
     limitations = closeout.get("known_limitations", [])
     lines.append("## Known Limitations")
@@ -502,6 +525,17 @@ def _generate_product_summary(closeout: dict[str, Any]) -> str:
             f"({acc['failed']} failed, {acc['pending']} pending, "
             f"{acc['skipped']} skipped)."
         )
+        lines.append("")
+
+    ownership = closeout.get("delivery_ownership") or {}
+    steps = ownership.get("ownership", []) if isinstance(ownership, dict) else []
+    if steps:
+        lines.append("## Ownership")
+        lines.append("")
+        for step in steps:
+            lines.append(
+                f"- **{step.get('step', '')}:** {step.get('owner', '')} / {step.get('team', '')}"
+            )
         lines.append("")
 
     # Limitations

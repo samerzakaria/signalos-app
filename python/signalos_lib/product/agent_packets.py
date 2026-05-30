@@ -205,6 +205,7 @@ def build_agent_packet(
     allowed_paths: list[str],
     forbidden_actions: list[str] | None = None,
     generation_packet: dict | None = None,
+    ownership_map: dict | None = None,
 ) -> dict:
     """Build a scoped agent execution packet.
 
@@ -290,6 +291,8 @@ def build_agent_packet(
     # Include generation packet data when available
     if generation_packet:
         packet["generation"] = generation_packet
+    if ownership_map:
+        packet["delivery_ownership"] = ownership_map
 
     return packet
 

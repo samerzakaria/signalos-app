@@ -274,13 +274,12 @@ def dispatch_build_agent(
     }
 
     # Check API key availability
-    if not (os.environ.get("ANTHROPIC_API_KEY")
-            or os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("SIGNALOS_LLM_PROVIDER")):
+    from .llm_provider import is_llm_available
+    if not is_llm_available():
         result["status"] = "no_api_key"
         result["errors"].append(
-            "No LLM API key configured. Set ANTHROPIC_API_KEY or "
-            "SIGNALOS_LLM_PROVIDER to enable agent dispatch."
+            "No LLM API key configured. Add a provider key in the "
+            "Vault to enable agent dispatch."
         )
         return result
 

@@ -614,6 +614,104 @@ def _merge_repo_context(intent: dict[str, Any], repo_context: dict[str, Any]) ->
             intent["product_name"] = name
 
 
+def _append_missing(target: list[str], values: list[str]) -> None:
+    existing = {item.lower() for item in target}
+    for value in values:
+        if value.lower() not in existing:
+            target.append(value)
+            existing.add(value.lower())
+
+
+def _enrich_task_management_intent(intent: dict[str, Any], text: str) -> None:
+    """Add enterprise defaults for team task/workload/KPI products.
+
+    The minimum user prompt often says "task management for my team" and
+    expects SignalOS to infer the enterprise-grade slice.  This enrichment is
+    deterministic and conservative: it adds the standard work-management
+    surfaces, security, and evidence expectations that unblock delivery
+    planning without asking a non-technical user for implementation choices.
+    """
+    if intent.get("product_type") != "task-management":
+        return
+
+    lower = text.lower()
+    team_context = bool(re.search(r"\b(team|teams|member|members|manager|workload|utili[sz]ation|kpis?)\b", lower))
+    kpi_context = bool(re.search(r"\b(kpi|kpis|metric|metrics|utili[sz]ation|workload|capacity)\b", lower))
+
+    if not intent.get("product_name"):
+        intent["product_name"] = (
+            "Team Task Operations" if team_context else "Task Management"
+        )
+
+    _append_missing(intent["entities"], ["Task", "Project"])
+    if team_context:
+        _append_missing(
+            intent["entities"],
+            ["Team", "TeamMember", "TaskAssignment", "WorkloadSnapshot"],
+        )
+        _append_missing(intent["target_users"], ["team managers", "team members"])
+        _append_missing(
+            intent["entity_relationships"],
+            [
+                "Task belongs to Project",
+                "TaskAssignment links Task to TeamMember",
+                "WorkloadSnapshot summarizes TeamMember capacity and assigned work",
+            ],
+        )
+        _append_missing(
+            intent["primary_workflows"],
+            [
+                "manage team tasks",
+                "assign tasks to team members",
+                "balance workload across the team",
+                "track utilization by team member",
+            ],
+        )
+
+    if kpi_context:
+        _append_missing(intent["entities"], ["KpiMetric"])
+        _append_missing(
+            intent["entity_relationships"],
+            ["KpiMetric measures team, project, and team-member outcomes"],
+        )
+        _append_missing(
+            intent["primary_workflows"],
+            [
+                "review team KPIs",
+                "monitor overdue work and delivery health",
+                "export workload and KPI reports",
+            ],
+        )
+        _append_missing(intent["ux_surfaces"], ["dashboard", "chart", "report"])
+
+    _append_missing(intent["ux_surfaces"], ["dashboard", "kanban", "table", "detail"])
+    _append_missing(intent["api_surfaces"], ["rest-api"])
+    _append_missing(intent["data_sources"], ["database"])
+    _append_missing(intent["auth_requirements"], ["login", "rbac"])
+    _append_missing(intent["permissions"], ["admin", "manager", "team-member", "viewer"])
+    _append_missing(intent["audit_requirements"], ["audit-trail", "change-history"])
+    _append_missing(
+        intent["security_constraints"],
+        ["role-based-access", "tenant-isolation", "auditability"],
+    )
+    _append_missing(
+        intent["performance_expectations"],
+        [
+            "Dashboard summary loads in under 2 seconds for 10000 active tasks",
+            "Task filtering responds in under 500 milliseconds for normal team views",
+        ],
+    )
+    if intent.get("deployment_intent") == "none":
+        intent["deployment_intent"] = "docker"
+    _append_missing(
+        intent["assumptions"],
+        [
+            "Enterprise defaults apply: authenticated users, manager/member roles, audit trail, and deployable packaging.",
+            "SignalOS chooses the implementation stack and asks the user only for product/domain decisions.",
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main extraction entry point
 # ---------------------------------------------------------------------------
@@ -675,6 +773,8 @@ def extract_product_intent(
 
     if repo_context is not None:
         _merge_repo_context(intent, repo_context)
+
+    _enrich_task_management_intent(intent, text)
 
     return intent
 

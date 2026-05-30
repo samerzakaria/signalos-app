@@ -39,6 +39,34 @@
       "path": "/projects",
       "description": "List all projects",
       "response": {"projects": "Project[]", "total": "number"}
+    },
+    {
+      "method": "GET",
+      "path": "/team-members",
+      "description": "List team members with capacity and role metadata",
+      "query": {"team_id": "string?", "role": "string?"},
+      "response": {"members": "TeamMember[]", "total": "number"}
+    },
+    {
+      "method": "GET",
+      "path": "/workload",
+      "description": "Summarize workload and utilization by team member",
+      "query": {"team_id": "string?", "period": "string?"},
+      "response": {"snapshots": "WorkloadSnapshot[]", "overloaded": "TeamMember[]"}
+    },
+    {
+      "method": "GET",
+      "path": "/kpis",
+      "description": "Return KPI metrics for teams, members, and projects",
+      "query": {"scope": "string?", "period": "string?"},
+      "response": {"metrics": "KpiMetric[]", "summary": "object"}
+    },
+    {
+      "method": "GET",
+      "path": "/reports/management",
+      "description": "Export management report for tasks, workload, utilization, and KPIs",
+      "query": {"team_id": "string?", "period": "string?"},
+      "response": {"report_url": "string", "generated_at": "string"}
     }
   ]
 }

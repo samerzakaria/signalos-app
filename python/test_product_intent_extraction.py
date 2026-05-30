@@ -47,6 +47,40 @@ class TestTaskManagementPrompt:
         assert intent["product_name"] != ""
 
 
+class TestMinimumEnterpriseTaskPrompt:
+    PROMPT = (
+        "I want to do a task management system to manage my team's tasks, "
+        "utilization, workload and their KPIs"
+    )
+
+    def test_minimum_prompt_expands_to_enterprise_task_operations(self):
+        intent = extract_product_intent(self.PROMPT)
+        assert intent["product_type"] == "task-management"
+        assert intent["product_name"] == "Team Task Operations"
+
+        entities = {item.lower() for item in intent["entities"]}
+        for expected in (
+            "task", "project", "team", "teammember",
+            "taskassignment", "workloadsnapshot", "kpimetric",
+        ):
+            assert expected in entities
+
+        workflows = " ".join(intent["primary_workflows"]).lower()
+        for expected in ("manage team tasks", "balance workload",
+                         "track utilization", "review team kpis"):
+            assert expected in workflows
+
+        assert "team managers" in intent["target_users"]
+        assert "team members" in intent["target_users"]
+        assert "dashboard" in intent["ux_surfaces"]
+        assert "chart" in intent["ux_surfaces"]
+        assert "report" in intent["ux_surfaces"]
+        assert "login" in intent["auth_requirements"]
+        assert "rbac" in intent["auth_requirements"]
+        assert "audit-trail" in intent["audit_requirements"]
+        assert "docker" == intent["deployment_intent"]
+
+
 # ---------------------------------------------------------------------------
 # Financial-dashboard prompt
 # ---------------------------------------------------------------------------

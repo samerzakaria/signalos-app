@@ -16,6 +16,7 @@ __all__ = ["generate_design_preview_html"]
 import json
 import os
 from typing import Any
+from .llm_provider import is_llm_available
 
 
 def generate_design_preview_html(design: dict, intent: dict) -> str:
@@ -28,7 +29,7 @@ def generate_design_preview_html(design: dict, intent: dict) -> str:
     If no API key is available, returns a page explaining the requirement.
     SignalOS does not fake what agents should produce.
     """
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+    if is_llm_available():
         result = _generate_with_llm(design, intent)
         if result:
             return result

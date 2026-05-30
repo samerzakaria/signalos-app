@@ -50,6 +50,25 @@ class TestLoadBlueprint:
                      "seed_detail", "acceptance_detail"):
             assert sub in bp, f"missing merged sub-file: {sub}"
 
+    def test_task_management_covers_workload_utilization_and_kpis(self):
+        bp = load_blueprint("task-management")
+        assert bp is not None
+        text = json.dumps(bp, sort_keys=True).lower()
+        for expected in (
+            "workloadsnapshot",
+            "kpimetric",
+            "balance_workload",
+            "track_utilization",
+            "review_kpis",
+            "workload-dashboard",
+            "kpi-dashboard",
+            "/workload",
+            "/kpis",
+            "tenant-isolation",
+            "audit-trail",
+        ):
+            assert expected in text
+
     def test_financial_dashboard_loads(self):
         bp = load_blueprint("financial-dashboard")
         assert bp is not None

@@ -8,21 +8,29 @@
   },
   "required_intent_fields": ["product_name", "entities"],
   "entities": [
-    {"name": "Task", "fields": ["id", "title", "description", "status", "assignee", "due_date", "project_id"]},
-    {"name": "Project", "fields": ["id", "name", "description", "owner"]},
-    {"name": "User", "fields": ["id", "name", "email", "role"]}
+    {"name": "Task", "fields": ["id", "title", "description", "status", "priority", "assignee_id", "due_date", "project_id", "estimated_hours", "actual_hours"]},
+    {"name": "Project", "fields": ["id", "name", "description", "owner_id", "status"]},
+    {"name": "Team", "fields": ["id", "name", "manager_id"]},
+    {"name": "TeamMember", "fields": ["id", "name", "email", "role", "weekly_capacity_hours", "team_id"]},
+    {"name": "TaskAssignment", "fields": ["id", "task_id", "team_member_id", "allocated_hours", "assigned_at"]},
+    {"name": "WorkloadSnapshot", "fields": ["id", "team_member_id", "period_start", "period_end", "assigned_hours", "capacity_hours", "utilization_percent"]},
+    {"name": "KpiMetric", "fields": ["id", "scope", "scope_id", "name", "value", "target", "period", "status"]}
   ],
   "workflows": [
     {"name": "create_task", "description": "Create a new task in a project"},
     {"name": "complete_task", "description": "Mark a task as done"},
     {"name": "list_tasks", "description": "List tasks with filters"},
-    {"name": "assign_task", "description": "Assign a task to a team member"}
+    {"name": "assign_task", "description": "Assign a task to a team member"},
+    {"name": "balance_workload", "description": "Compare assignments against capacity and rebalance overloaded team members"},
+    {"name": "track_utilization", "description": "Track utilization by team, member, and period"},
+    {"name": "review_kpis", "description": "Review team and project KPIs against targets"},
+    {"name": "export_management_report", "description": "Export workload, utilization, and KPI evidence for leadership"}
   ],
-  "api": ["POST /tasks", "GET /tasks", "PATCH /tasks/:id", "DELETE /tasks/:id", "POST /projects", "GET /projects"],
-  "ui": ["task-list", "task-detail", "project-board", "dashboard"],
-  "tests": ["create-task", "complete-task", "list-filter", "project-crud"],
-  "seed_data": ["sample-project", "sample-tasks", "sample-users"],
-  "security": ["auth-required", "role-based-access"],
+  "api": ["POST /tasks", "GET /tasks", "PATCH /tasks/:id", "DELETE /tasks/:id", "POST /projects", "GET /projects", "GET /team-members", "GET /workload", "GET /kpis", "GET /reports/management"],
+  "ui": ["task-list", "task-detail", "project-board", "workload-dashboard", "kpi-dashboard", "management-report"],
+  "tests": ["create-task", "complete-task", "list-filter", "project-crud", "workload-balance", "utilization-report", "kpi-dashboard", "role-access"],
+  "seed_data": ["sample-project", "sample-tasks", "sample-team", "sample-workload", "sample-kpis"],
+  "security": ["auth-required", "role-based-access", "tenant-isolation", "audit-trail"],
   "quality_profile": "standard",
   "default_deferrals": ["real-time-sync", "file-attachments", "notifications"],
   "profile_support": ["react-vite", "generic"]

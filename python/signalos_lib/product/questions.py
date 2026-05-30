@@ -10,6 +10,7 @@ __all__ = ["generate_questions", "generate_questions_with_llm"]
 import json
 import os
 from typing import Any
+from .llm_provider import is_llm_available
 
 
 # Fields that MUST have values before proceeding - blocking questions.
@@ -189,7 +190,7 @@ def generate_questions(intent: dict[str, Any]) -> list[dict[str, Any]]:
     before proceeding.  Non-blocking questions cover nice-to-have fields.
     """
     # Try LLM account-manager agent first
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+    if is_llm_available():
         llm_result = generate_questions_with_llm(intent)
         if llm_result is not None:
             return llm_result

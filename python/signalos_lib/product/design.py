@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from .llm_provider import is_llm_available
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +273,7 @@ def build_design_system(
         return _empty_design()
 
     # Try LLM architect agent first
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+    if is_llm_available():
         llm_result = select_design_with_llm(intent, profile, blueprint)
         if llm_result:
             return llm_result

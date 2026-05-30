@@ -20,12 +20,30 @@
       ]
     },
     {
-      "id": "sample-users",
-      "entity": "User",
+      "id": "sample-team",
+      "entity": "TeamMember",
       "data": [
-        {"name": "Alice Chen", "email": "alice@example.com", "role": "admin"},
-        {"name": "Bob Martinez", "email": "bob@example.com", "role": "member"},
-        {"name": "Carol Kim", "email": "carol@example.com", "role": "member"}
+        {"name": "Alice Chen", "email": "alice@example.com", "role": "manager", "weekly_capacity_hours": 32, "team": "Delivery"},
+        {"name": "Bob Martinez", "email": "bob@example.com", "role": "team-member", "weekly_capacity_hours": 30, "team": "Delivery"},
+        {"name": "Carol Kim", "email": "carol@example.com", "role": "team-member", "weekly_capacity_hours": 28, "team": "Delivery"}
+      ]
+    },
+    {
+      "id": "sample-workload",
+      "entity": "WorkloadSnapshot",
+      "data": [
+        {"team_member": "Alice Chen", "assigned_hours": 26, "capacity_hours": 32, "utilization_percent": 81},
+        {"team_member": "Bob Martinez", "assigned_hours": 34, "capacity_hours": 30, "utilization_percent": 113},
+        {"team_member": "Carol Kim", "assigned_hours": 21, "capacity_hours": 28, "utilization_percent": 75}
+      ]
+    },
+    {
+      "id": "sample-kpis",
+      "entity": "KpiMetric",
+      "data": [
+        {"name": "Task completion rate", "value": 84, "target": 90, "period": "current", "status": "at-risk"},
+        {"name": "Overdue tasks", "value": 7, "target": 3, "period": "current", "status": "off-track"},
+        {"name": "Average utilization", "value": 89, "target": 85, "period": "current", "status": "healthy"}
       ]
     }
   ]

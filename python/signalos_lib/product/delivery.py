@@ -48,6 +48,7 @@ from .lifecycle import (
     load_delivery_state,
     update_delivery_phase,
 )
+from .ownership import build_delivery_ownership_map, write_delivery_ownership_map
 from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
 from .questions import generate_questions
 from .gate_review import classify_review, handle_request_changes, handle_rejection
@@ -167,14 +168,15 @@ def run_delivery(
         intent["product_name"] = name
     product_name = intent.get("product_name") or name or repo_root.name
 
-    # Optional LLM refinement -- cleans up entities/roles/qualifiers
-    # when an API key is available. Falls back silently if not.
-    import os
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("SIGNALOS_LLM_PROVIDER"):
+    # LLM refinement -- cleans up entities/roles/qualifiers
+    from .llm_provider import is_llm_available
+    if is_llm_available():
         try:
             intent = refine_intent_with_llm(intent, prompt)
-        except Exception:
-            pass  # deterministic extraction is the fallback
+            _emit_progress("intent", "refine", "done", "Intent refined by AI")
+        except Exception as exc:
+            warnings.append(f"LLM intent refinement failed: {exc}")
+            _emit_progress("intent", "refine", "error", f"AI refinement failed: {exc}")
 
     # ------------------------------------------------------------------
     # 1b. HITL: Check if intent needs clarification
@@ -269,6 +271,18 @@ def run_delivery(
     # Ensure signalos dirs exist
     signalos_dir.mkdir(parents=True, exist_ok=True)
     (signalos_dir / "product").mkdir(parents=True, exist_ok=True)
+
+    ownership_map = build_delivery_ownership_map(
+        prompt=prompt,
+        intent=intent,
+        blueprint_id=blueprint_id,
+        profile=actual_profile,
+        deploy_mode=deploy,
+    )
+    try:
+        write_delivery_ownership_map(ownership_map, signalos_dir)
+    except Exception as exc:
+        errors.append(f"delivery ownership map failed: {exc}")
 
     # Write intent
     try:
@@ -424,6 +438,7 @@ def run_delivery(
             allowed_paths=generation_packet.get("allowed_paths", []),
             forbidden_actions=None,
             generation_packet=generation_packet,
+            ownership_map=ownership_map,
         )
         write_agent_packet(agent_packet, repo_root)
 

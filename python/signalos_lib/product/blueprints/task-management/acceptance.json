@@ -15,6 +15,22 @@
     {
       "test_id": "project-crud",
       "outcome": "A user can create a project and see it in the project list"
+    },
+    {
+      "test_id": "workload-balance",
+      "outcome": "A manager can see each team member's assigned hours, capacity, utilization, and overload risk"
+    },
+    {
+      "test_id": "utilization-report",
+      "outcome": "A manager can filter utilization by team member and reporting period"
+    },
+    {
+      "test_id": "kpi-dashboard",
+      "outcome": "A dashboard shows task throughput, overdue work, completion rate, and workload health against KPI targets"
+    },
+    {
+      "test_id": "role-access",
+      "outcome": "Role-based access separates admin, manager, team-member, and viewer capabilities"
     }
   ]
 }

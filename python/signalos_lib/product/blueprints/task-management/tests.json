@@ -19,6 +19,26 @@
       "id": "project-crud",
       "description": "Projects can be created and listed",
       "acceptance": "POST /projects creates a project; GET /projects includes the new project"
+    },
+    {
+      "id": "workload-balance",
+      "description": "Managers can identify overloaded team members and rebalance assigned work",
+      "acceptance": "GET /workload returns utilization and overload status for each team member"
+    },
+    {
+      "id": "utilization-report",
+      "description": "Utilization can be filtered by team member and reporting period",
+      "acceptance": "GET /workload?period=current returns capacity, assigned hours, and utilization percent"
+    },
+    {
+      "id": "kpi-dashboard",
+      "description": "KPI dashboard renders target, actual value, and status for team and project metrics",
+      "acceptance": "GET /kpis returns metrics with target comparison and status"
+    },
+    {
+      "id": "role-access",
+      "description": "Role-based access protects management views from unauthorized users",
+      "acceptance": "Team members can see assigned work; only managers/admins can see all workload and KPI reports"
     }
   ]
 }

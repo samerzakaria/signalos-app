@@ -27,6 +27,27 @@
       "description": "Overview with task counts, recent activity, and project summary",
       "data_bindings": ["GET /tasks", "GET /projects"],
       "layout": "main-content"
+    },
+    {
+      "id": "workload-dashboard",
+      "component": "WorkloadDashboard",
+      "description": "Manager dashboard showing capacity, assigned hours, utilization, and overload risk by team member",
+      "data_bindings": ["GET /team-members", "GET /workload"],
+      "layout": "main-content"
+    },
+    {
+      "id": "kpi-dashboard",
+      "component": "KpiDashboard",
+      "description": "KPI dashboard comparing team, project, and member metrics against targets",
+      "data_bindings": ["GET /kpis"],
+      "layout": "main-content"
+    },
+    {
+      "id": "management-report",
+      "component": "ManagementReport",
+      "description": "Exportable leadership view for task progress, workload, utilization, and KPIs",
+      "data_bindings": ["GET /reports/management"],
+      "layout": "full-width"
     }
   ]
 }

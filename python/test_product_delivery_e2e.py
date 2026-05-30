@@ -59,6 +59,61 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue((signalos / "product" / "CLOSEOUT.md").exists())
             self.assertTrue((signalos / "handoffs").exists())
 
+    def test_minimum_prompt_writes_enterprise_ownership_contract(self):
+        """Minimum non-technical prompt expands into enterprise scope + ownership."""
+        prompt = (
+            "I want to do a task management system to manage my team's tasks, "
+            "utulization, workload and their KPIs"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "team-ops"
+            closeout = run_delivery(
+                prompt=prompt,
+                name=None,
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="prepare",
+                dry_run=True,
+            )
+
+            signalos = repo_root / ".signalos"
+            intent = json.loads(
+                (signalos / "product" / "INTENT.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(intent["product_type"], "task-management")
+            self.assertEqual(intent["product_name"], "Team Task Operations")
+            self.assertIn("WorkloadSnapshot", intent["entities"])
+            self.assertIn("KpiMetric", intent["entities"])
+            self.assertIn("rbac", intent["auth_requirements"])
+            self.assertIn("audit-trail", intent["audit_requirements"])
+
+            acceptance = json.loads(
+                (signalos / "product" / "ACCEPTANCE_MATRIX.json").read_text(encoding="utf-8")
+            )
+            descriptions = " ".join(c["description"] for c in acceptance["criteria"]).lower()
+            self.assertIn("workload", descriptions)
+            self.assertIn("utilization", descriptions)
+            self.assertIn("kpi", descriptions)
+            self.assertIn("role-based access", descriptions)
+
+            ownership = json.loads(
+                (signalos / "product" / "DELIVERY_OWNERSHIP.json").read_text(encoding="utf-8")
+            )
+            owners = {step["owner"] for step in ownership["ownership"]}
+            self.assertIn("signalos-system", owners)
+            self.assertIn("signalos-agent-team", owners)
+            self.assertTrue(ownership["minimum_prompt_contract"]["accepted_minimum_prompt"])
+
+            runs_dir = signalos / "product" / "agent-runs"
+            run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()]
+            self.assertEqual(len(run_dirs), 1)
+            scope = json.loads((run_dirs[0] / "scope.json").read_text(encoding="utf-8"))
+            self.assertIn("delivery_ownership", scope)
+            self.assertEqual(scope["delivery_ownership"]["product_type"], "task-management")
+            self.assertEqual(closeout["delivery_ownership"]["product_type"], "task-management")
+
     def test_greenfield_generic_known_limitations(self):
         """Generic profile reports known limitations."""
         with tempfile.TemporaryDirectory() as td:
