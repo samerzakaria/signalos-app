@@ -180,13 +180,14 @@ export function Onboarding() {
           <button className="key-tog" onClick={() => window.toggleKey()} id="keyTog" aria-label="Show or hide key"><i className={`ti ${keyTogIcon}`}></i></button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '7px' }}>
-          <label className="field-label" style={{ marginBottom: 0 }}>Model</label>
+          <label className="field-label" htmlFor="ob-model" style={{ marginBottom: 0 }}>Model</label>
           <button className="btn btn-soft btn-compact" type="button" onClick={fetchModels} disabled={providerModelsLoading.value}>
             <i className={`ti ${providerModelsLoading.value ? 'ti-loader-2' : 'ti-refresh'}`} style={providerModelsLoading.value ? { animation: 'spin 1s linear infinite' } : undefined}></i>
             Fetch models
           </button>
         </div>
         <select
+          id="ob-model"
           className="select-input"
           value={modelSelectValue}
           disabled={models.length === 0}

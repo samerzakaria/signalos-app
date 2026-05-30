@@ -26,7 +26,7 @@ describe('loadProviderModels', () => {
     const result = await loadProviderModels('anthropic', 'bad-key');
 
     expect(result).toEqual([]);
-    expect(state.providerModelsError.value).toBe('anthropic rejected the API key. Replace it in Settings, then refresh models.');
+    expect(state.providerModelsError.value).toBe('Anthropic rejected the API key. Replace it in Settings, then refresh models.');
     expect(invoke).toHaveBeenCalledWith('delete_api_key', { provider: 'anthropic' });
   });
 
@@ -47,6 +47,35 @@ describe('loadProviderModels', () => {
 
     await loadProviderModels('anthropic', null);
 
-    expect(state.providerModelsError.value).toBe('anthropic models could not be loaded right now. Refresh again later or replace the key.');
+    expect(state.providerModelsError.value).toBe('Anthropic models could not be loaded right now. Refresh again later or replace the key.');
+  });
+
+  it('selects a fetched model from the provider list and persists it when requested', async () => {
+    const invoke = vi.fn(async <T,>(cmd: string): Promise<T> => {
+      if (cmd === 'fetch_provider_models') {
+        return [
+          { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
+          { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
+        ] as T;
+      }
+      return null as T;
+    });
+    window.__TAURI__ = { core: { invoke: invoke as Invoke } };
+
+    const state = await import('../state');
+    state.ai.value = '';
+    state.aiModel.value = 'retired-model';
+    state.providerModels.value = [];
+    state.providerModelsError.value = null;
+    const { loadProviderModels } = await import('./providerModels');
+
+    const result = await loadProviderModels('anthropic', 'valid-key', { persistSelection: true });
+
+    expect(result).toHaveLength(2);
+    expect(state.aiModel.value).toBe('claude-sonnet-4-5-20250929');
+    expect(invoke).toHaveBeenCalledWith('set_provider_model', {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5-20250929',
+    });
   });
 });

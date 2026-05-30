@@ -35,17 +35,36 @@ function isProviderAuthFailure(message: string): boolean {
   return /401|unauthori[sz]ed|invalid api key|invalid key|forbidden/i.test(message);
 }
 
+function providerDisplayName(provider: string): string {
+  const names: Record<string, string> = {
+    anthropic: 'Anthropic',
+    openai: 'OpenAI',
+    gemini: 'Gemini',
+    qwen: 'Qwen',
+    ollama: 'Ollama',
+    openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
+    mistral: 'Mistral',
+    groq: 'Groq',
+    cerebras: 'Cerebras',
+    together: 'Together AI',
+    xai: 'xAI',
+  };
+  return names[provider] || provider;
+}
+
 function providerConnectionMessage(provider: string, message: string): string {
+  const name = providerDisplayName(provider);
   if (isProviderAuthFailure(message)) {
-    return `${provider} rejected the API key. Replace it in Settings, then refresh models.`;
+    return `${name} rejected the API key. Replace it in Settings, then refresh models.`;
   }
   if (isExpectedMissingKey(message)) {
-    return `${provider} needs an API key before models can be fetched.`;
+    return `${name} needs an API key before models can be fetched.`;
   }
   if (/model list|fetch.*models|returned no models|no models/i.test(message)) {
-    return `${provider} models could not be loaded right now. Refresh again later or replace the key.`;
+    return `${name} models could not be loaded right now. Refresh again later or replace the key.`;
   }
-  return message || `${provider} models could not be loaded right now.`;
+  return message || `${name} models could not be loaded right now.`;
 }
 
 interface LoadProviderModelsOptions {
