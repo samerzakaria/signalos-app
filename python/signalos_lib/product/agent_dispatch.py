@@ -157,6 +157,17 @@ def _build_agent_prompt(
             lines.append(f"- {key}: {value}")
         lines.append("")
 
+    team_contract = packet.get("team_contract", {})
+    if team_contract:
+        lines.append("## SignalOS Team Contract")
+        lines.append(
+            "You are operating as a SignalOS team member managed by SignalOS, "
+            "not as a separate user-managed agent."
+        )
+        for key, value in team_contract.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+
     # Design constraints
     dc = gen.get("design_constraints", {})
     if dc:

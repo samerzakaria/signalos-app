@@ -113,6 +113,21 @@ _DEFAULT_SOURCE_POLICY: dict[str, str] = {
     "inference": "Label inferred conclusions separately from observed facts.",
 }
 
+_DEFAULT_TEAM_CONTRACT: dict[str, Any] = {
+    "agents_are_signalos_team": True,
+    "user_manages_agents": False,
+    "signalos_orchestrates_team": True,
+    "user_visible_name": "SignalOS team",
+    "scope_authority": (
+        "SignalOS owns the approved packet, allowed paths, forbidden rules, "
+        "validation commands, repair policy, and release evidence."
+    ),
+    "team_authority": (
+        "The assigned team member may produce product code only inside the "
+        "packet scope and must report blockers instead of inventing authority."
+    ),
+}
+
 _DEFAULT_AGENT_ROLE = "SignalOS Build agent"
 
 _DEFAULT_EXPERTISE_FRAME = (
@@ -141,6 +156,7 @@ _REQUIRED_PACKET_CONTRACT_FIELDS = (
     "repair_policy",
     "escalation_policy",
     "source_policy",
+    "team_contract",
 )
 
 _UI_HINTS = {
@@ -273,6 +289,7 @@ def build_agent_packet(
         "repair_policy": dict(_DEFAULT_REPAIR_POLICY),
         "escalation_policy": list(_DEFAULT_ESCALATION_POLICY),
         "source_policy": dict(_DEFAULT_SOURCE_POLICY),
+        "team_contract": dict(_DEFAULT_TEAM_CONTRACT),
         "intent_summary": intent_summary,
         "blueprint_id": blueprint_id,
         "profile": profile,
@@ -619,6 +636,19 @@ def _render_packet_md(packet: dict) -> str:
         lines.append("## Source Policy")
         lines.append("")
         for key, value in source_policy.items():
+            lines.append(f"- **{key}:** {value}")
+
+    team_contract = packet.get("team_contract", {})
+    if team_contract:
+        lines.append("")
+        lines.append("## SignalOS Team Contract")
+        lines.append("")
+        lines.append(
+            "Agents are SignalOS team members managed by SignalOS, not a "
+            "separate user-managed system."
+        )
+        lines.append("")
+        for key, value in team_contract.items():
             lines.append(f"- **{key}:** {value}")
 
     allowed = packet.get("allowed_paths", [])

@@ -96,7 +96,7 @@ class TestBuildAgentPacket:
             "agent_role", "expertise_frame", "quality_bar",
             "success_criteria", "evidence_required", "forbidden_rules",
             "repair_policy", "escalation_policy", "source_policy",
-            "blueprint_id", "profile", "wave", "tasks",
+            "team_contract", "blueprint_id", "profile", "wave", "tasks",
             "acceptance_criteria", "allowed_paths", "forbidden_paths",
             "forbidden_actions", "validation_commands", "skills_catalog",
             "applicable_skills", "result_schema",
@@ -153,6 +153,9 @@ class TestBuildAgentPacket:
         assert packet["repair_policy"]["forbidden_violation"].startswith("Reject")
         assert any("Escalate" in item for item in packet["escalation_policy"])
         assert "current_external_claims" in packet["source_policy"]
+        assert packet["team_contract"]["agents_are_signalos_team"] is True
+        assert packet["team_contract"]["user_manages_agents"] is False
+        assert packet["team_contract"]["signalos_orchestrates_team"] is True
         assert "validation_results" in packet["result_schema"]["required"]
 
     def test_success_criteria_include_tasks_and_acceptance(self, packet):
@@ -273,6 +276,8 @@ class TestWriteAgentPacket:
         assert "## Evidence Required" in md
         assert "## Forbidden Rules" in md
         assert "## Repair/Rework Policy" in md
+        assert "## SignalOS Team Contract" in md
+        assert "Agents are SignalOS team members managed by SignalOS" in md
         assert "## SignalOS Skills Catalog" in md
         assert "`test-driven-development`" in md
         assert "## Applicable SignalOS Skills" in md
@@ -299,6 +304,8 @@ class TestWriteAgentPacket:
         assert "## Evidence Required" in prompt
         assert "## Forbidden Rules (Hard Walls)" in prompt
         assert "## Repair/Rework Policy" in prompt
+        assert "## SignalOS Team Contract" in prompt
+        assert "not as a separate user-managed agent" in prompt
 
     def test_files_allowed_txt(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)

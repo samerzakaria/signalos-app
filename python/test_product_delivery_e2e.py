@@ -133,6 +133,9 @@ class TestDeliveryE2E(unittest.TestCase):
             owners = {step["owner"] for step in ownership["ownership"]}
             self.assertIn("signalos-system", owners)
             self.assertIn("signalos-agent-team", owners)
+            self.assertTrue(ownership["team_contract"]["agents_are_signalos_team"])
+            self.assertFalse(ownership["team_contract"]["user_manages_agents"])
+            self.assertTrue(ownership["team_contract"]["signalos_orchestrates_team"])
             self.assertTrue(ownership["minimum_prompt_contract"]["accepted_minimum_prompt"])
             self.assertEqual(
                 ownership["minimum_prompt_contract"]["technical_choices_owned_by"],
@@ -145,6 +148,8 @@ class TestDeliveryE2E(unittest.TestCase):
             scope = json.loads((run_dirs[0] / "scope.json").read_text(encoding="utf-8"))
             self.assertIn("delivery_ownership", scope)
             self.assertEqual(scope["delivery_ownership"]["product_type"], "task-management")
+            self.assertTrue(scope["team_contract"]["agents_are_signalos_team"])
+            self.assertFalse(scope["team_contract"]["user_manages_agents"])
             self.assertIn(".signalos/", scope["forbidden_paths"])
             self.assertIn(".git/", scope["forbidden_paths"])
             self.assertTrue(scope["allowed_paths"])

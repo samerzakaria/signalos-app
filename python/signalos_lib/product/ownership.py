@@ -58,6 +58,24 @@ def build_delivery_ownership_map(
             "non_technical_user_mode": True,
             "technical_choices_owned_by": "signalos-system",
         },
+        "team_contract": {
+            "agents_are_signalos_team": True,
+            "user_manages_agents": False,
+            "signalos_orchestrates_team": True,
+            "user_visible_name": "SignalOS team",
+            "user_role": (
+                "Describe the product outcome, answer product/domain blockers, "
+                "and approve the build plan and handoff."
+            ),
+            "signalos_role": (
+                "Assign, scope, constrain, validate, and repair team work under "
+                "the delivery governance contract."
+            ),
+            "agent_team_role": (
+                "Analyze, design, implement, test, review, and repair only inside "
+                "approved packets and allowed paths."
+            ),
+        },
         "ownership": [
             {
                 "step": "capture_prompt_and_create_workspace",
