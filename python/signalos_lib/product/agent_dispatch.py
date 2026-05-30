@@ -12,6 +12,7 @@ from __future__ import annotations
 
 __all__ = [
     "dispatch_build_agent",
+    "dispatch_local_build_agent",
     "parse_agent_response",
     "write_agent_files",
 ]
@@ -326,7 +327,103 @@ def dispatch_build_agent(
     result["files_written"] = written
     result["actions_taken"].append(f"wrote {len(written)} file(s)")
     result["status"] = "completed" if written else "failed"
+    _write_agent_result(repo_root, result)
 
+    return result
+
+
+def dispatch_local_build_agent(
+    repo_root: Path,
+    packet: dict,
+) -> dict[str, Any]:
+    """Execute a generation packet with the built-in governed local agent.
+
+    This is a deterministic agent-team implementation for supported
+    blueprints/profiles. It does not replace external agents; it gives the
+    delivery bridge a reliable baseline that still obeys the same packet,
+    allowed-path, forbidden-path, RESULT.json, and validation contract.
+    """
+    run_id = packet.get("run_id", "unknown")
+    result: dict[str, Any] = {
+        "status": "failed",
+        "run_id": run_id,
+        "files_written": [],
+        "actions_taken": [],
+        "validation_results": {},
+        "errors": [],
+        "tokens_in": None,
+        "tokens_out": None,
+        "agent": "signalos-local-build-agent",
+    }
+
+    gen = packet.get("generation", packet)
+    profile = gen.get("profile") or packet.get("profile")
+    if profile == "react-vite":
+        files = _render_react_vite_files(gen)
+    elif profile == "generic":
+        files = _render_generic_python_files(gen)
+    else:
+        result["status"] = "partial"
+        result["errors"].append(
+            f"local build agent does not support profile: {profile}"
+        )
+        _write_agent_result(repo_root, result)
+        return result
+
+    file_specs = gen.get("file_specs", [])
+    expected_paths = {
+        str(spec.get("path", "")).replace("\\", "/")
+        for spec in file_specs
+        if spec.get("path")
+    }
+
+    missing = sorted(expected_paths - set(files))
+    if missing:
+        result["errors"].append(
+            "local build agent did not render expected files: "
+            + ", ".join(missing)
+        )
+
+    allowed = gen.get("allowed_paths", [])
+    forbidden = gen.get("forbidden_paths", [])
+    accepted_files: dict[str, str] = {}
+    for path, content in files.items():
+        if path not in expected_paths:
+            result["errors"].append(f"local agent produced unexpected path: {path}")
+            continue
+        if _is_forbidden(path, forbidden):
+            result["errors"].append(f"local agent attempted forbidden path: {path}")
+            continue
+        if not _is_allowed(path, allowed):
+            result["errors"].append(f"local agent attempted disallowed path: {path}")
+            continue
+        if not content.strip():
+            result["errors"].append(f"local agent produced empty file: {path}")
+            continue
+        accepted_files[path] = content
+
+    written = write_agent_files(repo_root, accepted_files)
+    result["files_written"] = written
+    result["actions_taken"].append(
+        f"rendered {len(written)} governed file(s) from generation packet"
+    )
+
+    try:
+        from .generation import validate_generation_output
+
+        generation_validation = validate_generation_output(repo_root, gen)
+        result["validation_results"]["generation_output"] = generation_validation
+        if not generation_validation.get("valid", False):
+            result["errors"].extend(generation_validation.get("violations", []))
+            result["errors"].extend(
+                f"missing file: {path}"
+                for path in generation_validation.get("files_missing", [])
+            )
+    except Exception as exc:
+        result["errors"].append(f"generation output validation failed: {exc}")
+
+    result["status"] = "completed" if written and not result["errors"] else "failed"
+    _write_agent_result(repo_root, result)
     return result
 
 
@@ -383,6 +480,582 @@ def write_agent_files(repo_root: Path, files: dict[str, str]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
+    file_specs = gen.get("file_specs", [])
+    product_name = gen.get("product") or "SignalOS Product"
+    entities = gen.get("entities", [])
+    workflows = gen.get("workflows", [])
+    criteria = gen.get("acceptance_criteria", [])
+
+    component_paths = [
+        str(spec.get("path", "")).replace("\\", "/")
+        for spec in file_specs
+        if str(spec.get("path", "")).replace("\\", "/").startswith("src/components/")
+        and str(spec.get("path", "")).endswith(".tsx")
+        and not str(spec.get("path", "")).endswith(".test.tsx")
+    ]
+    component_names = [Path(path).stem for path in component_paths]
+
+    files: dict[str, str] = {}
+    for spec in file_specs:
+        path = str(spec.get("path", "")).replace("\\", "/")
+        if not path:
+            continue
+        if path == "src/types.ts":
+            files[path] = _render_types(entities)
+        elif path == "src/ui/theme.ts":
+            files[path] = _render_theme(gen.get("design_constraints", {}))
+        elif path == "src/ui/index.ts":
+            files[path] = "export * from './theme';\n"
+        elif path == "src/ui/layouts/AppLayout.tsx":
+            files[path] = _render_app_layout()
+        elif path == "src/ui/layouts/PageLayout.tsx":
+            files[path] = _render_page_layout()
+        elif path == "src/product.css":
+            files[path] = _render_product_css()
+        elif path == "src/App.tsx":
+            files[path] = _render_app(product_name, component_names, workflows, criteria)
+        elif path == "src/App.test.tsx":
+            files[path] = _render_app_test(product_name)
+        elif path.startswith("src/components/") and path.endswith(".test.tsx"):
+            component = Path(path).name.replace(".test.tsx", "")
+            files[path] = _render_component_test(component)
+        elif path.startswith("src/components/") and path.endswith(".tsx"):
+            component = Path(path).stem
+            files[path] = _render_component(component, spec, entities, criteria)
+
+    return files
+
+
+def _render_generic_python_files(gen: dict[str, Any]) -> dict[str, str]:
+    file_specs = gen.get("file_specs", [])
+    files: dict[str, str] = {}
+    source_specs = {
+        str(spec.get("entity") or ""): spec
+        for spec in file_specs
+        if str(spec.get("path", "")).replace("\\", "/").endswith(".py")
+        and spec.get("kind") == "source"
+        and spec.get("entity")
+    }
+
+    for spec in file_specs:
+        path = str(spec.get("path", "")).replace("\\", "/")
+        if not path:
+            continue
+        if path.endswith("__init__.py"):
+            files[path] = ""
+        elif path.endswith(".py") and spec.get("kind") == "test":
+            source_spec = source_specs.get(str(spec.get("entity") or ""))
+            files[path] = _render_python_entity_test(spec, source_spec)
+        elif path.endswith(".py") and spec.get("kind") == "source":
+            files[path] = _render_python_entity(spec)
+
+    return files
+
+
+def _render_python_entity(spec: dict[str, Any]) -> str:
+    entity = _to_pascal(str(spec.get("entity") or Path(str(spec.get("path", "record.py"))).stem))
+    fields = _python_fields_from_spec(spec)
+    field_lines = "\n".join(f"    {field}: Any = None" for field in fields)
+    return f"""\
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass
+class {entity}:
+{field_lines}
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+"""
+
+
+def _render_python_entity_test(
+    spec: dict[str, Any],
+    source_spec: dict[str, Any] | None,
+) -> str:
+    entity = _to_pascal(str(spec.get("entity") or "ProductRecord"))
+    source_path = str((source_spec or {}).get("path") or "")
+    module_name = Path(source_path).stem if source_path else _to_snake(entity)
+    package_name = _package_from_source_path(source_path)
+    fields = _python_fields_from_spec(source_spec or spec)
+    first_field = fields[0] if fields else "id"
+    kwargs = ", ".join(f"{field}={json.dumps(_sample_python_value(field))}" for field in fields)
+    import_line = (
+        f"from {package_name}.{module_name} import {entity}"
+        if package_name
+        else f"from {module_name} import {entity}"
+    )
+    return f"""\
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+{import_line}
+
+
+class Test{entity}(unittest.TestCase):
+    def test_create_and_serialize_{_to_snake(entity)}(self) -> None:
+        item = {entity}({kwargs})
+        data = item.to_dict()
+        self.assertEqual(data[{json.dumps(first_field)}], {json.dumps(_sample_python_value(first_field))})
+
+
+if __name__ == "__main__":
+    unittest.main()
+"""
+
+
+def _python_fields_from_spec(spec: dict[str, Any]) -> list[str]:
+    fields: list[str] = []
+    description = str(spec.get("description") or "")
+    match = re.search(r"Fields:\s*([^\.]+)", description)
+    if match:
+        fields.extend(match.group(1).split(","))
+    if not fields:
+        fields = ["id", "name", "status"]
+    cleaned = [_safe_py_field(str(field)) for field in fields]
+    return list(dict.fromkeys(field for field in cleaned if field))
+
+
+def _safe_py_field(field: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", field.strip().lower())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        return "value"
+    if cleaned[0].isdigit():
+        cleaned = f"field_{cleaned}"
+    if cleaned in {
+        "class", "def", "return", "from", "import", "for", "while", "if",
+        "else", "try", "except", "with", "as", "pass", "None", "True",
+        "False",
+    }:
+        cleaned = f"{cleaned}_value"
+    return cleaned
+
+
+def _sample_python_value(field: str) -> str:
+    lower = field.lower()
+    if "id" in lower:
+        return "sample-id"
+    if "status" in lower:
+        return "ready"
+    if "email" in lower:
+        return "user@example.test"
+    return f"sample-{lower.replace('_', '-')}"
+
+
+def _package_from_source_path(path: str) -> str:
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 3 and parts[0] == "src":
+        return parts[1]
+    return ""
+
+
+def _render_types(entities: list[Any]) -> str:
+    lines = [
+        "// Generated by the SignalOS local build agent from the approved packet.",
+        "",
+    ]
+    if not entities:
+        lines.extend([
+            "export interface ProductRecord {",
+            "  id: string;",
+            "  name: string;",
+            "}",
+            "",
+        ])
+        return "\n".join(lines)
+
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        name = _to_pascal(str(entity.get("name", "ProductRecord")))
+        fields = entity.get("fields") or ["id", "name"]
+        lines.append(f"export interface {name} {{")
+        for raw_field in fields:
+            field = _safe_ts_field(str(raw_field))
+            lines.append(f"  {field}: {_infer_ts_type(field)};")
+        lines.append("}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _render_theme(design_constraints: dict[str, Any]) -> str:
+    tokens = design_constraints.get("design_tokens", {}) or {}
+    primary = tokens.get("primary_color") or "#2563eb"
+    radius = tokens.get("border_radius") or "8px"
+    font = tokens.get("font_family") or "Inter, system-ui, sans-serif"
+    return f"""\
+// Generated by the SignalOS local build agent from the approved packet.
+export type Theme = {{
+  colors: {{ primary: string; text: string; muted: string; surface: string; border: string }};
+  radius: string;
+  fontFamily: string;
+}};
+
+export const theme: Theme = {{
+  colors: {{
+    primary: {json.dumps(primary)},
+    text: '#111827',
+    muted: '#6b7280',
+    surface: '#ffffff',
+    border: '#e5e7eb',
+  }},
+  radius: {json.dumps(radius)},
+  fontFamily: {json.dumps(font)},
+}};
+"""
+
+
+def _render_app_layout() -> str:
+    return """\
+import type { ReactNode } from 'react';
+
+type AppLayoutProps = {
+  title: string;
+  children: ReactNode;
+};
+
+export function AppLayout({ title, children }: AppLayoutProps) {
+  return (
+    <div className="product-shell">
+      <header className="product-header">
+        <p className="eyebrow">SignalOS generated product</p>
+        <h1>{title}</h1>
+      </header>
+      <main>{children}</main>
+    </div>
+  );
+}
+"""
+
+
+def _render_page_layout() -> str:
+    return """\
+import type { ReactNode } from 'react';
+
+type PageLayoutProps = {
+  title: string;
+  children: ReactNode;
+};
+
+export function PageLayout({ title, children }: PageLayoutProps) {
+  return (
+    <section className="product-card" aria-label={title}>
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+"""
+
+
+def _render_product_css() -> str:
+    return """\
+:root {
+  color: #111827;
+  background: #f6f7f9;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+.product-shell {
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.product-header {
+  max-width: 1160px;
+  margin: 0 auto 24px;
+}
+
+.eyebrow {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.product-header h1 {
+  font-size: 36px;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.summary-grid,
+.product-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-width: 1160px;
+  margin: 0 auto 16px;
+}
+
+.product-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.06);
+  padding: 18px;
+}
+
+.product-card h2 {
+  font-size: 18px;
+  margin: 0 0 12px;
+}
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #eef0f3;
+}
+
+.metric:first-of-type {
+  border-top: 0;
+}
+
+.metric span {
+  color: #6b7280;
+}
+
+.metric strong,
+.status-pill {
+  font-weight: 700;
+}
+
+.status-pill {
+  background: #e0f2fe;
+  border-radius: 999px;
+  color: #075985;
+  display: inline-flex;
+  padding: 4px 10px;
+}
+
+@media (max-width: 720px) {
+  .product-shell {
+    padding: 18px;
+  }
+
+  .product-header h1 {
+    font-size: 28px;
+  }
+}
+"""
+
+
+def _render_app(
+    product_name: str,
+    component_names: list[str],
+    workflows: list[Any],
+    criteria: list[Any],
+) -> str:
+    imports = [
+        "import './product.css';",
+        "import { AppLayout } from './ui/layouts/AppLayout';",
+    ]
+    for component in component_names:
+        imports.append(f"import {component} from './components/{component}';")
+
+    workflow_count = len(workflows)
+    criteria_count = len(criteria)
+    cards = "\n".join(
+        f"        <{component} />" for component in component_names
+    ) or "        <p>No generated components were specified.</p>"
+
+    return f"""\
+{chr(10).join(imports)}
+
+function App() {{
+  return (
+    <AppLayout title={json.dumps(product_name)}>
+      <div className="summary-grid" aria-label="Delivery summary">
+        <section className="product-card">
+          <h2>Governed delivery scope</h2>
+          <div className="metric"><span>Approved workflows</span><strong>{workflow_count}</strong></div>
+          <div className="metric"><span>Acceptance criteria</span><strong>{criteria_count}</strong></div>
+          <div className="metric"><span>Agent boundary</span><strong>Scoped files only</strong></div>
+        </section>
+      </div>
+      <div className="product-grid">
+{cards}
+      </div>
+    </AppLayout>
+  );
+}}
+
+export default App;
+"""
+
+
+def _render_app_test(product_name: str) -> str:
+    return f"""\
+import {{ render, screen }} from '@testing-library/react';
+import {{ expect, test }} from 'vitest';
+import App from './App';
+
+test('renders generated product shell', () => {{
+  render(<App />);
+  expect(screen.getByText({json.dumps(product_name)})).toBeDefined();
+  expect(screen.getByText(/Governed delivery scope/i)).toBeDefined();
+}});
+"""
+
+
+def _render_component(
+    component: str,
+    spec: dict[str, Any],
+    entities: list[Any],
+    criteria: list[Any],
+) -> str:
+    title = _label_from_component(component)
+    entity_name = spec.get("entity") or _entity_name_for_component(component, entities)
+    matched = _criteria_for_text(title, criteria)
+    metrics = [
+        ("Surface", title),
+        ("Domain object", entity_name or "Product workflow"),
+        ("Evidence", matched or "Acceptance linked in packet"),
+    ]
+    metric_rows = ",\n".join(
+        f"  {{ label: {json.dumps(label)}, value: {json.dumps(value)} }}"
+        for label, value in metrics
+    )
+    return f"""\
+const metrics = [
+{metric_rows},
+] as const;
+
+export function {component}() {{
+  return (
+    <section className="product-card" aria-label={json.dumps(title)}>
+      <h2>{title}</h2>
+      {{metrics.map((metric) => (
+        <div className="metric" key={{metric.label}}>
+          <span>{{metric.label}}</span>
+          <strong>{{metric.value}}</strong>
+        </div>
+      ))}}
+      <span className="status-pill">Ready for validation</span>
+    </section>
+  );
+}}
+
+export default {component};
+"""
+
+
+def _render_component_test(component: str) -> str:
+    title = _label_from_component(component)
+    return f"""\
+import {{ render, screen }} from '@testing-library/react';
+import {{ expect, test }} from 'vitest';
+import {component} from './{component}';
+
+test('renders {title}', () => {{
+  render(<{component} />);
+  expect(screen.getByRole('heading', {{ name: /{re.escape(title)}/i }})).toBeDefined();
+  expect(screen.getByText(/Ready for validation/i)).toBeDefined();
+}});
+"""
+
+
+def _label_from_component(component: str) -> str:
+    words = re.sub(r"(?<!^)([A-Z])", r" \1", component).strip()
+    return words or component
+
+
+def _entity_name_for_component(component: str, entities: list[Any]) -> str:
+    lower = component.lower()
+    for entity in entities:
+        if isinstance(entity, dict):
+            name = str(entity.get("name", ""))
+        else:
+            name = str(entity)
+        if name and name.lower() in lower:
+            return name
+    return ""
+
+
+def _criteria_for_text(text: str, criteria: list[Any]) -> str:
+    words = {word.lower() for word in re.findall(r"[A-Za-z]{4,}", text)}
+    for criterion in criteria:
+        if not isinstance(criterion, dict):
+            continue
+        desc = str(criterion.get("description", ""))
+        if any(word in desc.lower() for word in words):
+            return desc
+    return ""
+
+
+def _safe_ts_field(field: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", field.strip())
+    if not cleaned:
+        return "value"
+    if cleaned[0].isdigit():
+        cleaned = f"field_{cleaned}"
+    return cleaned
+
+
+def _infer_ts_type(field: str) -> str:
+    lower = field.lower()
+    if any(token in lower for token in ("hours", "percent", "value", "target", "amount", "count", "rate", "total")):
+        return "number"
+    if lower.startswith("is_") or lower in {"recurring", "active", "enabled"}:
+        return "boolean"
+    return "string"
+
+
+def _to_pascal(value: str) -> str:
+    words = re.split(r"[\s\-_]+", value.strip())
+    return "".join(word[:1].upper() + word[1:] for word in words if word)
+
+
+def _to_snake(value: str) -> str:
+    value = re.sub(r"(?<!^)([A-Z])", r"_\1", value)
+    value = re.sub(r"[^A-Za-z0-9_]+", "_", value)
+    value = re.sub(r"_+", "_", value).strip("_").lower()
+    return value or "product_record"
+
+
+def _is_allowed(path: str, allowed: list[str]) -> bool:
+    import fnmatch
+
+    normed = path.replace("\\", "/")
+    for pattern in allowed:
+        pat = pattern.replace("\\", "/")
+        if fnmatch.fnmatch(normed, pat):
+            return True
+    return False
+
+
+def _write_agent_result(repo_root: Path, result: dict[str, Any]) -> None:
+    run_id = result.get("run_id")
+    if not run_id:
+        return
+    run_dir = repo_root / ".signalos" / "product" / "agent-runs" / str(run_id)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "RESULT.json").write_text(
+            json.dumps(result, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
 
 def _is_forbidden(path: str, forbidden: list[str]) -> bool:
     """Check if a path matches any forbidden pattern."""

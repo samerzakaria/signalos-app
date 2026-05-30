@@ -33,8 +33,8 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p.add_argument("--max-repair-cycles", type=int, default=3)
     p.add_argument(
         "--agent",
-        choices=["none", "packet-only", "orchestrator", "auto"],
-        default="none",
+        choices=["none", "packet-only", "local", "orchestrator", "auto"],
+        default="auto",
     )
     p.add_argument("--json", action="store_true", dest="as_json")
     return p

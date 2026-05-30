@@ -122,31 +122,29 @@ class TestReactViteDetect:
 
 
 class TestGenericAdapter:
-    def test_scaffold_only_creates_signalos(self, tmp_path: Path) -> None:
+    def test_scaffold_creates_runnable_python_package(self, tmp_path: Path) -> None:
         result = GenericAdapter().scaffold(tmp_path, {})
-        # Only .signalos/ governance files should exist
-        for created in result["created"]:
-            assert created.startswith(".signalos/"), (
-                f"generic scaffold created non-governance file: {created}"
-            )
-        # No app files
+        assert ".signalos/profile.json" in result["created"]
+        assert "pyproject.toml" in result["created"]
+        assert (tmp_path / "pyproject.toml").is_file()
+        assert (tmp_path / "src").is_dir()
+        assert (tmp_path / "tests" / "__init__.py").is_file()
         assert not (tmp_path / "package.json").exists()
-        assert not (tmp_path / "src").exists()
 
-    def test_cannot_claim_runnable_ui(self, tmp_path: Path) -> None:
+    def test_claims_runnable_non_ui(self, tmp_path: Path) -> None:
         info = GenericAdapter().detect(tmp_path)
         assert info["can_deliver_ui"] is False
-        assert info["can_deliver_runnable"] is False
+        assert info["can_deliver_runnable"] is True
 
-    def test_scaffold_reports_not_runnable(self, tmp_path: Path) -> None:
+    def test_scaffold_reports_runnable(self, tmp_path: Path) -> None:
         result = GenericAdapter().scaffold(tmp_path, {})
         assert result["can_deliver_ui"] is False
-        assert result["can_deliver_runnable"] is False
+        assert result["can_deliver_runnable"] is True
 
-    def test_validation_plan_is_empty(self, tmp_path: Path) -> None:
+    def test_validation_plan_runs_python_build_and_test(self, tmp_path: Path) -> None:
         plan = GenericAdapter().validation_plan(tmp_path)
-        for commands in plan.values():
-            assert commands == []
+        assert any("compileall" in command for command in plan["build"])
+        assert any("unittest discover" in command for command in plan["test"])
 
     def test_preview_plan_is_null(self, tmp_path: Path) -> None:
         plan = GenericAdapter().preview_plan(tmp_path)

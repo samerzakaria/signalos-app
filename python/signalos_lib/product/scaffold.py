@@ -37,7 +37,8 @@ _PROFILE_EXPLANATIONS: dict[str, str] = {
     ),
     "generic": (
         "Generic profile selected: no recognised project markers were found. "
-        "Governance files will be created but no runnable application scaffold."
+        "SignalOS will create a runnable stdlib Python product scaffold unless "
+        "the product intent requires a dedicated UI adapter."
     ),
 }
 
@@ -64,7 +65,7 @@ def run_postflight(repo_root: Path, profile: str) -> dict[str, Any]:
 
     For react-vite: check package.json exists, has name field, has
     dependencies, src/ exists, at least one .tsx file exists.
-    For generic: check .signalos/ exists (minimal).
+    For generic: check runnable Python package scaffold exists.
     For existing-repo: check original files preserved.
 
     Returns ``{"passed": bool, "checks": [...]}``.
@@ -172,6 +173,36 @@ def _postflight_generic(repo_root: Path) -> list[dict[str, Any]]:
         "detail": ".signalos/ found" if signalos_exists else ".signalos/ not found",
     })
 
+    pyproject_exists = (repo_root / "pyproject.toml").is_file()
+    checks.append({
+        "name": "pyproject.toml exists",
+        "passed": pyproject_exists,
+        "detail": "pyproject.toml found" if pyproject_exists else "pyproject.toml not found",
+    })
+
+    src_exists = (repo_root / "src").is_dir()
+    package_dirs = [
+        child
+        for child in (repo_root / "src").iterdir()
+        if src_exists and child.is_dir() and (child / "__init__.py").is_file()
+    ] if src_exists else []
+    checks.append({
+        "name": "Python package exists under src/",
+        "passed": bool(package_dirs),
+        "detail": (
+            f"{len(package_dirs)} package(s) found"
+            if package_dirs
+            else "no src package with __init__.py found"
+        ),
+    })
+
+    tests_exists = (repo_root / "tests").is_dir()
+    checks.append({
+        "name": "tests/ directory exists",
+        "passed": tests_exists,
+        "detail": "tests/ found" if tests_exists else "tests/ not found",
+    })
+
     return checks
 
 
@@ -216,13 +247,18 @@ def run_scaffold(
     if resolved_mode == "auto":
         resolved_mode = lifecycle.detect_mode(repo_root)
 
-    # For a brand-new product, "auto" must choose a runnable product shell.
-    # Detecting an empty directory as generic only produces governance files,
-    # which is correct for adoption safety but wrong for greenfield delivery.
+    # 3. Extract product intent before stack selection so "auto" can make a
+    # product-shaped adapter decision rather than defaulting every greenfield
+    # request to one frontend stack.
+    if product_intent is None:
+        product_intent = intent_mod.extract_product_intent(prompt)
+    if product_name and not product_intent.get("product_name"):
+        product_intent["product_name"] = product_name
+
     profile_detected = False
     if resolved_profile == "auto":
         if resolved_mode == "greenfield":
-            resolved_profile = "react-vite"
+            resolved_profile = _select_greenfield_profile(repo_root, product_intent)
         else:
             resolved_profile = stacks.detect_profile(repo_root)
             profile_detected = True
@@ -259,12 +295,6 @@ def run_scaffold(
             errors=errors,
             warnings=warnings,
         )
-
-    # 3. Extract and write product intent
-    if product_intent is None:
-        product_intent = intent_mod.extract_product_intent(prompt)
-    if product_name and not product_intent.get("product_name"):
-        product_intent["product_name"] = product_name
 
     # 4. Match or use provided blueprint
     if resolved_blueprint is None:
@@ -313,12 +343,6 @@ def run_scaffold(
             scaffold_files.extend(adapter_result.get("created", []))
         except Exception as exc:
             warnings.append(f"adopt metadata write failed: {exc}")
-
-    # Add non-runnable warning for generic profile
-    if resolved_profile == "generic":
-        warnings.append(
-            "No runnable profile \u2014 delivery will be partial"
-        )
 
     # 7. Run postflight
     postflight_result = run_postflight(repo_root, resolved_profile)
@@ -369,3 +393,48 @@ def _build_result(
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
+    """Choose the first supported greenfield stack from product intent.
+
+    This is a stack-adapter decision, not a product-domain hardcode. A product
+    that clearly needs user-facing screens gets the currently supported UI
+    adapter. Products with no UI surface get the stdlib Python adapter so the
+    bridge still produces a real runnable repo.
+    """
+    detected_profile = stacks.detect_profile(repo_root)
+    if detected_profile != "generic":
+        return detected_profile
+
+    stack_preferences = {
+        str(pref).lower()
+        for pref in intent.get("stack_preferences", [])
+        if str(pref).strip()
+    }
+    if stack_preferences & {"react", "vite", "react-vite", "frontend", "web-ui"}:
+        return "react-vite"
+    if stack_preferences & {"python", "library", "cli", "api", "generic"}:
+        return "generic"
+
+    surfaces = {
+        str(surface).lower()
+        for surface in intent.get("ux_surfaces", [])
+        if str(surface).strip()
+    }
+    ui_surfaces = {
+        "web-ui", "dashboard", "table", "form", "detail", "list", "chart",
+        "gauge", "kanban", "calendar", "timeline", "report",
+    }
+    if surfaces & ui_surfaces:
+        return "react-vite"
+
+    product_type = str(intent.get("product_type") or "").lower()
+    ui_product_types = {
+        "task-management", "financial-dashboard", "e-commerce",
+        "social-platform", "crm", "dashboard",
+    }
+    if product_type in ui_product_types:
+        return "react-vite"
+
+    return "generic"

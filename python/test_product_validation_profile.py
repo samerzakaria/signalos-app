@@ -37,27 +37,29 @@ class TestBuildValidationPlan:
         assert plan["build"], "react-vite should declare build commands"
         assert plan["test"], "react-vite should declare test commands"
 
-    def test_generic_returns_empty_command_lists(self, tmp_path: Path):
+    def test_generic_returns_python_build_and_test_commands(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "generic")
-        for cat in ("install", "build", "test", "lint", "qa", "e2e",
-                     "runtime_smoke", "ux_smoke", "security"):
+        assert plan["build"], "generic should validate Python source"
+        assert plan["test"], "generic should run generated tests"
+        for cat in ("install", "lint", "qa", "e2e",
+                    "runtime_smoke", "ux_smoke", "security"):
             assert plan[cat] == [], f"generic should have empty {cat}"
 
     def test_react_vite_can_validate_build(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "react-vite")
         assert plan["can_validate_build"] is True
 
-    def test_generic_cannot_validate_build(self, tmp_path: Path):
+    def test_generic_can_validate_build(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "generic")
-        assert plan["can_validate_build"] is False
+        assert plan["can_validate_build"] is True
 
     def test_react_vite_can_validate_tests(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "react-vite")
         assert plan["can_validate_tests"] is True
 
-    def test_generic_cannot_validate_tests(self, tmp_path: Path):
+    def test_generic_can_validate_tests(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "generic")
-        assert plan["can_validate_tests"] is False
+        assert plan["can_validate_tests"] is True
 
     def test_schema_version_present(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "react-vite")
@@ -103,14 +105,14 @@ class TestRunValidationDryRun:
 # ------------------------------------------------------------------
 
 
-class TestRunValidationEmptyPlan:
-    def test_empty_plan_all_skipped(self, tmp_path: Path):
+class TestRunValidationGenericMissingScaffold:
+    def test_missing_scaffold_fails_build_and_test(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "generic")
         result = run_validation(tmp_path, plan)
-        for cat_result in result["results"].values():
-            assert cat_result["status"] == "skipped"
+        assert result["results"]["build"]["status"] == "failed"
+        assert result["results"]["test"]["status"] == "failed"
 
-    def test_empty_plan_cannot_close(self, tmp_path: Path):
+    def test_missing_scaffold_cannot_close(self, tmp_path: Path):
         plan = build_validation_plan(tmp_path, "generic")
         result = run_validation(tmp_path, plan)
         assert result["can_close_delivery"] is False
@@ -341,15 +343,14 @@ class TestCheckProductClosure:
         assert closure["level"] == "blocked"
         assert closure["closeable"] is False
 
-    def test_generic_cannot_close_ui_product(self, tmp_path: Path):
-        """Generic profile cannot close a UI product as ready."""
+    def test_generic_missing_scaffold_cannot_close(self, tmp_path: Path):
+        """Generic profile cannot close without real source and tests."""
         plan = build_validation_plan(tmp_path, "generic")
         result = run_validation(tmp_path, plan)
         closure = check_product_closure(result)
-        # All skipped -> partial, not ready
         assert closure["closeable"] is False
         assert closure["level"] == "partial"
-        assert any("skip" in b.lower() for b in closure["blockers"])
+        assert any("build" in b.lower() for b in closure["blockers"])
 
     def test_blockers_are_human_readable(self):
         result = {

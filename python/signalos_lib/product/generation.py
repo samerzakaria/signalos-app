@@ -494,6 +494,65 @@ def _build_react_vite_file_specs(
     base_constraints.append("Follow PascalCase naming")
     base_constraints.append("Co-locate test file as <Component>.test.tsx")
 
+    # Shared product UI infrastructure.  These are implementation files the
+    # agent owns inside src/, distinct from governance evidence in .signalos/.
+    ui_specs = [
+        {
+            "path": f"{source_base}/ui/theme.ts",
+            "kind": "config",
+            "description": "Shared design tokens used by generated product UI.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export a theme object",
+                "Follow the selected design system instructions from the packet",
+            ],
+        },
+        {
+            "path": f"{source_base}/ui/index.ts",
+            "kind": "config",
+            "description": "Barrel exports for generated product UI helpers.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": ["Export from ./theme"],
+        },
+        {
+            "path": f"{source_base}/ui/layouts/AppLayout.tsx",
+            "kind": "config",
+            "description": "Reusable application layout for generated product screens.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": ["Accept children and title props", "Use semantic layout elements"],
+        },
+        {
+            "path": f"{source_base}/ui/layouts/PageLayout.tsx",
+            "kind": "config",
+            "description": "Reusable page layout for generated product sections.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": ["Accept children and title props", "Use semantic section elements"],
+        },
+        {
+            "path": f"{source_base}/product.css",
+            "kind": "config",
+            "description": "Product stylesheet for generated screens and proof-visible UI.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Stay compatible with the selected design system",
+                "Responsive layout",
+            ],
+        },
+    ]
+    for spec in ui_specs:
+        if not _is_reserved(spec["path"]):
+            file_specs.append(spec)
+
     # Data-driven: derive component list from blueprint ui data
     component_specs = (
         _derive_components_from_blueprint(blueprint) if blueprint else []
@@ -618,6 +677,23 @@ def _build_react_vite_file_specs(
 
     # App registration
     if component_names:
+        app_test_path = f"{source_base}/App.test.tsx"
+        if not _is_reserved(app_test_path):
+            file_specs.append({
+                "path": app_test_path,
+                "kind": "test",
+                "description": (
+                    "Vitest test file for the root App. Verifies the generated "
+                    "product shell and primary product title render."
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use @testing-library/react for rendering",
+                    "Assert the product title is visible",
+                ],
+            })
         app_path = f"{source_base}/App.tsx"
         if not _is_reserved(app_path):
             file_specs.append({

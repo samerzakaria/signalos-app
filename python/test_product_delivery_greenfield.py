@@ -132,7 +132,7 @@ class TestGreenfieldReactVite:
 # ---------------------------------------------------------------------------
 
 class TestGreenfieldGeneric:
-    def test_scaffold_creates_signalos_only(self, tmp_path):
+    def test_scaffold_creates_runnable_python_package(self, tmp_path):
         target = tmp_path / "generic-app"
         target.mkdir()
 
@@ -151,11 +151,12 @@ class TestGreenfieldGeneric:
         assert result["success"] is True
         assert result["profile"] == "generic"
         assert (target / ".signalos").is_dir()
-        # No app files like package.json or src/
+        assert (target / "pyproject.toml").is_file()
+        assert (target / "src" / "generic_app" / "__init__.py").is_file()
+        assert (target / "tests" / "__init__.py").is_file()
         assert not (target / "package.json").is_file()
-        assert not (target / "src").is_dir()
 
-    def test_generic_warns_about_partial_delivery(self, tmp_path):
+    def test_generic_does_not_warn_about_partial_delivery(self, tmp_path):
         target = tmp_path / "gen"
         target.mkdir()
 
@@ -171,7 +172,7 @@ class TestGreenfieldGeneric:
                 mode="greenfield",
             )
 
-        assert any("partial" in w.lower() for w in result["warnings"])
+        assert not any("partial" in w.lower() for w in result["warnings"])
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +203,17 @@ class TestPostflight:
         src_check = next(c for c in result["checks"] if "src/" in c["name"] and "directory" in c["name"])
         assert src_check["passed"] is False
 
-    def test_generic_passes_with_signalos_dir(self, tmp_path):
+    def test_generic_fails_with_signalos_dir_only(self, tmp_path):
         (tmp_path / ".signalos").mkdir()
+        result = run_postflight(tmp_path, "generic")
+        assert result["passed"] is False
+
+    def test_generic_passes_with_runnable_python_scaffold(self, tmp_path):
+        (tmp_path / ".signalos").mkdir()
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = \"demo\"\n", encoding="utf-8")
+        (tmp_path / "src" / "demo").mkdir(parents=True)
+        (tmp_path / "src" / "demo" / "__init__.py").write_text("", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
         result = run_postflight(tmp_path, "generic")
         assert result["passed"] is True
 
@@ -243,7 +253,7 @@ class TestAutoProfileDetection:
 
         assert result["profile"] == "react-vite"
 
-    def test_selects_react_vite_for_empty_greenfield_repo(self, tmp_path):
+    def test_selects_generic_for_non_ui_greenfield_repo(self, tmp_path):
         with mock.patch(
             "signalos_lib.product.scaffold.lifecycle.init_product_repo",
             side_effect=_mock_init_success,
@@ -252,7 +262,22 @@ class TestAutoProfileDetection:
                 repo_root=tmp_path,
                 profile="auto",
                 product_name="empty",
-                prompt="Build something",
+                prompt="Build a Python checksum library",
+                mode="greenfield",
+            )
+
+        assert result["profile"] == "generic"
+
+    def test_selects_react_vite_for_ui_greenfield_repo(self, tmp_path):
+        with mock.patch(
+            "signalos_lib.product.scaffold.lifecycle.init_product_repo",
+            side_effect=_mock_init_success,
+        ):
+            result = run_scaffold(
+                repo_root=tmp_path,
+                profile="auto",
+                product_name="empty",
+                prompt="Build a dashboard to manage team tasks",
                 mode="greenfield",
             )
 

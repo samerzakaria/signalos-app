@@ -43,7 +43,12 @@ from .design_decisions import (
     validate_design_decisions,
     write_design_decisions,
 )
-from .generation import prepare_generation, write_generation_manifest
+from .generation import (
+    compute_sha256_lf,
+    prepare_generation,
+    validate_generation_output,
+    write_generation_manifest,
+)
 from .agent_packets import build_agent_packet, write_agent_packet
 from .assumptions import record_assumptions, write_assumptions
 from .intent import extract_product_intent, refine_intent_with_llm, write_intent
@@ -119,7 +124,7 @@ def run_delivery(
     yes: bool = False,
     dry_run: bool = False,
     max_repair_cycles: int = 3,
-    agent_mode: str = "none",
+    agent_mode: str = "auto",
     json_output: bool = False,
 ) -> dict:
     """Run the full product delivery pipeline.
@@ -325,6 +330,7 @@ def run_delivery(
         design = build_design_system(intent, actual_profile, bp)
         write_design(design, signalos_dir)
         design_deps = get_design_dependencies(design)
+        _merge_design_deps(repo_root, design_deps)
         # Scaffold shared UI layer (theme, layouts)
         scaffold_design_system(repo_root, design)
         # Generate visual design preview for client approval
@@ -486,25 +492,46 @@ def run_delivery(
     # 4b. AGENT DISPATCH (invoke LLM to write product code)
     # ------------------------------------------------------------------
     agent_result = None
-    if generation_packet and agent_mode != "none":
+    if generation_packet and agent_mode not in ("none", "packet-only"):
         _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
-            from .agent_dispatch import dispatch_build_agent
+            from .agent_dispatch import dispatch_build_agent, dispatch_local_build_agent
             governance = collect_governance_instructions(
                 agent_role="build",
                 extra_contexts=(
                     ["security"] if intent.get("security_constraints") else None
                 ),
             )
-            agent_result = dispatch_build_agent(
-                repo_root=repo_root,
-                packet=agent_packet or generation_packet,
-                governance=governance,
-            )
+            packet_for_agent = agent_packet or generation_packet
+            if agent_mode == "local" or (
+                agent_mode == "auto" and actual_profile in {"react-vite", "generic"}
+            ):
+                agent_result = dispatch_local_build_agent(
+                    repo_root=repo_root,
+                    packet=packet_for_agent,
+                )
+            else:
+                agent_result = dispatch_build_agent(
+                    repo_root=repo_root,
+                    packet=packet_for_agent,
+                    governance=governance,
+                )
             if agent_result.get("status") == "completed":
+                if manifest:
+                    _refresh_manifest_hashes(repo_root, manifest)
+                    write_generation_manifest(manifest, signalos_dir)
+                generation_validation = validate_generation_output(
+                    repo_root, generation_packet,
+                )
+                if not generation_validation.get("valid", False):
+                    errors.extend(generation_validation.get("violations", []))
+                    errors.extend(
+                        f"missing generated file: {path}"
+                        for path in generation_validation.get("files_missing", [])
+                    )
                 update_delivery_phase(repo_root, "generated", "complete")
             elif agent_result.get("status") == "no_api_key":
-                warnings.append("No API key — agent not dispatched. Packet written for external execution.")
+                warnings.append("No API key; agent not dispatched. Packet written for external execution.")
             else:
                 errors.extend(agent_result.get("errors", []))
             _emit_progress("generation", "packet", "done", agent_result.get("status", "agent finished"))
@@ -524,7 +551,11 @@ def run_delivery(
         write_validation_result(val_result, signalos_dir)
 
         # Repair loop: if validation fails and agent_mode is active
-        if not val_result.get("can_close_delivery", False) and agent_mode != "none":
+        if (
+            not dry_run
+            and not val_result.get("can_close_delivery", False)
+            and agent_mode != "none"
+        ):
             repair_result = run_repair_loop(
                 repo_root=repo_root,
                 validation_result=val_result,
@@ -737,6 +768,25 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _refresh_manifest_hashes(repo_root: Path, manifest: dict) -> None:
+    for record in manifest.get("files", []):
+        if not isinstance(record, dict):
+            continue
+        rel_path = str(record.get("path") or "")
+        if not rel_path:
+            continue
+        target = repo_root / rel_path
+        if not target.is_file():
+            continue
+        try:
+            record["sha256_lf"] = compute_sha256_lf(
+                target.read_text(encoding="utf-8")
+            )
+            record["overwrite_mode"] = "generated"
+        except (OSError, UnicodeDecodeError):
+            continue
+
 
 def _build_delivery_strategy_review(
     *,

@@ -8,6 +8,7 @@ particular product stack.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -77,6 +78,72 @@ _VALIDATION_KEYS = (
 
 def _empty_validation_plan() -> dict[str, list[str]]:
     return {k: [] for k in _VALIDATION_KEYS}
+
+
+def _python_package_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", value.strip().lower())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        cleaned = "signalos_product"
+    if cleaned[0].isdigit():
+        cleaned = f"product_{cleaned}"
+    return cleaned
+
+
+def _detect_python_package(repo_root: Path) -> str:
+    src = repo_root / "src"
+    if src.is_dir():
+        packages = [
+            child.name
+            for child in src.iterdir()
+            if child.is_dir() and (child / "__init__.py").is_file()
+        ]
+        if packages:
+            return sorted(packages)[0]
+
+    profile_path = repo_root / ".signalos" / "profile.json"
+    if profile_path.is_file():
+        try:
+            data = json.loads(profile_path.read_text(encoding="utf-8"))
+            package = str(data.get("package", "")).strip()
+            if package:
+                return _python_package_name(package)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return _python_package_name(repo_root.name)
+
+
+def _to_toml(data: dict[str, Any]) -> str:
+    lines: list[str] = []
+
+    def _emit_section(section: dict[str, Any], prefix: str = "") -> None:
+        for key, value in section.items():
+            full_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(f"[{full_key}]")
+                _emit_section(value, full_key)
+            else:
+                lines.append(f"{key} = {_toml_value(value)}")
+
+    _emit_section(data)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if value is None:
+        return '""'
+    return json.dumps(str(value))
 
 
 # ---------------------------------------------------------------------------
@@ -309,29 +376,60 @@ class ReactViteAdapter:
 
 @dataclass
 class GenericAdapter:
-    """Conservative adapter for repos without a known stack.
+    """Generic stdlib Python product adapter.
 
-    Cannot claim runnable UI delivery -- higher-level code must treat
-    this as a blocker if runnable delivery is required.
+    This is the fallback real-product path for prompts that do not require a
+    dedicated UI stack. It creates runnable Python source and unittest
+    structure without external dependencies.
     """
 
     id: str = "generic"
-    display_name: str = "Generic Product Repo"
+    display_name: str = "Generic Python Product Repo"
 
     def detect(self, repo_root: Path) -> dict[str, Any]:
         return {
             "profile": self.id,
             "can_deliver_ui": False,
-            "can_deliver_runnable": False,
-            "signals": [],
+            "can_deliver_runnable": True,
+            "signals": ["pyproject.toml"] if (repo_root / "pyproject.toml").is_file() else [],
         }
 
     def scaffold(self, repo_root: Path, intent: dict[str, Any]) -> dict[str, Any]:
         created: list[str] = []
+        package = _python_package_name(intent.get("product_name") or repo_root.name)
+
+        def _write(rel: str, content: str) -> None:
+            target = repo_root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            created.append(rel)
+
+        pyproject = {
+            "project": {
+                "name": package.replace("_", "-"),
+                "version": "0.1.0",
+                "description": "SignalOS generated generic product package",
+                "requires-python": ">=3.11",
+                "dependencies": [],
+            },
+            "tool": {
+                "signalos": {
+                    "profile": self.id,
+                    "package": package,
+                },
+            },
+        }
+        _write("pyproject.toml", _to_toml(pyproject))
+        _write(f"src/{package}/__init__.py", f'"""Generated product package: {package}."""\n')
+        _write("tests/__init__.py", "")
 
         signalos_dir = repo_root / ".signalos"
         signalos_dir.mkdir(parents=True, exist_ok=True)
-        profile_meta = {"profile": self.id, "display_name": self.display_name}
+        profile_meta = {
+            "profile": self.id,
+            "display_name": self.display_name,
+            "package": package,
+        }
         (signalos_dir / "profile.json").write_text(
             json.dumps(profile_meta, indent=2) + "\n", encoding="utf-8"
         )
@@ -340,19 +438,29 @@ class GenericAdapter:
         return {
             "created": created,
             "can_deliver_ui": False,
-            "can_deliver_runnable": False,
+            "can_deliver_runnable": True,
         }
 
     def resolve_targets(self, repo_root: Path) -> dict[str, str]:
+        package = _detect_python_package(repo_root)
         return {
-            "source": "",
-            "tests": "",
+            "source": f"src/{package}",
+            "tests": "tests",
             "config": "",
             "public": "",
         }
 
     def validation_plan(self, repo_root: Path) -> dict[str, list[str]]:
-        return _empty_validation_plan()
+        plan = _empty_validation_plan()
+        plan["build"] = [
+            "python -c \"from pathlib import Path; assert Path('src').is_dir() and Path('tests').is_dir(), 'missing src/tests'\"",
+            "python -m compileall src tests",
+        ]
+        plan["test"] = [
+            "python -c \"from pathlib import Path; assert any(Path('tests').glob('test_*.py')), 'missing generated tests'\"",
+            "python -m unittest discover -s tests",
+        ]
+        return plan
 
     def preview_plan(self, repo_root: Path) -> dict[str, Any]:
         return {

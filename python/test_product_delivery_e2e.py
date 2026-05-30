@@ -58,6 +58,20 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue((signalos / "product" / "CLOSEOUT.json").exists())
             self.assertTrue((signalos / "product" / "CLOSEOUT.md").exists())
             self.assertTrue((signalos / "handoffs").exists())
+            self.assertTrue((repo_root / "pyproject.toml").exists())
+            self.assertTrue((repo_root / "src" / "test_product").exists())
+            self.assertTrue((repo_root / "tests").exists())
+            self.assertTrue(
+                any(
+                    path.name.startswith("test_") and path.suffix == ".py"
+                    for path in (repo_root / "tests").iterdir()
+                )
+            )
+
+            runs_dir = signalos / "product" / "agent-runs"
+            run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()]
+            self.assertEqual(len(run_dirs), 1)
+            self.assertTrue((run_dirs[0] / "RESULT.json").exists())
 
     def test_minimum_prompt_writes_enterprise_ownership_contract(self):
         """Minimum non-technical prompt expands into enterprise scope + ownership."""
@@ -83,6 +97,9 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue((repo_root / "vite.config.ts").exists())
             self.assertTrue((repo_root / "src" / "App.tsx").exists())
             self.assertTrue((repo_root / "src" / "App.test.tsx").exists())
+            self.assertTrue((repo_root / "src" / "types.ts").exists())
+            self.assertTrue((repo_root / "src" / "product.css").exists())
+            self.assertTrue((repo_root / "src" / "ui" / "theme.ts").exists())
             self.assertEqual(closeout["profile"], "react-vite")
 
             signalos = repo_root / ".signalos"
@@ -135,7 +152,14 @@ class TestDeliveryE2E(unittest.TestCase):
                 any(path.startswith(".signalos") for path in scope["allowed_paths"])
             )
             self.assertTrue((run_dirs[0] / "PACKET.md").exists())
+            self.assertTrue((run_dirs[0] / "RESULT.json").exists())
             self.assertTrue((run_dirs[0] / "validation-plan.json").exists())
+            manifest = json.loads(
+                (signalos / "product" / "GENERATION_MANIFEST.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertTrue(all(file["sha256_lf"] for file in manifest["files"]))
             self.assertEqual(closeout["delivery_ownership"]["product_type"], "task-management")
             self.assertEqual(closeout["deploy_status"], "prepare")
             self.assertNotEqual(closeout["closure_level"], "ready")
@@ -155,6 +179,26 @@ class TestDeliveryE2E(unittest.TestCase):
             )
             self.assertNotEqual(closeout["closure_level"], "ready")
             self.assertGreater(len(closeout["known_limitations"]), 0)
+
+    def test_auto_profile_can_choose_generic_for_non_ui_product(self):
+        """Auto profile does not force every product into React/Vite."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "checksum-engine"
+            closeout = run_delivery(
+                prompt="Build a Python checksum library for validating uploaded files",
+                name="checksum-engine",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="auto",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            self.assertEqual(closeout["profile"], "generic")
+            self.assertTrue((repo_root / "pyproject.toml").exists())
+            self.assertFalse((repo_root / "package.json").exists())
+            self.assertTrue((repo_root / "src" / "checksum_engine").exists())
+            self.assertTrue((repo_root / "tests").exists())
 
     def test_delivery_with_prepare_deploy(self):
         """Prepare mode creates evidence but does not deploy."""
@@ -235,7 +279,7 @@ class TestDeliveryE2E(unittest.TestCase):
         self.assertFalse(args.yes)
         self.assertFalse(args.dry_run)
         self.assertEqual(args.max_repair_cycles, 3)
-        self.assertEqual(args.agent, "none")
+        self.assertEqual(args.agent, "auto")
         self.assertFalse(args.as_json)
 
     def test_adopt_mode_preserves_files(self):
@@ -415,13 +459,13 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue((run_dirs[0] / "skills-catalog.json").exists())
             self.assertTrue((run_dirs[0] / "applicable-skills.md").exists())
 
-    def test_no_application_code_written(self):
-        """Delivery does NOT write application source code to disk."""
+    def test_application_code_written_by_governed_local_agent(self):
+        """Generic delivery writes real app code through the governed agent path."""
         with tempfile.TemporaryDirectory() as td:
-            repo_root = Path(td) / "no-code-test"
+            repo_root = Path(td) / "code-test"
             run_delivery(
                 prompt="Build a task management app with projects and tasks",
-                name="no-code-test",
+                name="code-test",
                 repo_root=repo_root,
                 mode="greenfield",
                 profile="generic",
@@ -429,11 +473,13 @@ class TestDeliveryE2E(unittest.TestCase):
                 deploy="none",
                 dry_run=True,
             )
-            # No Python source files should exist (only .signalos governance)
-            for child in repo_root.rglob("*.py"):
-                rel = child.relative_to(repo_root).as_posix()
-                if not rel.startswith(".signalos"):
-                    self.fail(f"Application code written to disk: {rel}")
+            source_files = [
+                child.relative_to(repo_root).as_posix()
+                for child in repo_root.rglob("*.py")
+                if not child.relative_to(repo_root).as_posix().startswith(".signalos")
+            ]
+            self.assertTrue(any(path.startswith("src/") for path in source_files))
+            self.assertTrue(any(path.startswith("tests/") for path in source_files))
 
 
 class TestDeliveryRepairAndWiring(unittest.TestCase):

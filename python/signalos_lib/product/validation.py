@@ -3,7 +3,7 @@
 Composes stack adapter validation plans with execution, evidence
 capture, and delivery closure logic.  A dry-run validates wiring
 but cannot close delivery.  Missing toolchains are infra blockers,
-not successes.  The ``generic`` profile cannot close a UI product.
+not successes.  The ``generic`` profile validates non-UI Python products.
 """
 
 from __future__ import annotations
