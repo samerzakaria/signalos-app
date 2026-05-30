@@ -223,7 +223,7 @@ const phaseLabel = (phase: unknown): string => {
 };
 
 const friendlyError = (message: string): string => {
-  if (/timed out waiting for run_signal_command/i.test(message)) {
+  if (/timed out waiting for (run_signal_command|SignalOS Core command)/i.test(message)) {
     return 'SignalOS stopped receiving a response from Core before this step finished. Restart the engine and retry from this screen.';
   }
   if (/No workspace selected/i.test(message)) {

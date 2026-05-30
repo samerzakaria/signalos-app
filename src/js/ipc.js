@@ -39,10 +39,14 @@ if (IS_TAURI && typeof listenTauri === "function") {
   });
 
   listenTauri("sidecar:error", (e) => {
-    const message = typeof e.payload === "string"
-      ? e.payload
-      : "SignalOS Core reported an engine error.";
-    rejectPendingSidecars(message);
+    const payload = e.payload;
+    const id = payload && typeof payload === "object" ? payload.id : null;
+    const message = sidecarErrorMessage(payload, "SignalOS Core reported an engine error.");
+    if (id) {
+      rejectPendingSidecar(id, message);
+    } else {
+      console.warn(message);
+    }
   });
 
   listenTauri("sidecar:terminated", (e) => {
@@ -85,7 +89,7 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
       clearTimeout(timer);
       timer = setTimeout(() => {
         pendingSidecar.delete(id);
-        reject(new Error(`Timed out waiting for ${cmd}`));
+        reject(new Error(`Timed out waiting for ${describeSidecarCommand(cmd, args)}`));
       }, timeoutMs);
     };
 
@@ -103,6 +107,29 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
       },
     });
   });
+}
+
+function describeSidecarCommand(cmd, args = {}) {
+  if (cmd === "run_signal_command" && args?.command) {
+    return `SignalOS Core command "${args.command}"`;
+  }
+  return cmd;
+}
+
+function sidecarErrorMessage(payload, fallback) {
+  if (typeof payload === "string") return payload;
+  if (payload && typeof payload === "object") {
+    return payload.error || payload.message || fallback;
+  }
+  return fallback;
+}
+
+function rejectPendingSidecar(id, message = "Command stopped by user.") {
+  const pending = pendingSidecar.get(id);
+  if (!pending) return false;
+  pendingSidecar.delete(id);
+  pending.reject(new Error(message));
+  return true;
 }
 
 function rejectPendingSidecars(message = "Command stopped by user.") {

@@ -64,4 +64,51 @@ describe('ipc sidecar waits', () => {
 
     await expect(wait).rejects.toThrow(/SignalOS Core stopped/);
   });
+
+  it('does not reject a pending delivery when an unrelated stream error arrives', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { signal } = await import('./ipc.js');
+    const wait = signal.runAndWait('deliver', ['--json'], 0);
+    await invoke.mock.results[0].value;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    listeners.get('sidecar:error')?.({ payload: 'Stream failed' });
+
+    listeners.get('sidecar:response')?.({
+      payload: { id: 'req-1', ok: true, output: '{"ok":true}' },
+    });
+
+    await expect(wait).resolves.toBe('{"ok":true}');
+    expect(warn).toHaveBeenCalledWith('Stream failed');
+  });
+
+  it('rejects only the matching sidecar request when an error carries an id', async () => {
+    const { signal } = await import('./ipc.js');
+    const wait = signal.runAndWait('deliver', ['--json'], 0);
+    await invoke.mock.results[0].value;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    listeners.get('sidecar:error')?.({
+      payload: { id: 'req-1', error: 'Delivery command failed' },
+    });
+
+    await expect(wait).rejects.toThrow(/Delivery command failed/);
+  });
+
+  it('names the underlying SignalOS command in timeout errors', async () => {
+    const { signal } = await import('./ipc.js');
+    const wait = signal.runAndWait('deliver', ['--json'], 5000);
+    await invoke.mock.results[0].value;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(5000);
+
+    await expect(wait).rejects.toThrow(/Timed out waiting for SignalOS Core command "deliver"/);
+  });
 });
