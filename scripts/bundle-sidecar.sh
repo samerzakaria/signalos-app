@@ -31,7 +31,7 @@ fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
 "$VENV_PYTHON" -m pip install --upgrade pip wheel pyinstaller
-"$VENV_PYTHON" -m pip install "anthropic>=0.39,<1.0" "pyyaml>=6.0,<7"
+"$VENV_PYTHON" -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7"
 
 IPC_ENTRY="$ROOT_DIR/python/signalos_ipc_server.py"
 if [[ ! -f "$IPC_ENTRY" ]]; then
@@ -53,6 +53,8 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --add-data "$DATA_SPEC" \
   --hidden-import signalos_lib.cli \
   --hidden-import anthropic \
+  --hidden-import openai \
+  --hidden-import google.generativeai \
   --hidden-import yaml \
   "$IPC_ENTRY"
 

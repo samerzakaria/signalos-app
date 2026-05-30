@@ -169,7 +169,7 @@ def _no_api_key_page(design: dict, intent: dict) -> str:
     <ul>{entity_list}</ul>
   </div>
   <div class="hint">
-    Set ANTHROPIC_API_KEY in the Vault to enable the interactive design preview.
+    Add an AI provider key in the Vault to enable the interactive design preview.
   </div>
 </div>
 </body>

@@ -40,7 +40,7 @@ $venvPython = if ($isWindows) {
 }
 
 & $venvPython -m pip install --upgrade pip wheel pyinstaller
-& $venvPython -m pip install "anthropic>=0.39,<1.0" "pyyaml>=6.0,<7"
+& $venvPython -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7"
 
 $entry = Join-Path $root "python\signalos_ipc_server.py"
 $pythonPath = Join-Path $root "python"
@@ -59,6 +59,8 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --add-data $dataSpec `
   --hidden-import signalos_lib.cli `
   --hidden-import anthropic `
+  --hidden-import openai `
+  --hidden-import google.generativeai `
   --hidden-import yaml `
   $entry
 
