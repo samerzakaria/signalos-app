@@ -134,7 +134,7 @@ const deriveProductName = (state: DeliverState): string => {
     .replace(/[^a-zA-Z0-9\s-]/g, ' ')
     .trim()
     .split(/\s+/)
-    .filter((word) => !/^(i|we|want|need|to|build|create|make|an?|the|for|my|our)$/i.test(word))
+    .filter((word) => !/^(i|we|want|need|to|do|build|create|make|an?|the|for|my|our)$/i.test(word))
     .slice(0, 3);
   return safeProductName(words.join('-') || 'NewProduct');
 };
