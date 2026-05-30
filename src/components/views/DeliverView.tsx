@@ -288,6 +288,7 @@ const normalizeDesignPayload = (payload: any): any => {
   };
   return {
     ...design,
+    profile: payload?.profile ?? design.profile,
     ui_library: typeof design.ui_library === 'object' ? design.ui_library?.name : design.ui_library,
     ui_reason: typeof design.ui_library === 'object' ? design.ui_library?.reason : design.ui_reason,
     tokens,
@@ -296,6 +297,12 @@ const normalizeDesignPayload = (payload: any): any => {
     form_handling: typeof design.form_handling === 'object' ? design.form_handling?.name : design.form_handling,
     dependencies: payload?.dependencies ?? design.dependencies ?? design.additional_deps ?? {},
   };
+};
+
+const isUiDesign = (design: any, selectedProfile: string): boolean => {
+  const profile = String(design?.profile || selectedProfile || '').toLowerCase();
+  if (profile === 'generic') return false;
+  return Boolean(String(design?.ui_library || '').trim());
 };
 
 export function DeliverView() {
@@ -578,15 +585,15 @@ export function DeliverView() {
         <summary><i className="ti ti-adjustments"></i> Advanced options</summary>
         <div className="deliver-row">
           <div className="deliver-field">
-            <label className="deliver-label">Product type</label>
+            <label className="deliver-label">Product shape</label>
             <select
               className="deliver-select"
               value={state.profile}
               onChange={(e) => updateState({ profile: (e.target as HTMLSelectElement).value })}
               data-testid="deliver-profile-select"
             >
-              <option value="auto">Auto - let SignalOS decide</option>
-              <option value="react-vite">Web app</option>
+              <option value="auto">Let SignalOS team decide</option>
+              <option value="react-vite">User-facing app</option>
               <option value="generic">Service, API, or library</option>
             </select>
           </div>
@@ -757,33 +764,56 @@ export function DeliverView() {
     updateState({ design: updated });
   };
 
-  const renderDesignStep = () => (
+  const renderDesignStep = () => {
+    const uiDesign = isUiDesign(state.design, state.profile);
+
+    return (
     <div className="deliver-step" data-testid="deliver-step-design">
       <div className="deliver-step-head">
         <h2>Build plan</h2>
         <p>Review the product experience and approve the SignalOS team to build, test, and package it.</p>
       </div>
 
-      <div className="deliver-section">
-        <h3><i className="ti ti-layout-dashboard"></i> Product experience</h3>
-        <div className="deliver-decision-grid">
-          <div>
-            <strong>Interface foundation</strong>
-            <p>{state.design?.ui_library || 'Accessible component system'} selected for fast, consistent screens.</p>
+      {uiDesign ? (
+        <div className="deliver-section">
+          <h3><i className="ti ti-layout-dashboard"></i> Product experience</h3>
+          <div className="deliver-decision-grid">
+            <div>
+              <strong>Interface foundation</strong>
+              <p>{state.design?.ui_library || 'Accessible component system'} selected for fast, consistent screens.</p>
+            </div>
+            <div>
+              <strong>Data behavior</strong>
+              <p>{state.design?.data_layer || 'Local product state'} with {state.design?.state_management || 'simple state management'}.</p>
+            </div>
+            <div>
+              <strong>Forms and input</strong>
+              <p>{state.design?.form_handling || 'Clear form handling'} for validation and user feedback.</p>
+            </div>
           </div>
-          <div>
-            <strong>Data behavior</strong>
-            <p>{state.design?.data_layer || 'Local product state'} with {state.design?.state_management || 'simple state management'}.</p>
-          </div>
-          <div>
-            <strong>Forms and input</strong>
-            <p>{state.design?.form_handling || 'Clear form handling'} for validation and user feedback.</p>
+          {state.design?.ui_reason ? <div className="deliver-meta">{state.design.ui_reason}</div> : null}
+        </div>
+      ) : (
+        <div className="deliver-section" data-testid="deliver-non-ui-plan">
+          <h3><i className="ti ti-binary-tree"></i> Product architecture</h3>
+          <div className="deliver-decision-grid">
+            <div>
+              <strong>Product shape</strong>
+              <p>SignalOS selected a service, API, or library path because this prompt does not require a user-facing app shell.</p>
+            </div>
+            <div>
+              <strong>Implementation</strong>
+              <p>The SignalOS team will build runnable source, tests, validation evidence, and handoff inside the product repo.</p>
+            </div>
+            <div>
+              <strong>Review</strong>
+              <p>You approve the outcome and constraints; SignalOS owns stack, test, and packaging choices unless you override them.</p>
+            </div>
           </div>
         </div>
-        {state.design?.ui_reason ? <div className="deliver-meta">{state.design.ui_reason}</div> : null}
-      </div>
+      )}
 
-      {state.design?.tokens ? (
+      {uiDesign && state.design?.tokens ? (
         <div className="deliver-section">
           <h3><i className="ti ti-color-swatch"></i> Design tokens</h3>
           <div className="deliver-tokens">
@@ -818,6 +848,7 @@ export function DeliverView() {
         </div>
       ) : null}
 
+      {uiDesign ? (
       <details className="deliver-advanced" data-testid="deliver-design-advanced">
         <summary><i className="ti ti-adjustments"></i> Advanced technical controls</summary>
 
@@ -877,8 +908,9 @@ export function DeliverView() {
       </div>
 
       </details>
+      ) : null}
 
-      {state.designPreviewHtml ? (
+      {uiDesign && state.designPreviewHtml ? (
         <div className="deliver-section">
           <h3><i className="ti ti-eye"></i> Visual preview</h3>
           <p className="deliver-meta">This is how your product will look with the selected design.</p>
@@ -917,7 +949,8 @@ export function DeliverView() {
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   const renderProgressStep = () => {
     const completedCount = state.completedPhases.length;

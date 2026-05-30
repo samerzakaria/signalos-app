@@ -126,4 +126,94 @@ describe('Deliver golden installed-app path', () => {
       'C:/SignalOS Products/task-management-system',
     );
   });
+
+  it('lets SignalOS choose a non-UI product path instead of forcing React/Vite', async () => {
+    mockRunOnce({
+      intent: {
+        product_name: 'Checksum Engine',
+        product_type: 'custom',
+        entities: ['UploadedFile', 'Checksum'],
+        primary_workflows: ['Validate uploaded files'],
+        ux_surfaces: [],
+        stack_preferences: ['python'],
+      },
+      questions: ['Which frontend framework should be used?'],
+      assumptions: ['SignalOS will choose the runtime and packaging path.'],
+      blueprint_id: null,
+    });
+    mockRunOnce({
+      design: {
+        profile: 'generic',
+        ui_library: { name: '', reason: 'Non-UI profile' },
+        design_tokens: { primary_color: '#3b82f6', font_family: 'Inter', spacing_unit: 8 },
+        state_management: { name: '', reason: 'Non-UI profile' },
+        data_layer: { name: '', reason: 'Non-UI profile' },
+        form_handling: { name: '', reason: 'Non-UI profile' },
+      },
+      profile: 'generic',
+    });
+    mockRunOnce({ preview_html: '<html><body>Should not render for generic profile</body></html>' });
+    mockRunOnce({
+      name: 'Checksum Engine',
+      profile: 'generic',
+      blueprint: null,
+      closure_level: 'ready',
+      files_count: 8,
+      workspace: { repo_root: 'C:/SignalOS Products/Python-checksum-library' },
+      how_to_run: ['python -m unittest discover -s tests'],
+      tests_executed: [{ name: 'unit', status: 'passed' }],
+      security: { status: 'passed' },
+      limitations: [],
+    });
+
+    render(<DeliverView />);
+
+    fireEvent.input(screen.getByTestId('deliver-prompt-input'), {
+      target: {
+        value: 'Build a Python checksum library for validating uploaded files',
+      },
+    });
+    fireEvent.click(screen.getByTestId('deliver-start-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-intent')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Which frontend framework should be used?')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('deliver-continue-btn'));
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-design')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('deliver-non-ui-plan')).toHaveTextContent('service, API, or library');
+    expect(screen.queryByTestId('deliver-design-advanced')).not.toBeInTheDocument();
+    expect(screen.queryByText(/React Hook Form/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('deliver-design-preview')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('deliver-approve-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('deliver-step-closeout')).toBeInTheDocument();
+    });
+
+    expect(ipc.workspace.ensureDefault).toHaveBeenCalledWith(
+      'Python-checksum-library',
+      'C:/SignalOS Products',
+    );
+
+    const calls = (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map((call) => call[0])).toEqual([
+      'deliver-intent',
+      'deliver-design',
+      'deliver-design-preview',
+      'deliver',
+    ]);
+    expect(calls[1][1]).toContain('--profile');
+    expect(calls[1][1]).toContain('auto');
+    expect(calls[3][1]).toContain('--profile');
+    expect(calls[3][1]).toContain('auto');
+    expect(screen.getByTestId('deliver-repo-path')).toHaveTextContent(
+      'C:/SignalOS Products/Python-checksum-library',
+    );
+  });
 });
