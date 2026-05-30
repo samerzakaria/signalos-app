@@ -27,6 +27,14 @@ import { esc, errorMessage, isProviderAuthFailure, providerConnectionMessage, sh
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
+function workspaceNameFromPath(path) {
+  return String(path || "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+}
+
+function isStarterWorkspacePath(path) {
+  return workspaceNameFromPath(path) === "SignalOS Workspace";
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   boot().catch((e) => showError("Boot failed: " + errorMessage(e)));
 });
@@ -50,23 +58,13 @@ async function boot() {
 }
 
 async function bootApp() {
+  let savedWizard = {};
   try {
-    const saved = JSON.parse(localStorage.getItem("signalos.onboarding.wizard.v1") || "{}");
-    if (saved?.projectsRoot) state.projectsRoot = saved.projectsRoot;
+    savedWizard = JSON.parse(localStorage.getItem("signalos.onboarding.wizard.v1") || "{}");
+    if (savedWizard?.projectsRoot) state.projectsRoot = savedWizard.projectsRoot;
+    if (savedWizard?.identity?.name) state.userName = savedWizard.identity.name;
+    if (savedWizard?.identity?.role) state.userRole = savedWizard.identity.role;
   } catch {}
-
-  try {
-    // Identity
-    const id = await ipc.identity.get();
-    if (id) {
-      state.userName = id.name || "";
-      state.userRole = id.role || "";
-      const signName = document.getElementById("signName");
-      if (signName) signName.value = state.userName;
-    }
-  } catch (e) {
-    console.warn("Could not load identity:", errorMessage(e));
-  }
 
   try {
     // Provider + cost
@@ -91,7 +89,15 @@ async function bootApp() {
     // Workspace
     const ws = await ipc.workspace.get();
     if (ws) {
-      state.workspace = ws.path || ws || "";
+      const activeWorkspace = ws.path || ws || "";
+      if (isStarterWorkspacePath(activeWorkspace)) {
+        await ipc.workspace.clear().catch(() => null);
+        state.workspace = "";
+      } else {
+        state.workspace = activeWorkspace;
+      }
+    }
+    if (state.workspace) {
       const wsParts = state.workspace.replace(/\\/g, "/").split("/");
       const wsName = wsParts[wsParts.length - 1] || "Project";
       const crumbStrong = document.querySelector(".crumb strong");
@@ -102,6 +108,22 @@ async function bootApp() {
     applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
   } catch (e) {
     console.warn("Could not load workspace:", errorMessage(e));
+  }
+
+  try {
+    // Identity is workspace-scoped when a product workspace is active; before
+    // the first product exists, keep the onboarding identity from local state.
+    if (state.workspace) {
+      const id = await ipc.identity.get();
+      if (id) {
+        state.userName = id.name || state.userName || "";
+        state.userRole = id.role || state.userRole || "";
+      }
+    }
+    const signName = document.getElementById("signName");
+    if (signName) signName.value = state.userName;
+  } catch (e) {
+    console.warn("Could not load identity:", errorMessage(e));
   }
 
   try {
@@ -937,10 +959,7 @@ function prettyJson(value) {
 }
 
 function inStarterWorkspace() {
-  const name = state.workspace
-    ? state.workspace.replace(/\\/g, "/").split("/").filter(Boolean).pop()
-    : "";
-  return name === "SignalOS Workspace";
+  return isStarterWorkspacePath(state.workspace);
 }
 
 async function runTerminalCommand(cmd) {
@@ -1381,27 +1400,12 @@ async function finishOnboarding() {
 
   try {
     // Onboarding chooses the root folder where SignalOS will place product
-    // repos. The app still needs one active workspace after setup, so create
-    // a single starter workspace under that root and initialize it like any
-    // other product repo before writing identity/governance files.
+    // repos. Product workspaces are created later by Deliver/New Project.
     if (!projectsRoot) {
       throw new Error("Choose a projects root folder.");
     }
-    let folder = "";
-    try {
-      folder = await ipc.workspace.ensureDefault("SignalOS Workspace", projectsRoot);
-      state.workspace = folder;
-    } catch (e) {
-      throw new Error(`Workspace setup failed: ${errorMessage(e)}`);
-    }
-
-    try {
-      await ipc.signal.runAndWait("signal-init", ["--mode", "keep"], 60000);
-    } catch (e) {
-      throw new Error(`Workspace initialization failed: ${errorMessage(e)}`);
-    }
-
-    await ipc.identity.set(name, role);
+    try { await ipc.workspace.clear(); } catch {}
+    state.workspace = "";
     state.userName = name;
     state.userRole = role;
 
@@ -1439,24 +1443,15 @@ async function finishOnboarding() {
       state.monthlyCap = budget;
     }
 
-    if (folder) {
-      if (typeof window.instantiateGovernanceAndSignG0 === "function") {
-        // fire-and-forget; the chat preamble's protocol context will
-        // pick up the filled docs on its next reload
-        window.instantiateGovernanceAndSignG0().catch((e) =>
-          console.warn("governance instantiation failed:", errorMessage(e))
-        );
-      }
-    }
-
     const LS_KEY = "signalos.onboarding.wizard.v1";
     const WIZARD_VERSION = 2;
     localStorage.setItem(LS_KEY, JSON.stringify({
       version: WIZARD_VERSION,
-      completedSteps: ["welcome", "folder", "init", "identity", "ai", "budget", "done"],
+      completedSteps: ["welcome", "projects-root", "identity", "ai", "budget", "done"],
       current: 6,
-      folder: state.workspace,
+      folder: "",
       projectsRoot,
+      identity: { name, role },
       initMode: "keep",
       ai: { provider: state.ai, model: state.aiModel, tested: providerReady },
       budgetUsd: budget,

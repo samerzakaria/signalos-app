@@ -9,8 +9,8 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { onSidecarProgress, signal as signalIpc } from '../../js/ipc.js';
-import { workspace } from '../../js/ipc.js';
-import { projectsRoot, workspacePath } from '../../state';
+import { identity, workspace } from '../../js/ipc.js';
+import { projectsRoot, userName, userRole, workspacePath } from '../../state';
 import { viewClass } from '../viewShell';
 
 type DeliveryStep = 'prompt' | 'intent' | 'design' | 'progress' | 'closeout';
@@ -139,6 +139,18 @@ const deriveProductName = (state: DeliverState): string => {
   return safeProductName(words.join('-') || 'NewProduct');
 };
 
+const activeIdentity = (): { name: string; role: string } => ({
+  name: (userName.value || 'User').trim() || 'User',
+  role: userRole.value || 'PO',
+});
+
+const activateDeliveryWorkspace = async (path: string): Promise<void> => {
+  await workspace.set(path);
+  workspacePath.value = path;
+  const actor = activeIdentity();
+  await identity.set(actor.name, actor.role);
+};
+
 const isTechnicalQuestion = (question: string): boolean => {
   return TECHNICAL_QUESTION_RE.test(question);
 };
@@ -158,13 +170,14 @@ const technicalDecisionLabel = (question: string): string => {
 
 const resolveDeliveryWorkspace = async (state: DeliverState): Promise<string> => {
   if (state.repoRoot) {
-    await workspace.set(state.repoRoot);
-    workspacePath.value = state.repoRoot;
+    await activateDeliveryWorkspace(state.repoRoot);
     return state.repoRoot;
   }
 
   if (state.mode === 'adopt' && workspacePath.value.trim()) {
-    return workspacePath.value.trim();
+    const repoPath = workspacePath.value.trim();
+    await activateDeliveryWorkspace(repoPath);
+    return repoPath;
   }
 
   const root = resolveProjectsRoot();
@@ -181,8 +194,7 @@ const resolveDeliveryWorkspace = async (state: DeliverState): Promise<string> =>
   const repoRoot = await workspace.ensureDefault(productName, root);
   const repoPath = String(repoRoot || '').trim();
   if (!repoPath) throw new Error('SignalOS could not create the product workspace.');
-  await workspace.set(repoPath);
-  workspacePath.value = repoPath;
+  await activateDeliveryWorkspace(repoPath);
   return repoPath;
 };
 

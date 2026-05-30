@@ -15,6 +15,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/preact';
 vi.mock('../../js/ipc.js', () => ({
   onSidecarProgress: vi.fn(() => () => {}),
   signal: { runAndWait: vi.fn() },
+  identity: { set: vi.fn() },
   workspace: {
     set: vi.fn(),
     ensureDefault: vi.fn(async (name: string, root: string) => `${root}/${name}`),

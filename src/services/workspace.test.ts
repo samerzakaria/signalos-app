@@ -33,6 +33,7 @@ describe('workspace factory helpers', () => {
       command: 'signal-init',
       args: ['--mode', 'keep', '--name', 'Task App', '--profile', 'react-vite'],
     });
+    expect(invoke).toHaveBeenCalledWith('set_identity', { name: 'User', role: 'PO' });
     expect(invoke).toHaveBeenCalledWith('run_signal_command', {
       command: 'signal-sign',
       args: ['G0', '--signer', 'User', '--role', 'PO', '--verdict', 'pass'],

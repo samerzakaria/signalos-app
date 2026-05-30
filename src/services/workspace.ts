@@ -98,6 +98,10 @@ export async function createSignalosProject(
 
   await ensureWorkspaceFolder(target);
   await initWorkspace(target, { name: productName, profile, strict: true });
+  await tauriInvoke('set_identity', {
+    name: (userName.value || 'User').trim() || 'User',
+    role: userRole.value || 'PO',
+  });
   const governance = await instantiateGovernanceAndSignG0();
   const status = await tauriInvoke('get_workspace_status').catch(() => null);
 

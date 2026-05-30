@@ -12,15 +12,15 @@ describe('app-v2 onboarding setup order', () => {
     return source.slice(start, end);
   }
 
-  it('creates and initializes the workspace before writing workspace-scoped identity', () => {
+  it('does not create a starter workspace during onboarding', () => {
     const body = finishOnboardingBody();
-    const ensureWorkspace = body.indexOf('ipc.workspace.ensureDefault');
-    const initWorkspace = body.indexOf('ipc.signal.runAndWait("signal-init"');
-    const setIdentity = body.indexOf('ipc.identity.set');
 
-    expect(ensureWorkspace).toBeGreaterThanOrEqual(0);
-    expect(initWorkspace).toBeGreaterThan(ensureWorkspace);
-    expect(setIdentity).toBeGreaterThan(initWorkspace);
+    expect(body).not.toContain('ipc.workspace.ensureDefault("SignalOS Workspace"');
+    expect(body).not.toContain('ipc.signal.runAndWait("signal-init"');
+    expect(body).not.toContain('ipc.identity.set');
+    expect(body).toContain('await ipc.workspace.clear()');
+    expect(body).toContain('identity: { name, role }');
+    expect(body).toContain('Product workspaces are created later by Deliver/New Project.');
   });
 
   it('does not fail onboarding when provider validation rejects the API key', () => {
