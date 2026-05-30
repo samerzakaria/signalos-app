@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.25] - 2026-05-31
+
+### Internal delivery governance hardening
+
+- Add an installed-app golden path for minimum-prompt delivery through real product proof.
+- Keep generated products under the selected projects root while separating starter workspaces from product repos.
+- Rebuild Deliver around SignalOS-managed team ownership, generic stack selection, and non-technical approval.
+- Fetch provider models through the allowed ACL and keep model selection selectable instead of typed.
+- Require release, UX proof, and validation skip evidence before claiming delivery readiness.
+
 ## [3.0.0-internal.24] - 2026-05-28
 
 ### Internal product workspace and delivery UX recovery
