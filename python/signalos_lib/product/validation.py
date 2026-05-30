@@ -44,6 +44,38 @@ _CATEGORIES = (
 # Categories whose failure blocks delivery closure when the profile
 # declares that it *can* validate them.
 _CRITICAL_CATEGORIES = {"build", "test"}
+_REQUIRED_CLOSE_CATEGORIES = {"build", "test"}
+
+_SKIP_OWNERS = {
+    "install": (
+        "stack-adapter",
+        "No install command is required for this stack.",
+    ),
+    "lint": (
+        "stack-adapter",
+        "No lint command is declared for this stack.",
+    ),
+    "qa": (
+        "acceptance-proof",
+        "No stack-level QA command is declared; acceptance and proof evidence own QA.",
+    ),
+    "e2e": (
+        "proof-phase",
+        "Browser E2E is owned by the runtime and UX proof phase.",
+    ),
+    "runtime_smoke": (
+        "proof-phase",
+        "Runtime smoke is owned by the proof phase.",
+    ),
+    "ux_smoke": (
+        "proof-phase",
+        "UX smoke is owned by the proof phase.",
+    ),
+    "security": (
+        "security-gate",
+        "Security validation is owned by the product security gate.",
+    ),
+}
 
 
 # ------------------------------------------------------------------
@@ -104,14 +136,10 @@ def run_validation(
     for cat in _CATEGORIES:
         cmds = plan.get(cat, [])
         if not cmds:
-            results[cat] = {"status": "skipped", "output": "", "duration_s": 0.0}
+            results[cat] = _skipped_result(cat, dry_run=False)
             continue
         if dry_run:
-            results[cat] = {
-                "status": "skipped",
-                "output": "dry-run only",
-                "duration_s": 0.0,
-            }
+            results[cat] = _dry_run_skipped_result(cat)
             continue
         results[cat] = _run_commands(repo_root, cmds)
 
@@ -199,6 +227,46 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
     }
 
 
+def _dry_run_skipped_result(category: str) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "output": "dry-run only",
+        "duration_s": 0.0,
+        "skip_reason": "Dry-run mode did not execute validation commands.",
+        "skip_owner": "operator",
+        "release_disposition": "blocked",
+        "category": category,
+    }
+
+
+def _skipped_result(category: str, *, dry_run: bool) -> dict[str, Any]:
+    if dry_run:
+        return _dry_run_skipped_result(category)
+    if category in _REQUIRED_CLOSE_CATEGORIES:
+        return {
+            "status": "skipped",
+            "output": "",
+            "duration_s": 0.0,
+            "skip_reason": f"{category} validation command is missing.",
+            "skip_owner": "stack-adapter",
+            "release_disposition": "must_fix",
+            "category": category,
+        }
+    owner, reason = _SKIP_OWNERS.get(
+        category,
+        ("stack-adapter", "No validation command is declared for this category."),
+    )
+    return {
+        "status": "skipped",
+        "output": "",
+        "duration_s": 0.0,
+        "skip_reason": reason,
+        "skip_owner": owner,
+        "release_disposition": "not_applicable",
+        "category": category,
+    }
+
+
 def _can_close_delivery(
     plan: dict[str, Any],
     results: dict[str, dict[str, Any]],
@@ -210,6 +278,13 @@ def _can_close_delivery(
     statuses = [r["status"] for r in results.values()]
     # All skipped -> cannot close
     if all(s == "skipped" for s in statuses):
+        return False
+
+    for cat in _REQUIRED_CLOSE_CATEGORIES:
+        if results.get(cat, {}).get("status") != "passed":
+            return False
+
+    if _unauthorized_skips(results):
         return False
 
     # Any failure or blocked in critical categories
@@ -249,9 +324,24 @@ def _compute_blockers(
         elif st == "blocked":
             out = r.get("output", "")
             blockers.append(f"{cat} check blocked: {out}")
+        elif st == "skipped" and r.get("release_disposition") != "not_applicable":
+            reason = r.get("skip_reason") or "missing not-applicable evidence"
+            blockers.append(f"{cat} check skipped: {reason}")
+    for cat in _REQUIRED_CLOSE_CATEGORIES:
+        if results.get(cat, {}).get("status") != "passed":
+            blockers.append(f"{cat} check must pass before delivery can close")
     if all(r.get("status") == "skipped" for r in results.values()):
         blockers.append("All checks were skipped; at least one must pass")
     return blockers
+
+
+def _unauthorized_skips(results: dict[str, dict[str, Any]]) -> list[str]:
+    return [
+        cat
+        for cat, result in results.items()
+        if result.get("status") == "skipped"
+        and result.get("release_disposition") != "not_applicable"
+    ]
 
 
 # ------------------------------------------------------------------
@@ -319,6 +409,12 @@ def check_product_closure(result: dict[str, Any] | None) -> dict[str, Any]:
     has_failed = any(s == "failed" for s in statuses)
     has_passed = any(s == "passed" for s in statuses)
     all_skipped = all(s == "skipped" for s in statuses)
+    unauthorized_skips = _unauthorized_skips(results)
+    required_missing = [
+        cat
+        for cat in _REQUIRED_CLOSE_CATEGORIES
+        if results.get(cat, {}).get("status") != "passed"
+    ]
 
     if has_blocked:
         return {
@@ -342,6 +438,22 @@ def check_product_closure(result: dict[str, Any] | None) -> dict[str, Any]:
             "level": "partial",
             "evidence_summary": "All checks were skipped; no evidence of product quality",
             "blockers": blockers or ["All checks were skipped; at least one must pass"],
+        }
+
+    if required_missing or unauthorized_skips:
+        skip_blockers = [
+            f"{cat} check skipped without not-applicable evidence"
+            for cat in unauthorized_skips
+        ]
+        required_blockers = [
+            f"{cat} check must pass before delivery can close"
+            for cat in required_missing
+        ]
+        return {
+            "closeable": False,
+            "level": "partial",
+            "evidence_summary": "Mandatory validation evidence is incomplete",
+            "blockers": blockers or required_blockers + skip_blockers,
         }
 
     # has_passed is True, no failures, no blocked

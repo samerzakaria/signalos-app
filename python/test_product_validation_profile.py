@@ -224,6 +224,61 @@ class TestRunValidationRealCommands:
         result = run_validation(tmp_path, plan)
         assert result["can_close_delivery"] is True
 
+    def test_skipped_categories_have_owner_reason_and_disposition(self, tmp_path: Path):
+        plan = {
+            "profile": "test",
+            "install": [],
+            "build": [f"{sys.executable} -c \"print('built')\""],
+            "test": [f"{sys.executable} -c \"print('tested')\""],
+            "lint": [],
+            "qa": [],
+            "e2e": [],
+            "runtime_smoke": [],
+            "ux_smoke": [],
+            "security": [],
+            "can_validate_build": True,
+            "can_validate_tests": True,
+            "can_validate_runtime": False,
+            "can_deliver_ui": False,
+        }
+
+        result = run_validation(tmp_path, plan)
+
+        skipped = [
+            cat_result
+            for cat_result in result["results"].values()
+            if cat_result["status"] == "skipped"
+        ]
+        assert skipped
+        for cat_result in skipped:
+            assert cat_result["skip_reason"]
+            assert cat_result["skip_owner"]
+            assert cat_result["release_disposition"] == "not_applicable"
+
+    def test_missing_required_test_command_blocks_close(self, tmp_path: Path):
+        plan = {
+            "profile": "test",
+            "install": [],
+            "build": [f"{sys.executable} -c \"print('built')\""],
+            "test": [],
+            "lint": [],
+            "qa": [],
+            "e2e": [],
+            "runtime_smoke": [],
+            "ux_smoke": [],
+            "security": [],
+            "can_validate_build": True,
+            "can_validate_tests": False,
+            "can_validate_runtime": False,
+            "can_deliver_ui": False,
+        }
+
+        result = run_validation(tmp_path, plan)
+
+        assert result["can_close_delivery"] is False
+        assert result["results"]["test"]["release_disposition"] == "must_fix"
+        assert any("test check must pass" in b for b in result["blockers"])
+
     def test_summary_counts(self, tmp_path: Path):
         plan = {
             "profile": "test",
@@ -303,6 +358,23 @@ class TestCheckProductClosure:
         closure = check_product_closure(result)
         assert closure["level"] == "partial"
         assert closure["closeable"] is False
+
+    def test_unexplained_skip_is_partial_even_with_build_and_test(self):
+        result = {
+            "dry_run": False,
+            "results": {
+                "build": {"status": "passed"},
+                "test": {"status": "passed"},
+                "lint": {"status": "skipped"},
+            },
+            "blockers": [],
+        }
+
+        closure = check_product_closure(result)
+
+        assert closure["level"] == "partial"
+        assert closure["closeable"] is False
+        assert any("lint check skipped" in b for b in closure["blockers"])
 
     def test_verified_for_all_passed_dry_run(self):
         result = {

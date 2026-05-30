@@ -82,6 +82,17 @@ def _make_validation_result(
     security_status: str = "skipped",
     all_skipped: bool = False,
 ) -> None:
+    def _not_applicable(category: str, owner: str) -> dict:
+        return {
+            "status": "skipped",
+            "output": "",
+            "duration_s": 0.0,
+            "skip_reason": f"{category} is covered by {owner} in this fixture",
+            "skip_owner": owner,
+            "release_disposition": "not_applicable",
+            "category": category,
+        }
+
     if all_skipped:
         results = {
             cat: {"status": "skipped", "output": "", "duration_s": 0.0}
@@ -96,13 +107,15 @@ def _make_validation_result(
             "install": {"status": "passed", "output": "", "duration_s": 0.5},
             "build": {"status": build_status, "output": "", "duration_s": 1.2},
             "test": {"status": test_status, "output": "", "duration_s": 2.0},
-            "lint": {"status": "skipped", "output": "", "duration_s": 0.0},
-            "qa": {"status": "skipped", "output": "", "duration_s": 0.0},
-            "e2e": {"status": "skipped", "output": "", "duration_s": 0.0},
-            "runtime_smoke": {"status": "skipped", "output": "", "duration_s": 0.0},
-            "ux_smoke": {"status": "skipped", "output": "", "duration_s": 0.0},
+            "lint": _not_applicable("lint", "stack-adapter"),
+            "qa": _not_applicable("qa", "acceptance-proof"),
+            "e2e": _not_applicable("e2e", "proof-phase"),
+            "runtime_smoke": _not_applicable("runtime_smoke", "proof-phase"),
+            "ux_smoke": _not_applicable("ux_smoke", "proof-phase"),
             "security": {"status": security_status, "output": "", "duration_s": 0.0},
         }
+        if security_status == "skipped":
+            results["security"] = _not_applicable("security", "security-gate")
         blockers = []
         if build_status == "failed":
             blockers.append("build check failed")
