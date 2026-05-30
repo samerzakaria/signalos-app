@@ -1042,7 +1042,7 @@ async function termExecReal(cmd) {
     return;
   }
 
-  pushTermLine({ kind: "loading", text: "Running…" });
+  pushTermLine({ kind: "loading", text: "Running..." });
 
   try {
     const result = await runTerminalCommand(cleaned);

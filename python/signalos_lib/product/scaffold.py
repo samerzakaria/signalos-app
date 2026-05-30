@@ -258,7 +258,7 @@ def run_scaffold(
     profile_detected = False
     if resolved_profile == "auto":
         if resolved_mode == "greenfield":
-            resolved_profile = _select_greenfield_profile(repo_root, product_intent)
+            resolved_profile = select_greenfield_profile(repo_root, product_intent)
         else:
             resolved_profile = stacks.detect_profile(repo_root)
             profile_detected = True
@@ -395,7 +395,7 @@ def _build_result(
     }
 
 
-def _select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
+def select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
     """Choose the first supported greenfield stack from product intent.
 
     This is a stack-adapter decision, not a product-domain hardcode. A product
@@ -438,3 +438,8 @@ def _select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
         return "react-vite"
 
     return "generic"
+
+
+def _select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
+    """Compatibility wrapper for older internal tests/imports."""
+    return select_greenfield_profile(repo_root, intent)

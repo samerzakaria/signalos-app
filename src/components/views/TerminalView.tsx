@@ -13,7 +13,7 @@ export function TerminalView() {
   const bannerIcon = running === false ? 'ti-alert-circle' : 'ti-circle-check';
   const bannerText = running === false
     ? 'SignalOS Core not running'
-    : 'SignalOS Core running · Python sidecar ready';
+    : 'SignalOS Core running - Python sidecar ready';
 
   return (
     <>
@@ -63,7 +63,7 @@ export function TerminalView() {
                 className="term-input"
                 spellcheck={false}
                 autocomplete="off"
-                placeholder="type a command…"
+                placeholder="type a command..."
                 value={inputVal}
                 onInput={(e) => { termInputValue.value = (e.target as HTMLInputElement).value; }}
                 onKeyDown={(e) => window.termKey(e)}

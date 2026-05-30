@@ -120,7 +120,7 @@ describe('DeliverView', () => {
     const select = screen.getByTestId('deliver-profile-select') as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll('option'));
     const values = options.map((o) => o.value);
-    expect(select.value).toBe('react-vite');
+    expect(select.value).toBe('auto');
     expect(values).toContain('auto');
     expect(values).toContain('react-vite');
     expect(values).toContain('generic');
@@ -223,6 +223,7 @@ describe('DeliverView', () => {
       ['deliver', 0],
     ]);
     expect(ipc.workspace.ensureDefault).toHaveBeenCalledWith('my-kanban', 'C:/Products');
+    expect(ipc.workspace.set).toHaveBeenCalledWith('C:/Products/my-kanban');
     expect((ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls[2][1]).toContain('--repo-root');
     expect((ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mock.calls[3][1]).toContain('--repo-root');
     expect(screen.getByText('my-kanban')).toBeInTheDocument();

@@ -50,7 +50,7 @@ const INITIAL_STATE: DeliverState = {
   step: 'prompt',
   prompt: '',
   name: '',
-  profile: 'react-vite',
+  profile: 'auto',
   mode: 'auto',
   deploy: 'none',
   loading: false,
@@ -172,14 +172,16 @@ const resolveDeliveryWorkspace = async (state: DeliverState): Promise<string> =>
     throw new Error('Choose a projects root folder in onboarding or Settings before starting delivery.');
   }
 
+  const rawName = (state.name || '').trim();
   const productName = deriveProductName(state);
-  if (productName === INTERNAL_WORKSPACE_NAME) {
+  if (/^signalos workspace$/i.test(rawName) || productName === INTERNAL_WORKSPACE_NAME) {
     throw new Error('Choose a product name. SignalOS Workspace is only the starter workspace, not a product.');
   }
 
   const repoRoot = await workspace.ensureDefault(productName, root);
   const repoPath = String(repoRoot || '').trim();
   if (!repoPath) throw new Error('SignalOS could not create the product workspace.');
+  await workspace.set(repoPath);
   workspacePath.value = repoPath;
   return repoPath;
 };
@@ -375,7 +377,7 @@ export function DeliverView() {
           designPreviewHtml = String(html);
         }
       } catch (_previewErr) {
-        // Preview is optional — design step still works without it
+        // Preview is optional; design step still works without it.
       }
 
       updateState({
@@ -530,16 +532,16 @@ export function DeliverView() {
         <summary><i className="ti ti-adjustments"></i> Advanced options</summary>
         <div className="deliver-row">
           <div className="deliver-field">
-            <label className="deliver-label">App profile</label>
+            <label className="deliver-label">Product type</label>
             <select
               className="deliver-select"
               value={state.profile}
               onChange={(e) => updateState({ profile: (e.target as HTMLSelectElement).value })}
               data-testid="deliver-profile-select"
             >
-              <option value="react-vite">React + Vite</option>
-              <option value="auto">Auto-detect</option>
-              <option value="generic">Generic</option>
+              <option value="auto">Auto - let SignalOS decide</option>
+              <option value="react-vite">Web app</option>
+              <option value="generic">Service, API, or library</option>
             </select>
           </div>
 

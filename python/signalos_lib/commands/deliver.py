@@ -79,12 +79,14 @@ def cmd_deliver_design(args: argparse.Namespace) -> int:
     from ..product.intent import extract_product_intent
     from ..product.blueprints.registry import load_blueprint, match_blueprint
     from ..product.design import build_design_system, get_design_dependencies
+    from ..product.scaffold import select_greenfield_profile
 
     intent = extract_product_intent(args.prompt)
     if args.name:
         intent["product_name"] = args.name
 
-    profile = args.profile if args.profile != "auto" else "react-vite"
+    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
+    profile = args.profile if args.profile != "auto" else select_greenfield_profile(repo_root, intent)
     blueprint_id = match_blueprint(intent)
     bp = load_blueprint(blueprint_id) if blueprint_id else None
     design = build_design_system(intent, profile, bp)
@@ -112,12 +114,14 @@ def cmd_deliver_design_preview(args: argparse.Namespace) -> int:
     from ..product.blueprints.registry import load_blueprint, match_blueprint
     from ..product.design import build_design_system
     from ..product.design_preview import generate_design_preview_html
+    from ..product.scaffold import select_greenfield_profile
 
     intent = extract_product_intent(args.prompt)
     if args.name:
         intent["product_name"] = args.name
 
-    profile = args.profile if args.profile != "auto" else "react-vite"
+    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
+    profile = args.profile if args.profile != "auto" else select_greenfield_profile(repo_root, intent)
     blueprint_id = match_blueprint(intent)
     bp = load_blueprint(blueprint_id) if blueprint_id else None
     design = build_design_system(intent, profile, bp)
@@ -125,8 +129,6 @@ def cmd_deliver_design_preview(args: argparse.Namespace) -> int:
     preview_html = generate_design_preview_html(design, intent)
 
     # Write to .signalos/product/design-preview.html
-    from pathlib import Path
-    repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
     signalos_dir = repo_root / ".signalos"
     product_dir = signalos_dir / "product"
     product_dir.mkdir(parents=True, exist_ok=True)
