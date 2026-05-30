@@ -204,6 +204,8 @@ def _check_source_intent(root: Path) -> ReadinessCheck:
         ".signalos/sources/initial-intent.json",
         ".signalos/sources/source-intent.json",
         ".signalos/source-intent.json",
+        ".signalos/SOURCE_PROMPT.md",
+        ".signalos/product/INTENT.json",
         ".signalos/product.json",
     ]
     sources_dir = root / ".signalos" / "sources"
@@ -298,22 +300,43 @@ def _check_product_verification(
             details={"expected": ".signalos/evidence/<wave>/verify-product.json"},
         )
 
+    checks = payload.get("checks", [])
     failed_checks = [
-        check.get("name")
-        for check in payload.get("checks", [])
-        if check.get("status") == "FAIL"
+        _verification_check_name(check)
+        for check in checks
+        if _verification_check_status(check) == "FAIL"
     ]
-    ok = payload.get("status") == "PASS" and not failed_checks
+    skipped_checks = [
+        _verification_check_name(check)
+        for check in checks
+        if _verification_check_status(check) in {"SKIP", "SKIPPED"}
+        and not _verification_skip_is_allowed(check)
+    ]
+    summary = payload.get("summary", {})
+    any_reported_skip = any(
+        _verification_check_status(check) in {"SKIP", "SKIPPED"}
+        for check in checks
+    )
+    if not skipped_checks and not any_reported_skip and int(summary.get("skipped") or 0) > 0:
+        skipped_checks.append("<summary>")
+    ok = payload.get("status") == "PASS" and not failed_checks and not skipped_checks
+    if ok:
+        message = "build and test verification evidence passed"
+    elif skipped_checks:
+        message = "product verification evidence has skipped checks"
+    else:
+        message = "build or test verification evidence failed"
     return ReadinessCheck(
         id="build-test-evidence",
         status="PASS" if ok else "FAIL",
         severity="BLOCK_MERGE",
-        message="build and test verification evidence passed" if ok else "build or test verification evidence failed",
+        message=message,
         evidence=[evidence_path] if evidence_path else [],
         details={
             "verification_status": payload.get("status"),
             "failed_checks": failed_checks,
-            "summary": payload.get("summary", {}),
+            "skipped_checks": skipped_checks,
+            "summary": summary,
         },
     )
 
@@ -359,6 +382,8 @@ def _check_risks_visible(root: Path) -> ReadinessCheck:
 def _check_deployment_path(root: Path) -> ReadinessCheck:
     candidates = [
         ".signalos/deployment-path.json",
+        ".signalos/product/DEPLOY_DECISION.json",
+        ".signalos/product/DEPLOY_EVIDENCE.json",
         "core/execution/DEPLOYMENT.md",
         "docs/deployment.md",
         "DEPLOYMENT.md",
@@ -380,6 +405,32 @@ def _check_deployment_path(root: Path) -> ReadinessCheck:
         evidence=existing,
         details={"candidates": candidates, "json_errors": json_errors},
     )
+
+
+def _verification_check_status(check: Any) -> str:
+    if not isinstance(check, dict):
+        return ""
+    return str(check.get("status") or "").upper()
+
+
+def _verification_check_name(check: Any) -> str:
+    if not isinstance(check, dict):
+        return str(check)
+    name = check.get("name") or check.get("kind") or "<unnamed>"
+    return str(name)
+
+
+def _verification_skip_is_allowed(check: Any) -> bool:
+    if not isinstance(check, dict):
+        return False
+    details = check.get("details")
+    if isinstance(details, dict) and (
+        details.get("not_applicable") is True
+        or details.get("release_not_applicable") is True
+    ):
+        return True
+    reason = str(check.get("reason") or "").strip().lower()
+    return reason.startswith("not applicable")
 
 
 def _check_required_templates(root: Path) -> ReadinessCheck:

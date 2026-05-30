@@ -141,6 +141,77 @@ class ReleaseReadinessTests(unittest.TestCase):
         blockers = {blocker["id"] for blocker in payload["blockers"]}
         self.assertIn("build-test-evidence", blockers)
 
+    def test_skipped_verification_evidence_blocks_release(self) -> None:
+        _make_ready_repo(self.tmp)
+        _write(
+            self.tmp / ".signalos" / "evidence" / "W3" / "verify-product.json",
+            json.dumps({
+                "schema_version": "signalos.verify_product.v1",
+                "status": "PASS",
+                "summary": {"total": 3, "passed": 2, "failed": 0, "skipped": 1},
+                "checks": [
+                    {"name": "workspace", "status": "PASS", "required": True},
+                    {"name": "build", "status": "PASS", "required": True},
+                    {"name": "test", "status": "SKIP", "required": True},
+                ],
+            }) + "\n",
+        )
+
+        payload = release_readiness.release_readiness(self.tmp)
+
+        blockers = {blocker["id"] for blocker in payload["blockers"]}
+        checks = {check["id"]: check for check in payload["checks"]}
+        self.assertIn("build-test-evidence", blockers)
+        self.assertIn("test", checks["build-test-evidence"]["details"]["skipped_checks"])
+
+    def test_not_applicable_verification_skip_does_not_block_release(self) -> None:
+        _make_ready_repo(self.tmp)
+        _write(
+            self.tmp / ".signalos" / "evidence" / "W4" / "verify-product.json",
+            json.dumps({
+                "schema_version": "signalos.verify_product.v1",
+                "status": "PASS",
+                "summary": {"total": 4, "passed": 3, "failed": 0, "skipped": 1},
+                "checks": [
+                    {"name": "workspace", "status": "PASS", "required": True},
+                    {"name": "build", "status": "PASS", "required": True},
+                    {"name": "test", "status": "PASS", "required": True},
+                    {
+                        "name": "e2e",
+                        "status": "SKIP",
+                        "required": False,
+                        "details": {"not_applicable": True},
+                    },
+                ],
+            }) + "\n",
+        )
+
+        payload = release_readiness.release_readiness(self.tmp)
+
+        self.assertTrue(payload["ok"], payload)
+        checks = {check["id"]: check for check in payload["checks"]}
+        self.assertEqual(checks["build-test-evidence"]["details"]["skipped_checks"], [])
+
+    def test_product_intent_and_deploy_decision_are_release_evidence(self) -> None:
+        _make_ready_repo(self.tmp)
+        (self.tmp / ".signalos" / "sources" / "initial-intent.json").unlink()
+        (self.tmp / ".signalos" / "deployment-path.json").unlink()
+        _write(
+            self.tmp / ".signalos" / "product" / "INTENT.json",
+            json.dumps({"product_name": "TeamOps", "product_type": "workflow"}) + "\n",
+        )
+        _write(
+            self.tmp / ".signalos" / "product" / "DEPLOY_DECISION.json",
+            json.dumps({"mode": "prepare", "target": "none"}) + "\n",
+        )
+
+        payload = release_readiness.release_readiness(self.tmp)
+
+        self.assertTrue(payload["ok"], payload)
+        checks = {check["id"]: check for check in payload["checks"]}
+        self.assertIn(".signalos/product/INTENT.json", checks["source-intent-traceable"]["evidence"])
+        self.assertIn(".signalos/product/DEPLOY_DECISION.json", checks["deployment-path-known"]["evidence"])
+
     def test_top_level_cli_emits_json(self) -> None:
         _make_ready_repo(self.tmp)
         stdout = io.StringIO()

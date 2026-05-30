@@ -399,6 +399,8 @@ def _check_source_traceability(repo_root: Path) -> tuple[bool, str, dict[str, An
         ".signalos/sources/initial-intent.json",
         ".signalos/sources/source-intent.json",
         ".signalos/source-intent.json",
+        ".signalos/SOURCE_PROMPT.md",
+        ".signalos/product/INTENT.json",
         ".signalos/product.json",
     ]
     existing = [rel for rel in candidates if (repo_root / rel).is_file()]

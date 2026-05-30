@@ -283,6 +283,7 @@ def _inspect_tdd_runner(root: Path, profile_test_declared: bool) -> CheckResult:
             status="SKIP",
             required=False,
             reason="no TDD-compatible test runner detected",
+            details={"not_applicable": True},
         )
     name, argv = runner
     reason = "detected test runner; profile test command owns execution"
@@ -367,6 +368,7 @@ def _run_e2e(root: Path, evidence_dir: Path, profile: Profile) -> CheckResult:
             status="SKIP",
             required=False,
             reason=profile.preview.disabled_reason or "profile preview is disabled",
+            details={"not_applicable": True, "preview_mode": profile.preview.mode},
         )
 
     from signalos_lib.e2e_runner import run_e2e_task
