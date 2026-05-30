@@ -129,6 +129,21 @@ class TestUxProofNoPort:
         required = {"status", "checks", "errors"}
         assert required.issubset(result.keys())
 
+    def test_runtime_html_snapshot_can_prove_ux_without_live_port(self, tmp_path: Path) -> None:
+        result = run_ux_proof(
+            tmp_path,
+            "react-vite",
+            port=None,
+            html='<!doctype html><html><body><div id="root">Ready</div></body></html>',
+        )
+        assert result["status"] == "passed"
+        assert all(check["passed"] for check in result["checks"])
+
+    def test_blank_runtime_html_snapshot_fails_ux(self, tmp_path: Path) -> None:
+        result = run_ux_proof(tmp_path, "react-vite", port=None, html="")
+        assert result["status"] == "failed"
+        assert any("blank" in err.lower() for err in result["errors"])
+
 
 # ------------------------------------------------------------------
 # write_proof_artifacts

@@ -617,7 +617,22 @@ def run_delivery(
 
     _emit_progress("proof", "ux", "running", "Running UX proof")
     try:
-        ux_proof = run_ux_proof(repo_root, actual_profile)
+        ux_port = (
+            runtime_proof.get("port")
+            if runtime_proof.get("status") == "passed"
+            else None
+        )
+        ux_html = (
+            runtime_proof.get("html_snapshot")
+            if runtime_proof.get("status") == "passed"
+            else None
+        )
+        ux_proof = run_ux_proof(
+            repo_root,
+            actual_profile,
+            port=ux_port,
+            html=ux_html if isinstance(ux_html, str) and ux_html else None,
+        )
         _emit_progress("proof", "ux", "done", ux_proof.get("status", "UX proof complete"))
     except Exception as exc:
         errors.append(f"ux proof failed: {exc}")
@@ -629,11 +644,19 @@ def run_delivery(
     except Exception as exc:
         errors.append(f"proof artifact write failed: {exc}")
 
-    proof_status = (
-        "complete"
-        if runtime_proof.get("status") in ("passed", "skipped")
-        else "partial"
-    )
+    requires_ux_proof = bool(runtime_proof.get("preview_command"))
+    proof_status = "complete" if (
+        (
+            not requires_ux_proof
+            and runtime_proof.get("status") == "skipped"
+            and ux_proof.get("status") == "skipped"
+        )
+        or (
+            requires_ux_proof
+            and runtime_proof.get("status") == "passed"
+            and ux_proof.get("status") == "passed"
+        )
+    ) else "partial"
     try:
         update_delivery_phase(repo_root, "proved", proof_status)
     except Exception:
@@ -971,12 +994,20 @@ def _build_delivery_review_readiness(
         if deploy_decision is not None
         else "not_run"
     )
+    requires_ux_proof = bool((runtime_proof or {}).get("preview_command"))
+    if requires_ux_proof and ux_status != "passed":
+        blocking_items.append("UX proof must pass for UI products")
+    ux_ready = (
+        ux_status == "passed"
+        if requires_ux_proof
+        else ux_status in {"passed", "skipped"}
+    )
 
     ready = (
         not blocking_items
         and validation_closeable
         and runtime_status in {"passed", "skipped"}
-        and ux_status in {"passed", "skipped"}
+        and ux_ready
     )
 
     return build_review_readiness(

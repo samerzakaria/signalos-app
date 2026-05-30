@@ -119,7 +119,7 @@ def run_runtime_proof(
     Returns
     -------
     dict with keys: status, profile, preview_command, port,
-    health_check, server_log, duration_s, errors.
+    health_check, html_snapshot, server_log, duration_s, errors.
     """
     start_wall = time.perf_counter()
     errors: list[str] = []
@@ -173,6 +173,13 @@ def run_runtime_proof(
     # Poll health endpoint
     url = f"http://localhost:{port}{health_path}"
     health = _poll_health(url, plan_timeout)
+    html_snapshot = ""
+    if health["responded"]:
+        try:
+            resp = urlopen(url, timeout=5)  # noqa: S310
+            html_snapshot = resp.read().decode("utf-8", errors="replace")
+        except (URLError, OSError, ConnectionError):
+            html_snapshot = ""
 
     # Capture server log and stop
     server_log = _stop_server(proc)
@@ -189,6 +196,7 @@ def run_runtime_proof(
         "preview_command": command,
         "port": port,
         "health_check": health,
+        "html_snapshot": html_snapshot[:200_000],
         "server_log": server_log,
         "duration_s": round(time.perf_counter() - start_wall, 3),
         "errors": errors,
@@ -212,6 +220,9 @@ def run_ux_proof(
     repo_root: Path,
     profile: str,
     port: int | None = None,
+    *,
+    html: str | None = None,
+    status_code: int = 200,
 ) -> dict[str, Any]:
     """Check UX surfaces are present (no blank page).
 
@@ -226,35 +237,41 @@ def run_ux_proof(
         Stack adapter profile id.
     port:
         Port to check.  If ``None``, returns skipped.
+    html:
+        Optional runtime-captured page HTML.  When provided, UX proof uses this
+        snapshot instead of making another network call after the preview
+        process has been stopped.
     """
-    if port is None:
+    if port is None and html is None:
         return {
             "status": "skipped",
             "checks": [],
             "errors": ["No port provided; runtime proof was skipped or unavailable"],
         }
 
-    url = f"http://localhost:{port}/"
+    url = f"http://localhost:{port}/" if port is not None else "runtime-html-snapshot"
     checks: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    # Fetch the page
-    try:
-        resp = urlopen(url, timeout=10)  # noqa: S310
-        html = resp.read().decode("utf-8", errors="replace")
-        status_code = resp.status
-    except (URLError, OSError, ConnectionError) as exc:
-        return {
-            "status": "failed",
-            "checks": [
-                {
-                    "name": "page_fetch",
-                    "passed": False,
-                    "detail": f"Could not fetch {url}: {exc}",
-                },
-            ],
-            "errors": [str(exc)],
-        }
+    # Fetch the page unless runtime proof already captured the HTML before
+    # shutting down the preview process.
+    if html is None:
+        try:
+            resp = urlopen(url, timeout=10)  # noqa: S310
+            html = resp.read().decode("utf-8", errors="replace")
+            status_code = resp.status
+        except (URLError, OSError, ConnectionError) as exc:
+            return {
+                "status": "failed",
+                "checks": [
+                    {
+                        "name": "page_fetch",
+                        "passed": False,
+                        "detail": f"Could not fetch {url}: {exc}",
+                    },
+                ],
+                "errors": [str(exc)],
+            }
 
     # Check 1: HTTP status is 200
     ok_status = status_code == 200
