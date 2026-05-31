@@ -262,14 +262,26 @@ def run_security_gate(
             result["canary_planted"] = False
 
         # --- 5. Security posture check ---
-        constitution_path = repo_root / ".signalos" / "CONSTITUTION.md"
-        if constitution_path.exists():
-            try:
-                content = constitution_path.read_text(encoding="utf-8", errors="replace")
-                if re.search(r"(?i)\bsecur", content):
-                    result["security_posture_declared"] = True
-            except OSError:
-                pass
+        # Use the security-posture-guard validator (same logic as Layer 1)
+        # to check for explicit security_surfaces declaration.
+        try:
+            from ..validate_cmd import _check_security_posture
+            posture_passed, _posture_msg, posture_details = _check_security_posture(repo_root)
+            if posture_passed:
+                result["security_posture_declared"] = True
+            result["security_posture_details"] = posture_details
+        except Exception:
+            # Fallback: simple content check on constitution
+            constitution_path = repo_root / "core" / "governance" / "Governance" / "CONSTITUTION.md"
+            if not constitution_path.exists():
+                constitution_path = repo_root / ".signalos" / "CONSTITUTION.md"
+            if constitution_path.exists():
+                try:
+                    content = constitution_path.read_text(encoding="utf-8", errors="replace")
+                    if re.search(r"(?i)security[_\- ]surfaces", content):
+                        result["security_posture_declared"] = True
+                except OSError:
+                    pass
 
         if not result["security_posture_declared"] and security_constraints:
             # Having declared security constraints in intent counts

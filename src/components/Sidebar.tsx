@@ -1,3 +1,4 @@
+import { signal } from '@preact/signals';
 import {
   userName,
   userRole,
@@ -12,13 +13,63 @@ import {
   tab,
 } from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
+import { TestDebtPanel } from './TestDebtPanel';
 import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
+
+/** Whether the workspace has a .signalos/ directory — drives conditional rendering. */
+const hasSignalosDir = signal<boolean>(false);
+/** Whether there is actual test debt data to display. */
+const hasTestDebtData = signal<boolean>(false);
+
+/**
+ * Probe workspace for .signalos dir and test-debt store existence.
+ * Called when "gov" tab is selected and workspace changes.
+ */
+async function probeTestDebt(ws: string) {
+  if (!ws) {
+    hasSignalosDir.value = false;
+    hasTestDebtData.value = false;
+    return;
+  }
+  try {
+    const ipc = await import('../js/ipc.js');
+    const entries = await ipc.project.listDir('.signalos');
+    const dirExists = Array.isArray(entries) && entries.length > 0;
+    hasSignalosDir.value = dirExists;
+    if (dirExists) {
+      const debt = await ipc.testAutomation.listDebt();
+      const debtSummary = debt as { entries?: unknown[]; open_count?: number } | null;
+      hasTestDebtData.value = Boolean(
+        debtSummary &&
+        ((debtSummary.entries && debtSummary.entries.length > 0) ||
+         (debtSummary.open_count && debtSummary.open_count > 0))
+      );
+    } else {
+      hasTestDebtData.value = false;
+    }
+  } catch {
+    hasSignalosDir.value = false;
+    hasTestDebtData.value = false;
+  }
+}
+
+// Re-probe when workspace path changes
+let _lastProbedWs = '';
+function ensureTestDebtProbed(ws: string) {
+  if (ws !== _lastProbedWs) {
+    _lastProbedWs = ws;
+    probeTestDebt(ws);
+  }
+}
 
 export function Sidebar() {
   const tree = fileTreeEntries.value;
   const flashed = recentlyChangedFiles.value;
   const ws = workspacePath.value;
   const recents = recentWorkspaces.value;
+
+  // Probe test-debt availability whenever workspace changes
+  ensureTestDebtProbed(ws);
 
   const switchPanel = (id: string) => {
     sbTab.value = id;
@@ -184,6 +235,8 @@ export function Sidebar() {
           </div>
         </div>
       )}
+
+      {hasSignalosDir.value && hasTestDebtData.value ? <TestDebtPanel /> : null}
 
     </div>
   </aside>

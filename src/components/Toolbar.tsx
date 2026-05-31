@@ -1,5 +1,6 @@
 import { enforcementRules, enfOpen, tab, waveFrozen } from '../state';
 import { topTabClass } from './viewShell';
+import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
 export function Toolbar() {
   const rules = enforcementRules.value;
@@ -46,8 +47,7 @@ export function Toolbar() {
     <>
 <header className="toolbar">
       <div className="crumb">
-        <i className="ti ti-pizza"></i>
-        <strong>My pizza game</strong>
+        <WorkspaceSwitcher />
         <i className="ti ti-chevron-right"></i>
         <span id="viewName">{viewNames[activeTab] || activeTab}</span>
       </div>

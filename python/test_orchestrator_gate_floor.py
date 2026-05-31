@@ -161,21 +161,79 @@ class RunWaveRoutingTests(unittest.TestCase):
         if self._saved_override is not None:
             os.environ["SIGNALOS_GATE_OVERRIDE"] = self._saved_override
 
-    def test_run_wave_returns_needs_gate_when_prior_gate_unsigned(self):
-        """needs_gate is the non-refusal signal that a gate-agent must
-        fire first. The contract change vs the earlier 'blocked_by_gate'
-        is semantic: the orchestrator isn't refusing, it's pointing at
-        what's next."""
+    def test_run_wave_auto_dispatches_gate_agent_when_prior_gate_unsigned(self):
+        """When a prior gate is unsigned, the orchestrator auto-dispatches
+        the gate agent and returns gate_agent_completed on success."""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / ".signalos").mkdir()
+            agent_result = {
+                "status": "completed",
+                "gate": "G0",
+                "output": "Agent output for G0",
+                "tokens_in": 100,
+                "tokens_out": 50,
+                "error": None,
+            }
             with mock.patch("signalos_lib.status.get_wave_status",
-                            return_value={"gates": {"G0": False, "G1": False, "G2": False, "G3": False}}):
+                            return_value={"gates": {"G0": False, "G1": False, "G2": False, "G3": False}}), \
+                 mock.patch("signalos_lib.orchestrator._dispatch_gate_agent",
+                            return_value=agent_result):
+                result = run_wave("1", "PLAN.tasks.yaml", session_id="s", cwd=root)
+        self.assertEqual(result["status"], "gate_agent_completed")
+        self.assertEqual(result["gate"], "G0")
+        self.assertEqual(result["agent_output"], "Agent output for G0")
+        self.assertEqual(result["completed"], 0)
+        self.assertIn("route", result)
+        self.assertEqual(result["route"]["action"], "fire-agent-G0")
+
+    def test_run_wave_returns_needs_gate_when_agent_file_missing(self):
+        """When the agent file does not exist for the target gate, the
+        orchestrator falls back to needs_gate so the chat layer can
+        surface the re-route to the user."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            agent_result = {
+                "status": "no_agent",
+                "gate": "G0",
+                "output": "",
+                "tokens_in": None,
+                "tokens_out": None,
+                "error": "Agent file for G0 not found",
+            }
+            with mock.patch("signalos_lib.status.get_wave_status",
+                            return_value={"gates": {"G0": False, "G1": False, "G2": False, "G3": False}}), \
+                 mock.patch("signalos_lib.orchestrator._dispatch_gate_agent",
+                            return_value=agent_result):
                 result = run_wave("1", "PLAN.tasks.yaml", session_id="s", cwd=root)
         self.assertEqual(result["status"], "needs_gate")
         self.assertEqual(result["completed"], 0)
         self.assertIn("route", result)
         self.assertEqual(result["route"]["action"], "fire-agent-G0")
+
+    def test_run_wave_returns_gate_agent_failed_on_llm_error(self):
+        """When the gate agent dispatch fails (e.g. LLM error), the
+        orchestrator returns gate_agent_failed with error details."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir()
+            agent_result = {
+                "status": "failed",
+                "gate": "G1",
+                "output": "",
+                "tokens_in": None,
+                "tokens_out": None,
+                "error": "LLM call failed: timeout",
+            }
+            with mock.patch("signalos_lib.status.get_wave_status",
+                            return_value={"gates": {"G0": True, "G1": False, "G2": False, "G3": False}}), \
+                 mock.patch("signalos_lib.orchestrator._dispatch_gate_agent",
+                            return_value=agent_result):
+                result = run_wave("1", "PLAN.tasks.yaml", session_id="s", cwd=root)
+        self.assertEqual(result["status"], "gate_agent_failed")
+        self.assertEqual(result["gate"], "G1")
+        self.assertEqual(result["agent_error"], "LLM call failed: timeout")
 
     def test_run_wave_blocked_by_status_error_on_pathological_failure(self):
         with tempfile.TemporaryDirectory() as d:
@@ -219,12 +277,22 @@ class ProjectIdPlumbingTests(unittest.TestCase):
                 result = run_wave("1", "PLAN.tasks.yaml", session_id="s", cwd=root)
         self.assertEqual(result["project_id"], "default")
 
-    def test_run_wave_returns_project_id_in_needs_gate_summary(self):
+    def test_run_wave_returns_project_id_in_gate_agent_summary(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / ".signalos").mkdir()
+            agent_result = {
+                "status": "no_agent",
+                "gate": "G0",
+                "output": "",
+                "tokens_in": None,
+                "tokens_out": None,
+                "error": "Agent file for G0 not found",
+            }
             with mock.patch("signalos_lib.status.get_wave_status",
-                            return_value={"gates": {"G0": False}}):
+                            return_value={"gates": {"G0": False}}), \
+                 mock.patch("signalos_lib.orchestrator._dispatch_gate_agent",
+                            return_value=agent_result):
                 result = run_wave("1", "PLAN.tasks.yaml", session_id="s",
                                   cwd=root, project_id="beta")
         self.assertEqual(result["status"], "needs_gate")

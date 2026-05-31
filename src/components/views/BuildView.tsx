@@ -278,12 +278,72 @@ export function BuildView() {
               <div className="cmd-item" onClick={() => window.runCmd('/signal-ship')}>
                 <div className="cmd-item-ic"><i className="ti ti-rocket"></i></div>
                 <span className="cmd-item-name">/signal-ship</span>
-                <span className="cmd-item-desc">Skip G5 sign and ship now (logged violation)</span>
+                <span className="cmd-item-desc">Skip gate sign and ship now (logged override)</span>
               </div>
               <div className="cmd-item" onClick={() => window.runCmd('/signal-brain')}>
                 <div className="cmd-item-ic"><i className="ti ti-brain"></i></div>
                 <span className="cmd-item-name">/signal-brain</span>
                 <span className="cmd-item-desc">Show notes</span>
+              </div>
+
+              <div className="cmd-palette-head" style={{ marginTop: '8px' }}>Security</div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-cso')}>
+                <div className="cmd-item-ic"><i className="ti ti-shield-lock"></i></div>
+                <span className="cmd-item-name">/signal-cso</span>
+                <span className="cmd-item-desc">Run security scan</span>
+              </div>
+
+              <div className="cmd-palette-head" style={{ marginTop: '8px' }}>Planning</div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-autoplan')}>
+                <div className="cmd-item-ic"><i className="ti ti-list-check"></i></div>
+                <span className="cmd-item-name">/signal-autoplan</span>
+                <span className="cmd-item-desc">Auto-generate wave plan</span>
+              </div>
+
+              <div className="cmd-palette-head" style={{ marginTop: '8px' }}>Wave Control</div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-freeze')}>
+                <div className="cmd-item-ic"><i className="ti ti-snowflake"></i></div>
+                <span className="cmd-item-name">/signal-freeze</span>
+                <span className="cmd-item-desc">Freeze current wave</span>
+              </div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-unfreeze')}>
+                <div className="cmd-item-ic"><i className="ti ti-flame"></i></div>
+                <span className="cmd-item-name">/signal-unfreeze</span>
+                <span className="cmd-item-desc">Unfreeze wave</span>
+              </div>
+
+              <div className="cmd-palette-head" style={{ marginTop: '8px' }}>Quality</div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-careful')}>
+                <div className="cmd-item-ic"><i className="ti ti-alert-triangle"></i></div>
+                <span className="cmd-item-name">/signal-careful</span>
+                <span className="cmd-item-desc">Enable careful mode (extra validation)</span>
+              </div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-benchmark')}>
+                <div className="cmd-item-ic"><i className="ti ti-chart-bar"></i></div>
+                <span className="cmd-item-name">/signal-benchmark</span>
+                <span className="cmd-item-desc">Run benchmarks</span>
+              </div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-second-opinion')}>
+                <div className="cmd-item-ic"><i className="ti ti-users"></i></div>
+                <span className="cmd-item-name">/signal-second-opinion</span>
+                <span className="cmd-item-desc">Get a second opinion review</span>
+              </div>
+
+              <div className="cmd-palette-head" style={{ marginTop: '8px' }}>Context</div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-context-restore')}>
+                <div className="cmd-item-ic"><i className="ti ti-restore"></i></div>
+                <span className="cmd-item-name">/signal-context-restore</span>
+                <span className="cmd-item-desc">Restore session context</span>
+              </div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-investigate')}>
+                <div className="cmd-item-ic"><i className="ti ti-search"></i></div>
+                <span className="cmd-item-name">/signal-investigate</span>
+                <span className="cmd-item-desc">Investigate an issue</span>
+              </div>
+              <div className="cmd-item" onClick={() => window.runCmd('/signal-learn')}>
+                <div className="cmd-item-ic"><i className="ti ti-book"></i></div>
+                <span className="cmd-item-name">/signal-learn</span>
+                <span className="cmd-item-desc">Record a learning</span>
               </div>
             </div>
             <div className="composer">

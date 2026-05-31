@@ -1684,6 +1684,139 @@ def _route_next_gate_action(
     }
 
 
+# ---------------------------------------------------------------------------
+# Per-gate agent auto-dispatch (G0, G1, G3, G5)
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_gate_agent(
+    root: Path,
+    gate: str,
+    wave_id: str,
+    session_id: str | None,
+    provider_name: str | None = None,
+    model: str = harness_lib.DEFAULT_MODEL,
+    project_id: str = "default",
+) -> dict[str, Any]:
+    """Load and invoke the LLM agent for *gate*, returning its output.
+
+    Follows the same pattern as the G4 build dispatch (harness + provider)
+    but operates at the gate level: loads the agent .md as a system prompt,
+    sends workspace context, and returns the agent's response for the
+    orchestrator to process.
+
+    Returns:
+        {
+            "status": "completed" | "failed" | "no_agent" | "no_api_key",
+            "gate": str,
+            "output": str,          # agent response text
+            "tokens_in": int | None,
+            "tokens_out": int | None,
+            "error": str | None,
+        }
+    """
+    from .agent_loader import load_agent
+
+    agent = load_agent(gate)
+    if not agent["exists"]:
+        return {
+            "status": "no_agent",
+            "gate": gate,
+            "output": "",
+            "tokens_in": None,
+            "tokens_out": None,
+            "error": f"Agent file for {gate} not found at {agent.get('path', '?')}",
+        }
+
+    # Build context from workspace inspection.
+    from .wave_engine import inspect as wave_inspect
+    inspection = wave_inspect(root, project_id=project_id)
+
+    context_lines = [
+        f"Gate: {gate}",
+        f"Wave: {wave_id}",
+        f"Project: {project_id}",
+        f"Session: {session_id or 'none'}",
+        "",
+        "Current gate status:",
+    ]
+    for g in ["G0", "G1", "G2", "G3", "G4", "G5"]:
+        art = inspection["artifacts"].get(g, {})
+        signed = "signed" if art.get("signed") else "unsigned"
+        exists = "exists" if art.get("exists") else "missing"
+        context_lines.append(f"  {g}: {signed}, artifact {exists}")
+        if art.get("snippet"):
+            context_lines.append(f"      snippet: {art['snippet'][:120]}")
+    context_lines.append("")
+    context_lines.append("Workspace root: " + str(root))
+
+    context = "\n".join(context_lines)
+    system_prompt = agent["content"]
+    user_prompt = (
+        f"You are the {gate} gate agent. Produce the required artifact for this gate.\n\n"
+        f"--- Workspace Context ---\n{context}\n"
+    )
+
+    # Resolve LLM provider.
+    try:
+        provider = _resolve_provider(provider_name)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "gate": gate,
+            "output": "",
+            "tokens_in": None,
+            "tokens_out": None,
+            "error": f"Provider resolution failed: {exc}",
+        }
+
+    # Call the LLM.
+    try:
+        response_text, tokens_in, tokens_out = provider.call(
+            f"{system_prompt}\n\n{user_prompt}",
+            model,
+        )
+    except Exception as exc:
+        _append_audit_entry(root, {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": "gate-agent-dispatch-error",
+            "gate": gate,
+            "wave_id": wave_id,
+            "session_id": session_id,
+            "project_id": project_id,
+            "error": str(exc),
+        })
+        return {
+            "status": "failed",
+            "gate": gate,
+            "output": "",
+            "tokens_in": None,
+            "tokens_out": None,
+            "error": f"LLM call failed: {exc}",
+        }
+
+    # Audit success.
+    _append_audit_entry(root, {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "action": "gate-agent-dispatched",
+        "gate": gate,
+        "wave_id": wave_id,
+        "session_id": session_id,
+        "project_id": project_id,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    })
+
+    return {
+        "status": "completed",
+        "gate": gate,
+        "output": response_text,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "error": None,
+    }
+
+
 def run_wave(
     wave_id: str,
     plan_path: str,
@@ -1737,16 +1870,51 @@ def run_wave(
             "route": route,
         }
     if route["action"].startswith("fire-agent-"):
-        # Earlier gate not signed. Until the wave-engine fully wires per-gate
-        # agents (M-W2..M-W5), this orchestrator can't fire them itself —
-        # the caller (chat layer) must surface the re-route to the user.
-        # Returning a structured `needs_gate` status keeps the contract
-        # honest: the orchestrator didn't refuse, it pointed at what's next.
+        # Auto-dispatch the gate agent. Extract the gate name from the action
+        # (e.g. "fire-agent-G0" → "G0") and invoke the corresponding agent.
+        target_gate = route["action"].replace("fire-agent-", "")
+        _emit_task_progress(wave_id, f"gate-{target_gate}", "running",
+                           f"Dispatching {target_gate} gate agent")
+        agent_result = _dispatch_gate_agent(
+            root,
+            target_gate,
+            wave_id,
+            session_id,
+            provider_name=provider_name,
+            model=model,
+            project_id=project_id,
+        )
+        if agent_result["status"] == "no_agent":
+            # Agent file not available — fall back to needs_gate so the
+            # caller (chat layer) can surface the re-route to the user.
+            _emit_task_progress(wave_id, f"gate-{target_gate}", "error",
+                               f"No agent file for {target_gate}")
+            return {
+                "wave_id": wave_id,
+                "session_id": session_id,
+                "project_id": project_id,
+                "status": "needs_gate",
+                "tasks": [],
+                "completed": 0,
+                "failed": 0,
+                "paused": 0,
+                "elapsed_ms": 0,
+                "route": route,
+            }
+
+        state = "done" if agent_result["status"] == "completed" else "error"
+        _emit_task_progress(wave_id, f"gate-{target_gate}", state,
+                           f"{target_gate} agent {agent_result['status']}")
         return {
             "wave_id": wave_id,
             "session_id": session_id,
             "project_id": project_id,
-            "status": "needs_gate",
+            "status": "gate_agent_completed" if agent_result["status"] == "completed" else "gate_agent_failed",
+            "gate": target_gate,
+            "agent_output": agent_result["output"],
+            "agent_error": agent_result.get("error"),
+            "tokens_in": agent_result.get("tokens_in"),
+            "tokens_out": agent_result.get("tokens_out"),
             "tasks": [],
             "completed": 0,
             "failed": 0,

@@ -33,6 +33,7 @@ VALIDATOR_SEVERITY: dict[str, str] = {
     "artifact-shape-guard":         "BLOCK_MERGE",
     "path-consistency-guard":       "BLOCK_MERGE",
     "expectation-redline-guard":    "BLOCK_MERGE",
+    "security-posture-guard":       "BLOCK_MERGE",
     "decision-dna-guard":           "WARN",
     "client-signal-verbatim-guard": "WARN",
     "metrics-config-validator":     "WARN",
@@ -243,6 +244,7 @@ def _layer1_checks() -> list[Layer1Check]:
         ("layer1-path-safety", "HALT", _check_path_safety),
         ("agent-prompt-contracts", "BLOCK_MERGE", _check_agent_prompt_contracts),
         ("constitution-integrity", "BLOCK_MERGE", _check_constitution_integrity),
+        ("security-posture-guard", "BLOCK_MERGE", _check_security_posture),
     ]
 
 
@@ -543,3 +545,80 @@ def _is_inside(repo_root: Path, target: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def _check_security_posture(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    """Check that the constitution declares security_surfaces.
+
+    Mirrors security-posture-guard.sh logic: grep for 'security_surfaces',
+    'security-surfaces', or 'security surfaces' in SOUL-DOCUMENT.md,
+    CONSTITUTION.md, and AMENDMENTS.md.
+
+    On platforms where bash is available, delegates to the bundled shell script.
+    Otherwise performs the equivalent check in pure Python.
+    """
+    import re as _re
+    import shutil
+
+    docs = [
+        repo_root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md",
+        repo_root / "core" / "governance" / "Governance" / "CONSTITUTION.md",
+        repo_root / "core" / "governance" / "Retro" / "AMENDMENTS.md",
+    ]
+
+    # Try delegating to the shell script if bash is available
+    script = repo_root / "core" / "governance" / "Validators" / "security-posture-guard.sh"
+    if not script.exists():
+        # Fall back to bundled copy
+        bundle_script = (
+            Path(__file__).resolve().parent
+            / "_bundle" / "core" / "governance" / "Validators" / "security-posture-guard.sh"
+        )
+        if bundle_script.exists():
+            script = bundle_script
+
+    bash_path = shutil.which("bash")
+    if script.exists() and bash_path:
+        try:
+            proc = subprocess.run(
+                [bash_path, str(script), "--repo-root", str(repo_root)],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(repo_root),
+            )
+            found = proc.returncode == 0
+            return (
+                found,
+                "security_surfaces declared" if found else "security_surfaces not declared in constitution",
+                {
+                    "method": "shell",
+                    "script": str(script),
+                    "exit_code": proc.returncode,
+                    "stdout": proc.stdout.strip(),
+                    "stderr": proc.stderr.strip(),
+                },
+            )
+        except Exception:
+            pass  # Fall through to Python check
+
+    # Pure Python fallback (Windows or missing bash)
+    pattern = _re.compile(r"security[_\- ]surfaces", _re.IGNORECASE)
+    checked: list[dict[str, Any]] = []
+    found = False
+    for doc in docs:
+        entry: dict[str, Any] = {"path": str(doc.relative_to(repo_root)), "exists": doc.is_file()}
+        if doc.is_file():
+            try:
+                content = doc.read_text(encoding="utf-8", errors="replace")
+                match = bool(pattern.search(content))
+                entry["declares_security_surfaces"] = match
+                if match:
+                    found = True
+            except OSError:
+                entry["read_error"] = True
+        checked.append(entry)
+
+    return (
+        found,
+        "security_surfaces declared" if found else "security_surfaces not declared in constitution",
+        {"method": "python", "docs_checked": checked},
+    )
