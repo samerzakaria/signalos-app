@@ -1,7 +1,13 @@
 param(
   [switch]$InstallNsis,
   [switch]$CloseRunning,
-  [int]$LaunchTimeoutSeconds = 25,
+  # NSIS-installed app's first launch can stall up to ~30-45s on a fresh
+  # CI runner while WebView2 bootstraps from `downloadBootstrapper`
+  # (see tauri.conf.json: bundle.windows.webviewInstallMode). The poll
+  # loop below short-circuits early once the main window appears, so a
+  # wider ceiling is free when the app is healthy and only matters on
+  # the cold-start path.
+  [int]$LaunchTimeoutSeconds = 60,
   [int]$InstallerTimeoutSeconds = 180
 )
 
