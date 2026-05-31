@@ -77,6 +77,15 @@
 
 - {e.g. "Not a CRM. Not an analytics dashboard. Not a full-stack marketing suite."}
 
+## 8. Security surfaces
+
+security_surfaces:
+  - webview
+  - ipc
+  - sidecar
+  - filesystem
+  - network
+
 ---
 
 ## Gate 0 signature

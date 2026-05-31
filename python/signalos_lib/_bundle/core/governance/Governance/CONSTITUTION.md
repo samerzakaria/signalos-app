@@ -354,6 +354,18 @@ Scale Track and Delivery Mode are orthogonal, with one constraint: **Campaign is
 
 ---
 
+## §12b. Security Surfaces
+
+security_surfaces:
+  - webview (Tauri WebView2 — user-facing UI, CSP-governed)
+  - ipc (Tauri IPC bridge — all Rust commands)
+  - sidecar (Python SignalOS Core — LLM harness, file writes)
+  - keychain (OS credential storage — API keys)
+  - filesystem (workspace reads/writes — sandbox-bounded)
+  - network (LLM API calls — redacted before transmission)
+
+---
+
 ## §13. Glossary
 
 Operational vocabulary introduced or clarified by amendments. Entries are additive and do not override the preceding sections; when a section and a glossary entry disagree, the section wins. New entries land in Wave-scoped amendments and are cross-referenced from `core/governance/Retro/AMENDMENTS.md`.
