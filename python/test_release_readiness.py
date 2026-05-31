@@ -53,7 +53,11 @@ def _make_ready_repo(root: Path) -> None:
 
     for artifact in expected_gate_artifacts():
         target = root / artifact.rel_path
-        _write(target, f"# {artifact.label}\n\nRelease-ready fixture.\n")
+        content = f"# {artifact.label}\n\nRelease-ready fixture.\n"
+        # Security posture guard requires security_surfaces in constitution docs
+        if "SOUL-DOCUMENT" in artifact.rel_path or "CONSTITUTION" in artifact.rel_path:
+            content += "\nsecurity_surfaces:\n  - webview\n  - ipc\n"
+        _write(target, content)
         sign_artifact(
             target,
             signer="Fixture User",

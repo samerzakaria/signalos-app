@@ -33,8 +33,8 @@ def _make_layer1_repo(root: Path) -> None:
         json.dumps({"kind": "prompt", "text": "Build a task management system"}) + "\n",
     )
     _write(root / ".signalos" / "unknowns.json", "[]\n")
-    _write(root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md", "# Soul\n")
-    _write(root / "core" / "governance" / "Governance" / "CONSTITUTION.md", "# Constitution\n")
+    _write(root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md", "# Soul\n\nsecurity_surfaces:\n  - webview\n  - ipc\n")
+    _write(root / "core" / "governance" / "Governance" / "CONSTITUTION.md", "# Constitution\n\nsecurity_surfaces:\n  - webview\n  - ipc\n")
     _write(root / "core" / "governance" / "Governance" / "DECISION-DNA.md", "# Decision DNA\n")
 
 
@@ -75,7 +75,7 @@ class ValidateLayer1Tests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "signalos.validate.v1")
         self.assertEqual(payload["group"], "layer1")
         self.assertEqual(payload["status"], "PASS")
-        self.assertEqual(payload["summary"]["total"], 11)
+        self.assertEqual(payload["summary"]["total"], 12)
         self.assertEqual(payload["summary"]["failed"], 0)
         self.assertEqual(
             {result["name"] for result in payload["results"]},
@@ -91,6 +91,7 @@ class ValidateLayer1Tests(unittest.TestCase):
                 "layer1-path-safety",
                 "agent-prompt-contracts",
                 "constitution-integrity",
+                "security-posture-guard",
             },
         )
 
