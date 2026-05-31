@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.26] - 2026-05-31
+
+### Release smoke hardening
+
+- Widen the NSIS-installed-app launch ceiling from 25 s to 60 s so the WebView2 bootstrapper has room to download on a cold CI runner; the poll loop short-circuits once the main window appears so healthy launches stay fast.
+
 ## [3.0.0-internal.25] - 2026-05-31
 
 ### Internal delivery governance hardening
