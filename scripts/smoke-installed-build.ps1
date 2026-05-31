@@ -270,12 +270,13 @@ function Test-MsiExtraction {
   }
 
   # Same exact-name match as the NSIS picker — see comment in
-  # Test-NsisInstall for why the sidecar must not be eligible.
+  # Test-NsisInstall for why the sidecar must not be eligible and
+  # why productName != binary filename.
   $extractedExe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" |
-    Where-Object { $_.Name -ieq "SignalOS.exe" } |
+    Where-Object { $_.Name -ieq "signalos-desktop.exe" } |
     Select-Object -First 1
   if (-not $extractedExe) {
-    throw "MSI extraction did not produce SignalOS.exe"
+    throw "MSI extraction did not produce signalos-desktop.exe"
   }
   Write-Host "[PASS] MSI administrative extraction"
 }
@@ -518,18 +519,22 @@ function Test-NsisInstall {
   }
 
   # Pick the main Tauri app exe by EXACT name match against the
-  # productName from tauri.conf.json ("SignalOS"). The install dir also
-  # contains the bundled Python sidecar (e.g.
+  # Cargo [package].name from src-tauri/Cargo.toml ("signalos-desktop").
+  # The install dir also contains the bundled Python sidecar (e.g.
   # signalos-python-x86_64-pc-windows-msvc.exe, ~25-30 MB from
   # PyInstaller). The sidecar matches "signalos" too and is larger
   # than the Tauri stub, so any size-based tiebreaker would pick the
   # wrong binary and stall the launch test forever (the sidecar is a
   # stdin/stdout JSON daemon — it never creates a window).
+  #
+  # productName="SignalOS" in tauri.conf.json is the DISPLAYED name
+  # (window title / Start menu / install-dir name) — NOT the binary
+  # filename. The binary is always cargo-bin-name + ".exe".
   $installedExe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" |
-    Where-Object { $_.Name -ieq "SignalOS.exe" } |
+    Where-Object { $_.Name -ieq "signalos-desktop.exe" } |
     Select-Object -First 1
   if (-not $installedExe) {
-    throw "NSIS install did not produce SignalOS.exe in $target"
+    throw "NSIS install did not produce signalos-desktop.exe in $target"
   }
 
   Test-AppLaunch $installedExe.FullName "NSIS installed app"

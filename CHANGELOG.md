@@ -2,6 +2,12 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.28] - 2026-05-31
+
+### Release smoke hardening (real fix, take 2)
+
+- Correct the NSIS / MSI installer smoke picker to match `signalos-desktop.exe` exactly — the cargo `[package].name` from `src-tauri/Cargo.toml`. The `.27` fix matched `SignalOS.exe`, but that's the productName (display name) from `tauri.conf.json`, not the binary filename. Tauri 2 names the binary after the cargo bin name, not the productName.
+
 ## [3.0.0-internal.27] - 2026-05-31
 
 ### Release smoke hardening (real fix)
