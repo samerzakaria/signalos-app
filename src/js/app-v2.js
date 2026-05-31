@@ -849,6 +849,7 @@ async function replaceApiKey() {
     const result = await ipc.provider.test(state.ai, key, state.aiModel);
     if (result?.ok || result === true) {
       await ipc.keychain.store(state.ai, key);
+      try { await ipc.sidecar.restart(); } catch {}
       addAIBubble("API key updated and verified successfully.");
     }
   } catch (e) {
@@ -1414,6 +1415,10 @@ async function finishOnboarding() {
         await refreshCurrentProviderModels(apiKey);
         await ipc.provider.test(state.ai, apiKey, state.aiModel);
         await ipc.keychain.store(state.ai, apiKey);
+        // Restart sidecar so it picks up the newly-stored key from keychain.
+        // Without this, the sidecar (spawned at app launch before onboarding)
+        // runs without the API key in its environment.
+        try { await ipc.sidecar.restart(); } catch {}
         providerReady = true;
       } catch (e) {
         providerWarning = providerConnectionMessage(e, state.ai);
