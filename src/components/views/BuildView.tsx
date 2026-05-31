@@ -1,6 +1,6 @@
 import type { ChatBubble } from '../../state';
 import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../state';
-import { TestDebtPanel } from '../TestDebtPanel';
+// TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
 import { viewClass } from '../viewShell';
@@ -248,22 +248,7 @@ export function BuildView() {
           </div>
         </div>
 
-        <aside
-          className="build-right-rail"
-          data-testid="build-right-rail"
-          style={{
-            position: 'absolute',
-            right: '16px',
-            top: '72px',
-            width: '320px',
-            maxHeight: 'calc(100vh - 220px)',
-            overflowY: 'auto',
-            zIndex: 5,
-            pointerEvents: 'auto',
-          }}
-        >
-          <TestDebtPanel />
-        </aside>
+        {/* TestDebtPanel renders in the sidebar tab, not floating over chat */}
 
         <div className="chat-foot">
           <div className="chat-foot-inner">

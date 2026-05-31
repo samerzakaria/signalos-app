@@ -189,14 +189,16 @@ def generate_questions(intent: dict[str, Any]) -> list[dict[str, Any]]:
     Blocking questions target critical fields that should be answered
     before proceeding.  Non-blocking questions cover nice-to-have fields.
     """
-    # Try LLM account-manager agent first
+    # LLM agent generates smart, domain-specific questions
     if is_llm_available():
         llm_result = generate_questions_with_llm(intent)
         if llm_result is not None:
             return llm_result
 
-    # Fallback: deterministic (existing logic)
-    return _deterministic_questions(intent)
+    # No LLM — return empty list, not generic boilerplate.
+    # Generic questions that ignore the user's prompt are worse than
+    # no questions at all.
+    return []
 
 
 def _deterministic_questions(intent: dict[str, Any]) -> list[dict[str, Any]]:

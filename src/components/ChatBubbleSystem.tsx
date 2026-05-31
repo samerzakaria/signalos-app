@@ -124,8 +124,8 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
             <div style={{ marginBottom: 8, fontSize: '12.5px' }}>{bubble.text}</div>
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
+                display: 'flex',
+                flexDirection: 'column',
                 gap: 6,
               }}
             >

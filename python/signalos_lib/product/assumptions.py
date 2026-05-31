@@ -218,14 +218,15 @@ def record_assumptions(intent: dict[str, Any]) -> list[dict[str, str]]:
     Each entry is ``{"field": str, "assumed_value": str, "reason": str}``.
     Only fields that are currently empty/default get an assumption recorded.
     """
-    # Try LLM first
+    # LLM agent reasons about domain-appropriate defaults
     if is_llm_available():
         llm_result = record_assumptions_with_llm(intent)
         if llm_result is not None:
             return llm_result
 
-    # Fallback: static defaults
-    return _deterministic_assumptions(intent)
+    # No LLM — return empty, not fake defaults that ignore the prompt.
+    # "Assuming single-owner" for a team tool is wrong, not safe.
+    return []
 
 
 def _deterministic_assumptions(intent: dict[str, Any]) -> list[dict[str, str]]:
