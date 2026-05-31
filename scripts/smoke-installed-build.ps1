@@ -1,13 +1,7 @@
 param(
   [switch]$InstallNsis,
   [switch]$CloseRunning,
-  # NSIS-installed app's first launch can stall up to ~30-45s on a fresh
-  # CI runner while WebView2 bootstraps from `downloadBootstrapper`
-  # (see tauri.conf.json: bundle.windows.webviewInstallMode). The poll
-  # loop below short-circuits early once the main window appears, so a
-  # wider ceiling is free when the app is healthy and only matters on
-  # the cold-start path.
-  [int]$LaunchTimeoutSeconds = 60,
+  [int]$LaunchTimeoutSeconds = 25,
   [int]$InstallerTimeoutSeconds = 180
 )
 
@@ -275,11 +269,13 @@ function Test-MsiExtraction {
     throw "MSI extraction failed with code $exitCode"
   }
 
+  # Same exact-name match as the NSIS picker — see comment in
+  # Test-NsisInstall for why the sidecar must not be eligible.
   $extractedExe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" |
-    Where-Object { $_.Name -match "SignalOS|signalos|desktop" } |
+    Where-Object { $_.Name -ieq "SignalOS.exe" } |
     Select-Object -First 1
   if (-not $extractedExe) {
-    throw "MSI extraction did not produce an app executable"
+    throw "MSI extraction did not produce SignalOS.exe"
   }
   Write-Host "[PASS] MSI administrative extraction"
 }
@@ -521,12 +517,19 @@ function Test-NsisInstall {
     throw "NSIS silent install failed with code $exitCode. Close SignalOS if it is running, then retry."
   }
 
+  # Pick the main Tauri app exe by EXACT name match against the
+  # productName from tauri.conf.json ("SignalOS"). The install dir also
+  # contains the bundled Python sidecar (e.g.
+  # signalos-python-x86_64-pc-windows-msvc.exe, ~25-30 MB from
+  # PyInstaller). The sidecar matches "signalos" too and is larger
+  # than the Tauri stub, so any size-based tiebreaker would pick the
+  # wrong binary and stall the launch test forever (the sidecar is a
+  # stdin/stdout JSON daemon — it never creates a window).
   $installedExe = Get-ChildItem -Path $target -Recurse -Filter "*.exe" |
-    Where-Object { $_.Name -match "SignalOS|signalos|desktop" -and $_.Name -notmatch "uninst|uninstall" } |
-    Sort-Object Length -Descending |
+    Where-Object { $_.Name -ieq "SignalOS.exe" } |
     Select-Object -First 1
   if (-not $installedExe) {
-    throw "NSIS install did not produce an app executable in $target"
+    throw "NSIS install did not produce SignalOS.exe in $target"
   }
 
   Test-AppLaunch $installedExe.FullName "NSIS installed app"

@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.0.0-internal.27] - 2026-05-31
+
+### Release smoke hardening (real fix)
+
+- Fix the NSIS / MSI installer smoke picker to match the Tauri productName exactly (`SignalOS.exe`) instead of matching `SignalOS|signalos|desktop` and tie-breaking by file size. The size heuristic was selecting the bundled Python sidecar (`signalos-python-*.exe`, ~25-30 MB from PyInstaller, larger than the Tauri stub) and trying to launch it as a windowed app — but the sidecar is a stdin/stdout JSON daemon and never creates a window, so the launch poll timed out at any ceiling.
+- Revert the `.26` timeout bump (60 s → 25 s) — the cold-start was a symptom, not the cause; with the right binary the launch is well under 25 s.
+
 ## [3.0.0-internal.26] - 2026-05-31
 
 ### Release smoke hardening
