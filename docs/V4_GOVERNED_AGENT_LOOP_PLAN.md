@@ -372,6 +372,19 @@ Python agent_loop.py
 
 No existing streaming infrastructure is reused. The current `chat:token` Tauri events from `provider.rs` are for the legacy direct-to-provider chat path. The new path is sidecar-mediated. Both paths can coexist during migration (legacy chat still works until the agent loop fully replaces it).
 
+### Reference: Claude Code public repo
+
+The Claude Code source is publicly visible at `github.com/anthropics/claude-code` (proprietary license -- read and learn from, not embed or redistribute). The following patterns can be studied and adapted for our implementation where relevant:
+
+- **Tool-use loop structure**: how Claude Code iterates between LLM calls and tool execution, handles tool results, and manages conversation state
+- **Tool definitions**: the specific tool schemas for file read/write/edit, shell execution, search -- our tool definitions should match the quality and granularity of theirs
+- **Streaming architecture**: how token deltas are emitted and rendered incrementally
+- **Context management**: how conversation history is compressed/truncated for long sessions
+- **Permission model**: how Claude Code gates tool execution (user approval prompts before destructive actions)
+- **Error handling**: how tool failures, LLM errors, and timeout conditions are surfaced
+
+We build our own implementation -- the code is ours, the governance layer is ours, the multi-provider support is ours. But the patterns and design decisions in Claude Code are a proven reference for the tool-use loop, streaming, and UX that we should study before implementing each phase. No need to guess at patterns that are already visible and battle-tested.
+
 ---
 
 ## Architecture
