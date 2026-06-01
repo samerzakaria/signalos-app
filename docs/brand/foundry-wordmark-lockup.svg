@@ -10,6 +10,6 @@
     <path d="M346 212h26v112c0 27-21 48-48 48h-86v-26h86c12.5 0 22-9.5 22-22V212Z" fill="#2457d6" opacity="0.18"/>
   </g>
   <text x="206" y="103" fill="#1e1d1a" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="54" font-weight="760" letter-spacing="0">Foundry</text>
-  <text x="209" y="143" fill="#2457d6" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="17" font-weight="760" letter-spacing="4">BY SIGNALOS</text>
+  <text x="209" y="143" fill="#2457d6" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="19" font-weight="720" letter-spacing="0">by SignalOS</text>
   <path d="M208 164h306" stroke="#0f9f8f" stroke-width="4" stroke-linecap="round"/>
 </svg>
