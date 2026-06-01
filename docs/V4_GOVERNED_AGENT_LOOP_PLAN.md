@@ -1,4 +1,4 @@
-# Foundry by SignalOS — v4 Plan
+# Foundry by SignalOS -- v4 Plan
 
 **Your AI agentic product team, governed from idea to launch.**
 
@@ -17,7 +17,7 @@
 - **Text:** Charcoal (#1e1d1a)
 - **Trust color:** Deep blue (#2457d6)
 - **Active build accent:** Warm amber (#a86310)
-- **Style:** Premium software studio — not hacker tool, not chatbot toy, not internal devops screen
+- **Style:** Premium software studio -- not hacker tool, not chatbot toy, not internal devops screen
 
 ### Visual Principles
 
@@ -36,7 +36,7 @@
 
 ## Goal
 
-Build Foundry v4 — the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 13 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally — one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
+Build Foundry v4 -- the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 13 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally -- one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
 
 Every v3 module is either actively used, intentionally marked optional with justification, or de-scoped with proof. No forced integration. No fake usage.
 
@@ -50,7 +50,7 @@ The whole app is one simple flow:
 User types: "I want a task management system for my team to manage tasks, workload, utilization, and KPIs."
 
 ### 2. Product Brief
-Foundry explains what it understood — in business language, not developer jargon. Entities, workflows, users, surfaces — presented as a clear brief the client can read and approve.
+Foundry explains what it understood -- in business language, not developer jargon. Entities, workflows, users, surfaces -- presented as a clear brief the client can read and approve.
 
 ### 3. Team Plan
 Shows who will do what. The user sees the team, not the tools:
@@ -69,7 +69,7 @@ Shows who will do what. The user sees the team, not the tools:
 The user does NOT manage agents manually. Foundry assigns and coordinates them. The user sees progress, not process.
 
 ### 4. Approvals
-User approves decisions at meaningful points only — not every micro-step:
+User approves decisions at meaningful points only -- not every micro-step:
 
 - **Product scope** (G0-G1): "Is this what you want built?"
 - **Design direction** (G3): "Does this look right?" (with interactive preview)
@@ -78,7 +78,7 @@ User approves decisions at meaningful points only — not every micro-step:
 Everything else is the team doing their job. The user watches progress, not approves every file write.
 
 ### 5. Build Progress
-Clear visible stages — not a phase strip with internal codes:
+Clear visible stages -- not a phase strip with internal codes:
 
 ```
 Brief --> Design --> Build --> Validate --> Security --> Launch --> Handoff
@@ -92,7 +92,7 @@ Build/test/runtime/UX/security proof shown in plain language:
 - "All 12 tests pass"
 - "Dev server starts and responds on port 5173"
 - "No injection vulnerabilities found"
-- "HIPAA compliance flagged — audit trail enabled"
+- "HIPAA compliance flagged -- audit trail enabled"
 
 Not: "BLOCK_MERGE severity, Layer 1 validator exit code 0."
 
@@ -120,7 +120,7 @@ No dead pages. Every nav item either works or is hidden.
 
 | Item | Purpose | Dead? |
 |------|---------|-------|
-| **Build** | The conversation — where everything happens | Active |
+| **Build** | The conversation -- where everything happens | Active |
 | **Preview** | Live iframe of running product | Active |
 | **Evidence** | Build/test/security/proof evidence for this project | Active |
 | **Handoff** | What was built, how to run, what's next | Active |
@@ -174,6 +174,9 @@ LLM call failures, tool execution failures, governance denials, and validation f
 
 ### INV-5: Persisted agent run state
 Every agent run has a unique run ID. The event log, tool-call ledger, conversation history, and gate state are persisted to `.signalos/agent-runs/<run-id>/`. If the sidecar crashes or restarts, the run can be resumed from the last checkpoint. Tool calls are idempotent (re-executing a write that already succeeded is a no-op).
+
+### INV-7: Text-only mode cannot close delivery
+If a provider does not support tool calling, Foundry can explain, plan, and guide in text-only mode. But delivery closure (status "ready") REQUIRES tool execution, a real product repo, executed tests, runtime proof, UX proof, and evidence closeout. Text-only mode can produce a Brief and Team Plan but cannot produce a shipped product. The closeout must honestly state "text-only mode -- no product built" if tools were never executed.
 
 ### INV-6: CI independence from live providers
 CI tests MUST use deterministic fake providers (`TestProvider`). Live provider tests (T01-T04) are optional smoke tests gated behind env vars, never blocking CI.
@@ -306,8 +309,8 @@ Each v3 module is classified as ACTIVE (used directly), OPTIONAL (available but 
 | `keychain.rs` | ACTIVE | OS credential storage for all providers |
 | `sidecar.rs` | ACTIVE (modified) | Event routing for agent loop events |
 | `governance.rs` | ACTIVE | Audit trail, gate state persistence |
-| `DeliverView.tsx` | OPTIONAL (feature-flagged) | Hidden behind feature flag until chat parity proven. Deleted only after T33-T37 pass. |
-| `TerminalView.tsx` | OPTIONAL (feature-flagged) | Hidden behind feature flag until governed shell parity proven. Deleted only after T10 passes. |
+| `DeliverView.tsx` | DE-SCOPED | Removed from navigation. Logic preserved in internal services. Source file deleted after Build conversation compiles. |
+| `TerminalView.tsx` | DE-SCOPED | Removed from navigation. Governed shell lives in Build conversation. Source file deleted after tests pass. |
 
 ---
 
@@ -317,11 +320,11 @@ Each v3 module is classified as ACTIVE (used directly), OPTIONAL (available but 
 
 The chat must look and feel as powerful as Claude Code's interface BEFORE we wire the agent loop.
 
-DeliverView and TerminalView are NOT deleted. They are hidden behind a feature flag (`v4_agent_loop`). They remain accessible via the flag until the new chat proves parity.
+DeliverView and TerminalView are removed from navigation immediately. Useful logic is preserved as internal modules/services behind the Build conversation. Rollback is through git/release, not through in-app flags.
 
 | Step | What | Files | Delivers |
 |------|------|-------|----------|
-| 1.1 | Feature flag: `v4_agent_loop`. When on: hide Deliver + Terminal tabs. When off: everything works as v3. | Toolbar.tsx, app.tsx, state.ts | Safe rollback |
+| 1.1 | Remove Deliver and Terminal tabs from navigation. Preserve useful logic as internal services. 3 project tabs: Build, Preview, Evidence. | Toolbar.tsx, app.tsx | Clean navigation |
 | 1.2 | Chat redesign: full-width, streaming text, markdown rendering, code blocks with syntax highlighting, copy button | BuildView.tsx, styles.css | Professional chat |
 | 1.3 | Tool call bubbles: compact cards showing file read/write/edit, command execution, search -- with spinner then checkmark | ToolCallBubble.tsx (new) | User sees agent working |
 | 1.4 | File diff bubbles: inline green/red diffs for edits, collapsible full-file view | FileDiffBubble.tsx (new) | User sees what changed |
@@ -362,13 +365,13 @@ DeliverView and TerminalView are NOT deleted. They are hidden behind a feature f
 
 ### Phase 4: Parity Proof and Cleanup
 
-DeliverView and TerminalView are only removed AFTER parity is proven by tests.
+DeliverView and TerminalView are already removed from navigation (Phase 1). Phase 4 deletes the dead source files after the Build conversation compiles and tests pass.
 
 | Step | What | Files | Delivers |
 |------|------|-------|----------|
-| 4.1 | Parity test: delivery flow works entirely in chat (T33-T37 pass) | test suite | Prove Deliver parity |
-| 4.2 | Parity test: real commands work in chat (T10 passes) | test suite | Prove Terminal parity |
-| 4.3 | Remove feature flag, delete DeliverView.tsx and TerminalView.tsx | app.tsx, Toolbar.tsx | Clean codebase |
+| 4.1 | Delivery flow works entirely in Build conversation (T39-T44 pass) | test suite | E2E delivery proven |
+| 4.2 | Real commands work in Build conversation (T12 passes) | test suite | Governed shell proven |
+| 4.3 | Delete DeliverView.tsx and TerminalView.tsx source files | app.tsx | Dead code removed |
 | 4.4 | Preview tab integration: auto-open Preview when agent starts dev server | PreviewView.tsx, agentEvents.ts | Seamless preview |
 
 ### Phase 5: Full E2E Validation
@@ -411,7 +414,7 @@ All tests in the test matrix must pass. No exceptions. No relaxing.
 
 Every row must pass before v4 ships. No exceptions. No relaxing.
 
-### Provider Support (T01-T06)
+### Provider Support (T01-T08)
 
 | # | Test | What it proves | How to verify | CI? |
 |---|------|---------------|--------------|-----|
@@ -503,7 +506,7 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 | T56 | CI all green (test-automation + Smoke + Pages) | CI | Push and verify | Required CI |
 | T57 | Release workflow green (all platforms) | Release | Tag and verify installers | Required (Release) |
 
-**57 tests. 45 required in CI. 11 optional smoke (live provider). 1 manual.**
+**57 tests. 47 required in CI. 8 optional smoke (live provider). 1 manual. 1 required release.**
 
 ---
 
@@ -628,7 +631,7 @@ Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 proves parit
 
 - Off-white background, charcoal text, deep blue for trust, amber for active build
 - Agent messages show specialist name, not "SignalOS" or "AI"
-- Approval cards are large, clear, meaningful — not tiny pills
+- Approval cards are large, clear, meaningful -- not tiny pills
 - Progress bar shows business stages (Brief, Design, Build...) not gate codes
 - Evidence shown in plain language
 - No overlapping panels, no translucent layers
