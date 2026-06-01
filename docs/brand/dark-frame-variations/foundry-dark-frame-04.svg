@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 04</title>
+  <desc id="desc">A nested frame system with the active signal forming the lower rail.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <rect x="104" y="104" width="304" height="304" rx="72" fill="none" stroke="#f6f5f2" stroke-width="18"/>
+  <rect x="137" y="137" width="238" height="238" rx="50" fill="none" stroke="#f6f5f2" stroke-width="10" opacity="0.34"/>
+  <path d="M178 159h172v50H235v58h95v46h-95v100h-57V159Z" fill="#f6f5f2"/>
+  <path d="M342 138l32 32-32 32-32-32 32-32Z" fill="#0f9f8f"/>
+  <path d="M232 367h91c21 0 39-17 39-39v-88" fill="none" stroke="#0f9f8f" stroke-width="17" stroke-linecap="round"/>
+</svg>

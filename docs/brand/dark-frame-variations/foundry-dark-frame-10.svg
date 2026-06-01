@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 10</title>
+  <desc id="desc">A premium seal-like frame with a compact F and signal node.</desc>
+  <rect width="512" height="512" rx="128" fill="#1e1d1a"/>
+  <path d="M256 92c91 0 164 73 164 164s-73 164-164 164S92 347 92 256 165 92 256 92Z" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M174 164h172v50H232v58h96v47h-96v101h-58V164Z" fill="#f6f5f2"/>
+  <path d="M350 148l29 29-29 29-29-29 29-29Z" fill="#0f9f8f"/>
+  <path d="M371 229v80c0 36-29 65-65 65h-70" fill="none" stroke="#0f9f8f" stroke-width="16" stroke-linecap="round"/>
+</svg>

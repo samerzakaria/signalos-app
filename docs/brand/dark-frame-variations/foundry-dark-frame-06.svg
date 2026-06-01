@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 06</title>
+  <desc id="desc">A softer premium frame with an active signal orbiting the monogram.</desc>
+  <rect width="512" height="512" rx="120" fill="#1e1d1a"/>
+  <rect x="108" y="108" width="296" height="296" rx="86" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M178 162h170v51H235v59h94v48h-94v96h-57V162Z" fill="#f6f5f2"/>
+  <path d="M340 140l32 32-32 32-32-32 32-32Z" fill="#0f9f8f"/>
+  <path d="M372 226c30 55 12 122-44 152" fill="none" stroke="#0f9f8f" stroke-width="17" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 07</title>
+  <desc id="desc">A tall architectural frame with an editorial Foundry wordmark F.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M148 96h216c18 0 32 14 32 32v256c0 18-14 32-32 32H148c-18 0-32-14-32-32V128c0-18 14-32 32-32Z" fill="none" stroke="#f6f5f2" stroke-width="21"/>
+  <path d="M176 150h176v54H236v62h94v49h-94v105h-60V150Z" fill="#f6f5f2"/>
+  <path d="M350 126l28 28-28 28-28-28 28-28Z" fill="#0f9f8f"/>
+  <path d="M350 225v108c0 20-16 36-36 36h-70" fill="none" stroke="#0f9f8f" stroke-width="16" stroke-linecap="round"/>
+</svg>

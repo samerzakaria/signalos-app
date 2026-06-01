@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Foundry Dark Frame Variations</title>
+  <style>
+    :root {
+      --paper: #f6f5f2;
+      --ink: #1e1d1a;
+      --trust: #2457d6;
+      --signal: #0f9f8f;
+      --line: rgba(30, 29, 26, 0.14);
+      --muted: rgba(30, 29, 26, 0.62);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+    }
+
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 48px 28px 72px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 42px;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    article {
+      background: #fffdf8;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 14px 34px rgba(30, 29, 26, 0.08);
+    }
+
+    .stage {
+      display: grid;
+      place-items: center;
+      min-height: 168px;
+      border-radius: 8px;
+      background: #ebe9e3;
+      border: 1px solid var(--line);
+      margin-bottom: 12px;
+    }
+
+    img {
+      width: 112px;
+      height: 112px;
+      display: block;
+    }
+
+    h2 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .mini {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      background: var(--ink);
+      color: var(--paper);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .mini img {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+    }
+
+    .callout {
+      margin-top: 28px;
+      padding: 22px;
+      border-radius: 8px;
+      background: #fffdf8;
+      border: 1px solid var(--line);
+    }
+
+    .callout strong {
+      color: var(--trust);
+    }
+
+    @media (max-width: 1080px) {
+      .grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 680px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Foundry Dark Frame Variations</h1>
+      <p>Ten directions based on the stronger dark-frame route. These preserve the premium black field, off-white frame, built F, and teal active signal.</p>
+    </header>
+
+    <section class="grid" aria-label="Dark frame logo variations">
+      <article><div class="stage"><img src="./foundry-dark-frame-01.svg" alt="Variation 01"/></div><h2>01 Original Frame</h2><p>Balanced, proven starting point.</p><div class="mini"><img src="./foundry-dark-frame-01.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-02.svg" alt="Variation 02"/></div><h2>02 Compact Block</h2><p>Strongest at tiny sizes.</p><div class="mini"><img src="./foundry-dark-frame-02.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-03.svg" alt="Variation 03"/></div><h2>03 Open Corners</h2><p>Governance without a heavy box.</p><div class="mini"><img src="./foundry-dark-frame-03.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-04.svg" alt="Variation 04"/></div><h2>04 Nested Frame</h2><p>Best system/proof feel.</p><div class="mini"><img src="./foundry-dark-frame-04.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-05.svg" alt="Variation 05"/></div><h2>05 Proof Dots</h2><p>Operational and evidence-led.</p><div class="mini"><img src="./foundry-dark-frame-05.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-06.svg" alt="Variation 06"/></div><h2>06 Soft Premium</h2><p>Most approachable.</p><div class="mini"><img src="./foundry-dark-frame-06.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-07.svg" alt="Variation 07"/></div><h2>07 Tall Studio</h2><p>More architectural.</p><div class="mini"><img src="./foundry-dark-frame-07.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-08.svg" alt="Variation 08"/></div><h2>08 Minimal Square</h2><p>Cleanest mark geometry.</p><div class="mini"><img src="./foundry-dark-frame-08.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-09.svg" alt="Variation 09"/></div><h2>09 Motion Cut</h2><p>Most active, less formal.</p><div class="mini"><img src="./foundry-dark-frame-09.svg" alt=""/>Build</div></article>
+      <article><div class="stage"><img src="./foundry-dark-frame-10.svg" alt="Variation 10"/></div><h2>10 Seal</h2><p>Most institutional.</p><div class="mini"><img src="./foundry-dark-frame-10.svg" alt=""/>Build</div></article>
+    </section>
+
+    <section class="callout">
+      <p><strong>Shortlist:</strong> 02 for app-icon clarity, 03 for premium distinctiveness, 04 for governance/proof, and 08 for the cleanest product mark. I would avoid 09 unless the brand needs more movement than authority.</p>
+    </section>
+  </main>
+</body>
+</html>

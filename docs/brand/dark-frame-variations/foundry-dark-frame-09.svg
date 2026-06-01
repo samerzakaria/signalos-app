@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 09</title>
+  <desc id="desc">A framed monogram with a diagonal active signal for movement.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M136 118h240c10 0 18 8 18 18v240c0 10-8 18-18 18H136c-10 0-18-8-18-18V136c0-10 8-18 18-18Z" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M180 162h171v51H237v59h93v48h-93v98h-57V162Z" fill="#f6f5f2"/>
+  <path d="M350 136l31 31-31 31-31-31 31-31Z" fill="#0f9f8f"/>
+  <path d="M346 220L246 366" stroke="#0f9f8f" stroke-width="17" stroke-linecap="round"/>
+</svg>

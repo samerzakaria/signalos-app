@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 03</title>
+  <desc id="desc">A bracketed frame with open corners and a precision signal path.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M116 192v-48c0-16 12-28 28-28h52M316 116h52c16 0 28 12 28 28v48M396 320v48c0 16-12 28-28 28h-52M196 396h-52c-16 0-28-12-28-28v-48" fill="none" stroke="#f6f5f2" stroke-width="25" stroke-linecap="round"/>
+  <path d="M182 160h170v52H238v59h94v48h-94v96h-56V160Z" fill="#f6f5f2"/>
+  <path d="M354 140l33 33-33 33-33-33 33-33Z" fill="#0f9f8f"/>
+  <path d="M376 230v100c0 30-24 54-54 54h-84" fill="none" stroke="#0f9f8f" stroke-width="17" stroke-linecap="round"/>
+</svg>

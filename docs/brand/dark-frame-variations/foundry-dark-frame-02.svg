@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry dark frame 02</title>
+  <desc id="desc">A heavier square frame with a compact F monogram and centered signal.</desc>
+  <rect width="512" height="512" rx="96" fill="#1e1d1a"/>
+  <rect x="110" y="110" width="292" height="292" rx="52" fill="none" stroke="#f6f5f2" stroke-width="26"/>
+  <path d="M174 158h174v50H232v58h96v47h-96v104h-58V158Z" fill="#f6f5f2"/>
+  <path d="M350 222l30 30-30 30-30-30 30-30Z" fill="#0f9f8f"/>
+  <path d="M330 350h-78" stroke="#0f9f8f" stroke-width="18" stroke-linecap="round"/>
+</svg>
