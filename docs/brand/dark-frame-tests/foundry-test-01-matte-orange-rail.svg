@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 01 matte orange rail</title>
+  <desc id="desc">Dark frame mark with a matte orange active rail.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M135 117h242c10 0 18 8 18 18v242c0 10-8 18-18 18H135c-10 0-18-8-18-18V135c0-10 8-18 18-18Z" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M181 164h170v51H237v59h94v48h-94v97h-56V164Z" fill="#f6f5f2"/>
+  <path d="M348 137l31 31-31 31-31-31 31-31Z" fill="#d97845"/>
+  <path d="M367 229v92c0 29-23 52-52 52h-78" fill="none" stroke="#d97845" stroke-width="18" stroke-linecap="round"/>
+</svg>

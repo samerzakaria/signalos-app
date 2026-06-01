@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 09 gate cut</title>
+  <desc id="desc">Dark frame mark with a stronger gate-shaped frame and teal path.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M116 384V146c0-17 13-30 30-30h220c17 0 30 13 30 30v238" fill="none" stroke="#f6f5f2" stroke-width="23" stroke-linecap="round"/>
+  <path d="M174 160h180v54H235v60h99v49h-99v91h-61V160Z" fill="#f6f5f2"/>
+  <path d="M351 139l31 31-31 31-31-31 31-31Z" fill="#0f9f8f"/>
+  <path d="M374 230v84c0 34-27 61-61 61h-80" fill="none" stroke="#0f9f8f" stroke-width="18" stroke-linecap="round"/>
+</svg>

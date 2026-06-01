@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 08 negative F</title>
+  <desc id="desc">Dark frame mark using negative-space construction for the F.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <rect x="112" y="112" width="288" height="288" rx="54" fill="#f6f5f2"/>
+  <path d="M176 160h177v55H236v61h98v50h-98v91h-60V160Z" fill="#1e1d1a"/>
+  <path d="M346 136l30 30-30 30-30-30 30-30Z" fill="#0f9f8f"/>
+  <path d="M366 232v90c0 26-20 46-46 46h-84" fill="none" stroke="#0f9f8f" stroke-width="16" stroke-linecap="round"/>
+  <path d="M136 136h240v240H136V136Z" fill="none" stroke="#2457d6" stroke-width="12" opacity="0.52"/>
+</svg>

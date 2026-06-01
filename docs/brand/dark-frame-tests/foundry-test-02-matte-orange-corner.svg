@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 02 matte orange corner</title>
+  <desc id="desc">Dark frame mark with an orange governed corner system.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M119 194v-56c0-12 9-21 21-21h56M318 117h56c12 0 21 9 21 21v56M395 318v56c0 12-9 21-21 21h-56M196 395h-56c-12 0-21-9-21-21v-56" fill="none" stroke="#f6f5f2" stroke-width="24" stroke-linecap="round"/>
+  <path d="M182 160h170v52H238v59h94v48h-94v98h-56V160Z" fill="#f6f5f2"/>
+  <path d="M332 122h42c11 0 20 9 20 20v42" fill="none" stroke="#d97845" stroke-width="20" stroke-linecap="round"/>
+  <path d="M354 224l29 29-29 29-29-29 29-29Z" fill="#d97845"/>
+</svg>

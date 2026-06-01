@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 06 light green proof</title>
+  <desc id="desc">Dark frame mark with light green proof nodes.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M132 122h248v268H132V122Z" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M178 164h172v50H235v58h95v48h-95v96h-57V164Z" fill="#f6f5f2"/>
+  <circle cx="360" cy="170" r="16" fill="#8fdc7a"/>
+  <circle cx="360" cy="236" r="16" fill="#8fdc7a" opacity="0.82"/>
+  <circle cx="360" cy="302" r="16" fill="#8fdc7a" opacity="0.64"/>
+  <path d="M360 186v34M360 252v34" stroke="#8fdc7a" stroke-width="10" stroke-linecap="round" opacity="0.74"/>
+</svg>

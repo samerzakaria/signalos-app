@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry test 10 signal stamp</title>
+  <desc id="desc">Dark frame mark with a stamp-like blue frame and teal signal node.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <rect x="106" y="106" width="300" height="300" rx="72" fill="none" stroke="#2457d6" stroke-width="26"/>
+  <rect x="136" y="136" width="240" height="240" rx="52" fill="none" stroke="#f6f5f2" stroke-width="12" opacity="0.88"/>
+  <path d="M180 162h170v52H237v58h94v49h-94v96h-57V162Z" fill="#f6f5f2"/>
+  <path d="M344 140l32 32-32 32-32-32 32-32Z" fill="#0f9f8f"/>
+  <circle cx="344" cy="344" r="19" fill="#0f9f8f"/>
+</svg>
