@@ -127,15 +127,17 @@ class TestVaguePrompt:
         intent = extract_product_intent(self.PROMPT)
         assert isinstance(intent, dict)
 
-    def test_produces_questions(self):
+    def test_questions_empty_without_llm(self):
         intent = extract_product_intent(self.PROMPT)
         questions = generate_questions(intent)
-        assert len(questions) > 0
+        assert isinstance(questions, list)
+        assert len(questions) == 0
 
-    def test_produces_assumptions(self):
+    def test_assumptions_empty_without_llm(self):
         intent = extract_product_intent(self.PROMPT)
         assumptions = record_assumptions(intent)
-        assert len(assumptions) > 0
+        assert isinstance(assumptions, list)
+        assert len(assumptions) == 0
 
     def test_product_type_is_custom(self):
         intent = extract_product_intent(self.PROMPT)
@@ -252,36 +254,21 @@ class TestStackPreferences:
 # ---------------------------------------------------------------------------
 
 class TestGenerateQuestions:
-    def test_blocking_for_missing_product_name(self):
+    def test_empty_questions_without_llm(self):
+        """Without LLM, questions are empty — not generic boilerplate."""
         intent = extract_product_intent("")
         questions = generate_questions(intent)
-        blocking = [q for q in questions if q["blocking"]]
-        fields = [q["field"] for q in blocking]
-        assert "product_name" in fields
-
-    def test_blocking_for_missing_product_type(self):
-        intent = extract_product_intent("")
-        questions = generate_questions(intent)
-        blocking = [q for q in questions if q["blocking"]]
-        fields = [q["field"] for q in blocking]
-        assert "product_type" in fields
+        assert isinstance(questions, list)
+        assert len(questions) == 0
 
     def test_no_blocking_when_critical_present(self):
         intent = extract_product_intent(
             "Build me a task management app with projects, tasks, and team members"
         )
         questions = generate_questions(intent)
-        blocking = [q for q in questions if q["blocking"]]
-        # product_name and product_type should be filled, not blocking
-        blocking_fields = [q["field"] for q in blocking]
-        assert "product_name" not in blocking_fields
-        assert "product_type" not in blocking_fields
-
-    def test_non_blocking_for_optional_fields(self):
-        intent = extract_product_intent("")
-        questions = generate_questions(intent)
-        non_blocking = [q for q in questions if not q["blocking"]]
-        assert len(non_blocking) > 0
+        assert isinstance(questions, list)
+        # Without LLM, no questions at all
+        assert len(questions) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -289,13 +276,12 @@ class TestGenerateQuestions:
 # ---------------------------------------------------------------------------
 
 class TestRecordAssumptions:
-    def test_defaults_for_empty_fields(self):
+    def test_empty_without_llm(self):
+        """Without LLM, assumptions are empty — not fake defaults."""
         intent = extract_product_intent("")
         assumptions = record_assumptions(intent)
-        assert len(assumptions) > 0
-        fields = [a["field"] for a in assumptions]
-        assert "deployment_intent" in fields
-        assert "auth_requirements" in fields
+        assert isinstance(assumptions, list)
+        assert len(assumptions) == 0
 
     def test_no_assumption_for_filled_fields(self):
         intent = extract_product_intent(
@@ -445,17 +431,15 @@ class TestLLMQuestionsFallback:
 
     def test_generate_questions_tries_llm_first(self, monkeypatch):
         """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
-        back to deterministic because TestProvider returns canned text."""
+        back to empty because TestProvider returns canned non-JSON text."""
         monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
         monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "test")
 
         intent = extract_product_intent("")
         questions = generate_questions(intent)
-        # Fallback produces valid questions
+        # LLM returns canned text (not valid JSON) → falls back to empty
         assert isinstance(questions, list)
-        assert len(questions) > 0
-        blocking = [q for q in questions if q["blocking"]]
-        assert "product_name" in [q["field"] for q in blocking]
+        assert len(questions) == 0
 
     def test_generate_questions_with_llm_returns_none_on_canned(self, monkeypatch):
         """generate_questions_with_llm returns None on non-JSON response."""
@@ -493,17 +477,15 @@ class TestLLMAssumptionsFallback:
 
     def test_record_assumptions_tries_llm_first(self, monkeypatch):
         """With SIGNALOS_HARNESS_TEST=1, LLM path is attempted but falls
-        back to deterministic because TestProvider returns canned text."""
+        back to empty because TestProvider returns canned non-JSON text."""
         monkeypatch.setenv("SIGNALOS_HARNESS_TEST", "1")
         monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "test")
 
         intent = extract_product_intent("")
         assumptions = record_assumptions(intent)
-        # Fallback produces valid assumptions
+        # LLM returns canned text (not valid JSON) → falls back to empty
         assert isinstance(assumptions, list)
-        assert len(assumptions) > 0
-        fields = [a["field"] for a in assumptions]
-        assert "deployment_intent" in fields
+        assert len(assumptions) == 0
 
     def test_record_assumptions_with_llm_returns_none_on_canned(self, monkeypatch):
         """record_assumptions_with_llm returns None on non-JSON response."""
