@@ -1,19 +1,19 @@
 {
   "version": "3.0.0-internal",
   "notes":   "SignalOS v3.0.0-internal ",
-  "pub_date": "2026-05-31T18:42:29Z",
+  "pub_date": "2026-06-01T15:03:12Z",
   "platforms": {
     "darwin-aarch64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal/SignalOS_3.0.0-internal_aarch64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2lsNkFWSDRFUmxXcjRMbzNxMjNFTVEvYSt6SFgySXRHY3E0c3BJazRTVFRXZ2p2Tmc5amw1WVo2eWpuaHJZTEZxRkZBN0lPb1BxK0VHMDVVVEhLdlEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMjUxNzczCWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpTOHF1UG0xcUdheU9md2t1MVpsWVFxTTFrWi9razBYazdqaElUcFBXNVo2Z1o2YUNsT0lrcWlnc3d2anNhcURJd0drWjNMc1dLcFVwV2lPVkJhUndDQT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM29LcDdQbGdqdjk2ZGVUNklnMUlWQjYzZUx5MS9TMm9hUzIvYjVmRTBtUHpGaU15SFF1UjlIWmFnd0VWVER4UDNxLy9PSEZvMlI5VkxQN0pFWTdlWndZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMzI1OTI0CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpIbFJrdStYUWV5WmhKM21SbnA1cUFxc3BpWU9WdURBYmVGN3RGWWdSN1BYdE1tUTZSa0MrZWxQbkZlSHY4ZjJKdm5tWDMrUkVZZnI0TXRHb0UySGJBZz09Cg=="
     },
     "darwin-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal/SignalOS_3.0.0-internal_x64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3JRZGo1VjZKY0pyZDNyNHdmS292TTVBSzFhc2I0ajBGajBmL1NiL0gzSmJFS3V4b3dtdUNndHpZZFhJQjVJTmRBV1duei9iWlg2cFNCbmpWVGpWNlFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMjUyODE2CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5negpaUWg5MUpreUNuUVI1RnZFWGtxUkdxcjIzZHc2V1l3YXl4ck1pRWFlYlhVTldETHRCUDllTFN3YTdSd3R5cXlLNmpsWTRMV08wZkxraXdDN0ZvdlBEUT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2h2U2NGRzAwSFY2NDFaNC9XbTVDQlA5SlFGamZEQ0NaR0MvNDJkOUVRblI2THE2c2I3ZlIwN012RHZtalZsZmdQUWpjVFkvV1FGRW84UVdqRGQ3QndVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMzI2MTQ4CWZpbGU6U2lnbmFsT1MuYXBwLnRhci5nego1Z0ZyQSsvaVNDVWpJUWQrd0duSkR4b3RCMXNPMmZHcFhxN0gzazFlL2trZUJiclZXN2JRelJJRFRZd0thUm1acWE2aFVNT2dQa1pnNnF4V29WUTBCZz09Cg=="
     },
     "windows-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal/SignalOS_3.0.0-internal_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2xtM2JDWGNmMmxrWjJReTl3SWgrM2pDV1AzT2ZaZ0dSQWxPajd1K0lIQk5ydWtsS0VSczlyVW40bWRqdWU3bmdESkt1UUkwSEtVQ1BQTmRzaGkvTkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMjUyMDc4CWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjhfeDY0LXNldHVwLmV4ZQpNdTZvallCbG5MOXZPc2RYR2F4a0VJdkhMUjJ2Yldtb1VDLzZwZC9aeHd3ajVKZkQyQW1wYVV3ZWM2RFZiT0pmTlFBbnBQQWpudWdvM3RUUjRsOWlEUT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3I0Ukcrb2hzKzRPVkJ2VVR0RVovNU5LeFpUeU52bVBBTGpja3JJeVB4aVlBS1JNMVJQU0hHVWtwYk9oUHFTdEhSdTlwMEQvazljVnNMbDZlSnRTVUFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwMzI2MTE4CWZpbGU6U2lnbmFsT1NfMy4wLjAtaW50ZXJuYWwuMjhfeDY0LXNldHVwLmV4ZQpoYzNDeFlQY3lFYnEyWnlWNUlFRkE2dHJvUkVMWldGZGxzR1NiQUdZMDBsVGpXeDZtREdQMkpZeWxnMzVmdXd4SDRqdVVqalg0MW5vT08ra3J6amxBUT09Cg=="
     },
     "linux-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal/SignalOS_3.0.0-internal_amd64.AppImage",
