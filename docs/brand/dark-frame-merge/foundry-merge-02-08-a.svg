@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry merge 02-08 A</title>
+  <desc id="desc">Merged dark frame logo using the architectural orange corner from 02 and the negative-space F from 08.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M120 194v-56c0-12 9-21 21-21h56M318 117h56c12 0 21 9 21 21v56M395 318v56c0 12-9 21-21 21h-56M197 395h-56c-12 0-21-9-21-21v-56" fill="none" stroke="#f6f5f2" stroke-width="24" stroke-linecap="round"/>
+  <rect x="154" y="154" width="206" height="206" rx="34" fill="#f6f5f2"/>
+  <path d="M191 190h137v42h-89v48h76v39h-76v75h-48V190Z" fill="#1e1d1a"/>
+  <path d="M333 122h41c11 0 20 9 20 20v41" fill="none" stroke="#d97845" stroke-width="20" stroke-linecap="round"/>
+  <path d="M352 224l28 28-28 28-28-28 28-28Z" fill="#d97845"/>
+  <path d="M154 154h206v206H154V154Z" fill="none" stroke="#2457d6" stroke-width="10" opacity="0.44"/>
+</svg>
