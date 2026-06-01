@@ -12,6 +12,35 @@ evidence does not support development.
 This plan adds a full product-management and commercial-validation lane before
 the governed build loop.
 
+## Relationship To The V4 Governed Agent Loop
+
+This plan extends `docs/V4_GOVERNED_AGENT_LOOP_PLAN.md`.
+
+The V4 governed agent loop plan covers the engineering delivery gates `G0-G5`.
+This opportunity validation plan adds pre-build opportunity gates `O0-O5`.
+
+The full lifecycle is:
+
+```text
+O0-O5 opportunity validation -> G0-G5 governed engineering delivery
+```
+
+Both plans share the same:
+
+- governed agent loop;
+- specialist-agent model;
+- governance invariants;
+- LiteLLM/provider runtime;
+- audit trail;
+- evidence model;
+- human approval rules;
+- no-silent-skip policy;
+- Foundry design system outputs.
+
+The opportunity lane decides whether and how the product should be built. The
+engineering lane builds only after the opportunity lane produces a signed Go or
+approved override decision and a signed PRD baseline.
+
 ## Core Principle
 
 Agents analyze, recommend, and prepare artifacts.
