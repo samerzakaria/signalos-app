@@ -31,7 +31,7 @@ export function Toolbar() {
     build: 'Build',
     preview: 'Preview',
     terminal: 'Terminal',
-    dashboard: 'Dashboard',
+    dashboard: 'Evidence',
     vault: 'Vault',
     settings: 'Settings',
     help: 'Help',
@@ -52,11 +52,9 @@ export function Toolbar() {
         <span id="viewName">{viewNames[activeTab] || activeTab}</span>
       </div>
       <div className="seg">
-        <div className={topTabClass('deliver')} data-tab="deliver" onClick={() => window.switchTab('deliver')}><i className="ti ti-rocket"></i> Deliver</div>
         <div className={topTabClass('build')} data-tab="build" onClick={() => window.switchTab('build')}><i className="ti ti-message-circle-2"></i> Build</div>
         <div className={topTabClass('preview')} data-tab="preview" onClick={() => window.switchTab('preview')}><i className="ti ti-device-desktop"></i> Preview</div>
-        <div className={topTabClass('terminal')} data-tab="terminal" onClick={() => window.switchTab('terminal')}><i className="ti ti-terminal-2"></i> Terminal</div>
-        <div className={topTabClass('dashboard')} data-tab="dashboard" onClick={() => window.switchTab('dashboard')}><i className="ti ti-layout-dashboard"></i> Dashboard</div>
+        <div className={topTabClass('dashboard')} data-tab="dashboard" onClick={() => window.switchTab('dashboard')}><i className="ti ti-clipboard-check"></i> Evidence</div>
       </div>
       <div className="toolbar-right">
 

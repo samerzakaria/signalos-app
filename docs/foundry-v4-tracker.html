@@ -1,0 +1,407 @@
+<!DOCTYPE html><script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Foundry v4 Tracker",
+  "schemaVersion": 1,
+  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded all-pending: plan finalized 2026-06-01, build not started."
+}
+</script>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Foundry v4 &#8212; Governed Agent Loop &#183; Build Tracker</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f8f8f8;
+    color: #1a1a1a;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+  .meta { font-size: 12px; color: #888; margin-bottom: 18px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .branch-tag { background: #e8f4fd; color: #1d4ed8; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+  .session-tag { background: #f0fdf4; color: #166534; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+  .stats { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: white; border: 1px solid #e5e5e5; border-radius: 8px; padding: 10px 14px; flex: 1; min-width: 100px; text-align: center; }
+  .stat-num { font-size: 22px; font-weight: 700; color: #1B4FD8; line-height: 1; }
+  .stat-label { font-size: 10px; color: #888; margin-top: 2px; }
+  .overall-bar-wrap { background: white; border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; }
+  .overall-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .progress-bar { background: #f0f0f0; border-radius: 6px; height: 12px; overflow: hidden; }
+  .progress-fill { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #1B4FD8, #60a5fa); transition: width 0.4s ease; }
+  .group-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #aaa; margin: 18px 0 8px 2px; }
+  .group-label:first-of-type { margin-top: 4px; }
+  .tracks { display: flex; flex-direction: column; gap: 10px; }
+  .track { background: white; border: 1px solid #e5e5e5; border-radius: 10px; overflow: hidden; }
+  .track-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
+  .track-header:hover { background: #fafafa; }
+  .track-num { font-size: 11px; font-weight: 700; color: white; padding: 2px 8px; border-radius: 5px; flex-shrink: 0; }
+  .track-info { flex: 1 }
+  .track-name { font-size: 13px; font-weight: 600; }
+  .track-sub { font-size: 11px; color: #999; margin-top: 1px; }
+  .track-progress { display: flex; align-items: center; gap: 8px; }
+  .track-pct { font-size: 12px; font-weight: 700; color: #1B4FD8; width: 34px; text-align: right; }
+  .mini-bar { width: 70px; background: #f0f0f0; border-radius: 4px; height: 6px; }
+  .mini-fill { height: 6px; border-radius: 4px; transition: width 0.3s; }
+  .track-toggle { font-size: 16px; color: #bbb; margin-left: 4px; transition: transform 0.2s; }
+  .track-toggle.open { transform: rotate(180deg); }
+  .track-body { display: none; border-top: 1px solid #f0f0f0; }
+  .track-body.open { display: block; }
+  .task { display: flex; align-items: flex-start; gap: 10px; padding: 9px 14px; border-bottom: 1px solid #f5f5f5; }
+  .task:last-child { border-bottom: none; }
+  .task-status { flex-shrink: 0; margin-top: 1px; }
+  .status-btn { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #d0d0d0; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; transition: all 0.15s; flex-shrink: 0; }
+  .status-btn:hover { border-color: #1B4FD8; }
+  .status-btn.in-progress { border-color: #f59e0b; background: #fef3c7; }
+  .status-btn.done { border-color: #10b981; background: #10b981; color: white; }
+  .status-btn.blocked { border-color: #ef4444; background: #fee2e2; }
+  .task-name { font-size: 12px; flex: 1; line-height: 1.4; }
+  .task-name.done { text-decoration: line-through; color: #aaa; }
+  .task-name.in-progress { color: #92400e; font-weight: 500; }
+  .task-name.blocked { color: #b91c1c; }
+  .task-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; margin-top: 1px; font-weight: 600; }
+  .badge-inv { background: #fee2e2; color: #b91c1c; }
+  .badge-new { background: #ede9fe; color: #6d28d9; }
+  .badge-smoke { background: #dbeafe; color: #1d4ed8; }
+  .badge-manual { background: #f1f5f9; color: #475569; }
+  .badge-rel { background: #fef3c7; color: #92400e; }
+  .legend { display: flex; gap: 14px; margin-top: 18px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #888; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .footer { margin-top: 16px; font-size: 11px; color: #bbb; text-align: right; }
+  .reset-btn { font-size: 11px; color: #bbb; cursor: pointer; border: none; background: none; padding: 0; margin-left: auto; }
+  .reset-btn:hover { color: #ef4444; }
+</style>
+</head>
+<body>
+<h1>Foundry v4 &#8212; Governed Agent Loop &#183; Build Tracker</h1>
+<div class="meta">
+  <span class="branch-tag">feat/v4-governed-agent-loop</span>
+  <span class="session-tag">Plan finalized 2026-06-01 &#183; build not started</span>
+  <span>~251h agent est &#183; 169h build + 82h tests &#183; P1&#8741;P2 parallel &#183; 90 tracked items</span>
+  <button class="reset-btn" onclick="resetToSeed()">&#8634; reset to plan seed</button>
+</div>
+
+<div class="stats" id="stats"></div>
+<div class="overall-bar-wrap">
+  <div class="overall-label"><span>Overall Progress</span><span id="overall-pct">0%</span></div>
+  <div class="progress-bar"><div class="progress-fill" id="overall-fill" style="width:0%"></div></div>
+</div>
+<div id="tracks-root"></div>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#d0d0d0;border:1px solid #ccc"></div> Pending</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> In Progress</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div> Done</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Blocked</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fee2e2;border:1px solid #fca5a5"></div> INV (invariant-critical)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ede9fe;border:1px solid #c4b5fd"></div> new file</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#dbeafe;border:1px solid #93c5fd"></div> smoke (live provider)</div>
+</div>
+<div class="footer" id="footer"></div>
+
+<script>
+const GROUPS = [
+  { label: "Implementation Phases", tracks: [
+    {
+      id: "p1", num: "P1", name: "UI/UX Revamp", color: "#1B4FD8", est: 55,
+      sub: "11 steps &#183; runs parallel to Phase 2 &#183; feeds Phase 3",
+      tasks: [
+        { id: "1.1",  name: "Remove Deliver + Terminal tabs from nav; 3 project tabs (Build, Preview, Evidence)" },
+        { id: "1.1b", name: "Extract reusable logic &#8594; services/deliveryFlow.ts + services/governedShell.ts", badges:[{t:"new",c:"badge-new"}] },
+        { id: "1.2",  name: "Chat redesign: full-width, streaming, markdown, code blocks + copy" },
+        { id: "1.3",  name: "Tool call bubbles (ToolCallBubble.tsx) &#8212; spinner then checkmark", badges:[{t:"new",c:"badge-new"}] },
+        { id: "1.4",  name: "File diff bubbles (FileDiffBubble.tsx) &#8212; inline green/red diffs", badges:[{t:"new",c:"badge-new"}] },
+        { id: "1.5",  name: "Gate review cards &#8212; all 5 verdict buttons (GateReviewCard.tsx)", badges:[{t:"new",c:"badge-new"}] },
+        { id: "1.6",  name: "Design preview inline iframe (ChatPreviewBubble.tsx)", badges:[{t:"new",c:"badge-new"}] },
+        { id: "1.7",  name: "Unified command input &#8212; auto-detect /signal-* vs natural language" },
+        { id: "1.8",  name: "Sidebar cleanup: Projects + Files + Gov (TestDebtPanel)" },
+        { id: "1.9",  name: "Streaming + tool-use indicators" },
+        { id: "1.10", name: "Mobile-responsive chat + sidebar" },
+      ]
+    },
+    {
+      id: "p2", num: "P2", name: "LiteLLM + Provider Adapter + Agent Loop", color: "#7c3aed", est: 70,
+      sub: "11 steps &#183; 2.1 &#8594; 2.11 sequential &#183; the runtime",
+      tasks: [
+        { id: "2.1",  name: "Install LiteLLM in sidecar bundle + requirements" },
+        { id: "2.2",  name: "Provider adapter contract + capability detection (provider_adapter.py)", badges:[{t:"new",c:"badge-new"}] },
+        { id: "2.3",  name: "Replace harness providers with adapter; freeze LLMProvider; TestProvider unchanged" },
+        { id: "2.4",  name: "Agent loop core (agent_loop.py): msg &#8594; adapter &#8594; tools &#8594; govern &#8594; execute &#8594; loop", badges:[{t:"new",c:"badge-new"},{t:"INV-5",c:"badge-inv"}] },
+        { id: "2.5",  name: "Tool defs: typed path allowlists, command policy, timeouts, cancellation, redaction" },
+        { id: "2.6",  name: "Audit ledger &#8594; .signalos/agent-runs/<run-id>/tool-calls.jsonl" },
+        { id: "2.7",  name: "Loop completion: end_turn / tool-limit &#8594; return to orchestrator (no gate awareness)" },
+        { id: "2.8",  name: "Verdict handling &#8212; all 5 verdicts with policy", badges:[{t:"INV-1",c:"badge-inv"}] },
+        { id: "2.9",  name: "Security scan: injection on write, secret redaction, PII detection" },
+        { id: "2.10", name: "Run state persistence (state.json) + idempotent tool execution", badges:[{t:"INV-5",c:"badge-inv"}] },
+        { id: "2.11", name: "Graceful degradation: text-only mode when no tool calling", badges:[{t:"INV-7",c:"badge-inv"}] },
+      ]
+    },
+    {
+      id: "p3", num: "P3", name: "Wire Loop to UI", color: "#0891b2", est: 32,
+      sub: "7 steps &#183; connects Phase 1 &#8596; Phase 2",
+      tasks: [
+        { id: "3.1", name: "IPC agent:run &#8212; sidecar handler runs AgentLoop + streams events" },
+        { id: "3.2", name: "IPC agent:verdict &#8212; validate against gate_review.py policy" },
+        { id: "3.3", name: "IPC agent:cancel &#8212; persist state for resume" },
+        { id: "3.4", name: "IPC agent:resume &#8212; resume paused/crashed run" },
+        { id: "3.5", name: "Event routing in Rust: sidecar stdout &#8594; Tauri agent:event" },
+        { id: "3.6", name: "Frontend event handler (agentEvents.ts) &#8594; chat bubbles", badges:[{t:"new",c:"badge-new"}] },
+        { id: "3.7", name: "Chat sendMsg switch: agent loop vs direct sidecar command" },
+      ]
+    },
+    {
+      id: "p4", num: "P4", name: "Test-Gated Cleanup", color: "#059669", est: 12,
+      sub: "4 steps &#183; deletes dead views after tests pass",
+      tasks: [
+        { id: "4.1", name: "Delivery flow works entirely in Build conversation (T39&#8211;T44)" },
+        { id: "4.2", name: "Real commands work in Build conversation (T12)" },
+        { id: "4.3", name: "Delete DeliverView.tsx + TerminalView.tsx source files" },
+        { id: "4.4", name: "Preview tab auto-opens when agent starts dev server" },
+      ]
+    },
+  ]},
+  { label: "Phase 5 &#8212; Test Matrix (57 tests &#183; must all pass)", tracks: [
+    {
+      id: "ts1", num: "T01&#8211;08", name: "Provider Support", color: "#d97706", est: 8,
+      sub: "8 tests &#183; 5 smoke, 3 required CI",
+      tasks: [
+        { id: "T01", name: "Anthropic key &#8594; agent responds", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T02", name: "OpenAI key &#8594; agent responds", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T03", name: "Gemini key &#8594; agent responds", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T04", name: "Ollama &#8594; agent responds", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T05", name: "No key &#8594; honest error (no fake output)" },
+        { id: "T06", name: "Switch provider mid-session", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T07", name: "No tool-call support &#8594; text-only mode", badges:[{t:"INV-7",c:"badge-inv"}] },
+        { id: "T08", name: "Capability detection returns correct flags" },
+      ]
+    },
+    {
+      id: "ts2", num: "T09&#8211;15", name: "Tool Use", color: "#e05c2e", est: 10,
+      sub: "7 tests &#183; all required CI",
+      tasks: [
+        { id: "T09", name: "Agent reads a file (read_file)" },
+        { id: "T10", name: "Agent writes a file (write_file)" },
+        { id: "T11", name: "Agent edits a file (edit_file)" },
+        { id: "T12", name: "Agent runs a command (run_command)" },
+        { id: "T13", name: "Agent searches files (search_files)" },
+        { id: "T14", name: "File diff shown in chat" },
+        { id: "T15", name: "Tool call shown in chat" },
+      ]
+    },
+    {
+      id: "ts3", num: "T16&#8211;25", name: "Governance", color: "#b91c1c", est: 14,
+      sub: "10 tests &#183; all required CI",
+      tasks: [
+        { id: "T16", name: "Write to .env blocked" },
+        { id: "T17", name: "Write to .signalos/ blocked" },
+        { id: "T18", name: "rm -rf blocked" },
+        { id: "T19", name: "git push --force blocked" },
+        { id: "T20", name: "Command timeout enforced" },
+        { id: "T21", name: "Secret redacted in command output" },
+        { id: "T22", name: "Denial shown to user" },
+        { id: "T23", name: "Denial logged in audit ledger" },
+        { id: "T24", name: "Injection scan on write" },
+        { id: "T25", name: "Trust tier enforced (T2 ceiling)" },
+      ]
+    },
+    {
+      id: "ts4", num: "T26&#8211;38", name: "Gates", color: "#be185d", est: 18,
+      sub: "13 tests &#183; all required CI",
+      tasks: [
+        { id: "T26", name: "G0 pause shows intent" },
+        { id: "T27", name: "G1 pause shows direction" },
+        { id: "T28", name: "G2 pause shows plan" },
+        { id: "T29", name: "G3 pause shows design preview" },
+        { id: "T30", name: "G4 pause shows build evidence" },
+        { id: "T31", name: "G5 pause shows closeout" },
+        { id: "T32", name: "APPROVE advances via sign.py API", badges:[{t:"INV-3",c:"badge-inv"}] },
+        { id: "T33", name: "APPROVE-WITH-CONDITIONS signs + logs conditions" },
+        { id: "T34", name: "REQUEST CHANGES &#8594; bounded rework (max 3)" },
+        { id: "T35", name: "REJECT stops delivery (max 2)" },
+        { id: "T36", name: "WAIVE requires justification" },
+        { id: "T37", name: "WAIVE cannot satisfy mandatory proof", badges:[{t:"INV-1",c:"badge-inv"}] },
+        { id: "T38", name: "Gate signed in audit trail" },
+      ]
+    },
+    {
+      id: "ts5", num: "T39&#8211;44", name: "Full Delivery E2E", color: "#0d9488", est: 16,
+      sub: "6 tests &#183; 3 smoke, 3 required CI",
+      tasks: [
+        { id: "T39", name: "\"Build task management\" &#8594; running app", badges:[{t:"INV-2",c:"badge-inv"},{t:"smoke",c:"badge-smoke"}] },
+        { id: "T40", name: "\"Build medical records HIPAA\" &#8594; GDPR flagged" },
+        { id: "T41", name: "Vague prompt &#8594; smart questions asked", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T42", name: "User changes design mid-flow", badges:[{t:"smoke",c:"badge-smoke"}] },
+        { id: "T43", name: "Closeout honest when partial" },
+        { id: "T44", name: "Sidecar crash &#8594; run resumes from checkpoint", badges:[{t:"INV-5",c:"badge-inv"}] },
+      ]
+    },
+    {
+      id: "ts6", num: "T45&#8211;52", name: "UI/UX", color: "#4338ca", est: 10,
+      sub: "8 tests &#183; 7 required CI, 1 manual",
+      tasks: [
+        { id: "T45", name: "Streaming text renders live" },
+        { id: "T46", name: "Markdown renders in chat" },
+        { id: "T47", name: "Code blocks have syntax highlighting" },
+        { id: "T48", name: "Chat scrolls to bottom on new message" },
+        { id: "T49", name: "Workspace switcher works" },
+        { id: "T50", name: "Command palette opens with /" },
+        { id: "T51", name: "Mobile responsive (375px)", badges:[{t:"manual",c:"badge-manual"}] },
+        { id: "T52", name: "No TestDebtPanel overlap" },
+      ]
+    },
+    {
+      id: "ts7", num: "T53&#8211;57", name: "Regression", color: "#525252", est: 6,
+      sub: "5 tests &#183; 4 required CI, 1 required release",
+      tasks: [
+        { id: "T53", name: "All Python tests pass (pytest)" },
+        { id: "T54", name: "TypeScript compiles clean (tsc --noEmit)" },
+        { id: "T55", name: "Frontend tests pass (vitest)" },
+        { id: "T56", name: "CI all green (test-automation + Smoke + Pages)" },
+        { id: "T57", name: "Release workflow green (all platforms)", badges:[{t:"release",c:"badge-rel"}] },
+      ]
+    },
+  ]},
+];
+
+const TRACKS = GROUPS.flatMap(g => g.tracks);
+const STATUS_CYCLE = ["pending", "in-progress", "done", "blocked"];
+
+// Seed - v4 plan finalized 2026-06-01. Build not started: every item pending.
+const SEED_STATE = {};
+const SEED_VERSION = "v4-plan-seed-2026-06-01";
+const LS = "foundry-v4-tracker";
+
+function loadState() {
+  try {
+    const stored_v = localStorage.getItem(LS + "-version");
+    if (stored_v !== SEED_VERSION) {
+      localStorage.setItem(LS, JSON.stringify(SEED_STATE));
+      localStorage.setItem(LS + "-version", SEED_VERSION);
+      localStorage.setItem(LS + "-updated", new Date().toISOString());
+      return { ...SEED_STATE };
+    }
+    const stored = localStorage.getItem(LS);
+    if (!stored) return { ...SEED_STATE };
+    return JSON.parse(stored);
+  } catch { return { ...SEED_STATE }; }
+}
+
+function saveState(state) {
+  localStorage.setItem(LS, JSON.stringify(state));
+  localStorage.setItem(LS + "-updated", new Date().toISOString());
+}
+
+function resetToSeed() {
+  if (!confirm("Reset to plan seed? All items return to pending and manual changes are lost.")) return;
+  localStorage.removeItem(LS);
+  localStorage.removeItem(LS + "-version");
+  render();
+}
+
+function getStatusIcon(s) {
+  if (s === "done") return "&#10003;";
+  if (s === "in-progress") return "&#9679;";
+  if (s === "blocked") return "&#10007;";
+  return "";
+}
+
+function trackHTML(track, state) {
+  const trackDone  = track.tasks.filter(t => (state[t.id] || "pending") === "done").length;
+  const trackTotal = track.tasks.length;
+  const trackPct   = Math.round((trackDone / trackTotal) * 100);
+  return `
+    <div class="track">
+      <div class="track-header" onclick="toggleTrack('${track.id}')">
+        <span class="track-num" style="background:${track.color}">${track.num}</span>
+        <div class="track-info">
+          <div class="track-name">${track.name}</div>
+          <div class="track-sub">~${track.est}h &#183; ${track.sub}</div>
+        </div>
+        <div class="track-progress">
+          <span class="track-pct">${trackPct}%</span>
+          <div class="mini-bar"><div class="mini-fill" style="width:${trackPct}%;background:${track.color}"></div></div>
+        </div>
+        <span class="track-toggle ${isOpen(track.id) ? 'open' : ''}" id="toggle-${track.id}">&#9662;</span>
+      </div>
+      <div class="track-body ${isOpen(track.id) ? 'open' : ''}" id="body-${track.id}">
+        ${track.tasks.map(task => {
+          const status = state[task.id] || "pending";
+          const badges = (task.badges || []).map(b => `<span class="task-badge ${b.c}">${b.t}</span>`).join("");
+          return `
+          <div class="task" id="task-${task.id}">
+            <div class="status-btn ${status}" onclick="cycleStatus('${task.id}')" title="Click to change status">${getStatusIcon(status)}</div>
+            <span class="task-name ${status}"><strong style="color:${track.color};font-weight:700">${task.id}</strong> &nbsp;${task.name}</span>
+            ${badges}
+          </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
+function render() {
+  const state = loadState();
+  const root = document.getElementById("tracks-root");
+  root.innerHTML = "";
+  let totalTasks = 0, doneTasks = 0, totalEst = 0, doneEst = 0;
+
+  GROUPS.forEach(group => {
+    const label = document.createElement("div");
+    label.className = "group-label";
+    label.innerHTML = group.label;
+    root.appendChild(label);
+
+    const wrap = document.createElement("div");
+    wrap.className = "tracks";
+    group.tracks.forEach(track => {
+      const td = track.tasks.filter(t => (state[t.id] || "pending") === "done").length;
+      totalTasks += track.tasks.length;
+      doneTasks  += td;
+      totalEst   += track.est;
+      doneEst    += track.est * (td / track.tasks.length);
+      wrap.insertAdjacentHTML("beforeend", trackHTML(track, state));
+    });
+    root.appendChild(wrap);
+  });
+
+  const pct = Math.round((doneTasks / totalTasks) * 100);
+  document.getElementById("overall-fill").style.width = pct + "%";
+  document.getElementById("overall-pct").textContent = pct + "%";
+
+  const inProgress = Object.values(state).filter(v => v === "in-progress").length;
+  const blocked    = Object.values(state).filter(v => v === "blocked").length;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="stat-num">${doneTasks}/${totalTasks}</div><div class="stat-label">Items done</div></div>
+    <div class="stat"><div class="stat-num" style="color:#f59e0b">${inProgress}</div><div class="stat-label">In progress</div></div>
+    <div class="stat"><div class="stat-num" style="color:#ef4444">${blocked}</div><div class="stat-label">Blocked</div></div>
+    <div class="stat"><div class="stat-num">${pct}%</div><div class="stat-label">Complete</div></div>
+    <div class="stat"><div class="stat-num" style="color:#7c3aed">${Math.round(doneEst)}/${totalEst}h</div><div class="stat-label">Est. effort done</div></div>
+  `;
+
+  const updated = localStorage.getItem(LS + "-updated");
+  document.getElementById("footer").textContent = updated
+    ? "Last updated: " + new Date(updated).toLocaleString()
+    : "No updates yet - click a task circle to change its status";
+}
+
+const openTracks = new Set(["p1","p2","p3","p4"]);
+function isOpen(id) { return openTracks.has(id); }
+function toggleTrack(id) {
+  if (openTracks.has(id)) openTracks.delete(id); else openTracks.add(id);
+  document.getElementById("body-"   + id).classList.toggle("open");
+  document.getElementById("toggle-" + id).classList.toggle("open");
+}
+function cycleStatus(taskId) {
+  const state = loadState();
+  const idx = STATUS_CYCLE.indexOf(state[taskId] || "pending");
+  state[taskId] = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  saveState(state);
+  render();
+}
+
+render();
+</script>
+</body>
+</html>

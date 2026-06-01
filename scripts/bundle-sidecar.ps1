@@ -40,7 +40,10 @@ $venvPython = if ($isWindows) {
 }
 
 & $venvPython -m pip install --upgrade pip wheel pyinstaller
-& $venvPython -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7"
+# LiteLLM (v4 Phase 2.1) is the provider-agnostic completion library behind
+# the AgentProvider adapter. Pinned <2 to keep the tool-call response shape
+# stable.
+& $venvPython -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7" "litellm>=1.40,<2"
 
 $entry = Join-Path $root "python\signalos_ipc_server.py"
 $pythonPath = Join-Path $root "python"
@@ -62,6 +65,8 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --hidden-import openai `
   --hidden-import google.generativeai `
   --hidden-import yaml `
+  --hidden-import litellm `
+  --collect-all litellm `
   $entry
 
 $built = Join-Path $outDir $expectedFile

@@ -1,8 +1,15 @@
 import type { ChatBubble } from '../../state';
-import { userName, chatBubbles, chatInputValue, cmdPaletteOpen } from '../../state';
+import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy } from '../../state';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
+import { Markdown } from '../markdown';
+import { ToolCallBubble } from '../ToolCallBubble';
+import { FileDiffBubble } from '../FileDiffBubble';
+import { GateReviewCard, type GateReviewSubmission } from '../GateReviewCard';
+import { ChatPreviewBubble } from '../ChatPreviewBubble';
+import { isGovernedCommand } from '../../services/governedShell';
+import { BUSINESS_STAGES } from '../../services/deliveryFlow';
 import { viewClass } from '../viewShell';
 
 export function BuildView() {
@@ -10,31 +17,40 @@ export function BuildView() {
   const inputVal = chatInputValue.value;
   const paletteCls = cmdPaletteOpen.value ? 'cmd-palette open' : 'cmd-palette';
   const userAv = userName.value ? userName.value[0].toUpperCase() : '?';
+  // 1.7 unified input: auto-detect /signal-* commands vs natural language so we
+  // can hint the user (and, in Phase 3, route to the governed shell).
+  const inputIsCommand = isGovernedCommand(inputVal);
+  // 1.9 streaming / tool-use indicator: the agent is "working" while a
+  // streaming bubble is present or a tool call is running, or busy is set.
+  const agentWorking =
+    busy.value ||
+    bubbles.some(
+      (b) => b.kind === 'streaming' || (b.kind === 'tool' && b.tool?.status === 'running'),
+    );
+
+  // Business-stage strip (plan: Brief → Design → Build → Validate → Security →
+  // Launch → Handoff). Active stage is supplied by the agent loop in Phase 3;
+  // until then we surface the first stage as active so the strip is meaningful.
+  const activeStage = bubbles.find((b) => b.kind === 'gate' && b.gateReview)?.gateReview?.gate;
 
   return (
     <>
 <div className={viewClass('build')} data-view="build">
 
-        <div className="phase-strip">
-          <div className="phase-node">
-            <div className="phase-dot done"></div>
-            <span className="phase-label done">Plan</span>
-          </div>
-          <div className="phase-conn done"></div>
-          <div className="phase-node">
-            <div className="phase-dot active"></div>
-            <span className="phase-label active">Build</span>
-          </div>
-          <div className="phase-conn"></div>
-          <div className="phase-node">
-            <div className="phase-dot"></div>
-            <span className="phase-label">Check</span>
-          </div>
-          <div className="phase-conn"></div>
-          <div className="phase-node">
-            <div className="phase-dot"></div>
-            <span className="phase-label">Ship</span>
-          </div>
+        <div className="phase-strip" data-testid="business-stage-strip">
+          {BUSINESS_STAGES.flatMap((stage, i) => {
+            const isLast = i === BUSINESS_STAGES.length - 1;
+            const activeCls = activeStage ? '' : i === 0 ? ' active' : '';
+            const node = (
+              <div className="phase-node" key={stage.label}>
+                <div className={`phase-dot${activeCls}`}></div>
+                <span className={`phase-label${activeCls}`}>{stage.label}</span>
+              </div>
+            );
+            return isLast
+              ? [node]
+              : [node, <div className="phase-conn" key={`conn-${stage.label}`}></div>];
+          })}
         </div>
 
         <div className="chat-scroll" id="chatScroll">
@@ -67,11 +83,72 @@ export function BuildView() {
                     <div className="msg-av"><i className="ti ti-sparkles" style={{ 'fontSize': '17px' }}></i></div>
                     <div>
                       <div className="bubble streaming" id={`stream-${b.id}`}>
-                        <span className="stream-text">{b.text}</span><span className="stream-cursor"></span>
+                        <span className="stream-text"><Markdown text={b.text} /></span><span className="stream-cursor"></span>
                       </div>
                       <div className="msg-meta">SignalOS · now</div>
                     </div>
                   </div>
+                );
+              }
+              // 1.3 tool call bubble
+              if (b.kind === 'tool' && b.tool) {
+                return (
+                  <ToolCallBubble
+                    key={b.id}
+                    tool={b.tool.name}
+                    target={b.tool.target}
+                    status={b.tool.status}
+                    summary={b.tool.summary}
+                    detail={b.tool.detail}
+                  />
+                );
+              }
+              // 1.4 file diff bubble
+              if (b.kind === 'diff' && b.diff) {
+                return (
+                  <FileDiffBubble
+                    key={b.id}
+                    path={b.diff.path}
+                    before={b.diff.before}
+                    after={b.diff.after}
+                  />
+                );
+              }
+              // 1.5 gate review card
+              if (b.kind === 'gate' && b.gateReview) {
+                const gr = b.gateReview;
+                return (
+                  <GateReviewCard
+                    key={b.id}
+                    gate={gr.gate}
+                    title={gr.title}
+                    question={gr.question}
+                    resolved={gr.resolvedVerdict ?? null}
+                    onVerdict={(submission: GateReviewSubmission) => {
+                      // Mark resolved locally; Phase 3 wires this to agent:verdict.
+                      chatBubbles.value = chatBubbles.value.map((cb: ChatBubble) =>
+                        cb.id === b.id && cb.gateReview
+                          ? { ...cb, gateReview: { ...cb.gateReview, resolvedVerdict: submission.verdict } }
+                          : cb,
+                      );
+                      try {
+                        window.submitGateVerdict?.(b.id, submission.verdict, submission.feedback);
+                      } catch { /* not wired yet (Phase 3) */ }
+                    }}
+                  >
+                    {b.text ? <Markdown text={b.text} /> : null}
+                  </GateReviewCard>
+                );
+              }
+              // 1.6 inline design preview
+              if (b.kind === 'preview' && b.preview) {
+                return (
+                  <ChatPreviewBubble
+                    key={b.id}
+                    srcDoc={b.preview.srcDoc}
+                    url={b.preview.url}
+                    caption={b.preview.caption}
+                  />
                 );
               }
               if (b.kind === 'plan' && b.plan) {
@@ -233,17 +310,28 @@ export function BuildView() {
                   />
                 );
               }
-              // ai
+              // ai — 1.2: render markdown (headings, code blocks, lists, links)
               return (
                 <div className="msg spark" key={b.id}>
                   <div className="msg-av"><i className="ti ti-sparkles" style={{ 'fontSize': '17px' }}></i></div>
-                  <div>
-                    <div className="bubble">{b.text}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="bubble"><Markdown text={b.text} /></div>
                     {b.ts && !b.historical ? <div className="msg-meta">SignalOS · {b.ts}</div> : <div className="msg-meta">SignalOS</div>}
                   </div>
                 </div>
               );
             })}
+            {agentWorking ? (
+              <div className="msg spark" data-testid="agent-working-indicator">
+                <div className="msg-av"><i className="ti ti-sparkles" style={{ 'fontSize': '17px' }}></i></div>
+                <div>
+                  <div className="bubble agent-working">
+                    <span className="typing-dot"></span><span className="typing-dot"></span><span className="typing-dot"></span>
+                    <span className="agent-working-label">working…</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <ProgressDetail />
           </div>
         </div>
@@ -346,7 +434,12 @@ export function BuildView() {
                 <span className="cmd-item-desc">Record a learning</span>
               </div>
             </div>
-            <div className="composer">
+            <div className={`composer${inputIsCommand ? ' composer-command' : ''}`}>
+              {inputIsCommand ? (
+                <span className="composer-mode-badge" data-testid="composer-mode-command" title="Detected a SignalOS command">
+                  <i className="ti ti-terminal-2"></i> cmd
+                </span>
+              ) : null}
               <input
                 id="chatInput"
                 placeholder="Tell SignalOS anything, or type / for commands…"

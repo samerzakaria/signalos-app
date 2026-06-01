@@ -42,7 +42,18 @@
 
 from __future__ import annotations
 
-__all__ = ["run_step", "DEFAULT_MODEL", "LLMProvider"]  # W-2: explicit public API
+__all__ = [
+    "run_step",
+    "DEFAULT_MODEL",
+    "LLMProvider",
+    # v4 Phase 2.3 — new agent-loop protocol (alongside the frozen LLMProvider)
+    "AgentProvider",
+    "AgentResponse",
+    "ToolCall",
+    "TokenUsage",
+    "StreamDelta",
+    "AgentTestProvider",
+]  # W-2: explicit public API
 
 import json
 import os
@@ -50,9 +61,10 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Iterator, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -281,6 +293,164 @@ class TestProvider:
 
 
 # ---------------------------------------------------------------------------
+# v4 Phase 2.3 — AgentProvider protocol (the tool-calling agent loop path)
+#
+# This protocol is NEW and lives ALONGSIDE the frozen `LLMProvider` above.
+# `LLMProvider.call(prompt, model) -> (text, in, out)` is untouched and keeps
+# serving the legacy one-shot harness/orchestrator path. The agent loop
+# (agent_loop.py) talks to the multi-turn, tool-aware `AgentProvider` instead.
+#
+# Architecture Decision Q1: LiteLLMAgentProvider (in product/provider_adapter.py)
+# implements this protocol by wrapping litellm.completion(). The ProviderAdapter
+# wraps it and adds capability detection. AgentTestProvider below is the
+# deterministic CI double (INV-6) — no network, scriptable tool-call responses.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TokenUsage:
+    """Normalized token accounting for one AgentProvider.chat() turn."""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    def as_dict(self) -> dict[str, int | None]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+        }
+
+
+@dataclass
+class ToolCall:
+    """A single tool-use request emitted by the model.
+
+    `id` is the provider's correlation id — it MUST be echoed back in the
+    tool-result message so the provider can match result to request.
+    `arguments` is the already-parsed argument dict (the adapter parses the
+    provider's JSON string form before constructing this).
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"id": self.id, "name": self.name, "arguments": self.arguments}
+
+
+@dataclass
+class StreamDelta:
+    """One incremental chunk during a streamed chat turn.
+
+    `kind` is "text" for a token delta or "tool_call" for an assembling
+    tool-call fragment. The streaming path (Q5 / Phase 3.5) consumes these.
+    """
+
+    kind: str
+    text: str | None = None
+    tool_call: ToolCall | None = None
+
+
+@dataclass
+class AgentResponse:
+    """Normalized result of one AgentProvider.chat() turn.
+
+    `stop_reason` is normalized across providers to one of:
+    "end_turn" | "tool_use" | "max_tokens" | "error".
+    When `stop_reason == "tool_use"`, `tool_calls` is non-empty.
+    `stream` is only set when chat(stream=True) was requested.
+    """
+
+    content: str | None
+    tool_calls: list[ToolCall] | None
+    stop_reason: str
+    usage: TokenUsage
+    stream: Iterator[StreamDelta] | None = None
+    raw: Any = None  # provider-native response object, for debugging only
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "content": self.content,
+            "tool_calls": [tc.as_dict() for tc in (self.tool_calls or [])],
+            "stop_reason": self.stop_reason,
+            "usage": self.usage.as_dict(),
+        }
+
+
+@runtime_checkable
+class AgentProvider(Protocol):
+    """Protocol for the tool-calling agent-loop provider (v4 Q1).
+
+    Distinct from the frozen `LLMProvider`. Implementations take an
+    OpenAI-format messages array plus optional provider-agnostic tool
+    definitions and return a normalized `AgentResponse`.
+    """
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        stream: bool = False,
+    ) -> AgentResponse:
+        """Run one multi-turn completion and return a normalized response."""
+        ...
+
+
+class AgentTestProvider:
+    """Deterministic AgentProvider double for CI (INV-6).
+
+    No network, no SDK. The agent loop and its governance tests drive this
+    instead of a live provider. A `script` of canned `AgentResponse` objects
+    is replayed one per `chat()` call; once exhausted it returns a plain
+    end_turn text response. This lets a test stage a sequence like
+    "ask for a write_file tool call, then end the turn".
+
+    If no script is provided it always returns a fixed end_turn message,
+    mirroring the spirit of the frozen `TestProvider`.
+    """
+
+    DEFAULT_TEXT = "AGENT_TEST: deterministic end_turn response."
+
+    def __init__(self, script: list[AgentResponse] | None = None) -> None:
+        self._script: list[AgentResponse] = list(script or [])
+        self._calls: list[dict[str, Any]] = []
+
+    @property
+    def calls(self) -> list[dict[str, Any]]:
+        """Record of every chat() invocation, for test assertions."""
+        return self._calls
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+        tools: list[dict[str, Any]] | None = None,
+        stream: bool = False,
+    ) -> AgentResponse:
+        self._calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "tools": tools,
+                "stream": stream,
+            }
+        )
+        if self._script:
+            return self._script.pop(0)
+        return AgentResponse(
+            content=self.DEFAULT_TEXT,
+            tool_calls=None,
+            stop_reason="end_turn",
+            usage=TokenUsage(
+                input_tokens=sum(len(str(m).encode("utf-8")) for m in messages),
+                output_tokens=len(self.DEFAULT_TEXT.encode("utf-8")),
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Provider resolution (AMD-CORE-007)
 # ---------------------------------------------------------------------------
 
@@ -408,19 +578,6 @@ def _fire_hook(
         )
         return 0
 
-    # Only step-started accepts --actor / --intent. step-completed and
-    # step-failed take outcome/duration/token fields instead; pre-session-
-    # compress takes its own shape. Pass --tool to every event (every
-    # hook script accepts it) so the journal rows are uniformly tagged.
-    #
-    # Path form: relative-from-root in POSIX form, with cwd=str(root).
-    # On Windows, subprocess.run(["bash", ...]) resolves to WSL bash
-    # (C:\Windows\System32\bash.exe wins via CreateProcess System32
-    # priority, regardless of user PATH or shutil.which). WSL bash does
-    # not understand drive-letter paths (C:/Users/...); it expects
-    # /mnt/c/Users/... A relative path against cwd works for both WSL
-    # bash and git-bash because Python translates the cwd argument
-    # correctly when launching the child process.
     argv = [
         "bash", hook_script.relative_to(root).as_posix(),
         "--session-id", session_id,
@@ -431,11 +588,6 @@ def _fire_hook(
         argv.extend(["--actor", actor])
     if extra_args:
         argv.extend(extra_args)
-    # Sandbox wrap: when .signalos/sandbox.json has enabled=true AND
-    # Docker is reachable, the hook script runs in a container with the
-    # workspace mounted at /workspace. Trusted bundle code, but wrapping
-    # it completes the sandbox-toggle promise (every subprocess routes
-    # through the same gate -- defense in depth).
     from signalos_lib.sandbox import maybe_wrap_for_sandbox
     argv, _ = maybe_wrap_for_sandbox(root, argv)
     proc = subprocess.run(argv, check=False, cwd=str(root))
@@ -452,12 +604,7 @@ def _append_metric(
     tokens_out: int | None = None,
     hook: str | None = None,
 ) -> int:
-    """Invoke metrics-append.sh with a harness-origin metric row.
-
-    Field allowlist is enforced by metrics-append.sh; we only emit the
-    keys we are certain are allowed (see core/execution/hooks/_lib/
-    metrics-append.sh header comment for the authoritative list).
-    """
+    """Invoke metrics-append.sh with a harness-origin metric row."""
     metric: dict[str, Any] = {
         "ts": _now_iso(),
         "schema_version": 1,
@@ -481,10 +628,6 @@ def _append_metric(
             "metrics row not written (fail-open)\n"
         )
         return 0
-    # Relative-from-root POSIX path + cwd=str(root). See _fire_hook for
-    # the full rationale (WSL bash vs git-bash path-form portability).
-    # Sandbox wrap: same rationale as _fire_hook -- bundle script,
-    # workspace-scoped writes only.
     from signalos_lib.sandbox import maybe_wrap_for_sandbox
     argv, _ = maybe_wrap_for_sandbox(
         root,
@@ -510,13 +653,7 @@ def _write_state(
     call_id: str,
     **fields: Any,
 ) -> None:
-    """Upsert state.json for a harness call.
-
-    This is NOT the journal. state.json is a mutable per-call file the
-    harness uses to communicate with `signalos harness status` and
-    `signalos harness abort`. The append-only truth record is still the
-    journal, written through the hook scripts.
-    """
+    """Upsert state.json for a harness call."""
     cdir = _call_dir(root, session_id, call_id)
     cdir.mkdir(parents=True, exist_ok=True)
     path = _state_path(root, session_id, call_id)
@@ -557,28 +694,17 @@ def _is_aborted(root: Path, session_id: str, call_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _resolve_or_create_session(root: Path, session_id: str | None) -> str:
-    """Return a usable session_id. If none provided, create a new one.
-
-    The harness does not itself emit a `session.start` event (that is
-    the session-start hook's job). If we create a new session dir here
-    it's only so the hook scripts downstream have a place to write.
-    """
+    """Return a usable session_id. If none provided, create a new one."""
     if session_id:
         return session_id
 
     sid = datetime.now(timezone.utc).strftime("harness-session-%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:6]
     _session_dir(root, sid).mkdir(parents=True, exist_ok=True)
 
-    # Fire session-start hook if present. Fail-open if missing.
     session_start = _hooks_dir(root) / "session-start"
     if session_start.is_dir():
-        # session-start is a FILE script in v1.0.3+ at
-        # core/execution/hooks/session-start/session-start.sh (W1.1
-        # convention). Use it if present; otherwise skip.
         script = session_start / "session-start.sh"
         if script.is_file():
-            # Relative-from-root POSIX path + cwd=str(root). See
-            # _fire_hook for the full rationale.
             from signalos_lib.sandbox import maybe_wrap_for_sandbox
             argv, _ = maybe_wrap_for_sandbox(
                 root,
@@ -600,20 +726,13 @@ def _resolve_or_create_session(root: Path, session_id: str | None) -> str:
 
 
 def _safe_error(exc: BaseException) -> str:
-    """Return a sanitized error string for user-facing stderr output.
-
-    Strips internal file paths and env var names from exception messages
-    to prevent accidental disclosure of filesystem layout or secrets.
-    Set SIGNALOS_DEBUG=1 to get the full trace instead.
-    """
+    """Return a sanitized error string for user-facing stderr output."""
     if os.environ.get("SIGNALOS_DEBUG"):
         return str(exc)
     msg = str(exc)
-    # Strip absolute paths (Unix and Windows)
     import re as _re
     msg = _re.sub(r"(/[a-zA-Z0-9_.\-]+){3,}", "[path]", msg)
     msg = _re.sub(r"[A-Za-z]:\\(?:[^\\\s]+\\){2,}[^\\\s]+", "[path]", msg)
-    # Strip env var values that look like secrets
     msg = _re.sub(r"[A-Z][A-Z0-9_]{4,}=[^\s]+", "[env]", msg)
     return msg or "[internal error — set SIGNALOS_DEBUG=1 for full trace]"
 
@@ -629,19 +748,7 @@ def run_step(
     intent: str | None = None,
     provider: LLMProvider | None = None,
 ) -> dict[str, Any]:
-    """Execute one PLAN step headlessly and emit the four W1.1 events.
-
-    Returns a dict with at least:
-        call_id, session_id, step_id, status ("completed"|"failed"|"aborted"),
-        duration_ms, response_preview, tokens_in, tokens_out, exit_code.
-
-    The `provider` parameter (AMD-CORE-007) selects the LLM backend.
-    If None, `_resolve_provider()` is called to pick via env vars.
-
-    Never raises for an LLM provider failure — the failure is captured
-    in the `status = "failed"` return and the `step.failed` event.
-    """
-    # ---- Input validation ----
+    """Execute one PLAN step headlessly and emit the four W1.1 events."""
     if not step_id or not isinstance(step_id, str):
         raise ValueError("signalos harness: --step is required and must be a string")
     resolved_prompt = _resolve_prompt(prompt, prompt_file)
@@ -650,7 +757,6 @@ def run_step(
             "signalos harness: prompt is empty — pass --prompt '<text>' or --prompt-file <path>"
         )
 
-    # ---- Provider resolution (AMD-CORE-007) ----
     active_provider = provider if provider is not None else _resolve_provider()
 
     root = _repo_root(cwd)
@@ -669,7 +775,6 @@ def run_step(
         intent=intent or f"headless harness call for step {step_id}",
     )
 
-    # ---- Emit step.started via the step-started hook ----
     step_started_extra = [
         "--intent", intent or f"headless harness call for step {step_id}",
     ]
@@ -681,7 +786,6 @@ def run_step(
         extra_args=step_started_extra,
     )
 
-    # ---- Do the work ----
     t0 = time.perf_counter()
     response_text: str = ""
     tokens_in: int | None = None
@@ -689,7 +793,6 @@ def run_step(
     failure: str | None = None
 
     try:
-        # AMD-CORE-011: sanitize prompt before any LLM transmission
         resolved_prompt = _redact_text(root, resolved_prompt)
         if _is_aborted(root, sid, call_id):
             failure = "aborted before LLM call"
@@ -702,9 +805,6 @@ def run_step(
         failure = f"{type(exc).__name__}: {exc}"
 
     duration_ms = int((time.perf_counter() - t0) * 1000)
-    # Persist a redacted preview next to state.json. Trimmed aggressively —
-    # full response bodies are out-of-scope for the append-only journal
-    # per AMD-CORE-001 §invariants.
     _persist_response_preview(root, sid, call_id, response_text)
 
     final_status: str
@@ -725,7 +825,6 @@ def run_step(
         tokens_out=tokens_out,
     )
 
-    # ---- Emit step.{completed|failed} via the matching hook ----
     if final_status == "completed":
         completed_extra = [
             "--outcome", "ok",
@@ -751,13 +850,11 @@ def run_step(
             ],
         )
 
-    # ---- Emit metrics row (one per call; hook-level metrics belong to
-    # the per-hook scripts) ----
     _append_metric(
         root, sid, step_id,
         duration_ms=duration_ms,
         tokens_in=tokens_in, tokens_out=tokens_out,
-        hook=None,  # this is a tool-level row, not a hook-fired row
+        hook=None,
     )
 
     exit_code = 0 if final_status == "completed" else 2
@@ -776,11 +873,7 @@ def run_step(
 
 
 def get_status(call_id: str, *, session_id: str | None = None, cwd: Path | None = None) -> dict[str, Any]:
-    """Return the state.json contents for a given call.
-
-    When `session_id` is None, scan every session in .signalos/sessions/
-    for a matching call. Raises FileNotFoundError if no match.
-    """
+    """Return the state.json contents for a given call."""
     root = _repo_root(cwd)
 
     candidates: list[Path]
@@ -804,13 +897,7 @@ def get_status(call_id: str, *, session_id: str | None = None, cwd: Path | None 
 
 
 def abort_call(call_id: str, *, session_id: str | None = None, cwd: Path | None = None) -> dict[str, Any]:
-    """Write the abort.flag for a running call and update state.json.
-
-    Idempotent: calling abort on an already-completed call is a no-op
-    that returns the current state. This function does NOT emit a
-    step.aborted hook — the running harness process observes the flag
-    and emits its own step.failed event with reason "aborted".
-    """
+    """Write the abort.flag for a running call and update state.json."""
     root = _repo_root(cwd)
     state = get_status(call_id, session_id=session_id, cwd=cwd)
     sid = state["session_id"]
@@ -852,40 +939,24 @@ def _persist_response_preview(
     call_id: str,
     response_text: str,
 ) -> None:
-    """Write a truncated, redacted preview beside state.json.
-
-    Full response bodies are deliberately not journaled (AMD-CORE-001
-    invariant). This file is a human-readable sample for debugging.
-    """
+    """Write a truncated, redacted preview beside state.json."""
     if not response_text:
         return
     cdir = _call_dir(root, session_id, call_id)
     cdir.mkdir(parents=True, exist_ok=True)
 
     preview_path = cdir / "response.preview.txt"
-    # Redact via the shared Python filter.
     redacted = _redact_text(root, response_text[:4000])
     preview_path.write_text(redacted, encoding="utf-8")
 
 
 def _redact_text(root: Path, text: str) -> str:
-    """Run text through core/execution/hooks/_lib/redact.py --filter.
-
-    The redactor reads JSON by default, so we wrap the text as a
-    single-field JSON and unwrap after. On any redactor error, return
-    the text unchanged — failure-to-redact must not crash the harness,
-    only the journal write path is required to fail hard on redaction.
-    """
+    """Run text through core/execution/hooks/_lib/redact.py --filter."""
     helper = _lib_dir(root) / "redact.py"
     if not helper.is_file():
         return text
     wrapped = json.dumps({"t": text})
     try:
-        # Sandbox wrap: redact.py is a pure stdin/stdout filter; safe to
-        # run in a container. Use relative-from-root path so the helper
-        # resolves the same way inside the container (workspace at
-        # /workspace) as on host (cwd=root). The image classifier picks
-        # python:3.11-slim from the `python3` cmd[0].
         from signalos_lib.sandbox import maybe_wrap_for_sandbox
         argv, _ = maybe_wrap_for_sandbox(
             root,

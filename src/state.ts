@@ -132,7 +132,7 @@ export interface PlanTask {
 
 export interface ChatBubble {
   id: string;
-  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system';
+  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview';
   text: string;
   ts?: string;
   historical?: boolean;
@@ -181,6 +181,36 @@ export interface ChatBubble {
   /** Set after a prompt button is clicked so the buttons disable + the
    *  bubble shows the chosen action. */
   waveResolved?: { choice: string; followupText?: string };
+
+  // ── Phase 1 agent-loop bubble payloads (rendered by BuildView) ──────────
+  /** kind === 'tool': a single agent tool call (ToolCallBubble). */
+  tool?: {
+    name: string;
+    target?: string;
+    status: 'running' | 'done' | 'error' | 'denied';
+    summary?: string;
+    detail?: string;
+  };
+  /** kind === 'diff': a file edit diff (FileDiffBubble). */
+  diff?: {
+    path: string;
+    before?: string;
+    after?: string;
+  };
+  /** kind === 'gate': a gate review surface (GateReviewCard). */
+  gateReview?: {
+    gate: string;
+    title: string;
+    question: string;
+    /** Set once a verdict is submitted, to disable the card. */
+    resolvedVerdict?: 'approve' | 'approve-with-conditions' | 'request-changes' | 'reject' | 'waive' | null;
+  };
+  /** kind === 'preview': inline design preview (ChatPreviewBubble). */
+  preview?: {
+    srcDoc?: string;
+    url?: string;
+    caption?: string;
+  };
 }
 export const chatBubbles = signal<ChatBubble[]>([]);
 export const chatInputValue = signal<string>('');

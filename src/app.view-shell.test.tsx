@@ -27,14 +27,16 @@ describe('App view shell isolation', () => {
   it('updates active content without leaving the previous page visible', async () => {
     const { container } = render(<App />);
 
-    tab.value = 'terminal';
+    // 'preview' is one of the three project tabs that remain in nav after
+    // Phase 1.1 (Build / Preview / Evidence). Terminal was removed from nav.
+    tab.value = 'preview';
 
     await waitFor(() => {
       const activeViews = Array.from(container.querySelectorAll('.view.active'))
         .map((el) => el.getAttribute('data-view'));
 
-      expect(activeViews).toEqual(['terminal']);
-      expect(container.querySelector('.seg-i.active')?.getAttribute('data-tab')).toBe('terminal');
+      expect(activeViews).toEqual(['preview']);
+      expect(container.querySelector('.seg-i.active')?.getAttribute('data-tab')).toBe('preview');
     });
   });
 

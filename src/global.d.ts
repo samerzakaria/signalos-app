@@ -90,6 +90,9 @@ declare global {
     selectProv: (provider: string, model: string, keyLabel: string) => void;
     sendChip: (text: string) => void;
     sendMsg: () => void;
+    /** Phase 1.5/3: submit a gate verdict to the paused agent loop. Optional
+     *  until the agent-loop IPC is wired in Phase 3. */
+    submitGateVerdict?: (bubbleId: string, verdict: string, feedback: string) => void;
     shareProject: () => void;
     showFileWriteToast: (files: unknown) => void;
     showNotifications: () => void;

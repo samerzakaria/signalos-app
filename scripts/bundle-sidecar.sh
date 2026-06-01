@@ -31,7 +31,10 @@ fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
 "$VENV_PYTHON" -m pip install --upgrade pip wheel pyinstaller
-"$VENV_PYTHON" -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7"
+# LiteLLM (v4 Phase 2.1) is the provider-agnostic completion library behind
+# the AgentProvider adapter. Pinned <2 to keep the tool-call response shape
+# stable. litellm pulls openai as a transitive dep but we pin it explicitly.
+"$VENV_PYTHON" -m pip install "anthropic>=0.39,<1.0" "openai>=1.30,<2" "google-generativeai>=0.5,<1" "pyyaml>=6.0,<7" "litellm>=1.40,<2"
 
 IPC_ENTRY="$ROOT_DIR/python/signalos_ipc_server.py"
 if [[ ! -f "$IPC_ENTRY" ]]; then
@@ -56,6 +59,8 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --hidden-import openai \
   --hidden-import google.generativeai \
   --hidden-import yaml \
+  --hidden-import litellm \
+  --collect-all litellm \
   "$IPC_ENTRY"
 
 if [[ ! -f "$SIDECAR_DIR/$SIDECAR_NAME" ]]; then
