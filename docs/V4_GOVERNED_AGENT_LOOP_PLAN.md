@@ -36,7 +36,7 @@
 
 ## Goal
 
-Build Foundry v4 -- the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 13 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally -- one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
+Build Foundry v4 -- the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 12 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally -- one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
 
 Every v3 module is either actively used, intentionally marked optional with justification, or de-scoped with proof. No forced integration. No fake usage.
 
@@ -239,7 +239,7 @@ If `supports_tool_calls` is False, the agent loop falls back to text-only mode (
 **Decision: Python executes tools. Rust is the single source of truth for governance rules. Python reads rules from Rust at loop start, not per-call.**
 
 Flow:
-1. At agent loop start, Python calls Rust IPC `get_enforcement_state()` once to get the full rule set (13 rules, forbidden paths, forbidden actions, trust tier ceiling)
+1. At agent loop start, Python calls Rust IPC `get_enforcement_state()` once to get the full rule set (12 rules, forbidden paths, forbidden actions, trust tier ceiling)
 2. Python caches these rules for the duration of the loop run
 3. On each tool call, Python checks the cached rules (fast, no round-trip)
 4. Python executes the tool (file read/write via `pathlib`, command via `subprocess`)
@@ -251,6 +251,8 @@ Why not round-trip Rust for every tool call: latency. A tool-use loop can fire 2
 Why not re-implement all governance in Python: governance would drift. Python reads the canonical rules from Rust at loop start. If rules change mid-run (e.g., user changes trust tier in Settings), the loop picks up new rules on the next run, not mid-run. This is acceptable because a single agent run is a bounded operation (one gate at a time).
 
 The `validate_workspace_write()` Rust call on file writes is the safety net: even if Python's cached rules are stale, Rust blocks the actual write if the path is reserved.
+
+**Command policy is frozen for the run's duration.** Unlike file writes (which have a Rust safety net), command execution has no secondary Rust check. If the user downgrades trust tier mid-run, the cached command allowlist remains in effect until the current loop run completes and the orchestrator starts the next one (which re-reads rules from Rust). This is acceptable because: (a) a single loop run is bounded (one gate), (b) trust-tier changes mid-build are rare, and (c) the audit ledger records every command executed so post-hoc review catches any gap. A future `validate_command()` Rust IPC can close this gap if needed.
 
 ### Q3: Frontend layer -- Preact components, chat.js is the send/receive bridge
 
@@ -455,7 +457,7 @@ Continue or rework (persisted run state survives restart)
 - `_bundle/` -- 287 governance files (constitution, agent contracts, standards, rules)
 
 **Rust backend (Tauri):**
-- `enforcement.rs` -- 13 runtime rules
+- `enforcement.rs` -- 12 runtime rules
 - `keychain.rs` -- OS credential storage (11 providers)
 - `sidecar.rs` -- Python sidecar spawn with env key injection
 - `ipc.rs` -- all IPC commands (file ops, secrets, workspace, gates, etc.)
@@ -507,12 +509,12 @@ Each v3 module is classified as ACTIVE (used directly), OPTIONAL (available but 
 | `security.py` | ACTIVE | OWASP/STRIDE, canary tokens |
 | `data_privacy.py` | ACTIVE | GDPR export/purge |
 | `_bundle/` | ACTIVE | Gate agent system prompts, constitution, standards |
-| `enforcement.rs` | ACTIVE | 13 runtime rules checked on every tool call |
+| `enforcement.rs` | ACTIVE | 12 runtime rules checked on every tool call |
 | `keychain.rs` | ACTIVE | OS credential storage for all providers |
 | `sidecar.rs` | ACTIVE (modified) | Event routing for agent loop events |
 | `governance.rs` | ACTIVE | Audit trail, gate state persistence |
-| `DeliverView.tsx` | DE-SCOPED | Removed from navigation. Logic preserved in internal services. Source file deleted after Build conversation compiles. |
-| `TerminalView.tsx` | DE-SCOPED | Removed from navigation. Governed shell lives in Build conversation. Source file deleted after tests pass. |
+| `DeliverView.tsx` | DE-SCOPED | Removed from navigation in 1.1. Useful logic extracted to services/deliveryFlow.ts in 1.1b. Source file deleted in 4.3. |
+| `TerminalView.tsx` | DE-SCOPED | Removed from navigation in 1.1. Command routing extracted to services/governedShell.ts in 1.1b. Source file deleted in 4.3. |
 
 ---
 
@@ -527,6 +529,7 @@ DeliverView and TerminalView are removed from navigation immediately. Useful log
 | Step | What | Files | Delivers |
 |------|------|-------|----------|
 | 1.1 | Remove Deliver and Terminal tabs from navigation. Preserve useful logic as internal services. 3 project tabs: Build, Preview, Evidence. | Toolbar.tsx, app.tsx | Clean navigation |
+| 1.1b | Extract reusable logic from DeliverView and TerminalView into services: delivery flow state machine -> services/deliveryFlow.ts, terminal command routing -> services/governedShell.ts, preview launch -> services/preview.ts (already exists). Verify imports compile. | services/deliveryFlow.ts (new), services/governedShell.ts (new) | Backend logic preserved before view deletion |
 | 1.2 | Chat redesign: full-width, streaming text, markdown rendering, code blocks with syntax highlighting, copy button | BuildView.tsx, styles.css | Professional chat |
 | 1.3 | Tool call bubbles: compact cards showing file read/write/edit, command execution, search -- with spinner then checkmark | ToolCallBubble.tsx (new) | User sees agent working |
 | 1.4 | File diff bubbles: inline green/red diffs for edits, collapsible full-file view | FileDiffBubble.tsx (new) | User sees what changed |
@@ -547,7 +550,7 @@ DeliverView and TerminalView are removed from navigation immediately. Useful log
 | 2.4 | Agent loop core -- `agent_loop.py`: message --> adapter --> tool calls --> governance --> execute --> loop. Persisted run state (INV-5). | agent_loop.py (new) | The runtime |
 | 2.5 | Tool definitions with strict execution rules: typed path allowlists (not globs), command policy (allowlist + denylist), timeouts (default 30s read, 120s command), cancellation support, secret redaction on stdout/stderr, no direct governance file edits | agent_loop.py | Governed tool execution |
 | 2.6 | Audit ledger: every tool call (allowed or denied) logged to `.signalos/agent-runs/<run-id>/tool-calls.jsonl` with timestamp, tool name, args, result, governance decision, duration | agent_loop.py | Full traceability |
-| 2.7 | Gate detection: after each tool round, query wave_engine.inspect(). Pause at gate boundaries. Gate signing calls `sign.py:sign_artifact()` only (INV-3). | agent_loop.py | Gate checkpoints |
+| 2.7 | Loop completion: agent loop runs until LLM end_turn or tool-call limit. Returns control to orchestrator. No gate awareness in the loop. | agent_loop.py | Orchestrator owns gates |
 | 2.8 | Verdict handling: all 5 verdicts with policy. Approve --> sign + advance. Conditions --> sign + log conditions. Changes --> bounded rework (max 3). Reject --> bounded restart (max 2). Waive --> explicit justification required, audit logged, cannot satisfy mandatory proof (INV-1). | agent_loop.py + gate_review.py | Full verdict model |
 | 2.9 | Security scan: injection scan on every write_file content, secret redaction on run_command output, PII detection on generated content | agent_loop.py + security_gate.py | Safe output |
 | 2.10 | Run state persistence: `.signalos/agent-runs/<run-id>/state.json` with conversation history, current gate, tool-call count, resume checkpoint. Idempotent tool execution (re-running a completed write is a no-op). | agent_loop.py | Crash recovery (INV-5) |
@@ -604,7 +607,7 @@ All tests in the test matrix must pass. No exceptions. No relaxing.
 | `validate_cmd.py` | Agent loop validators | 12 Layer 1 validators |
 | `security.py` | Agent loop governance | OWASP/STRIDE checks |
 | `data_privacy.py` | Agent loop governance | GDPR export/purge |
-| `enforcement.rs` | Agent loop trust tiers | 13 runtime rules |
+| `enforcement.rs` | Agent loop trust tiers | 12 runtime rules |
 | `keychain.rs` | Provider adapter setup | OS credential storage |
 | `sidecar.rs` | Agent event streaming | Sidecar spawn + event routing |
 | `governance.rs` | Audit trail | Gate state + audit append |
@@ -718,7 +721,7 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 |------|--------|------------|
 | LiteLLM tool calling varies by provider | Agent loop breaks on some providers | Capability detection adapter (T07-T08); fallback to text-only |
 | Conversation context window overflow | Long sessions crash | Context compression; persist history to disk |
-| Gate detection timing | Agent skips a gate | wave_engine.inspect() after EVERY tool round; test T26-T31 |
+| Gate detection timing | Agent skips a gate | Orchestrator calls wave_engine.inspect() after each loop run; test T26-T31; test T26-T31 |
 | Streaming performance | UI freezes on fast token output | Batch text-delta events (debounce 50ms); test T45 |
 | Sidecar crash during agent loop | Lost state | Persisted run state + resume (INV-5); test T44 |
 | LiteLLM bundle size | PyInstaller binary larger | Early ready line (already shipped); monitor cold-start |
@@ -751,11 +754,11 @@ Phase 1 (UI)         Phase 2 (Runtime)         Phase 3 (Wire)       Phase 4 (Par
                                      3.5 -> 3.6 -> 3.7
                                                      |
                                                      v
-                                                    4.1 (prove Deliver parity)
-                                                    4.2 (prove Terminal parity)
+                                                    4.1 (E2E delivery in chat)
+                                                    4.2 (governed shell in chat)
                                                      |
                                                      v
-                                                    4.3 (delete only after parity)
+                                                    4.3 (delete dead view files)
                                                     4.4
                                                      |
                                                      v
