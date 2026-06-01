@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry concept A mark</title>
+  <desc id="desc">A governed frame containing an amber spark.</desc>
+  <rect width="512" height="512" rx="112" fill="#f6f5f2"/>
+  <rect x="84" y="84" width="344" height="344" rx="88" fill="#2457d6"/>
+  <rect x="124" y="124" width="264" height="264" rx="64" fill="none" stroke="#f6f5f2" stroke-width="24"/>
+  <path d="M256 127c35 49 45 86 31 120 35-11 62-37 81-77 31 84-4 159-80 189-29 11-61 11-90 0-74-29-108-103-78-184 15 34 39 56 72 67-12-32 9-73 64-115Z" fill="#a86310"/>
+  <path d="M256 203c22 32 28 56 18 76 19-5 36-20 50-44 16 48-7 88-52 104-11 4-23 6-36 4-44-6-75-44-65-94 12 18 28 30 48 35-6-24 7-49 37-77Z" fill="#f6f5f2"/>
+</svg>
