@@ -1,0 +1,21 @@
+{
+  "name": "Foundry by SignalOS",
+  "colors": {
+    "paper": "#f6f5f2",
+    "ink": "#1e1d1a",
+    "trustBlue": "#2457d6",
+    "signalOrange": "#d97845",
+    "softBlue": "#b7c9ff"
+  },
+  "radius": {
+    "appIcon": 112,
+    "card": 8
+  },
+  "assets": {
+    "mark": "src/assets/brand/foundry-mark.svg",
+    "appIcon": "src/assets/brand/foundry-app-icon.svg",
+    "monoMark": "src/assets/brand/foundry-mark-mono.svg",
+    "wordmark": "src/assets/brand/foundry-wordmark.svg",
+    "wordmarkDark": "src/assets/brand/foundry-wordmark-dark.svg"
+  }
+}

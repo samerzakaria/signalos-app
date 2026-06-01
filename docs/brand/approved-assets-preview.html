@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Foundry Approved Brand Assets</title>
+  <link rel="stylesheet" href="../../src/assets/brand/foundry-brand.css"/>
+  <style>
+    body {
+      margin: 0;
+      background: var(--foundry-paper);
+      color: var(--foundry-ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 52px 28px 72px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 42px;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: rgba(30, 29, 26, 0.64);
+      line-height: 1.55;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 30px;
+    }
+
+    .panel {
+      border-radius: 8px;
+      border: 1px solid rgba(30, 29, 26, 0.14);
+      background: #fffdf8;
+      padding: 22px;
+      box-shadow: 0 16px 40px rgba(30, 29, 26, 0.08);
+    }
+
+    .panel.dark {
+      background: var(--foundry-ink);
+      color: var(--foundry-paper);
+    }
+
+    .asset-stage {
+      display: grid;
+      place-items: center;
+      min-height: 260px;
+      border-radius: 8px;
+      background: #ebe9e3;
+      border: 1px solid rgba(30, 29, 26, 0.12);
+    }
+
+    .dark .asset-stage {
+      background: #141310;
+      border-color: rgba(246, 245, 242, 0.12);
+    }
+
+    .mark {
+      width: 156px;
+      height: 156px;
+    }
+
+    .wordmark {
+      width: min(100%, 620px);
+    }
+
+    h2 {
+      margin: 18px 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .app-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      padding: 13px 14px;
+      border-radius: 8px;
+      background: var(--foundry-ink);
+      color: var(--foundry-paper);
+      font-weight: 750;
+    }
+
+    .app-row img {
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+    }
+
+    .tokens {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .swatch {
+      min-height: 92px;
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      align-content: end;
+      font-size: 12px;
+      font-weight: 750;
+      border: 1px solid rgba(30, 29, 26, 0.14);
+    }
+
+    .paper { background: var(--foundry-paper); }
+    .ink { background: var(--foundry-ink); color: var(--foundry-paper); }
+    .blue { background: var(--foundry-trust-blue); color: white; }
+    .orange { background: var(--foundry-signal-orange); color: white; }
+    .soft { background: var(--foundry-soft-blue); }
+
+    @media (max-width: 860px) {
+      .grid,
+      .tokens {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Foundry by SignalOS approved assets</h1>
+    <p>Approved concept: B Premium Merge. A dark premium frame, negative-space F, and matte orange governed signal.</p>
+
+    <section class="grid" aria-label="Approved logo assets">
+      <article class="panel">
+        <div class="asset-stage">
+          <img class="mark" src="../../src/assets/brand/foundry-mark.svg" alt="Foundry approved mark"/>
+        </div>
+        <h2>Primary Mark</h2>
+        <p>Use for app icon, sidebar, compact navigation, and project cards.</p>
+        <div class="app-row">
+          <img src="../../src/assets/brand/foundry-mark.svg" alt=""/>
+          <span>Build</span>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="asset-stage">
+          <img class="wordmark" src="../../src/assets/brand/foundry-wordmark.svg" alt="Foundry wordmark"/>
+        </div>
+        <h2>Light Wordmark</h2>
+        <p>Use on onboarding, docs, handoff, release pages, and empty-state screens.</p>
+      </article>
+
+      <article class="panel dark">
+        <div class="asset-stage">
+          <img class="wordmark" src="../../src/assets/brand/foundry-wordmark-dark.svg" alt="Foundry dark wordmark"/>
+        </div>
+        <h2>Dark Wordmark</h2>
+        <p>Use on splash screens, dark panels, and installer hero surfaces.</p>
+      </article>
+
+      <article class="panel">
+        <div class="asset-stage">
+          <img class="mark" src="../../src/assets/brand/foundry-mark-mono.svg" alt="Foundry monochrome mark"/>
+        </div>
+        <h2>Monochrome Mark</h2>
+        <p>Use only where color reproduction is constrained.</p>
+      </article>
+    </section>
+
+    <section class="tokens" aria-label="Brand color tokens">
+      <div class="swatch paper">Paper<br/>#f6f5f2</div>
+      <div class="swatch ink">Ink<br/>#1e1d1a</div>
+      <div class="swatch blue">Trust blue<br/>#2457d6</div>
+      <div class="swatch orange">Signal orange<br/>#d97845</div>
+      <div class="swatch soft">Soft blue<br/>#b7c9ff</div>
+    </section>
+  </main>
+</body>
+</html>
