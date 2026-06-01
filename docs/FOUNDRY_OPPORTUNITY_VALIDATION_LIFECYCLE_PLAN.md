@@ -45,15 +45,62 @@ Required presentation qualities:
 - source appendix and assumption log;
 - decision page with explicit user choices;
 - visual consistency with Foundry brand assets.
+- mandatory use of the Foundry design system.
 
 Forbidden:
 
 - using McKinsey, Deloitte, BCG, or any third-party logo;
 - claiming a firm produced or endorsed the artifact;
 - copying proprietary slide templates;
+- producing decks or reports in non-Foundry visual styles;
 - inventing market data or sources;
 - hiding low-confidence assumptions;
 - treating an agent recommendation as a user decision.
+
+## Foundry Design System Requirement
+
+Every user-facing output from this lifecycle must use the Foundry design system.
+
+This applies to:
+
+- Markdown reports;
+- HTML previews;
+- deck outlines;
+- PPTX exports;
+- PDF exports;
+- decision packets;
+- opportunity closeouts;
+- handoff executive decks.
+
+Approved design system inputs:
+
+| Asset | Source |
+|---|---|
+| Primary mark | `src/assets/brand/foundry-mark.svg` |
+| App icon source | `src/assets/brand/foundry-app-icon.svg` |
+| Monochrome mark | `src/assets/brand/foundry-mark-mono.svg` |
+| Light wordmark | `src/assets/brand/foundry-wordmark.svg` |
+| Dark wordmark | `src/assets/brand/foundry-wordmark-dark.svg` |
+| Design tokens | `src/assets/brand/foundry-brand-tokens.json` |
+| CSS tokens | `src/assets/brand/foundry-brand.css` |
+| Usage guide | `docs/brand/APPROVED_BRAND_ASSETS.md` |
+
+Output styling rules:
+
+- use Foundry paper `#f6f5f2` as the default light background;
+- use Foundry ink `#1e1d1a` for primary text and dark hero surfaces;
+- use trust blue `#2457d6` for trust, evidence, endorsement, and primary emphasis;
+- use signal orange `#d97845` only for active build, decision, or callout signals;
+- use `by SignalOS` casing exactly;
+- use the approved Foundry mark or wordmark on title/cover pages;
+- keep cards at 8px radius or less;
+- keep layouts clean, executive, and information-dense;
+- avoid decorative gradients, bokeh, or generic AI visuals;
+- avoid purple, neon, muddy brown, or unrelated accent palettes;
+- every deck/report must include an appendix page or section for sources and assumptions.
+
+Proof rule: if an exported artifact does not consume the Foundry design tokens
+or approved brand assets, it is not a valid output.
 
 ## Lifecycle Overview
 
@@ -440,6 +487,7 @@ Deck quality standard:
 - source notes or assumption labels;
 - appendix for details;
 - consistent Foundry brand identity.
+- Foundry design system tokens and approved assets are mandatory.
 
 Mandatory slide patterns:
 
@@ -626,6 +674,11 @@ Add a deck generation layer that renders:
 The first version may generate Markdown and HTML only, but the schemas must be
 ready for PPTX export.
 
+All renderers must consume Foundry design tokens from
+`src/assets/brand/foundry-brand-tokens.json`. HTML renderers must also consume
+or mirror `src/assets/brand/foundry-brand.css`. PPTX/PDF renderers must use the
+same token values and approved mark/wordmark assets.
+
 ### W5 - Go/No-Go Gate
 
 Add gate UI and signing flow for O4:
@@ -653,6 +706,7 @@ Add tests that prove:
 - PRD cannot be generated before O4;
 - build cannot start before O5;
 - deck contains decision page and source appendix;
+- deck/report uses Foundry design tokens and approved brand assets;
 - market facts require source or assumption label;
 - user decision is required.
 
@@ -670,6 +724,7 @@ proof/scenarios/265_no_go_closeout.sh
 proof/scenarios/266_override_build_anyway.sh
 proof/scenarios/267_consulting_deck_generation.sh
 proof/scenarios/268_prd_baseline_before_build.sh
+proof/scenarios/269_foundry_design_system_artifacts.sh
 ```
 
 ## Completion Levels
@@ -705,5 +760,6 @@ This lane is complete when:
 - build cannot start before PRD baseline approval;
 - consulting-grade decks are generated with executive summary, decision page,
   source appendix, and assumption register;
+- all generated decks/reports use Foundry design tokens and approved brand
+  assets;
 - all proof scenarios pass.
-
