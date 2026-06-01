@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Foundry by SignalOS - Logo Concepts</title>
+  <title>Foundry by SignalOS - Identity Concepts</title>
   <style>
     :root {
       --paper: #f6f5f2;
       --ink: #1e1d1a;
       --trust: #2457d6;
-      --build: #a86310;
+      --build: #0f9f8f;
       --line: rgba(30, 29, 26, 0.14);
       --muted: rgba(30, 29, 26, 0.62);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -45,6 +45,48 @@
       color: var(--muted);
       font-size: 16px;
       line-height: 1.55;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+
+    .lockup-stage {
+      display: grid;
+      place-items: center;
+      min-height: 286px;
+      background: #fffdf8;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 18px 44px rgba(30, 29, 26, 0.08);
+      padding: 24px;
+    }
+
+    .lockup-stage img {
+      width: min(100%, 620px);
+      display: block;
+    }
+
+    .direction {
+      border-radius: 8px;
+      background: #1e1d1a;
+      color: var(--paper);
+      padding: 26px;
+      display: grid;
+      align-content: center;
+      gap: 14px;
+    }
+
+    .direction p {
+      color: rgba(246, 245, 242, 0.74);
+    }
+
+    .direction strong {
+      color: #f6f5f2;
     }
 
     .grid {
@@ -172,74 +214,84 @@
 <body>
   <main>
     <header>
-      <h1>Foundry by SignalOS logo concepts</h1>
-      <p>Three constrained directions for a premium software studio identity: off-white, charcoal, deep blue, and warm amber. No robot, no terminal mark, no childish startup badge.</p>
+      <h1>Foundry by SignalOS identity concepts</h1>
+      <p>A tighter direction for a premium governed product studio: a built F, a controlled frame, and one active teal signal. No literal flame, no robot, no terminal mark, no generic AI glyph.</p>
     </header>
+
+    <section class="hero" aria-label="Recommended wordmark">
+      <div class="lockup-stage">
+        <img src="./foundry-wordmark-lockup.svg" alt="Foundry by SignalOS wordmark lockup"/>
+      </div>
+      <div class="direction">
+        <p><strong>Design decision:</strong> the mark should be a constructed monogram, not an illustration. Foundry needs to feel like a serious product studio with governance built in, so the frame and F do the work while the teal signal marks active build state.</p>
+        <p><strong>Recommended route:</strong> Mark 01. It is the most ownable, scales cleanly, and can survive as an app icon without the wordmark.</p>
+      </div>
+    </section>
 
     <section class="grid" aria-label="Logo concepts">
       <article class="concept">
         <div class="mark-stage">
-          <img src="./foundry-logo-concept-a.svg" alt="Concept A mark"/>
+          <img src="./foundry-mark-01-monogram.svg" alt="Mark 01 monogram"/>
         </div>
-        <h2>A. Framed Flame</h2>
-        <p>The clearest literal read: Foundry as protected build energy. Strongest app-icon candidate.</p>
+        <h2>01. Governed F</h2>
+        <p>The strongest direction: a built F inside a precise frame with one teal active-build signal.</p>
         <div class="lockup">
-          <img src="./foundry-logo-concept-a.svg" alt=""/>
+          <img src="./foundry-mark-01-monogram.svg" alt=""/>
           <div class="word">
             <strong>Foundry</strong>
             <span>by SignalOS</span>
           </div>
         </div>
         <div class="app-row">
-          <img src="./foundry-logo-concept-a.svg" alt=""/>
+          <img src="./foundry-mark-01-monogram.svg" alt=""/>
           <span>Build</span>
         </div>
-        <div class="note">Best for: public app icon, installer icon, first-launch brand mark.</div>
+        <div class="note">Best for: final app icon, wordmark, sidebar, installer icon.</div>
       </article>
 
       <article class="concept">
         <div class="mark-stage">
-          <img src="./foundry-logo-concept-b.svg" alt="Concept B mark"/>
+          <img src="./foundry-mark-02-keystone.svg" alt="Mark 02 keystone"/>
         </div>
-        <h2>B. Shielded Forge</h2>
-        <p>More institutional and security-forward. The frame reads as governance first, spark second.</p>
+        <h2>02. Keystone</h2>
+        <p>More enterprise and institutional. The mark feels stamped, governed, and operational.</p>
         <div class="lockup">
-          <img src="./foundry-logo-concept-b.svg" alt=""/>
+          <img src="./foundry-mark-02-keystone.svg" alt=""/>
           <div class="word">
             <strong>Foundry</strong>
             <span>by SignalOS</span>
           </div>
         </div>
         <div class="app-row">
-          <img src="./foundry-logo-concept-b.svg" alt=""/>
+          <img src="./foundry-mark-02-keystone.svg" alt=""/>
           <span>Build</span>
         </div>
-        <div class="note">Best for: enterprise trust, security, governance-heavy contexts.</div>
+        <div class="note">Best for: enterprise trust, admin surfaces, governance-heavy contexts.</div>
       </article>
 
       <article class="concept">
         <div class="mark-stage">
-          <img src="./foundry-logo-concept-c.svg" alt="Concept C mark"/>
+          <img src="./foundry-mark-03-frame.svg" alt="Mark 03 frame"/>
         </div>
-        <h2>C. Proof Spark</h2>
-        <p>Most abstract and system-like. The crosshair suggests control, evidence, and precision.</p>
+        <h2>03. Dark Frame</h2>
+        <p>Most premium and dramatic. Better for splash screens than small UI because of the dark field.</p>
         <div class="lockup">
-          <img src="./foundry-logo-concept-c.svg" alt=""/>
+          <img src="./foundry-mark-03-frame.svg" alt=""/>
           <div class="word">
             <strong>Foundry</strong>
             <span>by SignalOS</span>
           </div>
         </div>
         <div class="app-row">
-          <img src="./foundry-logo-concept-c.svg" alt=""/>
+          <img src="./foundry-mark-03-frame.svg" alt=""/>
           <span>Build</span>
         </div>
-        <div class="note">Best for: internal product system, evidence, precision, agent governance.</div>
+        <div class="note">Best for: dark splash, presentation title slides, premium campaign use.</div>
       </article>
     </section>
 
     <section class="recommendation">
-      <p><strong>Recommendation:</strong> start from Concept A for the public icon and wordmark. It is the easiest to recognize at small sizes and communicates the brand without making users decode the governance metaphor. Concept B is a credible backup if the brand needs to feel more enterprise-security first.</p>
+      <p><strong>Recommendation:</strong> use Mark 01 as the core identity and wordmark base. It is the least generic, the most scalable, and the easiest to systemize across the desktop icon, sidebar, onboarding, and release assets. Mark 02 is the backup if the product needs to lean harder into enterprise governance.</p>
     </section>
   </main>
 </body>

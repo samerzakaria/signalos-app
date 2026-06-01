@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry by SignalOS wordmark lockup</title>
+  <desc id="desc">Foundry wordmark with the selected monogram mark and by SignalOS endorsement.</desc>
+  <rect width="720" height="220" rx="28" fill="#f6f5f2"/>
+  <g transform="translate(44 44) scale(0.258)">
+    <rect width="512" height="512" rx="112" fill="#f6f5f2"/>
+    <path d="M140 112h232c15.5 0 28 12.5 28 28v232c0 15.5-12.5 28-28 28H140c-15.5 0-28-12.5-28-28V140c0-15.5 12.5-28 28-28Z" fill="none" stroke="#2457d6" stroke-width="26"/>
+    <path d="M184 160h162v52H238v62h91v50h-91v102h-54V160Z" fill="#2457d6"/>
+    <path d="M322 122l28 28-28 28-28-28 28-28Z" fill="#0f9f8f"/>
+    <path d="M346 212h26v112c0 27-21 48-48 48h-86v-26h86c12.5 0 22-9.5 22-22V212Z" fill="#2457d6" opacity="0.18"/>
+  </g>
+  <text x="206" y="103" fill="#1e1d1a" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="54" font-weight="760" letter-spacing="0">Foundry</text>
+  <text x="209" y="143" fill="#2457d6" font-family="Inter, Avenir Next, Segoe UI, Arial, sans-serif" font-size="17" font-weight="760" letter-spacing="4">BY SIGNALOS</text>
+  <path d="M208 164h306" stroke="#0f9f8f" stroke-width="4" stroke-linecap="round"/>
+</svg>

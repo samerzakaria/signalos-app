@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry mark 02 keystone</title>
+  <desc id="desc">A keystone-style governed frame with a precise teal signal.</desc>
+  <rect width="512" height="512" rx="112" fill="#2457d6"/>
+  <path d="M126 128c0-14.4 11.6-26 26-26h208c14.4 0 26 11.6 26 26v244c0 14.4-11.6 26-26 26H152c-14.4 0-26-11.6-26-26V128Z" fill="#f6f5f2"/>
+  <path d="M176 158h160v52H230v57h88v50h-88v77h-54V158Z" fill="#2457d6"/>
+  <path d="M336 210h-56v-52h56v52Z" fill="#0f9f8f"/>
+  <path d="M306 292l31 31-31 31-31-31 31-31Z" fill="#0f9f8f"/>
+  <path d="M126 128c0-14.4 11.6-26 26-26h208c14.4 0 26 11.6 26 26v22H126v-22Z" fill="#2457d6" opacity="0.08"/>
+</svg>

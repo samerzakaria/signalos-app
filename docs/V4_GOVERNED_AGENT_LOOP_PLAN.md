@@ -16,7 +16,7 @@
 - **Background:** Off-white (#f6f5f2)
 - **Text:** Charcoal (#1e1d1a)
 - **Trust color:** Deep blue (#2457d6)
-- **Active build accent:** Warm amber (#a86310)
+- **Active build accent:** Signal teal (#0f9f8f)
 - **Style:** Premium software studio -- not hacker tool, not chatbot toy, not internal devops screen
 
 ### Visual Principles
@@ -834,7 +834,7 @@ Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 deletes dead
 
 ### Visual rules applied
 
-- Off-white background, charcoal text, deep blue for trust, amber for active build
+- Off-white background, charcoal text, deep blue for trust, signal teal for active build
 - Agent messages show specialist name, not "SignalOS" or "AI"
 - Approval cards are large, clear, meaningful -- not tiny pills
 - Progress bar shows business stages (Brief, Design, Build...) not gate codes

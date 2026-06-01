@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry mark 03 frame</title>
+  <desc id="desc">A governed frame and active build spark forming a premium product studio symbol.</desc>
+  <rect width="512" height="512" rx="112" fill="#1e1d1a"/>
+  <path d="M136 118h240c10 0 18 8 18 18v240c0 10-8 18-18 18H136c-10 0-18-8-18-18V136c0-10 8-18 18-18Z" fill="none" stroke="#f6f5f2" stroke-width="22"/>
+  <path d="M182 166h166v48H234v56h94v48h-94v96h-52V166Z" fill="#f6f5f2"/>
+  <path d="M344 142l32 32-32 32-32-32 32-32Z" fill="#0f9f8f"/>
+  <path d="M368 232v94c0 23-19 42-42 42h-92" fill="none" stroke="#0f9f8f" stroke-width="18" stroke-linecap="round" opacity="0.9"/>
+</svg>

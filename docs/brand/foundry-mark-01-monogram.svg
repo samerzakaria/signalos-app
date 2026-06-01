@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Foundry mark 01 monogram</title>
+  <desc id="desc">A precise Foundry F monogram held inside a governed frame.</desc>
+  <rect width="512" height="512" rx="112" fill="#f6f5f2"/>
+  <path d="M140 112h232c15.5 0 28 12.5 28 28v232c0 15.5-12.5 28-28 28H140c-15.5 0-28-12.5-28-28V140c0-15.5 12.5-28 28-28Z" fill="none" stroke="#2457d6" stroke-width="26"/>
+  <path d="M184 160h162v52H238v62h91v50h-91v102h-54V160Z" fill="#2457d6"/>
+  <path d="M322 122l28 28-28 28-28-28 28-28Z" fill="#0f9f8f"/>
+  <path d="M346 212h26v112c0 27-21 48-48 48h-86v-26h86c12.5 0 22-9.5 22-22V212Z" fill="#2457d6" opacity="0.18"/>
+</svg>
