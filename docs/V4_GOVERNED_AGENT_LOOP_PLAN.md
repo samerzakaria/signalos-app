@@ -183,6 +183,197 @@ CI tests MUST use deterministic fake providers (`TestProvider`). Live provider t
 
 ---
 
+## Architecture Decisions
+
+Answers to the dev team's architectural questions. Each decision is final for v4 implementation.
+
+### Q1: Provider Protocol redesign
+
+**Decision: New `AgentProvider` protocol alongside the frozen `LLMProvider`.**
+
+The existing `LLMProvider.call(prompt, model) -> (text, tokens_in, tokens_out)` is frozen. It continues to serve the legacy harness path (`signalos harness call`, one-shot orchestrator commands, existing `refine_intent_with_llm` calls). No changes to it.
+
+The agent loop uses a new `AgentProvider` protocol:
+
+```python
+class AgentProvider(Protocol):
+    def chat(
+        self,
+        messages: list[dict],       # OpenAI-format messages array
+        model: str,
+        tools: list[dict] | None,   # tool definitions (provider-agnostic)
+        stream: bool = False,
+    ) -> AgentResponse: ...
+
+@dataclass
+class AgentResponse:
+    content: str | None                    # text response (if any)
+    tool_calls: list[ToolCall] | None      # tool call requests (if any)
+    stop_reason: str                       # "end_turn" | "tool_use" | "max_tokens"
+    usage: TokenUsage
+    stream: AsyncIterator[StreamDelta] | None  # if stream=True
+```
+
+`LiteLLMAgentProvider` implements `AgentProvider` by wrapping `litellm.completion()`. It translates our tool definitions to LiteLLM's format and normalizes responses.
+
+The `ProviderAdapter` (from the architect's feedback) wraps `LiteLLMAgentProvider` and adds capability detection:
+
+```python
+class ProviderAdapter:
+    supports_streaming: bool
+    supports_tool_calls: bool
+    supports_json_schema: bool
+    context_length: int
+    model_list: list[str]
+
+    def chat(...) -> AgentResponse  # delegates to LiteLLMAgentProvider
+    def detect_capabilities(model: str) -> ProviderCapabilities
+```
+
+If `supports_tool_calls` is False, the agent loop falls back to text-only mode (INV-7: cannot close delivery).
+
+**The old harness is NOT retired.** It stays for one-shot CLI commands. The agent loop uses the new protocol.
+
+### Q2: Tool execution -- Python executes, Rust is governance authority
+
+**Decision: Python executes tools. Rust is the single source of truth for governance rules. Python reads rules from Rust at loop start, not per-call.**
+
+Flow:
+1. At agent loop start, Python calls Rust IPC `get_enforcement_state()` once to get the full rule set (13 rules, forbidden paths, forbidden actions, trust tier ceiling)
+2. Python caches these rules for the duration of the loop run
+3. On each tool call, Python checks the cached rules (fast, no round-trip)
+4. Python executes the tool (file read/write via `pathlib`, command via `subprocess`)
+5. For file writes specifically, Python calls Rust IPC `validate_workspace_write()` before writing (Rust double-checks the path is within workspace and not reserved)
+6. Audit entries are written by Python to the JSONL ledger (Python already owns the audit trail format)
+
+Why not round-trip Rust for every tool call: latency. A tool-use loop can fire 20-50 tool calls per gate. Round-tripping Rust for each would add 200-500ms of IPC overhead per call.
+
+Why not re-implement all governance in Python: governance would drift. Python reads the canonical rules from Rust at loop start. If rules change mid-run (e.g., user changes trust tier in Settings), the loop picks up new rules on the next run, not mid-run. This is acceptable because a single agent run is a bounded operation (one gate at a time).
+
+The `validate_workspace_write()` Rust call on file writes is the safety net: even if Python's cached rules are stale, Rust blocks the actual write if the path is reserved.
+
+### Q3: Frontend layer -- Preact components, chat.js is the send/receive bridge
+
+**Decision: All new UI components are Preact `.tsx`. `chat.js` becomes a thin bridge between Preact state and the sidecar IPC.**
+
+Today `chat.js` does too much: state management, message formatting, response parsing, provider streaming. In v4:
+
+- **Preact owns rendering**: `BuildView.tsx` renders the conversation, `ToolCallBubble.tsx`, `FileDiffBubble.tsx`, `GateReviewCard.tsx` render their bubble types
+- **Preact signals own state**: `chatBubbles`, `agentRunning`, `currentGate` etc. live in `state.ts`
+- **`chat.js` owns IPC**: `sendMsg()` calls `ipc.agent.run()` and subscribes to `agent:event`. It updates Preact signals with incoming events. No rendering logic.
+- **`agentEvents.ts` (new)**: subscribes to Tauri `agent:event`, maps events to signal updates. This is the bridge between sidecar events and Preact state.
+
+Shared state flow: `chat.js:sendMsg()` --> sidecar --> events --> `agentEvents.ts` --> Preact signals --> components re-render.
+
+No component reads from `chat.js` directly. All state flows through signals.
+
+### Q4: Agent loop vs orchestrator -- one loop per gate, orchestrator selects the prompt
+
+**Decision: Each gate is one agent-loop run with a gate-specific system prompt. The orchestrator selects which gate to run and provides the system prompt. The loop executes it.**
+
+Concretely:
+1. `orchestrator.py` determines the current gate (e.g., G2 -- plan)
+2. Orchestrator calls `agent_loader.load_agent("G2")` to get the plan agent's `.md` system prompt
+3. Orchestrator constructs the user-facing specialist name ("Solution Architect")
+4. Orchestrator calls `agent_loop.run(system_prompt, specialist_name)` with the user's message
+5. The loop runs until the gate artifact is produced or the user intervenes
+6. On gate completion, the loop emits `GatePause` and returns control to the orchestrator
+7. Orchestrator waits for user verdict (via `agent:verdict` IPC)
+8. On approve, orchestrator signs the gate and advances to the next one
+
+There is NOT one long-lived loop that changes persona. Each gate gets a fresh loop with a fresh system prompt. Conversation history from the previous gate is summarized and included as context (not the full transcript -- context compression applies).
+
+**Gate boundary detection**: the orchestrator checks `wave_engine.inspect()` AFTER each agent-loop run completes. The agent loop does NOT detect gates internally -- it runs until the LLM signals completion (`stop_reason: "end_turn"`) or the tool-call limit is reached. Then the orchestrator checks if the gate artifact was produced. If not, the orchestrator can re-run the loop with additional guidance.
+
+This means the agent loop is stateless regarding gates. It runs a bounded conversation. The orchestrator is the gate-aware supervisor.
+
+### Q5: Underspecified mechanisms
+
+#### Q5a: INV-5 idempotency -- content hash
+
+**Decision: Content hash comparison.**
+
+Each tool call is recorded in `.signalos/agent-runs/<run-id>/tool-calls.jsonl` with:
+```json
+{
+  "seq": 42,
+  "tool": "write_file",
+  "args": {"path": "src/App.tsx", "content": "..."},
+  "content_sha256": "abc123...",
+  "status": "completed",
+  "ts": "2026-06-01T..."
+}
+```
+
+On resume after crash:
+1. Read `tool-calls.jsonl` to get the last completed sequence number
+2. Replay the conversation up to that point (from `conversation.jsonl`)
+3. For the next tool call, check: does the file at `path` already have content matching `content_sha256`? If yes, skip (idempotent). If no, execute.
+
+Mtime is not reliable (clock skew, different filesystem). Ledger replay is too slow (would re-execute everything). Content hash is deterministic and fast.
+
+#### Q5b: Context compression -- LLM summarizes, gate evidence is pinned
+
+**Decision: LLM summarizes older messages. Gate artifacts and evidence are pinned (never dropped).**
+
+When conversation history exceeds 80% of the provider's context window:
+1. Messages older than the last gate checkpoint are candidates for compression
+2. An LLM call summarizes the candidate messages into a single "context summary" message
+3. Gate artifacts (the actual signed documents), evidence paths, and the user's latest message are PINNED -- they are never included in the summary candidates
+4. The compressed conversation is: `[system prompt] + [context summary] + [pinned gate artifacts] + [recent messages]`
+
+The pinning rule: any message that contains a gate artifact path, a signed document, or evidence reference is excluded from compression. This guarantees T44 (crash resume) preserves gate evidence.
+
+### Smaller open items
+
+#### Trust-tier path allowlists
+
+**Decision: Define per-tier allowlists in a new config file `.signalos/trust-tier-paths.json`, seeded by `signalos init`.**
+
+```json
+{
+  "T1": {
+    "read": ["**"],
+    "write": [],
+    "execute": []
+  },
+  "T2": {
+    "read": ["**"],
+    "write": ["src/**", "public/**", "tests/**", "package.json", "tsconfig.json"],
+    "execute": ["npm install", "npm run build", "npm test", "npm run dev", "git status", "git diff", "git log"]
+  },
+  "T3": {
+    "read": ["**"],
+    "write": ["**"],
+    "execute": ["**"]
+  },
+  "forbidden_always": {
+    "write": [".signalos/AUDIT_TRAIL.jsonl", ".signalos/gates.json", ".env", ".env.local", "*.pem", "*.key"],
+    "execute": ["rm -rf", "git push --force", "git reset --hard", "npm publish", "docker push"]
+  }
+}
+```
+
+The agent loop reads this at startup (alongside the enforcement state from Rust). `agent_packets.py` currently has `_DEFAULT_FORBIDDEN_PATHS` -- this is replaced by the config file. Typed paths (explicit strings), not globs, for `forbidden_always`. T2 write allowlist uses globs for the source directory but explicit names for config files.
+
+#### Streaming -- fully greenfield
+
+**Decision: Acknowledge greenfield. The streaming path is new end-to-end.**
+
+```
+Python agent_loop.py
+  --> yields StreamDelta events
+  --> signalos_ipc_server.py writes JSON lines: {"kind": "agent-event", "type": "text-delta", "text": "..."}
+  --> sidecar.rs stdout parser recognizes "agent-event" kind
+  --> emits Tauri event "agent:event"
+  --> agentEvents.ts receives event, updates chatBubbles signal
+  --> BuildView.tsx re-renders with new text
+```
+
+No existing streaming infrastructure is reused. The current `chat:token` Tauri events from `provider.rs` are for the legacy direct-to-provider chat path. The new path is sidecar-mediated. Both paths can coexist during migration (legacy chat still works until the agent loop fully replaces it).
+
+---
+
 ## Architecture
 
 ```
