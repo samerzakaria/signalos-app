@@ -568,7 +568,7 @@ DeliverView and TerminalView are removed from navigation immediately. Useful log
 | 3.6 | Frontend event handler: subscribe to `agent:event`, render as chat bubbles (text, tool calls, gate reviews, diffs) | agentEvents.ts (new), chat.js | Live agent conversation |
 | 3.7 | Chat sendMsg switch: detect if message should go to agent loop vs direct sidecar command | chat.js | Unified input works |
 
-### Phase 4: Parity Proof and Cleanup
+### Phase 4: Test-Gated Cleanup
 
 DeliverView and TerminalView are already removed from navigation (Phase 1). Phase 4 deletes the dead source files after the Build conversation compiles and tests pass.
 
@@ -603,7 +603,7 @@ All tests in the test matrix must pass. No exceptions. No relaxing.
 | `design_preview.py` | ChatPreviewBubble.tsx | Inline iframe preview |
 | `wave_engine.py` | Orchestrator gate detection | State machine + inspect (called by orchestrator after each loop run, not by agent loop) |
 | `orchestrator.py` | Agent loop file writing | Pre-write guard, audit |
-| `sign.py` | Agent loop gate signing (INV-3) | The ONLY signing path |
+| `sign.py` | Orchestrator gate signing (INV-3) | The ONLY signing path |
 | `validate_cmd.py` | Agent loop validators | 12 Layer 1 validators |
 | `security.py` | Agent loop governance | OWASP/STRIDE checks |
 | `data_privacy.py` | Agent loop governance | GDPR export/purge |
@@ -721,7 +721,7 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 |------|--------|------------|
 | LiteLLM tool calling varies by provider | Agent loop breaks on some providers | Capability detection adapter (T07-T08); fallback to text-only |
 | Conversation context window overflow | Long sessions crash | Context compression; persist history to disk |
-| Gate detection timing | Agent skips a gate | Orchestrator calls wave_engine.inspect() after each loop run; test T26-T31; test T26-T31 |
+| Gate detection timing | Agent skips a gate | Orchestrator calls wave_engine.inspect() after each loop run; test T26-T31 |
 | Streaming performance | UI freezes on fast token output | Batch text-delta events (debounce 50ms); test T45 |
 | Sidecar crash during agent loop | Lost state | Persisted run state + resume (INV-5); test T44 |
 | LiteLLM bundle size | PyInstaller binary larger | Early ready line (already shipped); monitor cold-start |
@@ -765,7 +765,7 @@ Phase 1 (UI)         Phase 2 (Runtime)         Phase 3 (Wire)       Phase 4 (Par
                                               Phase 5 (57-test validation)
 ```
 
-Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 proves parity before deleting. Phase 5 validates everything.
+Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 deletes dead view files after tests T39-T44 and T12 pass. Phase 5 validates everything.
 
 ---
 
