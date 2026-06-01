@@ -1,10 +1,158 @@
-# SignalOS v4 — The Governed Agent Loop
+# Foundry by SignalOS — v4 Plan
+
+**Your AI agentic product team, governed from idea to launch.**
+
+## Product Identity
+
+### Brand
+
+- **Wordmark:** Foundry
+- **Mark:** Small flame/spark + governed frame
+- **Tagline:** Your AI agentic product team, governed from idea to launch.
+- **Full name:** Foundry by SignalOS
+
+### Visual Identity
+
+- **Background:** Off-white (#f6f5f2)
+- **Text:** Charcoal (#1e1d1a)
+- **Trust color:** Deep blue (#2457d6)
+- **Active build accent:** Warm amber (#a86310)
+- **Style:** Premium software studio — not hacker tool, not chatbot toy, not internal devops screen
+
+### Visual Principles
+
+- Calm, clean, confident
+- No overlapping translucent panels
+- No tiny unclear pills
+- No fake terminal as primary UX
+- No childish wizard
+- No heavy technical dashboard on first use
+- Strong spacing, clear hierarchy, readable labels
+- Status colors only where they matter
+- Cards only for meaningful things: approvals, evidence, project summaries
+- Think: enterprise product studio + client portal
+
+---
 
 ## Goal
 
-Build SignalOS v4 — the governed agent loop. Replace the current dumb chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 13 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally in chat — no separate Deliver page, no wizard, no fake terminal. One conversation surface. Any AI provider. The user is the client. The agents are the team. SignalOS is the software house.
+Build Foundry v4 — the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 13 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally — one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
 
 Every v3 module is either actively used, intentionally marked optional with justification, or de-scoped with proof. No forced integration. No fake usage.
+
+---
+
+## Main UX Shape
+
+The whole app is one simple flow:
+
+### 1. New Product
+User types: "I want a task management system for my team to manage tasks, workload, utilization, and KPIs."
+
+### 2. Product Brief
+Foundry explains what it understood — in business language, not developer jargon. Entities, workflows, users, surfaces — presented as a clear brief the client can read and approve.
+
+### 3. Team Plan
+Shows who will do what. The user sees the team, not the tools:
+
+| Role | What they do |
+|------|-------------|
+| **Product Strategist** | Understands intent, asks clarifying questions |
+| **Domain Analyst** | Extracts entities, workflows, acceptance criteria |
+| **UX Designer** | Selects design system, creates interactive preview |
+| **Solution Architect** | Plans the build, selects stack, scopes tasks |
+| **Full-Stack Engineer** | Writes product code (components, API, tests) |
+| **QA Lead** | Validates build, tests, mutation score |
+| **Security Reviewer** | Injection scan, PII detection, compliance |
+| **Release Manager** | Deploy decision, closeout, handoff |
+
+The user does NOT manage agents manually. Foundry assigns and coordinates them. The user sees progress, not process.
+
+### 4. Approvals
+User approves decisions at meaningful points only — not every micro-step:
+
+- **Product scope** (G0-G1): "Is this what you want built?"
+- **Design direction** (G3): "Does this look right?" (with interactive preview)
+- **Launch decision** (G5): "Ready to ship?"
+
+Everything else is the team doing their job. The user watches progress, not approves every file write.
+
+### 5. Build Progress
+Clear visible stages — not a phase strip with internal codes:
+
+```
+Brief --> Design --> Build --> Validate --> Security --> Launch --> Handoff
+```
+
+Each stage shows: what's happening, who's working, what's done, what's next.
+
+### 6. Evidence
+Build/test/runtime/UX/security proof shown in plain language:
+
+- "All 12 tests pass"
+- "Dev server starts and responds on port 5173"
+- "No injection vulnerabilities found"
+- "HIPAA compliance flagged — audit trail enabled"
+
+Not: "BLOCK_MERGE severity, Layer 1 validator exit code 0."
+
+### 7. Handoff
+What was built, where it lives, how to run it, what passed, what still needs attention. A document the client can share with their team.
+
+---
+
+## Navigation
+
+### App-level sidebar
+
+| Item | Purpose | Dead? |
+|------|---------|-------|
+| **Projects** | List of products, workspace switcher | Active |
+| **New Product** | Start a new delivery | Active |
+| **Team** | See agent team status and activity | Active |
+| **Evidence** | Cross-project evidence and proof | Active |
+| **Settings** | Provider, identity, preferences | Active |
+| **Help** | Guide, onboarding, support | Active |
+
+No dead pages. Every nav item either works or is hidden.
+
+### Inside a project
+
+| Item | Purpose | Dead? |
+|------|---------|-------|
+| **Build** | The conversation — where everything happens | Active |
+| **Preview** | Live iframe of running product | Active |
+| **Evidence** | Build/test/security/proof evidence for this project | Active |
+| **Handoff** | What was built, how to run, what's next | Active |
+| **Activity** | Audit trail, gate history, agent actions | Active |
+
+---
+
+## Agent Team
+
+The agents are presented as **Foundry specialists**, not random bots or internal role codes.
+
+| Internal role | User-facing name | Gate |
+|--------------|-----------------|------|
+| G0 onboarding agent | **Product Strategist** | G0 |
+| G1 brainstorm agent | **Domain Analyst** | G1 |
+| G3 design agent | **UX Designer** | G3 |
+| G2 plan agent | **Solution Architect** | G2 |
+| G4 build agent | **Full-Stack Engineer** | G4 |
+| G4 test agent | **QA Lead** | G4 |
+| Security agent | **Security Reviewer** | G4-G5 |
+| G5 release agent | **Release Manager** | G5 |
+
+In the chat, agent messages show the specialist name:
+
+```
+[Product Strategist] I've analyzed your request. Here's what I understand...
+[UX Designer] Based on the product scope, I recommend Mantine for the UI...
+[Full-Stack Engineer] Building the Task component... [writing src/components/Task.tsx]
+[QA Lead] All 12 tests pass. Mutation score: 87%.
+```
+
+The user never selects, configures, or manages agents. Foundry assigns the right specialist for each phase.
 
 ---
 
@@ -415,34 +563,78 @@ Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 proves parit
 
 ## Final Layout (v4)
 
+### App-level (no project open)
+
 ```
 +-------------------------------------------------------------------+
-| Toolbar: [WorkspaceSwitcher] [Build] [Preview] [Dashboard]        |
+|  Foundry                                          [Settings] [Help]|
 +---------------+---------------------------------------------------+
 |               |                                                   |
-|   Sidebar     |   Build (chat -- the only surface)                |
-|   +---------+ |   +-------------------------------------------+  |
-|   |Projects | |   | User: "Build task management for my team"  |  |
-|   |Files    | |   |                                            |  |
-|   |Gov      | |   | Agent: "I understand. Let me extract the   |  |
-|   | Gates   | |   |  intent..." [reading workspace...]         |  |
-|   | Debt    | |   |                                            |  |
-|   +---------+ |   | G0 Review: [intent summary card]           |  |
-|               |   | [Approve] [Conditions] [Changes] [Reject]  |  |
-|   Vault       |   | [Waive]                                    |  |
-|   Settings    |   |                                            |  |
-|               |   | User: "Approve"                            |  |
-|               |   |                                            |  |
-|               |   | Agent: "Building plan..."                  |  |
-|               |   | [writing src/components/Task.tsx] +        |  |
-|               |   | [diff: +42 lines] [checkmark]             |  |
-|               |   |                                            |  |
-|               |   | G3 Review: [design preview iframe]         |  |
-|               |   | [Approve] [Conditions] [Changes] [Reject]  |  |
-|               |   | [Waive]                                    |  |
-|               |   +-------------------------------------------+  |
-|               |   [input: type a message or /command...]         |
+|  Projects     |   Welcome to Foundry                              |
+|  + New Product|                                                   |
+|               |   Your AI product team, governed from idea        |
+|  Team         |   to launch. Start by describing what you         |
+|  Evidence     |   want to build.                                  |
+|  Settings     |                                                   |
+|  Help         |   [+ New Product]                                 |
+|               |                                                   |
+|  Recent:      |   Recent projects:                                |
+|  - TeamPulse  |   [TeamPulse] [MedUnify] [RecipeApp]              |
+|  - MedUnify   |                                                   |
 +---------------+---------------------------------------------------+
 ```
 
-3 tabs. 1 chat surface. Any provider. 5 verdicts. Full governance. 57 tests. No exceptions.
+### Inside a project
+
+```
++-------------------------------------------------------------------+
+|  Foundry > TeamPulse                   [Build] [Preview] [Evidence]|
++---------------+---------------------------------------------------+
+|               |                                                   |
+|  Build        |   Build (the conversation)                        |
+|  Preview      |   +-------------------------------------------+  |
+|  Evidence     |   | User: "Build task management for my team"  |  |
+|  Handoff      |   |                                            |  |
+|  Activity     |   | [Product Strategist]                       |  |
+|               |   | "I've analyzed your request. Here's what   |  |
+|               |   |  I understand..."                          |  |
+|               |   | [Product Brief card]                       |  |
+|               |   |                                            |  |
+|               |   | Scope Approval:                            |  |
+|               |   | "Does this match what you want built?"     |  |
+|               |   | [Approve] [Request Changes] [Reject]       |  |
+|               |   |                                            |  |
+|               |   | User: "Yes, but add KPI dashboards"        |  |
+|               |   |                                            |  |
+|               |   | [UX Designer]                              |  |
+|               |   | "Here's the design direction..."           |  |
+|               |   | [interactive preview iframe]               |  |
+|               |   |                                            |  |
+|               |   | Design Approval:                           |  |
+|               |   | [Approve] [Request Changes]                |  |
+|               |   |                                            |  |
+|               |   | [Full-Stack Engineer]                      |  |
+|               |   | "Building..."                              |  |
+|               |   | [writing src/components/Task.tsx] [check]  |  |
+|               |   | [diff: +42 lines]                         |  |
+|               |   |                                            |  |
+|               |   | Brief -> Design -> [Build] -> Validate ... |  |
+|               |   +-------------------------------------------+  |
+|               |   [Type a message...]                             |
++---------------+---------------------------------------------------+
+```
+
+### Visual rules applied
+
+- Off-white background, charcoal text, deep blue for trust, amber for active build
+- Agent messages show specialist name, not "SignalOS" or "AI"
+- Approval cards are large, clear, meaningful — not tiny pills
+- Progress bar shows business stages (Brief, Design, Build...) not gate codes
+- Evidence shown in plain language
+- No overlapping panels, no translucent layers
+- Strong spacing between cards
+- Status colors only on approvals and evidence
+
+---
+
+Foundry by SignalOS. Premium product studio. Any provider. 5 verdicts. Full governance. 57 tests. No exceptions.
