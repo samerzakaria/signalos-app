@@ -175,11 +175,11 @@ LLM call failures, tool execution failures, governance denials, and validation f
 ### INV-5: Persisted agent run state
 Every agent run has a unique run ID. The event log, tool-call ledger, conversation history, and gate state are persisted to `.signalos/agent-runs/<run-id>/`. If the sidecar crashes or restarts, the run can be resumed from the last checkpoint. Tool calls are idempotent (re-executing a write that already succeeded is a no-op).
 
-### INV-7: Text-only mode cannot close delivery
-If a provider does not support tool calling, Foundry can explain, plan, and guide in text-only mode. But delivery closure (status "ready") REQUIRES tool execution, a real product repo, executed tests, runtime proof, UX proof, and evidence closeout. Text-only mode can produce a Brief and Team Plan but cannot produce a shipped product. The closeout must honestly state "text-only mode -- no product built" if tools were never executed.
-
 ### INV-6: CI independence from live providers
 CI tests MUST use deterministic fake providers (`TestProvider`). Live provider tests (T01-T04) are optional smoke tests gated behind env vars, never blocking CI.
+
+### INV-7: Text-only mode cannot close delivery
+If a provider does not support tool calling, Foundry can explain, plan, and guide in text-only mode. But delivery closure (status "ready") REQUIRES tool execution, a real product repo, executed tests, runtime proof, UX proof, and evidence closeout. Text-only mode can produce a Brief and Team Plan but cannot produce a shipped product. The closeout must honestly state "text-only mode -- no product built" if tools were never executed.
 
 ---
 
@@ -409,13 +409,11 @@ Agent Loop (the governed runtime)
     |    |--- No direct governance file edits (.signalos/, gate frontmatter)
     |    |--- Audit ledger entry for every tool call (allowed or denied)
     |--- Execute allowed tool calls
-    |--- GATE CHECK after each round:
-    |    |--- Query wave_engine.inspect()
-    |    |--- If gate boundary reached --> pause, emit GatePause event
-    |--- Loop until LLM done or gate reached
+    |--- Loop until LLM signals completion or tool-call limit reached
+    |--- Emit WorkComplete event to orchestrator
     |
     v
-Gate checkpoint --> user reviews --> 5 verdicts:
+Orchestrator checks wave_engine.inspect() --> gate boundary? --> user reviews --> 5 verdicts:
     |--- APPROVE --> call sign.py:sign_artifact(), advance
     |--- APPROVE-WITH-CONDITIONS --> sign with conditions logged, advance
     |--- REQUEST-CHANGES --> bounded rework (max 3), agent re-works
@@ -600,7 +598,7 @@ All tests in the test matrix must pass. No exceptions. No relaxing.
 | `lifecycle.py` | Agent loop state | Delivery state machine |
 | `repair_loop.py` | Agent loop retry | Bounded rework on failures |
 | `design_preview.py` | ChatPreviewBubble.tsx | Inline iframe preview |
-| `wave_engine.py` | Agent loop gate detection | State machine + inspect |
+| `wave_engine.py` | Orchestrator gate detection | State machine + inspect (called by orchestrator after each loop run, not by agent loop) |
 | `orchestrator.py` | Agent loop file writing | Pre-write guard, audit |
 | `sign.py` | Agent loop gate signing (INV-3) | The ONLY signing path |
 | `validate_cmd.py` | Agent loop validators | 12 Layer 1 validators |
@@ -733,7 +731,7 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 
 ```
 Phase 1 (UI)         Phase 2 (Runtime)         Phase 3 (Wire)       Phase 4 (Parity)
-  1.1 (flag) --+
+  1.1 ---------+
   1.2 ---------+
   1.3 ---------+---> 3.6 (events render)
   1.4 ---------+
