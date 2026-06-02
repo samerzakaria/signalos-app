@@ -688,6 +688,8 @@ Live-provider validation reported on 2026-06-02: 9 pass, 0 fail, 1 skip. Passing
 | T37 | WAIVE cannot satisfy mandatory proof (INV-1) | No-skip policy | Waive G5, verify delivery cannot close as "ready" | Required CI |
 | T38 | Gate signed in audit trail | Audit | After T32, check AUDIT_TRAIL.jsonl has gate signature | Required CI |
 
+Gate-matrix validation on 2026-06-02: T26-T38 passed through `python -m pytest python/test_product_gate_orchestrator.py python/test_product_e2e_v4.py -q` with 17 total tests passing. `test_product_gate_orchestrator.py` covers the G0-G5 gate walk, all five verdict paths, sign-on-approve via the signing API, bounded request-changes/reject loops, waiver non-readiness, G3 preview, delivery resume, and real sign audit evidence.
+
 ### Full Delivery E2E (T39-T44)
 
 | # | Test | What it proves | How to verify | CI? |
@@ -700,6 +702,8 @@ Live-provider validation reported on 2026-06-02: 9 pass, 0 fail, 1 skip. Passing
 | T44 | Sidecar crash --> run resumes from checkpoint | INV-5 | Kill sidecar during delivery, restart, verify resumes | Required CI |
 
 Live-provider smoke note: T39 gate walk + real provider response passed on 2026-06-02. Full T39 delivery closure still requires the INV-2 evidence listed in the row: real product repo, executed tests, runtime proof, UX proof, and evidence closeout.
+
+Required E2E validation on 2026-06-02: T40/T43/T44 passed through `python -m pytest python/test_product_gate_orchestrator.py python/test_product_e2e_v4.py -q` with 17 total tests passing. `test_product_e2e_v4.py` covers HIPAA/GDPR/PII flagging, honest partial closeout when proofs are missing, and persisted delivery resume after simulated sidecar memory loss.
 
 ### UI/UX (T45-T52)
 

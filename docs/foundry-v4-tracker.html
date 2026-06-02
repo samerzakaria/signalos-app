@@ -2,7 +2,7 @@
 {
   "name": "Foundry v4 Tracker",
   "schemaVersion": 1,
-  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup plus the 2026-06-02 live-provider smoke matrix."
+  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup, the 2026-06-02 live-provider smoke matrix, and deterministic closure of T26-T44 rows except T56/T57 external CI/release proof."
 }
 </script>
 <html lang="en">
@@ -327,6 +327,19 @@ const SEED_STATE = {
   "T23": "done",
   "T24": "done",
   "T25": "done",
+  "T26": "done",
+  "T27": "done",
+  "T28": "done",
+  "T29": "done",
+  "T30": "done",
+  "T31": "done",
+  "T32": "done",
+  "T33": "done",
+  "T34": "done",
+  "T35": "done",
+  "T36": "done",
+  "T37": "done",
+  "T38": "done",
   "T54": "done",
   "T14": "done",
   "T15": "done",
@@ -341,10 +354,13 @@ const SEED_STATE = {
   "T53": "done",
   "T55": "done",
   "T39": "done",
+  "T40": "done",
   "T41": "done",
-  "T42": "done"
+  "T42": "done",
+  "T43": "done",
+  "T44": "done"
 };
-const SEED_VERSION = "v4-progress-2026-06-02-live-provider-smoke";
+const SEED_VERSION = "v4-progress-2026-06-02-t26-t44-closed";
 const LS = "foundry-v4-tracker";
 
 function loadState() {
