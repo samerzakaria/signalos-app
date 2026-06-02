@@ -99,6 +99,41 @@ def _pick_latest_gemini(models: list[str]) -> str:
     return sorted(models)[-1] if models else ""
 
 
+def _ollama_base() -> str:
+    return os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+
+
+def _resolve_ollama_model() -> str:
+    """Discover a pulled Ollama model from the local daemon (no guessing).
+
+    SIGNALOS_MODEL wins if set; otherwise ask the daemon /api/tags what is
+    actually installed and use the first model. Raises if the daemon is down or
+    has no models, so the caller surfaces it (INV-4) instead of guessing.
+    """
+    import json as _json
+    import urllib.request
+
+    override = os.getenv("SIGNALOS_MODEL")
+    with urllib.request.urlopen(f"{_ollama_base()}/api/tags", timeout=10) as r:  # noqa: S310
+        data = _json.loads(r.read().decode("utf-8"))
+    installed = [m.get("name") for m in data.get("models", []) if m.get("name")]
+    chosen = None
+    if override:
+        bare = override.split("/", 1)[-1]  # tolerate a passed-in ollama/ prefix
+        if bare in installed:
+            chosen = bare
+        else:
+            print(f"    (WARNING: SIGNALOS_MODEL={override!r} not pulled in Ollama; "
+                  f"installed: {installed}; using first installed)")
+    if chosen is None:
+        if not installed:
+            raise RuntimeError("Ollama daemon has no models pulled (run: ollama pull <model>)")
+        chosen = installed[0]
+    # Explicit ollama/ prefix -> LiteLLM routes to the local daemon (the path
+    # passthrough in _normalize_litellm_model respects it; no global coupling).
+    return f"ollama/{chosen}"
+
+
 def _resolve_gemini_model(api_key: str) -> str:
     """Discover the live latest model; honor SIGNALOS_MODEL only if it's real.
 
@@ -166,10 +201,12 @@ def run() -> int:
         except Exception as exc:  # INV-4: surface
             status, detail = "fail", f"{type(exc).__name__}: {exc}"
         _record(results, test_id, status, detail)
-    # T04 Ollama -- separate runtime
+    # T04 Ollama -- local runtime, no key; needs the daemon + a pulled model.
     if os.getenv("SIGNALOS_LLM_PROVIDER") == "ollama":
         try:
-            status, detail = _provider_responds("ollama", os.getenv("SIGNALOS_MODEL", "llama3"))
+            ollama_model = _resolve_ollama_model()
+            print(f"    (ollama local model: {ollama_model})")
+            status, detail = _provider_responds("ollama", ollama_model)
         except Exception as exc:
             status, detail = "fail", f"{type(exc).__name__}: {exc}"
         _record(results, "T04", status, detail)

@@ -141,6 +141,18 @@ class TestLiteLLMCallPath:
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         assert _normalize_litellm_model("gemini-2.0-flash") == "gemini-2.0-flash"
 
+    def test_ollama_explicit_prefix_is_preserved(self, monkeypatch):
+        # Ollama must be selected by an explicit LiteLLM provider path so one
+        # process can safely test cloud and local providers without env coupling.
+        monkeypatch.setenv("SIGNALOS_LLM_PROVIDER", "ollama")
+        assert _normalize_litellm_model("qwen2.5-coder:14b") == "qwen2.5-coder:14b"
+        assert _normalize_litellm_model("ollama/qwen2.5-coder:14b") == "ollama/qwen2.5-coder:14b"
+
+        lm = _fake_litellm(response=_text_response("ready"))
+        prov = LiteLLMAgentProvider(litellm_module=lm)
+        prov.chat(messages=[{"role": "user", "content": "hi"}], model="ollama/qwen2.5-coder:14b")
+        assert lm._captured["model"] == "ollama/qwen2.5-coder:14b"
+
     def test_adapter_drops_tools_when_unsupported(self):
         # ProviderAdapter must not forward tools if the provider can't use them.
         lm = _fake_litellm(response=_text_response("text only"))
