@@ -80,7 +80,7 @@
 <h1>Foundry v4 &#8212; Governed Agent Loop &#183; Build Tracker</h1>
 <div class="meta">
   <span class="branch-tag">feat/v4-governed-agent-loop</span>
-  <span class="session-tag">P1+P2 built &#183; tsc clean, 86 py tests pass &#183; P3 wiring next</span>
+  <span class="session-tag">P1+P2 proof gaps closed &#183; vitest 245 + build green &#183; full pytest blocked by WSL security guard</span>
   <span>~251h agent est &#183; 169h build + 82h tests &#183; P1&#8741;P2 parallel &#183; 90 tracked items</span>
   <button class="reset-btn" onclick="resetToSeed()">&#8634; reset to plan seed</button>
 </div>
@@ -304,24 +304,26 @@ const SEED_STATE = {
   "T17": "done",
   "T18": "done",
   "T19": "done",
+  "T20": "done",
   "T21": "done",
+  "T22": "done",
   "T23": "done",
   "T24": "done",
   "T25": "done",
   "T54": "done",
-  "T14": "in-progress",
-  "T15": "in-progress",
-  "T45": "in-progress",
-  "T46": "in-progress",
-  "T47": "in-progress",
-  "T48": "in-progress",
-  "T49": "in-progress",
-  "T50": "in-progress",
-  "T52": "in-progress",
+  "T14": "done",
+  "T15": "done",
+  "T45": "done",
+  "T46": "done",
+  "T47": "done",
+  "T48": "done",
+  "T49": "done",
+  "T50": "done",
+  "T52": "done",
   "T53": "in-progress",
-  "T55": "in-progress"
+  "T55": "done"
 };
-const SEED_VERSION = "v4-progress-2026-06-02";
+const SEED_VERSION = "v4-progress-2026-06-02-p1p2-gaps";
 const LS = "foundry-v4-tracker";
 
 function loadState() {
@@ -440,4 +442,22 @@ const openTracks = new Set(["p1","p2","p3","p4"]);
 function isOpen(id) { return openTracks.has(id); }
 function toggleTrack(id) {
   if (openTracks.has(id)) openTracks.delete(id); else openTracks.add(id);
-  document.getEleme
+  const toggle = document.getElementById("toggle-" + id);
+  const body = document.getElementById("body-" + id);
+  if (toggle) toggle.classList.toggle("open", openTracks.has(id));
+  if (body) body.classList.toggle("open", openTracks.has(id));
+}
+
+function cycleStatus(id) {
+  const state = loadState();
+  const current = state[id] || "pending";
+  const next = STATUS_CYCLE[(STATUS_CYCLE.indexOf(current) + 1) % STATUS_CYCLE.length];
+  state[id] = next;
+  saveState(state);
+  render();
+}
+
+render();
+</script>
+</body>
+</html>

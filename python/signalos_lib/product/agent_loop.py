@@ -747,8 +747,16 @@ class AgentLoop:
         self._validate_workspace_write(target)
         # Security scan on write content (2.9) — reuse security_gate.
         warnings = self._scan_write_content(rel_path, content)
+        before = ""
+        if target.is_file():
+            try:
+                before = target.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                before = ""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        # 3.6: emit a diff event so the UI can render a FileDiffBubble.
+        self._emit({"type": "diff", "path": rel_path, "before": before, "after": content})
         msg = f"OK: wrote {len(content)} bytes to {rel_path}"
         if warnings:
             msg += "\nSECURITY WARNINGS:\n" + "\n".join(f"- {w}" for w in warnings)
@@ -773,6 +781,8 @@ class AgentLoop:
         updated = original.replace(old, new, 1)
         warnings = self._scan_write_content(rel_path, updated)
         target.write_text(updated, encoding="utf-8")
+        # 3.6: emit a diff event so the UI can render a FileDiffBubble.
+        self._emit({"type": "diff", "path": rel_path, "before": original, "after": updated})
         msg = f"OK: edited {rel_path}"
         if warnings:
             msg += "\nSECURITY WARNINGS:\n" + "\n".join(f"- {w}" for w in warnings)

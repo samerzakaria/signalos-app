@@ -93,6 +93,10 @@ declare global {
     /** Phase 1.5/3: submit a gate verdict to the paused agent loop. Optional
      *  until the agent-loop IPC is wired in Phase 3. */
     submitGateVerdict?: (bubbleId: string, verdict: string, feedback: string) => void;
+    /** Phase 3: cancel the in-flight agent run (agent:cancel). */
+    cancelAgentRun?: () => void;
+    /** Phase 3: resume a cancelled/crashed agent run (agent:resume). */
+    resumeAgentRun?: (runId?: string) => void;
     shareProject: () => void;
     showFileWriteToast: (files: unknown) => void;
     showNotifications: () => void;

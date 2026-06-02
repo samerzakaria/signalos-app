@@ -8,8 +8,10 @@ import './services/chat';
 import './services/workspace';
 import './services/approvePlan';
 import './services/orchestratorEvents';
+import './services/agentEvents';
 import './services/fileTree';
 import './services/preview';
 import './services/protocolContext';
+
 
 render(<App />, document.getElementById('root') as HTMLElement);

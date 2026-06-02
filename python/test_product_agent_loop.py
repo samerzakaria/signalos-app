@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -228,6 +230,27 @@ class TestToolExecution(unittest.TestCase):
             self.assertIn("hello", tool_msgs[0]["content"])
             self.assertIn("exit_code: 0", tool_msgs[0]["content"])
 
+    def test_run_command_timeout_is_enforced(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("run_command", {"command": "long-running-command"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider)
+
+            with patch(
+                "signalos_lib.product.agent_loop.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("long-running-command", 120),
+            ):
+                result = loop.run("sys", "run a command that hangs")
+
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("timed out", tool_msgs[0]["content"])
+            self.assertIn("killed", tool_msgs[0]["content"])
+
 
 # ---------------------------------------------------------------------------
 # Governance denials (T16-T19, T25)
@@ -252,6 +275,32 @@ class TestGovernance(unittest.TestCase):
             )
             self.assertIn("DENIED", content)
             self.assertFalse((root / ".env").exists())
+
+    def test_denial_emits_user_visible_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": ".env", "content": "SECRET=1"}),
+                    _end_resp(),
+                ]
+            )
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="denial-run",
+                emit=events.append,
+            )
+
+            loop.run("sys", "write .env")
+
+            denial_events = [e for e in events if e.get("type") == "tool_denied"]
+            self.assertEqual(len(denial_events), 1)
+            self.assertEqual(denial_events[0]["tool"], "write_file")
+            self.assertIn(".env", denial_events[0]["reason"])
 
     def test_write_signalos_denied(self):
         with tempfile.TemporaryDirectory() as d:
@@ -489,6 +538,24 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # list_directory tool (Gap 5) + trust-tier-paths seed (Gap 6)
 # ---------------------------------------------------------------------------
+
+
+class TestDiffEvent(unittest.TestCase):
+    def test_write_emits_diff_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            events = []
+            provider = AgentTestProvider(
+                script=[_tool_resp("write_file", {"path": "a.txt", "content": "hello"}), _end_resp()]
+            )
+            loop = _loop(root, provider)
+            loop._emit = events.append  # capture emitted events
+            loop.run("sys", "write a.txt")
+            diffs = [e for e in events if e.get("type") == "diff"]
+            self.assertEqual(len(diffs), 1)
+            self.assertEqual(diffs[0]["path"], "a.txt")
+            self.assertEqual(diffs[0]["before"], "")
+            self.assertEqual(diffs[0]["after"], "hello")
 
 
 class TestListDirectoryAndSeed(unittest.TestCase):

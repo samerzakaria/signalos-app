@@ -1,5 +1,5 @@
 import type { ChatBubble } from '../../state';
-import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy } from '../../state';
+import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId } from '../../state';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
@@ -328,6 +328,17 @@ export function BuildView() {
                   <div className="bubble agent-working">
                     <span className="typing-dot"></span><span className="typing-dot"></span><span className="typing-dot"></span>
                     <span className="agent-working-label">working…</span>
+                    <button type="button" className="agent-stop-btn" onClick={() => window.cancelAgentRun?.()}>Stop</button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            {resumableRunId.value ? (
+              <div className="msg spark" data-testid="agent-resume">
+                <div className="msg-av"><i className="ti ti-refresh" style={{ 'fontSize': '15px' }}></i></div>
+                <div>
+                  <div className="bubble">
+                    <button type="button" className="agent-resume-btn" onClick={() => window.resumeAgentRun?.()}>Resume run</button>
                   </div>
                 </div>
               </div>

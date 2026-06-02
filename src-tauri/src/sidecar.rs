@@ -177,6 +177,14 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                                     continue;
                                 }
                             }
+                            // Phase 3 Stream B: agent events carry
+                            // kind="agent-event". Pass the full envelope through
+                            // unchanged as the "agent:event" payload for the
+                            // frontend (Stream C) to parse.
+                            if value.get("kind").and_then(|v| v.as_str()) == Some("agent-event") {
+                                let _ = app_emit.emit("agent:event", &value);
+                                continue;
+                            }
                             if let Ok(resp) = serde_json::from_value::<SidecarResponse>(value) {
                                 let _ = app_emit.emit("sidecar:response", &resp);
                                 continue;

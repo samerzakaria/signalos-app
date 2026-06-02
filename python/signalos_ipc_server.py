@@ -140,6 +140,20 @@ def handle(req: dict) -> dict:
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
+    # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
+    # not the legacy redacted string list. Route them off the raw payload so
+    # the structured object (prompt, run_id, etc.) survives intact.
+    if command in ("agent:run", "agent:verdict", "agent:cancel", "agent:resume"):
+        try:
+            return route_agent(req_id, command, raw_args, project_id=project_id)
+        except Exception as exc:
+            return {
+                "id": req_id,
+                "ok": False,
+                "error": redact_text(f"{type(exc).__name__}: {exc}"),
+                "trace": redact_text(traceback.format_exc()),
+            }
+
     try:
         return route(req_id, command, args, project_id=project_id)
     except Exception as exc:
@@ -331,6 +345,273 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
         ))
 
     return err(req_id, f"Unknown command: {command}")
+
+
+def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "default") -> dict:
+    """Dispatch Phase 3 Stream A agent:* commands.
+
+    These bridge the frontend chat surface to product/agent_loop.AgentLoop.
+    Each loop event is wrapped in an agent-event envelope and printed on
+    stdout so the Rust multiplexer (Stream B) can route it to the Tauri
+    "agent:event" channel. The final SidecarResponse carries the run
+    summary. raw_args is a SINGLE JSON object (not the legacy string list).
+    """
+    if command == "agent:run":
+        return agent_run(req_id, raw_args, project_id=project_id)
+    if command == "agent:verdict":
+        return agent_verdict(req_id, raw_args, project_id=project_id)
+    if command == "agent:cancel":
+        return agent_cancel(req_id, raw_args, project_id=project_id)
+    if command == "agent:resume":
+        return agent_resume(req_id, raw_args, project_id=project_id)
+    return err(req_id, f"Unknown command: {command}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Stream A: agent loop bridge
+# ---------------------------------------------------------------------------
+#
+# Injection seam (INV-6, deterministic tests): tests set the module-level
+# hooks `_AGENT_ADAPTER_FACTORY` and/or `_AGENT_ENFORCEMENT_FACTORY` so the
+# handler builds a deterministic AgentTestProvider + StaticEnforcementProvider
+# instead of constructing a live LiteLLM-backed adapter. In production both
+# hooks are None and the handler builds the real provider adapter.
+#
+#   _AGENT_ADAPTER_FACTORY(model: str) -> ProviderAdapter
+#   _AGENT_ENFORCEMENT_FACTORY() -> EnforcementProvider
+#
+# The cancellation registry maps run_id -> bool. agent:cancel sets the flag;
+# the AgentLoop's cancel_check polls it between tool calls.
+
+_AGENT_ADAPTER_FACTORY = None       # set by tests; signature: (model: str) -> ProviderAdapter
+_AGENT_ENFORCEMENT_FACTORY = None   # set by tests; signature: () -> EnforcementProvider
+_AGENT_CANCEL_FLAGS: dict[str, bool] = {}
+_AGENT_DEFAULT_MODEL = "claude-sonnet-4-5"
+
+
+def _coerce_agent_args(args: Any) -> dict:
+    """agent:* commands take a single JSON object. The IPC transport may hand
+    us either the already-parsed dict, a one-element list wrapping a JSON
+    string, or a bare JSON string. Normalize all three to a dict."""
+    payload = args
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
+    if isinstance(payload, str):
+        payload = json.loads(payload) if payload.strip() else {}
+    if not isinstance(payload, dict):
+        raise ValueError("agent command requires a single JSON object argument")
+    return payload
+
+
+def _build_agent_adapter(model: str):
+    """Construct the ProviderAdapter. Honors the test injection seam."""
+    if _AGENT_ADAPTER_FACTORY is not None:
+        return _AGENT_ADAPTER_FACTORY(model)
+    from signalos_lib.product.provider_adapter import ProviderAdapter
+    return ProviderAdapter(model=model)
+
+
+def _build_agent_enforcement():
+    """Construct the EnforcementProvider. Honors the test injection seam.
+
+    Returns None in production so AgentLoop falls back to its own default
+    (StaticEnforcementProvider), which Phase 3 Stream B will swap for the
+    Rust-authoritative provider."""
+    if _AGENT_ENFORCEMENT_FACTORY is not None:
+        return _AGENT_ENFORCEMENT_FACTORY()
+    return None
+
+
+def _agent_emit(run_id: str):
+    """Build the emit callback for an AgentLoop run.
+
+    Each loop event dict is wrapped in the agent-event envelope and printed
+    as one newline-delimited JSON object on stdout (flush=True), mirroring
+    the ProgressEmitter._emit pattern. Rust routes kind=="agent-event"
+    lines to the Tauri "agent:event" channel (Stream B)."""
+    def emit_cb(ev: dict) -> None:
+        envelope = {"kind": "agent-event", "run_id": run_id, "type": ev.get("type", "")}
+        for k, v in ev.items():
+            if k == "type":
+                continue
+            # Don't let a loop dict's own run_id shadow the authoritative one.
+            if k == "run_id":
+                continue
+            envelope[k] = v
+        print(json.dumps(redact_response(envelope)), flush=True)
+    return emit_cb
+
+
+def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:run -> construct an AgentLoop, stream agent-event lines, return
+    a summary SidecarResponse {run_id, status, tool_calls_made}."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:run args invalid: {exc}")
+
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return err(req_id, "agent:run requires a non-empty 'prompt'")
+    system_prompt = str(payload.get("system_prompt") or "You are SignalOS, a governed build agent.")
+    run_id = str(payload.get("run_id") or "").strip() or None
+    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
+
+    from signalos_lib.product.agent_loop import AgentLoop
+
+    repo_root = Path(os.getcwd())
+    try:
+        adapter = _build_agent_adapter(model)
+    except Exception as exc:  # INV-4: surface, do not swallow
+        run_id_for_err = run_id or "agent-unstarted"
+        _agent_emit(run_id_for_err)({"type": "error", "error": f"provider init failed: {exc}"})
+        return err(req_id, f"agent:run provider init failed: {type(exc).__name__}: {exc}")
+
+    enforcement = _build_agent_enforcement()
+    loop = AgentLoop(
+        adapter=adapter,
+        repo_root=repo_root,
+        enforcement_provider=enforcement,
+        run_id=run_id,
+        emit=None,  # replaced below once run_id is finalized
+        cancel_check=None,
+    )
+    # AgentLoop assigns its own run_id when None was passed; bind emit + cancel
+    # to that final id so envelopes and cancellation share one key.
+    final_run_id = loop.run_id
+    _AGENT_CANCEL_FLAGS.setdefault(final_run_id, False)
+    loop._emit = _agent_emit(final_run_id)
+    loop._cancel_check = lambda rid=final_run_id: _AGENT_CANCEL_FLAGS.get(rid, False)
+
+    try:
+        result = loop.run(system_prompt=system_prompt, user_message=prompt)
+    except Exception as exc:  # INV-4: surface as agent-event AND non-ok response
+        loop._emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+        return err(req_id, f"agent:run failed: {type(exc).__name__}: {exc}")
+    finally:
+        _AGENT_CANCEL_FLAGS.pop(final_run_id, None)
+
+    summary = {
+        "run_id": result.run_id,
+        "status": result.status,
+        "tool_calls_made": result.tool_calls_made,
+    }
+    if result.status == "error":
+        # INV-4: a failed run is a non-ok response carrying the run summary.
+        return {
+            "id": req_id,
+            "ok": False,
+            "error": redact_text(result.error or "agent run failed"),
+            "data": redact_response(summary),
+        }
+    return ok(req_id, output=json.dumps(summary), data=summary)
+
+
+def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:verdict -> validate + record a gate verdict via gate_review.
+
+    INV-3: verdict handling routes through gate_review (classify_review +
+    handle_request_changes / handle_rejection / record_review_event). We
+    NEVER write gate signatures here."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:verdict args invalid: {exc}")
+
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return err(req_id, "agent:verdict requires 'run_id'")
+    raw_verdict = str(payload.get("verdict") or "").strip()
+    if not raw_verdict:
+        return err(req_id, "agent:verdict requires 'verdict'")
+    feedback = str(payload.get("feedback") or "")
+
+    from signalos_lib.product import gate_review
+
+    # Normalize the verdict through classify_review so free-text replies
+    # ("looks good", "no, change X") and explicit verdict tokens both resolve
+    # to the canonical taxonomy.
+    classification = gate_review.classify_review(raw_verdict if raw_verdict else feedback)
+    verdict = classification["verdict"]
+    repo_root = Path(os.getcwd())
+    # gate_id for the run-scoped review is the run_id (review packets are
+    # filed under .signalos/product/reviews/<gate_id>/...).
+    gate_id = str(payload.get("gate_id") or run_id)
+
+    outcome: dict = {
+        "run_id": run_id,
+        "verdict": verdict,
+        "confidence": classification.get("confidence"),
+        "specific_items": classification.get("specific_items", []),
+    }
+    try:
+        if verdict in ("request-changes",):
+            handled = gate_review.handle_request_changes(
+                repo_root=repo_root,
+                gate_id=gate_id,
+                feedback=feedback or classification.get("feedback", ""),
+                specific_items=classification.get("specific_items", []),
+            )
+            outcome["handled"] = handled
+        elif verdict == "reject":
+            handled = gate_review.handle_rejection(
+                repo_root=repo_root,
+                gate_id=gate_id,
+                reason=feedback or classification.get("feedback", ""),
+            )
+            outcome["handled"] = handled
+        else:
+            # approve / approve-with-conditions / waive: record the event only.
+            gate_review.record_review_event(
+                repo_root=repo_root,
+                gate_id=gate_id,
+                verdict=verdict.upper(),
+                feedback=feedback or classification.get("feedback", ""),
+                cycle=0,
+            )
+            outcome["handled"] = {"status": "recorded"}
+    except Exception as exc:  # INV-4
+        return err(req_id, f"agent:verdict failed: {type(exc).__name__}: {exc}")
+
+    return ok(req_id, output=json.dumps({"verdict": verdict}), data=outcome)
+
+
+def agent_cancel(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:cancel -> request cancellation of an in-flight run.
+
+    Sets the cancel flag the loop's cancel_check polls between tool calls."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:cancel args invalid: {exc}")
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return err(req_id, "agent:cancel requires 'run_id'")
+    _AGENT_CANCEL_FLAGS[run_id] = True
+    return ok(req_id, output=f"cancellation requested for {run_id}",
+              data={"run_id": run_id, "cancel_requested": True})
+
+
+def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:resume -> load persisted run state from
+    .signalos/agent-runs/<run_id>/state.json if present."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:resume args invalid: {exc}")
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return err(req_id, "agent:resume requires 'run_id'")
+
+    state_path = Path(os.getcwd()) / ".signalos" / "agent-runs" / run_id / "state.json"
+    if not state_path.is_file():
+        return err(req_id, f"no persisted state for run {run_id}")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return err(req_id, f"agent:resume state unreadable: {exc}")
+    return ok(req_id, output=json.dumps({"run_id": run_id, "resumed": True}),
+              data={"run_id": run_id, "resumed": True, "state": state})
 
 
 def terminal_help_text() -> str:
@@ -904,10 +1185,8 @@ def handle_rollback(args: list[str], cwd: str) -> str:
 # /signal-sandbox disable             -> set enabled=false
 # ---------------------------------------------------------------------------
 
-def handle_sandbox(args: list[str], cwd: str) -> str:
+def handle_sandbox(args, cwd):
     """UI bridge for the sandboxed-execution settings + capability probe."""
-    # Lazy import so the IPC server doesn't pull signalos_lib at startup
-    # (cold-start cost) when nobody asks for sandbox state.
     from signalos_lib.sandbox import (
         docker_available,
         get_sandbox_config,
@@ -926,7 +1205,7 @@ def handle_sandbox(args: list[str], cwd: str) -> str:
         })
 
     if subcommand == "enable":
-        patches: dict = {"enabled": True}
+        patches = {"enabled": True}
         if "image-js" in kv:
             patches["image_js"] = kv["image-js"]
         if "image-py" in kv:
@@ -957,7 +1236,7 @@ def handle_sandbox(args: list[str], cwd: str) -> str:
     })
 
 
-def audit_list(limit: int) -> list[dict]:
+def audit_list(limit):
     for name in ("AUDIT_TRAIL.jsonl", "audit.jsonl"):
         audit_path = os.path.join(os.getcwd(), ".signalos", name)
         if os.path.exists(audit_path):
@@ -975,43 +1254,7 @@ def audit_list(limit: int) -> list[dict]:
     return list(reversed(entries))[:limit]
 
 
-# Wave engine handlers (M-W3..M-W7)
-# Each handler reconstructs a fresh WaveEngine from the workspace root and
-# returns a JSON-serializable result. The engine is stateless across
-# requests in v1 - state lives in .signalos/ (read by inspect()) and in
-# the request payload (current_gate, user_request, etc).
-#
-# IPC contract per command:
-#   wave:begin                args=[user_request]
-#                             -> {action, current_gate, agent, inspection,
-#                                drift, system_bubble}
-#   wave:reply                args=[user_reply, current_gate]
-#                             -> {action, signed_gate?, current_gate,
-#                                system_bubble, auto_signed?, ...}
-#   wave:scope-drift-resolve  args=[user_request, choice(a|b|c|d)]
-#                             -> {action, mode?, current_gate}
-#   wave:translate-external   args=[artifact_path_or_url, optional gate]
-#                             -> {translation, gate, system_bubble}
-#   wave:violation-request    args=[{violation_kind, findings, gate?}]
-#                             -> {prompt, system_bubble}
-#   wave:violation-confirm    args=[{violation_kind, choice, user_reply,
-#                                    findings, gate?}]
-#                             -> {audit_entry, system_bubble}
-#   wave:g5-handoff           args=[wave_id, optional summary_dict]
-#                             -> {commit_outcome, system_bubble}
-
-
-def _build_engine(project_id: str = "default"):
-    """Construct a WaveEngine rooted at the current working directory.
-
-    Deferred import - keeps signalos_ipc_server cheap to import for the
-    non-wave-engine code paths (status, sign, brain, etc.).
-
-    When SIGNALOS_LLM_JUDGE_DRIFT=1 is set (per design section13.Q2 - opt-in
-    LLM-judged scope-drift), the engine is constructed with the harness
-    LLM-judge wired in. The cheap heuristic still runs first; the judge
-    only fires in the ambiguous zone (0.1 < overlap < 0.4).
-    """
+def _build_engine(project_id="default"):
     from pathlib import Path as _Path
     from signalos_lib.wave_engine import WaveEngine
     from signalos_lib.wave_engine_judge import build_llm_judge, llm_judge_enabled
@@ -1024,12 +1267,7 @@ def _build_engine(project_id: str = "default"):
     )
 
 
-def _serialize_engine_result(result: dict) -> dict:
-    """Drop non-JSON-serializable fields (e.g., Path objects) so the
-    structured engine result survives the IPC json.dumps step."""
-    # Paths inside inspection/artifacts already come back as strings via
-    # wave_engine.inspect - but if a future change leaks a Path through,
-    # this layer is a safety net.
+def _serialize_engine_result(result):
     def _walk(obj):
         if isinstance(obj, dict):
             return {k: _walk(v) for k, v in obj.items()}
@@ -1041,21 +1279,17 @@ def _serialize_engine_result(result: dict) -> dict:
     return _walk(result)
 
 
-def wave_begin(user_request: str, project_id: str = "default") -> dict:
+def wave_begin(user_request, project_id="default"):
     eng = _build_engine(project_id)
     result = eng.begin(user_request)
     eng.persist()
     return _serialize_engine_result(result)
 
 
-def wave_reply(user_reply: str, current_gate: str, project_id: str = "default") -> dict:
+def wave_reply(user_reply, current_gate, project_id="default"):
     from signalos_lib.wave_engine import WaveState as _WaveState
 
     eng = _build_engine(project_id)
-    # Fresh engines start in ENTRY state. If persistence has already moved
-    # the engine past ENTRY (e.g., DISPATCH from a prior wave:begin), the
-    # explicit resume_at_dispatch is redundant; honor the caller's
-    # current_gate directly so the IPC contract stays explicit.
     if eng.state is _WaveState.ENTRY:
         try:
             eng.resume_at_dispatch(current_gate)
@@ -1068,17 +1302,9 @@ def wave_reply(user_reply: str, current_gate: str, project_id: str = "default") 
     return _serialize_engine_result(result)
 
 
-def wave_scope_drift_resolve(
-    user_request: str,
-    choice: str,
-    project_id: str = "default",
-) -> dict:
-    """Resolve a scope-drift prompt. Re-runs begin() to land in
-    SCOPE_DRIFT state, then applies the choice."""
+def wave_scope_drift_resolve(user_request, choice, project_id="default"):
     eng = _build_engine(project_id)
     begin_result = eng.begin(user_request)
-    # Verify we actually landed in scope-drift; otherwise the request is
-    # stale (engine no longer thinks there's drift).
     from signalos_lib.wave_engine import WaveState as _WaveState
     if eng.state is not _WaveState.SCOPE_DRIFT:
         return {
@@ -1092,16 +1318,12 @@ def wave_scope_drift_resolve(
     return _serialize_engine_result(result)
 
 
-def wave_translate_external(
-    artifact: str,
-    gate: str | None = None,
-    project_id: str = "default",
-) -> dict:
+def wave_translate_external(artifact, gate=None, project_id="default"):
     eng = _build_engine(project_id)
     return _serialize_engine_result(eng.translate_external(artifact, gate=gate))
 
 
-def wave_violation_request(payload: dict, project_id: str = "default") -> dict:
+def wave_violation_request(payload, project_id="default"):
     eng = _build_engine(project_id)
     kind = str(payload.get("violation_kind") or "").strip()
     if not kind:
@@ -1113,7 +1335,7 @@ def wave_violation_request(payload: dict, project_id: str = "default") -> dict:
     ))
 
 
-def wave_violation_confirm(payload: dict, project_id: str = "default") -> dict:
+def wave_violation_confirm(payload, project_id="default"):
     eng = _build_engine(project_id)
     kind = str(payload.get("violation_kind") or "").strip()
     choice = str(payload.get("choice") or "").strip()
@@ -1132,29 +1354,20 @@ def wave_violation_confirm(payload: dict, project_id: str = "default") -> dict:
     except ValueError as exc:
         return {"action": "error", "error": str(exc)}
 
-    # Caller asked the engine to confirm a violation; the engine returns
-    # the audit entry but doesn't write it (separation of concerns).
-    # The IPC handler appends it to .signalos/AUDIT_TRAIL.jsonl here so
-    # the trail file is the single source of truth from the chat layer's
-    # perspective. _append_audit prepends the ts itself.
     audit_entry = result.get("audit_entry") or {}
     if audit_entry:
         _append_audit(os.getcwd(), audit_entry)
     return _serialize_engine_result(result)
 
 
-def wave_g5_handoff(
-    wave_id: str,
-    summary: dict | None = None,
-    project_id: str = "default",
-) -> dict:
+def wave_g5_handoff(wave_id, summary=None, project_id="default"):
     eng = _build_engine(project_id)
     return _serialize_engine_result(eng.run_g5_handoff(
         wave_id=wave_id, summary=summary or {},
     ))
 
 
-def get_status_json(project_id: str = "default") -> dict:
+def get_status_json(project_id="default"):
     fallback = {
         "wave_id": "-",
         "phase": "ONBOARDING",
@@ -1173,7 +1386,7 @@ def get_status_json(project_id: str = "default") -> dict:
         return fallback
 
 
-def normalize_brain_entry(entry: dict) -> dict:
+def normalize_brain_entry(entry):
     return {
         "id": entry.get("id", ""),
         "text": redact_text(entry.get("content") or entry.get("text") or ""),
@@ -1185,7 +1398,7 @@ def normalize_brain_entry(entry: dict) -> dict:
     }
 
 
-def ok(req_id: str, output: str | None = None, data: Any = None) -> dict:
+def ok(req_id, output=None, data=None):
     return {
         "id": req_id,
         "ok": True,
@@ -1194,21 +1407,16 @@ def ok(req_id: str, output: str | None = None, data: Any = None) -> dict:
     }
 
 
-def err(req_id: str, message: str) -> dict:
+def err(req_id, message):
     return {"id": req_id, "ok": False, "error": redact_text(message)}
 
 
-def main() -> None:
-    # Report readiness only after imports, route definitions, and helper
-    # bindings are complete. The desktop runtime and installed-build smoke
-    # treat this as "stdin IPC is live", not merely "the process started".
+def main():
     sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
     sys.stdout.flush()
 
     for raw_line in sys.stdin:
-        # Windows PowerShell 5.1 can NUL-pad redirected stdin when driving
-        # a PyInstaller sidecar in release smoke. Normalize before JSON parse.
-        line = raw_line.replace("\x00", "").lstrip("\ufeff").strip()
+        line = raw_line.replace("\x00", "").lstrip("﻿").strip()
         if not line:
             continue
 

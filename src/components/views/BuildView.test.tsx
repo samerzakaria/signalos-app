@@ -71,6 +71,76 @@ describe('BuildView chat bubbles', () => {
     // The error bubble has the alert-circle icon as the avatar marker.
     expect(container.querySelector('.ti-alert-circle')).not.toBeNull();
   });
+
+  it('renders tool call bubbles inside the Build conversation', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'tool-1',
+        kind: 'tool',
+        tool: {
+          name: 'read_file',
+          target: 'package.json',
+          status: 'running',
+          summary: 'Reading package.json',
+        },
+      }),
+    ];
+
+    render(<BuildView />);
+
+    const bubble = screen.getByTestId('tool-call-bubble');
+    expect(bubble.querySelector('.tool-call')?.getAttribute('data-tool')).toBe('read_file');
+    expect(screen.getByText('Reading')).toBeInTheDocument();
+    expect(screen.getByText('package.json')).toBeInTheDocument();
+    expect(screen.getByText(/Reading package\.json/i)).toBeInTheDocument();
+  });
+
+  it('renders file diff bubbles inside the Build conversation', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'diff-1',
+        kind: 'diff',
+        diff: {
+          path: 'src/App.tsx',
+          before: 'const title = "Old";',
+          after: 'const title = "New";',
+        },
+      }),
+    ];
+
+    const { container } = render(<BuildView />);
+
+    expect(screen.getByText('src/App.tsx')).toBeInTheDocument();
+    expect(screen.getByTestId('file-diff-bubble')).toBeInTheDocument();
+    expect(container.querySelector('.file-diff-line.add')).not.toBeNull();
+    expect(container.querySelector('.file-diff-line.del')).not.toBeNull();
+  });
+
+  it('renders markdown code blocks inside AI bubbles', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'ai-code',
+        kind: 'ai',
+        text: '```ts\nconst answer = 42;\n```',
+      }),
+    ];
+
+    const { container } = render(<BuildView />);
+
+    const code = container.querySelector('pre code');
+    expect(code).not.toBeNull();
+    expect(code?.textContent).toContain('const answer = 42;');
+    expect(screen.getByRole('button', { name: /copy code/i })).toBeInTheDocument();
+  });
+
+  it('shows the command palette when slash mode is open', () => {
+    cmdPaletteOpen.value = true;
+
+    render(<BuildView />);
+
+    expect(screen.getByText('Commands')).toBeInTheDocument();
+    expect(screen.getByText('/signal-status')).toBeInTheDocument();
+  });
 });
 
 describe('BuildView plan card status -> CTA', () => {

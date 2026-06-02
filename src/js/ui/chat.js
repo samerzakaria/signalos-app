@@ -11,6 +11,12 @@ function nowId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
 }
 
+// Phase 3 (3.7) — every plain natural-language message is routed to the
+// governed agent loop via the Python `agent:run` sidecar command. There is NO
+// feature flag: the agent loop IS the chat path. Streaming text, tool rows,
+// and turn completion arrive over the "agent:event" Tauri channel and are
+// rendered by src/services/agentEvents.ts. sendMsg() only fires the command.
+
 // Milestone 2-a: keep the originating user prompt for each in-flight LLM
 // stream so the audit-trail entry (written when the response guard fires)
 // can include a short trace of what the model was answering. Cleared in
@@ -102,6 +108,41 @@ async function sendMsg() {
       state.chatBubbles = [...state.chatBubbles, { id: nowId(), kind: 'error', text: 'Command failed: ' + (e.message || e) }];
       showError(e.message || 'Command failed');
     } finally {
+      state.busy = false;
+    }
+    return;
+  }
+
+  // Phase 3 Stream C — agent-loop path. When the v4 agent loop is enabled,
+  // route plain natural-language messages to the governed tool-using agent
+  // loop in the Python sidecar via the `agent:run` command. The command is
+  // fire-and-forget from the UI's perspective: streamed text, tool rows, and
+  // turn completion all arrive asynchronously over the "agent:event" Tauri
+  // channel and are rendered by src/services/agentEvents.ts. We keep `busy`
+  // set so the working indicator shows until an end_turn/error/cancelled
+  // event clears it (agentEvents flips busy back to false).
+  //
+  // No flag: natural-language always drives the agent loop. (The legacy
+  // wave-engine + LLM-stream code remains below but is unreachable for NL.)
+  {
+    try {
+      // agent:run takes a single JSON object argument; the sidecar's
+      // _coerce_agent_args accepts a one-element list wrapping a JSON string
+      // (same convention as attachment:analyze). We don't await a streamed
+      // result — agent:event drives the UI. runAndWait still resolves with
+      // the final {run_id, status} summary, which we use only to clear busy
+      // defensively if no terminal event arrived.
+      await ipc.signal.runAndWait('agent:run', [JSON.stringify({ prompt: val })], 600000);
+    } catch (e) {
+      state.chatBubbles = [...state.chatBubbles, {
+        id: nowId(),
+        kind: 'error',
+        text: 'Agent run failed: ' + (e && e.message ? e.message : String(e)),
+      }];
+      showError(e && e.message ? e.message : 'Agent run failed');
+    } finally {
+      // agentEvents normally clears busy on the terminal event; clear here too
+      // so the composer never locks if the run ends without one.
       state.busy = false;
     }
     return;
