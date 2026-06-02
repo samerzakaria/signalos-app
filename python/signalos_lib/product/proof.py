@@ -16,6 +16,7 @@ __all__ = [
 ]
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -24,6 +25,17 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 from .stacks import get_adapter
+
+
+def _proof_timeout_s(default_s: int) -> int:
+    raw = os.environ.get("SIGNALOS_PROOF_TIMEOUT_S", "").strip()
+    if not raw:
+        return default_s
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default_s
+    return parsed if parsed > 0 else default_s
 
 
 # ------------------------------------------------------------------
@@ -129,7 +141,7 @@ def run_runtime_proof(
     command = preview.get("command")
     port = preview.get("port")
     health_path = preview.get("health_path") or "/"
-    plan_timeout = preview.get("timeout_s") or timeout_s
+    plan_timeout = _proof_timeout_s(int(preview.get("timeout_s") or timeout_s))
 
     # No preview command means the profile cannot produce a runtime
     if command is None:

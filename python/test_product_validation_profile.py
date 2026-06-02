@@ -164,6 +164,35 @@ class TestRunValidationRealCommands:
         result = run_validation(tmp_path, plan)
         assert result["results"]["build"]["status"] == "failed"
 
+    def test_timeout_command_is_recorded_as_blocked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S", "1")
+        plan = {
+            "profile": "test",
+            "install": [],
+            "build": [f"{sys.executable} -c \"import time; time.sleep(5)\""],
+            "test": [],
+            "lint": [],
+            "qa": [],
+            "e2e": [],
+            "runtime_smoke": [],
+            "ux_smoke": [],
+            "security": [],
+            "can_validate_build": True,
+            "can_validate_tests": False,
+            "can_validate_runtime": False,
+            "can_deliver_ui": False,
+        }
+
+        result = run_validation(tmp_path, plan)
+
+        build_result = result["results"]["build"]
+        assert build_result["status"] == "blocked"
+        assert "timed out after 1s" in build_result["output"]
+
     def test_can_close_when_build_fails(self, tmp_path: Path):
         plan = {
             "profile": "test",

@@ -1411,12 +1411,12 @@ def err(req_id, message):
     return {"id": req_id, "ok": False, "error": redact_text(message)}
 
 
-def main():
+def main() -> None:
     sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
     sys.stdout.flush()
 
     for raw_line in sys.stdin:
-        line = raw_line.replace("\x00", "").lstrip("﻿").strip()
+        line = raw_line.replace("\x00", "").lstrip("\ufeff").strip()
         if not line:
             continue
 

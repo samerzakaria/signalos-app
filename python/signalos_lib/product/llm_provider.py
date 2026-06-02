@@ -35,6 +35,8 @@ _PROVIDER_ENV_VARS = [
     "SIGNALOS_LLM_PROVIDER",
 ]
 
+_DISABLE_VALUES = {"1", "true", "yes", "on"}
+
 
 @dataclass
 class LLMCallResult:
@@ -53,6 +55,8 @@ def is_llm_available() -> bool:
     set in the environment. Tauri injects all keychain-stored keys at
     sidecar spawn time.
     """
+    if os.environ.get("SIGNALOS_DISABLE_LLM", "").strip().lower() in _DISABLE_VALUES:
+        return False
     return any(os.environ.get(var) for var in _PROVIDER_ENV_VARS)
 
 

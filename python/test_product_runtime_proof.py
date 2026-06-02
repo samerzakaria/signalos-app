@@ -279,6 +279,53 @@ class TestReactVitePreviewCommand:
         assert result["preview_command"] == "npm run dev"
         assert result["status"] == "blocked"
 
+    def test_runtime_proof_timeout_env_bounds_polling(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """SIGNALOS_PROOF_TIMEOUT_S caps runtime proof polling."""
+        from signalos_lib.product.stacks import ReactViteAdapter
+
+        port = _find_free_port()
+        orig_preview = ReactViteAdapter.preview_plan
+
+        class _FakeProc:
+            stdout = None
+
+            def terminate(self) -> None:
+                pass
+
+            def wait(self, timeout: float = 5) -> None:
+                pass
+
+            def kill(self) -> None:
+                pass
+
+        def _fake_start(cmd: str, cwd: Path) -> _FakeProc:
+            return _FakeProc()
+
+        def _patched_preview(self: Any, repo_root: Path) -> dict[str, Any]:
+            return {
+                "command": "python -m http.server",
+                "port": port,
+                "health_path": "/",
+                "timeout_s": 30,
+            }
+
+        monkeypatch.setenv("SIGNALOS_PROOF_TIMEOUT_S", "1")
+        ReactViteAdapter.preview_plan = _patched_preview  # type: ignore[assignment]
+        try:
+            result = run_runtime_proof(
+                tmp_path, "react-vite", _start_fn=_fake_start,
+            )
+        finally:
+            ReactViteAdapter.preview_plan = orig_preview  # type: ignore[assignment]
+
+        assert result["status"] == "failed"
+        assert "within 1s" in " ".join(result["errors"])
+        assert result["duration_s"] < 5
+
 
 # ------------------------------------------------------------------
 # Live server integration test

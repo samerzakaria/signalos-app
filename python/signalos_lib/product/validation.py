@@ -18,6 +18,9 @@ __all__ = [
 ]
 
 import json
+import os
+import signal
+import shlex
 import shutil
 import subprocess
 import time
@@ -76,6 +79,23 @@ _SKIP_OWNERS = {
         "Security validation is owned by the product security gate.",
     ),
 }
+
+
+def _validation_command_timeout_s() -> int:
+    """Return the per-command validation timeout.
+
+    Real deliveries keep the historical 300s default.  Tests and CI can lower
+    this with SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S so unavailable package
+    registries become explicit blockers instead of hanging the suite.
+    """
+    raw = os.environ.get("SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S", "").strip()
+    if not raw:
+        return 300
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 300
+    return parsed if parsed > 0 else 300
 
 
 # ------------------------------------------------------------------
@@ -174,8 +194,11 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
     """Run a list of shell commands, returning aggregated result."""
     outputs: list[str] = []
     start = time.perf_counter()
+    timeout_s = _validation_command_timeout_s()
     for cmd in cmds:
-        argv = cmd.split()
+        argv = _split_command(cmd)
+        if not argv:
+            continue
         exe = shutil.which(argv[0])
         if exe is None:
             elapsed = time.perf_counter() - start
@@ -185,13 +208,11 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
                 "duration_s": round(elapsed, 3),
             }
         try:
-            proc = subprocess.run(
+            proc = _run_shell_command(
                 cmd,
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                timeout=300,
-                shell=True,
+                [exe, *argv[1:]],
+                repo_root,
+                timeout_s,
             )
             out = proc.stdout or ""
             if proc.stderr:
@@ -207,8 +228,8 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
         except subprocess.TimeoutExpired:
             elapsed = time.perf_counter() - start
             return {
-                "status": "failed",
-                "output": f"command timed out: {cmd}",
+                "status": "blocked",
+                "output": f"command timed out after {timeout_s}s: {cmd}",
                 "duration_s": round(elapsed, 3),
             }
         except OSError as exc:
@@ -225,6 +246,95 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
         "output": "\n".join(outputs),
         "duration_s": round(elapsed, 3),
     }
+
+
+def _run_shell_command(
+    cmd: str,
+    argv: list[str],
+    repo_root: Path,
+    timeout_s: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command and kill its process tree on timeout."""
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(repo_root),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "shell": False,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(argv, **popen_kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_tree(proc)
+        raise subprocess.TimeoutExpired(
+            cmd=cmd,
+            timeout=timeout_s,
+            output=exc.output,
+            stderr=exc.stderr,
+        )
+
+    return subprocess.CompletedProcess(
+        args=cmd,
+        returncode=proc.returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _split_command(cmd: str) -> list[str]:
+    """Split a validation command into argv without invoking a shell."""
+    try:
+        args = shlex.split(cmd, posix=os.name != "nt")
+    except ValueError:
+        args = cmd.split()
+    cleaned: list[str] = []
+    for arg in args:
+        if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in {"'", '"'}:
+            cleaned.append(arg[1:-1])
+        else:
+            cleaned.append(arg)
+    return cleaned
+
+
+def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            proc.kill()
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        return
+
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
 
 
 def _dry_run_skipped_result(category: str) -> dict[str, Any]:

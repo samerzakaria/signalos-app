@@ -225,17 +225,16 @@ class WriteExtractedFiles(unittest.TestCase):
             _write_extracted_files(root, [("x.ts", "new")])
             self.assertEqual((root / "x.ts").read_text(), "new")
 
-    @unittest.skipUnless(_bash_available(), "bash unavailable")
     def test_pre_write_guard_blocks_malicious_payload(self) -> None:
-        """AMD-CORE-110: orchestrator must invoke pre-tool-use-guard.sh on
-        every file write, refuse the write on non-zero exit, and append a
+        """AMD-CORE-110: orchestrator must guard every file write.
+
+        The direct redact.py scan must run on all platforms before any
+        shell-specific hook path. Malicious content is refused and a
         violation:write-blocked entry to AUDIT_TRAIL.jsonl.
 
-        Strategy: stage the real guard + redact.py + a stub
-        PERMANENTLY_T3.md so the guard runs end-to-end. Submit two files:
-        one clean, one containing an AWS-key-shaped string the secret
-        scanner rejects. Assert the clean file lands, the malicious file
-        does not, and the audit trail records the block.
+        Strategy: stage the real guard plus redact.py in the workspace layout
+        and submit one clean file plus one AWS-key-shaped string. The Python
+        scan path blocks the secret even when bash is unavailable.
         """
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
