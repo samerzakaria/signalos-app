@@ -80,7 +80,7 @@
 <h1>Foundry v4 &#8212; Governed Agent Loop &#183; Build Tracker</h1>
 <div class="meta">
   <span class="branch-tag">feat/v4-governed-agent-loop</span>
-  <span class="session-tag">Plan finalized 2026-06-01 &#183; build not started</span>
+  <span class="session-tag">P1+P2 built &#183; tsc clean, 86 py tests pass &#183; P3 wiring next</span>
   <span>~251h agent est &#183; 169h build + 82h tests &#183; P1&#8741;P2 parallel &#183; 90 tracked items</span>
   <button class="reset-btn" onclick="resetToSeed()">&#8634; reset to plan seed</button>
 </div>
@@ -270,8 +270,58 @@ const TRACKS = GROUPS.flatMap(g => g.tracks);
 const STATUS_CYCLE = ["pending", "in-progress", "done", "blocked"];
 
 // Seed - v4 plan finalized 2026-06-01. Build not started: every item pending.
-const SEED_STATE = {};
-const SEED_VERSION = "v4-plan-seed-2026-06-01";
+const SEED_STATE = {
+  "1.1": "done",
+  "1.1b": "done",
+  "1.2": "done",
+  "1.3": "done",
+  "1.4": "done",
+  "1.5": "done",
+  "1.6": "done",
+  "1.7": "done",
+  "1.8": "done",
+  "1.9": "done",
+  "1.10": "done",
+  "2.1": "done",
+  "2.2": "done",
+  "2.3": "done",
+  "2.4": "done",
+  "2.5": "done",
+  "2.6": "done",
+  "2.7": "done",
+  "2.8": "done",
+  "2.9": "done",
+  "2.10": "done",
+  "2.11": "done",
+  "T07": "done",
+  "T08": "done",
+  "T09": "done",
+  "T10": "done",
+  "T11": "done",
+  "T12": "done",
+  "T13": "done",
+  "T16": "done",
+  "T17": "done",
+  "T18": "done",
+  "T19": "done",
+  "T21": "done",
+  "T23": "done",
+  "T24": "done",
+  "T25": "done",
+  "T54": "done",
+  "T14": "in-progress",
+  "T15": "in-progress",
+  "T45": "in-progress",
+  "T46": "in-progress",
+  "T47": "in-progress",
+  "T48": "in-progress",
+  "T49": "in-progress",
+  "T50": "in-progress",
+  "T52": "in-progress",
+  "T53": "in-progress",
+  "T55": "in-progress"
+};
+const SEED_VERSION = "v4-progress-2026-06-02";
 const LS = "foundry-v4-tracker";
 
 function loadState() {
@@ -390,18 +440,4 @@ const openTracks = new Set(["p1","p2","p3","p4"]);
 function isOpen(id) { return openTracks.has(id); }
 function toggleTrack(id) {
   if (openTracks.has(id)) openTracks.delete(id); else openTracks.add(id);
-  document.getElementById("body-"   + id).classList.toggle("open");
-  document.getElementById("toggle-" + id).classList.toggle("open");
-}
-function cycleStatus(taskId) {
-  const state = loadState();
-  const idx = STATUS_CYCLE.indexOf(state[taskId] || "pending");
-  state[taskId] = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
-  saveState(state);
-  render();
-}
-
-render();
-</script>
-</body>
-</html>
+  document.getEleme

@@ -69,3 +69,4 @@ distribution/internal/
 .signalos/plans/retry-*.yaml
 .signalos/worktree-state.json
 .signalos/worktrees/
+.signalos/trust-tier-paths.json
