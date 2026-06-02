@@ -131,7 +131,10 @@ def run() -> int:
             from signalos_lib.product.provider_adapter import ProviderAdapter
             from signalos_lib.product.enforcement_state import StaticEnforcementProvider
 
-            # T39: build task management -> first gate fires
+            # T39: build task management -> first gate fires AND the LLM
+            # actually responded (no error event). A gate firing on a failed
+            # provider call is NOT a pass — that would prove plumbing, not a
+            # real response.
             with tempfile.TemporaryDirectory() as d:
                 events: list = []
                 orch = GateOrchestrator(
@@ -141,12 +144,19 @@ def run() -> int:
                 )
                 res = orch.start()
                 gate_fired = any(e.get("type") == "gate" for e in events)
-                if res.get("gate") == "G0" and gate_fired:
-                    _record(results, "T39", "pass", f"G0 gate fired via {primary}")
+                errored = any(e.get("type") == "error" for e in events)
+                responded = any(e.get("type") in ("text", "tool_done") for e in events)
+                if errored:
+                    err = next(e for e in events if e.get("type") == "error")
+                    _record(results, "T39", "fail", f"provider error: {err.get('error', '')[:80]}")
+                elif res.get("gate") == "G0" and gate_fired and responded:
+                    _record(results, "T39", "pass", f"G0 fired + LLM responded via {primary}")
                 else:
-                    _record(results, "T39", "fail", f"no G0 gate: {res}")
+                    _record(results, "T39", "fail",
+                            f"gate={res.get('gate')} fired={gate_fired} responded={responded}")
 
-            # T41: vague prompt -> the agent engages (asks/clarifies)
+            # T41: vague prompt -> the agent engages (real text/tool output,
+            # no error event).
             with tempfile.TemporaryDirectory() as d:
                 events = []
                 orch = GateOrchestrator(
@@ -155,11 +165,18 @@ def run() -> int:
                     prompt="build me something",
                 )
                 orch.start()
-                text_events = [e for e in events if e.get("type") in ("text", "gate")]
-                if text_events:
-                    _record(results, "T41", "pass", "vague prompt produced agent engagement")
+                if any(e.get("type") == "error" for e in events):
+                    err = next(e for e in events if e.get("type") == "error")
+                    _record(results, "T41", "fail", f"provider error: {err.get('error', '')[:80]}")
+                    text_events = ["_errored_"]  # skip the pass branch below
                 else:
-                    _record(results, "T41", "fail", "vague prompt produced nothing")
+                    text_events = [e for e in events if e.get("type") == "text"]
+                if text_events == ["_errored_"]:
+                    pass  # already recorded a fail above
+                elif text_events:
+                    _record(results, "T41", "pass", "vague prompt produced real agent text")
+                else:
+                    _record(results, "T41", "fail", "vague prompt produced no text")
 
             # T42: design change mid-flow -> request-changes reworks G-current
             with tempfile.TemporaryDirectory() as d:
