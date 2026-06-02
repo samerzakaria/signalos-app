@@ -20,7 +20,7 @@ jobs:
     name: L0 pre-commit gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Tauri Linux system deps
         run: |
           sudo apt-get update
@@ -32,13 +32,12 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential \
             pkg-config
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
       - name: Ensure sidecar binary exists for target
         run: bash scripts/ensure-sidecar.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install Python sidecar deps
@@ -60,7 +59,7 @@ jobs:
           cargo install --quiet cargo-audit --locked
           cargo audit --deny warnings
       - name: secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
@@ -79,8 +78,8 @@ jobs:
     needs: l0-precommit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
       - name: Verify Docker is available on the runner
         run: |
@@ -101,7 +100,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-2025, macos-latest ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install platform system deps
         shell: bash
         run: |
@@ -118,12 +117,11 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential \
             pkg-config
-      - uses: actions-rs/toolchain@v1
-        with: { toolchain: stable }
+      - uses: dtolnay/rust-toolchain@stable
       - name: Ensure sidecar binary exists for target
         shell: bash
         run: bash scripts/ensure-sidecar.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
       - name: Install Python sidecar deps
         shell: bash
@@ -157,7 +155,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-2025, macos-latest ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install platform system deps
         shell: bash
         run: |
@@ -174,8 +172,7 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential \
             pkg-config
-      - uses: actions-rs/toolchain@v1
-        with: { toolchain: stable }
+      - uses: dtolnay/rust-toolchain@stable
       - name: Ensure sidecar binary exists for target
         shell: bash
         run: bash scripts/ensure-sidecar.sh
@@ -188,7 +185,7 @@ jobs:
     needs: l2-installer-smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Tauri Linux system deps
         run: |
           sudo apt-get update
@@ -200,12 +197,11 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential \
             pkg-config
-      - uses: actions-rs/toolchain@v1
-        with: { toolchain: stable }
+      - uses: dtolnay/rust-toolchain@stable
       - name: Ensure sidecar binary exists for target
         shell: bash
         run: bash scripts/ensure-sidecar.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
       - name: Install Python sidecar deps
         shell: bash

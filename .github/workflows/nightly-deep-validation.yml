@@ -13,7 +13,7 @@ jobs:
     name: L6 deep validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Tauri Linux system deps
         run: |
           sudo apt-get update
@@ -25,9 +25,8 @@ jobs:
             libayatana-appindicator3-dev \
             build-essential \
             pkg-config
-      - uses: actions-rs/toolchain@v1
-        with: { toolchain: stable }
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
       - name: Ensure sidecar binary exists for target
         shell: bash
