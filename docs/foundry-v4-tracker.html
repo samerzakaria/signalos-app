@@ -2,7 +2,7 @@
 {
   "name": "Foundry v4 Tracker",
   "schemaVersion": 1,
-  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded all-pending: plan finalized 2026-06-01, build not started."
+  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup on 2026-06-02."
 }
 </script>
 <html lang="en">
@@ -156,7 +156,7 @@ const GROUPS = [
       id: "p4", num: "P4", name: "Test-Gated Cleanup", color: "#059669", est: 12,
       sub: "4 steps &#183; deletes dead views after tests pass",
       tasks: [
-        { id: "4.1", name: "Delivery flow works entirely in Build conversation (T39&#8211;T44)" },
+        { id: "4.1", name: "Delivery-flow parity works entirely in Build conversation; T39&#8211;T44 stay in Phase 5 E2E matrix" },
         { id: "4.2", name: "Real commands work in Build conversation (T12)" },
         { id: "4.3", name: "Delete DeliverView.tsx + TerminalView.tsx source files" },
         { id: "4.4", name: "Preview tab auto-opens when agent starts dev server" },
@@ -300,6 +300,10 @@ const SEED_STATE = {
   "3.5": "done",
   "3.6": "done",
   "3.7": "done",
+  "4.1": "done",
+  "4.2": "done",
+  "4.3": "done",
+  "4.4": "done",
   "T07": "done",
   "T08": "done",
   "T09": "done",
@@ -331,7 +335,7 @@ const SEED_STATE = {
   "T53": "done",
   "T55": "done"
 };
-const SEED_VERSION = "v4-progress-2026-06-02-p1p2-t51-t53-docker";
+const SEED_VERSION = "v4-progress-2026-06-02-p1p2p3p4-cleanup";
 const LS = "foundry-v4-tracker";
 
 function loadState() {

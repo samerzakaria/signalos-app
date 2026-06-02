@@ -572,12 +572,21 @@ DeliverView and TerminalView are removed from navigation immediately. Useful log
 
 DeliverView and TerminalView are already removed from navigation (Phase 1). Phase 4 deletes the dead source files after the Build conversation compiles and tests pass.
 
-| Step | What | Files | Delivers |
-|------|------|-------|----------|
-| 4.1 | Delivery flow works entirely in Build conversation (T39-T44 pass) | test suite | E2E delivery proven |
-| 4.2 | Real commands work in Build conversation (T12 passes) | test suite | Governed shell proven |
-| 4.3 | Delete DeliverView.tsx and TerminalView.tsx source files | app.tsx | Dead code removed |
-| 4.4 | Preview tab integration: auto-open Preview when agent starts dev server | PreviewView.tsx, agentEvents.ts | Seamless preview |
+| Step | Status | What | Files | Delivers |
+|------|--------|------|-------|----------|
+| 4.1 | Done | Delivery-flow parity works entirely in Build conversation. T39-T44 remain Phase 5 E2E matrix rows and are not marked complete here. | deliveryFlow.test.ts, BuildView.test.tsx, app.view-shell.test.tsx | Build-surface delivery parity proven without stale Deliver page |
+| 4.2 | Done | Real commands work in Build conversation (T12 covered by governed shell tests) | governedShell.ts, governedShell.test.ts | Governed shell proven |
+| 4.3 | Done | Delete DeliverView.tsx and TerminalView.tsx source files, plus stale terminal service, old app-v2 terminal handlers, and dead Deliver/Terminal CSS | app.tsx, app-v2.js, styles.css, state.ts | Dead code removed |
+| 4.4 | Done | Preview tab integration: auto-open Preview when agent starts dev server | PreviewView.tsx, agentEvents.ts | Seamless preview |
+
+Phase 4 validation on 2026-06-02:
+
+- `npm.cmd test`: 37 test files, 236 tests passed.
+- `npm.cmd run build`: passed.
+- Legacy surface sweep for `DeliverView`, `TerminalView`, `data-view="deliver"`, `data-view="terminal"`, terminal state/globals, and `deliver-`/`term-` selectors: clean.
+- Preview auto-open verified in `agentEvents.ts`: preview events set `previewUrl` and switch `tab` to `preview`.
+- Cleanup committed as `2280831 refactor: remove obsolete delivery terminal surfaces`.
+- T39-T44 are still tracked in Phase 5. They must only be marked done when their specific CI/mock or smoke scenarios pass.
 
 ### Phase 5: Full E2E Validation
 
@@ -754,7 +763,7 @@ Phase 1 (UI)         Phase 2 (Runtime)         Phase 3 (Wire)       Phase 4 (Par
                                      3.5 -> 3.6 -> 3.7
                                                      |
                                                      v
-                                                    4.1 (E2E delivery in chat)
+                                                    4.1 (delivery parity in chat)
                                                     4.2 (governed shell in chat)
                                                      |
                                                      v
@@ -765,7 +774,7 @@ Phase 1 (UI)         Phase 2 (Runtime)         Phase 3 (Wire)       Phase 4 (Par
                                               Phase 5 (57-test validation)
 ```
 
-Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 deletes dead view files after tests T39-T44 and T12 pass. Phase 5 validates everything.
+Phase 1 and Phase 2 run in parallel. Phase 3 connects them. Phase 4 deletes dead view files after Build-surface delivery parity and T12 pass. Phase 5 owns the full T39-T44 delivery E2E matrix and the rest of the 57-test validation.
 
 ---
 
