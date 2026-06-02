@@ -2,7 +2,7 @@
 {
   "name": "Foundry v4 Tracker",
   "schemaVersion": 1,
-  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup on 2026-06-02."
+  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup plus the 2026-06-02 live-provider smoke matrix."
 }
 </script>
 <html lang="en">
@@ -230,7 +230,7 @@ const GROUPS = [
       id: "ts5", num: "T39&#8211;44", name: "Full Delivery E2E", color: "#0d9488", est: 16,
       sub: "6 tests &#183; 3 smoke, 3 required CI",
       tasks: [
-        { id: "T39", name: "\"Build task management\" &#8594; running app", badges:[{t:"INV-2",c:"badge-inv"},{t:"smoke",c:"badge-smoke"}] },
+        { id: "T39", name: "\"Build task management\" &#8594; live gate walk + real response; INV-2 runtime proof remains hard closeout evidence", badges:[{t:"INV-2",c:"badge-inv"},{t:"smoke",c:"badge-smoke"}] },
         { id: "T40", name: "\"Build medical records HIPAA\" &#8594; GDPR flagged" },
         { id: "T41", name: "Vague prompt &#8594; smart questions asked", badges:[{t:"smoke",c:"badge-smoke"}] },
         { id: "T42", name: "User changes design mid-flow", badges:[{t:"smoke",c:"badge-smoke"}] },
@@ -304,6 +304,12 @@ const SEED_STATE = {
   "4.2": "done",
   "4.3": "done",
   "4.4": "done",
+  "T01": "done",
+  "T02": "done",
+  "T03": "done",
+  "T04": "done",
+  "T05": "done",
+  "T06": "done",
   "T07": "done",
   "T08": "done",
   "T09": "done",
@@ -333,9 +339,12 @@ const SEED_STATE = {
   "T51": "done",
   "T52": "done",
   "T53": "done",
-  "T55": "done"
+  "T55": "done",
+  "T39": "done",
+  "T41": "done",
+  "T42": "done"
 };
-const SEED_VERSION = "v4-progress-2026-06-02-p1p2p3p4-cleanup";
+const SEED_VERSION = "v4-progress-2026-06-02-live-provider-smoke";
 const LS = "foundry-v4-tracker";
 
 function loadState() {

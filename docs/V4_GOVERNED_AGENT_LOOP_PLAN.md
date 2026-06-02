@@ -641,6 +641,8 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 | T07 | Provider without tool-call support --> text-only mode | Graceful degradation | Use a provider that doesn't support tools, verify text-only | Required CI (TestProvider) |
 | T08 | Capability detection returns correct flags | Adapter works | Query adapter for streaming/tools/schema, verify per provider | Required CI |
 
+Live-provider validation reported on 2026-06-02: 9 pass, 0 fail, 1 skip. Passing rows: T01 Anthropic, T02 OpenAI, T03 Gemini (`gemini-flash-lite-latest`), T04 Ollama, T05 no-key honesty, T06 provider switch, T39 gate walk + real response, T41 vague prompt, T42 request-changes rework. The skipped item is not marked as pass unless separately mapped to a tracker row with a `not-applicable` reason.
+
 ### Tool Use (T09-T15)
 
 | # | Test | What it proves | How to verify | CI? |
@@ -696,6 +698,8 @@ Every row must pass before v4 ships. No exceptions. No relaxing.
 | T42 | User changes design mid-flow | Interactive | At G3, say "change to blue", verify design updates | Optional smoke |
 | T43 | Closeout honest when partial | Honesty | Interrupt at G4, verify closeout says "partial" not "ready" | Required CI |
 | T44 | Sidecar crash --> run resumes from checkpoint | INV-5 | Kill sidecar during delivery, restart, verify resumes | Required CI |
+
+Live-provider smoke note: T39 gate walk + real provider response passed on 2026-06-02. Full T39 delivery closure still requires the INV-2 evidence listed in the row: real product repo, executed tests, runtime proof, UX proof, and evidence closeout.
 
 ### UI/UX (T45-T52)
 
