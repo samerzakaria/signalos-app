@@ -143,7 +143,7 @@ def handle(req: dict) -> dict:
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
     # the structured object (prompt, run_id, etc.) survives intact.
-    if command in ("agent:run", "agent:verdict", "agent:cancel", "agent:resume"):
+    if command in ("agent:run", "agent:deliver", "agent:verdict", "agent:cancel", "agent:resume"):
         try:
             return route_agent(req_id, command, raw_args, project_id=project_id)
         except Exception as exc:
@@ -358,6 +358,8 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
     """
     if command == "agent:run":
         return agent_run(req_id, raw_args, project_id=project_id)
+    if command == "agent:deliver":
+        return agent_deliver(req_id, raw_args, project_id=project_id)
     if command == "agent:verdict":
         return agent_verdict(req_id, raw_args, project_id=project_id)
     if command == "agent:cancel":
@@ -386,6 +388,11 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
 _AGENT_ADAPTER_FACTORY = None       # set by tests; signature: (model: str) -> ProviderAdapter
 _AGENT_ENFORCEMENT_FACTORY = None   # set by tests; signature: () -> EnforcementProvider
 _AGENT_CANCEL_FLAGS: dict[str, bool] = {}
+# Active governed deliveries (gate walk), keyed by run_id. The sidecar
+# is long-lived so the orchestrator survives between agent:deliver and
+# the later agent:verdict calls that advance the walk.
+_ACTIVE_DELIVERIES: dict = {}
+_DELIVERY_SIGN_FN = None  # test seam: (root,gate,signer,role,verdict,conditions)->list
 _AGENT_DEFAULT_MODEL = "claude-sonnet-4-5"
 
 
@@ -442,6 +449,78 @@ def _agent_emit(run_id: str):
     return emit_cb
 
 
+def _agent_run_dir(repo_root: Path, run_id: str) -> Path:
+    return repo_root / ".signalos" / "agent-runs" / run_id
+
+
+def _agent_cancel_marker(repo_root: Path, run_id: str) -> Path:
+    return _agent_run_dir(repo_root, run_id) / "cancel-requested.json"
+
+
+def _write_agent_cancel_marker(repo_root: Path, run_id: str) -> None:
+    marker = _agent_cancel_marker(repo_root, run_id)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps({
+            "run_id": run_id,
+            "cancel_requested": True,
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _clear_agent_cancel_marker(repo_root: Path, run_id: str) -> None:
+    try:
+        _agent_cancel_marker(repo_root, run_id).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _agent_cancel_requested(repo_root: Path, run_id: str) -> bool:
+    return bool(_AGENT_CANCEL_FLAGS.get(run_id)) or _agent_cancel_marker(repo_root, run_id).is_file()
+
+
+def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:deliver -> start a governed delivery (the G0->G5 gate walk).
+
+    Builds a GateOrchestrator, runs the current gate, and pauses with a `gate`
+    agent-event for user review. The returned run_id is used by later
+    agent:verdict calls to advance the walk. INV-3 signing happens inside the
+    orchestrator via sign.py."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:deliver args invalid: {exc}")
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return err(req_id, "agent:deliver requires a non-empty 'prompt'")
+    run_id = str(payload.get("run_id") or "").strip() or ("delivery-" + __import__("uuid").uuid4().hex[:8])
+    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
+    repo_root = Path(os.getcwd())
+    try:
+        adapter = _build_agent_adapter(model)
+    except Exception as exc:  # INV-4: surface
+        _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
+        return err(req_id, f"agent:deliver provider init failed: {type(exc).__name__}: {exc}")
+    enforcement = _build_agent_enforcement()
+    from signalos_lib.product.gate_orchestrator import GateOrchestrator
+    orch = GateOrchestrator(
+        repo_root, adapter, _agent_emit(run_id),
+        enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
+        prompt=prompt, run_id=run_id,
+    )
+    _ACTIVE_DELIVERIES[run_id] = orch
+    try:
+        res = orch.start()
+    except Exception as exc:  # INV-4: surface as agent-event AND non-ok
+        _agent_emit(run_id)({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+        return err(req_id, f"agent:deliver failed: {type(exc).__name__}: {exc}")
+    return ok(req_id, output=json.dumps(res), data=res)
+
+
 def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
     """agent:run -> construct an AgentLoop, stream agent-event lines, return
     a summary SidecarResponse {run_id, status, tool_calls_made}."""
@@ -479,9 +558,10 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
     # AgentLoop assigns its own run_id when None was passed; bind emit + cancel
     # to that final id so envelopes and cancellation share one key.
     final_run_id = loop.run_id
+    _clear_agent_cancel_marker(repo_root, final_run_id)
     _AGENT_CANCEL_FLAGS.setdefault(final_run_id, False)
     loop._emit = _agent_emit(final_run_id)
-    loop._cancel_check = lambda rid=final_run_id: _AGENT_CANCEL_FLAGS.get(rid, False)
+    loop._cancel_check = lambda rid=final_run_id, root=repo_root: _agent_cancel_requested(root, rid)
 
     try:
         result = loop.run(system_prompt=system_prompt, user_message=prompt)
@@ -525,6 +605,21 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
     if not raw_verdict:
         return err(req_id, "agent:verdict requires 'verdict'")
     feedback = str(payload.get("feedback") or "")
+
+    # Active governed delivery? Drive the gate walk (apply_verdict signs via
+    # sign.py inside the orchestrator and advances to the next gate).
+    _orch = _ACTIVE_DELIVERIES.get(run_id)
+    if _orch is not None:
+        from signalos_lib.product import gate_review as _gr
+        _known = {"approve", "approve-with-conditions", "request-changes", "reject", "waive"}
+        _v = raw_verdict if raw_verdict in _known else _gr.classify_review(raw_verdict or feedback)["verdict"]
+        try:
+            _result = _orch.apply_verdict(_v, feedback)
+        except Exception as exc:  # INV-4: surface
+            return err(req_id, f"agent:verdict (delivery) failed: {type(exc).__name__}: {exc}")
+        if getattr(_orch.state, "status", "") in ("complete", "stopped"):
+            _ACTIVE_DELIVERIES.pop(run_id, None)
+        return ok(req_id, output=json.dumps(_result), data=_result)
 
     from signalos_lib.product import gate_review
 
@@ -579,7 +674,8 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
 def agent_cancel(req_id: str, args: Any, project_id: str = "default") -> dict:
     """agent:cancel -> request cancellation of an in-flight run.
 
-    Sets the cancel flag the loop's cancel_check polls between tool calls."""
+    Sets the in-memory cancel flag and writes a durable marker so a restarted
+    sidecar or resumed loop still honors the user's cancel request."""
     try:
         payload = _coerce_agent_args(args)
     except (TypeError, ValueError) as exc:
@@ -587,14 +683,23 @@ def agent_cancel(req_id: str, args: Any, project_id: str = "default") -> dict:
     run_id = str(payload.get("run_id") or "").strip()
     if not run_id:
         return err(req_id, "agent:cancel requires 'run_id'")
+    repo_root = Path(os.getcwd())
     _AGENT_CANCEL_FLAGS[run_id] = True
+    try:
+        _write_agent_cancel_marker(repo_root, run_id)
+    except OSError as exc:
+        return err(req_id, f"agent:cancel failed to persist marker: {exc}")
     return ok(req_id, output=f"cancellation requested for {run_id}",
               data={"run_id": run_id, "cancel_requested": True})
 
 
 def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
-    """agent:resume -> load persisted run state from
-    .signalos/agent-runs/<run_id>/state.json if present."""
+    """agent:resume -> resume a persisted AgentLoop or gate delivery.
+
+    Plain agent runs continue from conversation.jsonl/state.json. Governed
+    deliveries restore delivery.json and re-emit the current gate checkpoint
+    so the user can approve/rework without losing the gate walk.
+    """
     try:
         payload = _coerce_agent_args(args)
     except (TypeError, ValueError) as exc:
@@ -603,15 +708,72 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
     if not run_id:
         return err(req_id, "agent:resume requires 'run_id'")
 
-    state_path = Path(os.getcwd()) / ".signalos" / "agent-runs" / run_id / "state.json"
-    if not state_path.is_file():
+    repo_root = Path(os.getcwd())
+    run_dir = _agent_run_dir(repo_root, run_id)
+    state_path = run_dir / "state.json"
+    delivery_path = run_dir / "delivery.json"
+    if not state_path.is_file() and not delivery_path.is_file():
         return err(req_id, f"no persisted state for run {run_id}")
+
+    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return err(req_id, f"agent:resume state unreadable: {exc}")
-    return ok(req_id, output=json.dumps({"run_id": run_id, "resumed": True}),
-              data={"run_id": run_id, "resumed": True, "state": state})
+        adapter = _build_agent_adapter(model)
+    except Exception as exc:  # INV-4: surface, do not swallow
+        _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
+        return err(req_id, f"agent:resume provider init failed: {type(exc).__name__}: {exc}")
+
+    enforcement = _build_agent_enforcement()
+
+    if delivery_path.is_file():
+        from signalos_lib.product.gate_orchestrator import GateOrchestrator
+        try:
+            orch = GateOrchestrator.load(
+                repo_root,
+                adapter,
+                _agent_emit(run_id),
+                run_id=run_id,
+                enforcement_provider=enforcement,
+                sign_fn=_DELIVERY_SIGN_FN,
+                project_id=project_id,
+            )
+            _ACTIVE_DELIVERIES[run_id] = orch
+            data = orch.resume()
+        except Exception as exc:
+            _agent_emit(run_id)({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+            return err(req_id, f"agent:resume delivery failed: {type(exc).__name__}: {exc}")
+        return ok(req_id, output=json.dumps(data), data=data)
+
+    from signalos_lib.product.agent_loop import AgentLoop
+    loop = AgentLoop(
+        adapter=adapter,
+        repo_root=repo_root,
+        enforcement_provider=enforcement,
+        run_id=run_id,
+        emit=_agent_emit(run_id),
+        cancel_check=lambda rid=run_id, root=repo_root: _agent_cancel_requested(root, rid),
+    )
+    try:
+        result = loop.resume()
+    except Exception as exc:  # INV-4: surface as agent-event AND non-ok response
+        loop._emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+        return err(req_id, f"agent:resume failed: {type(exc).__name__}: {exc}")
+    finally:
+        _AGENT_CANCEL_FLAGS.pop(run_id, None)
+
+    summary = {
+        "run_id": result.run_id,
+        "resumed": True,
+        "status": result.status,
+        "tool_calls_made": result.tool_calls_made,
+    }
+    if result.status == "error":
+        return {
+            "id": req_id,
+            "ok": False,
+            "error": redact_text(result.error or "agent resume failed"),
+            "data": redact_response(summary),
+        }
+    return ok(req_id, output=json.dumps(summary), data=summary)
 
 
 def terminal_help_text() -> str:

@@ -306,7 +306,7 @@ class LoopResult:
     """Outcome of one agent-loop run, returned to the orchestrator (Q4)."""
 
     run_id: str
-    status: str  # "completed" | "tool_limit" | "text_only" | "error"
+    status: str  # "completed" | "tool_limit" | "text_only" | "cancelled" | "error"
     final_text: str | None
     tool_calls_made: int
     messages: list[dict[str, Any]]
@@ -381,6 +381,53 @@ class AgentLoop:
     def _ensure_run_dir(self) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
+    def _load_enforcement(self) -> str | None:
+        """Load and cache enforcement once per run/resume.
+
+        Returns a user-visible error string on failure. Keeping this in one
+        place prevents resume from using a weaker policy path than run().
+        """
+        try:
+            self._enforcement = self.enforcement_provider.get_enforcement_state(
+                self.repo_root
+            )
+        except Exception as exc:  # INV-4: surface, do not swallow
+            err = f"Failed to load enforcement state: {exc}"
+            self._emit({"type": "error", "error": err})
+            return err
+        return None
+
+    def _load_state(self) -> dict[str, Any]:
+        if not self.state_path.is_file():
+            raise FileNotFoundError(f"no persisted state for run {self.run_id}")
+        try:
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"agent run state unreadable: {exc}") from exc
+        if not isinstance(state, dict):
+            raise RuntimeError("agent run state must be a JSON object")
+        return state
+
+    def _load_conversation(self) -> list[dict[str, Any]]:
+        if not self.conversation_path.is_file():
+            raise FileNotFoundError(
+                f"no persisted conversation for run {self.run_id}"
+            )
+        messages: list[dict[str, Any]] = []
+        try:
+            for raw in self.conversation_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+                if isinstance(item, dict):
+                    messages.append(item)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"agent conversation unreadable: {exc}") from exc
+        if not messages:
+            raise RuntimeError("agent conversation is empty")
+        return messages
+
     # --- main entry ----------------------------------------------------------
 
     def run(
@@ -396,20 +443,15 @@ class AgentLoop:
         """
         self._ensure_run_dir()
         # Q2: read governance rules ONCE, cache for this run.
-        try:
-            self._enforcement = self.enforcement_provider.get_enforcement_state(
-                self.repo_root
-            )
-        except Exception as exc:  # INV-4: surface, do not swallow
-            err = f"Failed to load enforcement state: {exc}"
-            self._emit({"type": "error", "error": err})
+        enforcement_error = self._load_enforcement()
+        if enforcement_error:
             return LoopResult(
                 run_id=self.run_id,
                 status="error",
                 final_text=None,
                 tool_calls_made=0,
                 messages=[],
-                error=err,
+                error=enforcement_error,
             )
 
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
@@ -421,8 +463,68 @@ class AgentLoop:
         if not self.adapter.supports_tool_calls:
             return self._run_text_only(messages)
 
+        return self._run_tool_loop(messages, tool_calls_made=0)
+
+    def resume(self) -> LoopResult:
+        """Resume a persisted agent conversation without adding a new prompt.
+
+        This is the durable P3 resume path: state.json provides the prior tool
+        count and conversation.jsonl provides the provider context. Terminal
+        runs are returned as-is. Non-terminal runs continue through the same
+        governed tool loop as a fresh run.
+        """
+        self._ensure_run_dir()
+        try:
+            state = self._load_state()
+            messages = self._load_conversation()
+        except Exception as exc:
+            err = str(exc)
+            self._emit({"type": "error", "error": err})
+            return LoopResult(
+                run_id=self.run_id,
+                status="error",
+                final_text=None,
+                tool_calls_made=0,
+                messages=[],
+                error=err,
+            )
+
+        tool_calls_made = int(state.get("tool_calls_made") or 0)
+        status = str(state.get("status") or "running")
+        if status in {"completed", "text_only", "cancelled"}:
+            return LoopResult(
+                run_id=self.run_id,
+                status=status,
+                final_text=None,
+                tool_calls_made=tool_calls_made,
+                messages=messages,
+                text_only=status == "text_only",
+                error="cancelled by user" if status == "cancelled" else None,
+            )
+
+        enforcement_error = self._load_enforcement()
+        if enforcement_error:
+            return LoopResult(
+                run_id=self.run_id,
+                status="error",
+                final_text=None,
+                tool_calls_made=tool_calls_made,
+                messages=messages,
+                error=enforcement_error,
+            )
+
+        if not self.adapter.supports_tool_calls:
+            return self._run_text_only(messages)
+
+        return self._run_tool_loop(messages, tool_calls_made=tool_calls_made)
+
+    def _run_tool_loop(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tool_calls_made: int,
+    ) -> LoopResult:
         tools = [t.as_openai_tool() for t in AGENT_TOOLS]
-        tool_calls_made = 0
         final_text: str | None = None
 
         self._persist_state(messages, tool_calls_made, status="running")
@@ -433,7 +535,7 @@ class AgentLoop:
                 self._emit({"type": "cancelled", "run_id": self.run_id})
                 return LoopResult(
                     run_id=self.run_id,
-                    status="error",
+                    status="cancelled",
                     final_text=final_text,
                     tool_calls_made=tool_calls_made,
                     messages=messages,
@@ -441,7 +543,10 @@ class AgentLoop:
                 )
 
             try:
-                resp: AgentResponse = self.adapter.chat(messages=messages, tools=tools)
+                resp: AgentResponse = self.adapter.chat(
+                    messages=[dict(m) for m in messages],
+                    tools=tools,
+                )
             except Exception as exc:  # INV-4
                 err = f"Provider call failed: {exc}"
                 self._emit({"type": "error", "error": err})

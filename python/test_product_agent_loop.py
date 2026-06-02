@@ -487,6 +487,87 @@ class TestToolLimit(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Durable resume (P3 3.3-3.4)
+# ---------------------------------------------------------------------------
+
+
+class TestResume(unittest.TestCase):
+    def _seed_running_run(self, root: Path, run_id: str, tool_calls_made: int = 1):
+        run_dir = root / ".signalos" / "agent-runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "state.json").write_text(
+            json.dumps({
+                "run_id": run_id,
+                "status": "running",
+                "tool_calls_made": tool_calls_made,
+                "trust_tier": "T3",
+                "updated_at": "2026-06-02T00:00:00Z",
+            }),
+            encoding="utf-8",
+        )
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "continue this run"},
+            {"role": "assistant", "content": "prior work"},
+        ]
+        (run_dir / "conversation.jsonl").write_text(
+            "\n".join(json.dumps(m) for m in messages) + "\n",
+            encoding="utf-8",
+        )
+        return messages
+
+    def test_resume_continues_persisted_conversation_without_new_user_turn(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            messages = self._seed_running_run(root, "resume-run")
+            provider = AgentTestProvider(script=[_end_resp("resumed")])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="resume-run",
+            )
+
+            result = loop.resume()
+
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.final_text, "resumed")
+            self.assertEqual(result.tool_calls_made, 1)
+            self.assertEqual(provider.calls[0]["messages"], messages)
+            state = json.loads(
+                (root / ".signalos" / "agent-runs" / "resume-run" / "state.json")
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["status"], "completed")
+
+    def test_resume_honors_cancel_check_before_provider_call(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._seed_running_run(root, "cancel-run")
+            provider = AgentTestProvider(script=[_end_resp("should not call")])
+            events: list[dict] = []
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="cancel-run",
+                cancel_check=lambda: True,
+                emit=events.append,
+            )
+
+            result = loop.resume()
+
+            self.assertEqual(result.status, "cancelled")
+            self.assertEqual(provider.calls, [])
+            self.assertTrue(any(e.get("type") == "cancelled" for e in events))
+            state = json.loads(
+                (root / ".signalos" / "agent-runs" / "cancel-run" / "state.json")
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(state["status"], "cancelled")
+
+
+# ---------------------------------------------------------------------------
 # Security scan on write (T24 / 2.9)
 # ---------------------------------------------------------------------------
 

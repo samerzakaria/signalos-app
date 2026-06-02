@@ -105,11 +105,13 @@ class _AgentIpcBase(unittest.TestCase):
         )
         srv._AGENT_ADAPTER_FACTORY = None  # set per-test
         srv._AGENT_CANCEL_FLAGS.clear()
+        srv._ACTIVE_DELIVERIES.clear()
 
     def tearDown(self) -> None:
         srv._AGENT_ADAPTER_FACTORY = None
         srv._AGENT_ENFORCEMENT_FACTORY = None
         srv._AGENT_CANCEL_FLAGS.clear()
+        srv._ACTIVE_DELIVERIES.clear()
         os.chdir(self._prev_cwd)
         self._tmp.cleanup()
 
@@ -295,6 +297,14 @@ class TestAgentCancelResume(_AgentIpcBase):
         self.assertTrue(resp["ok"], msg=resp)
         self.assertTrue(resp["data"]["cancel_requested"])
         self.assertTrue(srv._AGENT_CANCEL_FLAGS.get("run-X"))
+        marker = (
+            Path(os.getcwd())
+            / ".signalos"
+            / "agent-runs"
+            / "run-X"
+            / "cancel-requested.json"
+        )
+        self.assertTrue(marker.is_file())
 
     def test_resume_missing_state_is_error(self):
         resp, _ = self._run(
@@ -308,7 +318,8 @@ class TestAgentCancelResume(_AgentIpcBase):
         self.assertIn("no persisted state", resp["error"])
 
     def test_resume_reads_persisted_state(self):
-        # A completed run persists state.json; resume should read it back.
+        # A completed run persists state.json; resume should return its
+        # terminal state without appending a new prompt.
         srv._AGENT_ADAPTER_FACTORY = _adapter_factory([_end_resp("done")])
         run_resp, _ = self._run(
             {
@@ -332,7 +343,74 @@ class TestAgentCancelResume(_AgentIpcBase):
         )
         self.assertTrue(resp["ok"], msg=resp)
         self.assertTrue(resp["data"]["resumed"])
-        self.assertEqual(resp["data"]["state"]["run_id"], "run-R")
+        self.assertEqual(resp["data"]["run_id"], "run-R")
+        self.assertEqual(resp["data"]["status"], "completed")
+
+    def _seed_running_run(self, run_id: str):
+        run_dir = Path(os.getcwd()) / ".signalos" / "agent-runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "state.json").write_text(
+            json.dumps({
+                "run_id": run_id,
+                "status": "running",
+                "tool_calls_made": 1,
+                "trust_tier": "T3",
+                "updated_at": "2026-06-02T00:00:00Z",
+            }),
+            encoding="utf-8",
+        )
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "prior"},
+        ]
+        (run_dir / "conversation.jsonl").write_text(
+            "\n".join(json.dumps(m) for m in messages) + "\n",
+            encoding="utf-8",
+        )
+
+    def test_resume_continues_running_state(self):
+        self._seed_running_run("run-live-resume")
+        srv._AGENT_ADAPTER_FACTORY = _adapter_factory([_end_resp("resumed")])
+
+        resp, events = self._run(
+            {
+                "command": "agent:resume",
+                "id": "r-3",
+                "args": [json.dumps({"run_id": "run-live-resume"})],
+            }
+        )
+
+        self.assertTrue(resp["ok"], msg=resp)
+        self.assertEqual(resp["data"]["status"], "completed")
+        self.assertEqual(resp["data"]["tool_calls_made"], 1)
+        self.assertTrue(any(e.get("type") == "text" and e.get("text") == "resumed" for e in events))
+        self.assertTrue(any(e.get("type") == "end_turn" for e in events))
+
+    def test_resume_honors_persisted_cancel_marker(self):
+        self._seed_running_run("run-cancel-resume")
+        srv._AGENT_ADAPTER_FACTORY = _adapter_factory([_end_resp("should not call")])
+        cancel_resp, _ = self._run(
+            {
+                "command": "agent:cancel",
+                "id": "c-2",
+                "args": [json.dumps({"run_id": "run-cancel-resume"})],
+            }
+        )
+        self.assertTrue(cancel_resp["ok"], msg=cancel_resp)
+        srv._AGENT_CANCEL_FLAGS.clear()  # simulate sidecar memory loss
+
+        resp, events = self._run(
+            {
+                "command": "agent:resume",
+                "id": "r-4",
+                "args": [json.dumps({"run_id": "run-cancel-resume"})],
+            }
+        )
+
+        self.assertTrue(resp["ok"], msg=resp)
+        self.assertEqual(resp["data"]["status"], "cancelled")
+        self.assertTrue(any(e.get("type") == "cancelled" for e in events))
 
 
 if __name__ == "__main__":

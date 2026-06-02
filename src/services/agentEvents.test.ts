@@ -132,4 +132,29 @@ describe('agentEvents', () => {
       }),
     ]);
   });
+
+  it('marks cancelled runs as resumable and sends cancel/resume IPC commands', async () => {
+    const { state, mod } = await loadHarness();
+
+    emit({ kind: 'agent-event', run_id: 'run-5', type: 'text', text: 'working' });
+    mod.cancelAgentRun();
+
+    expect(run).toHaveBeenCalledWith('agent:cancel', [
+      JSON.stringify({ run_id: 'run-5' }),
+    ]);
+
+    emit({ kind: 'agent-event', run_id: 'run-5', type: 'cancelled' });
+
+    expect(state.resumableRunId.value).toBe('run-5');
+    expect(state.busy.value).toBe(false);
+    expect(state.chatBubbles.value.some((b) => b.kind === 'system' && b.text === 'Agent run cancelled.')).toBe(true);
+
+    mod.resumeAgentRun();
+
+    expect(state.resumableRunId.value).toBe(null);
+    expect(state.busy.value).toBe(true);
+    expect(run).toHaveBeenCalledWith('agent:resume', [
+      JSON.stringify({ run_id: 'run-5' }),
+    ]);
+  });
 });

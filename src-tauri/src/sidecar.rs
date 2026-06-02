@@ -42,6 +42,28 @@ pub struct SidecarProgress {
     pub ts: u128,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidecarStdoutKind {
+    Progress,
+    AgentEvent,
+    Response,
+    Log,
+}
+
+fn classify_sidecar_stdout(value: &serde_json::Value) -> SidecarStdoutKind {
+    match value.get("kind").and_then(|v| v.as_str()) {
+        Some("progress") => SidecarStdoutKind::Progress,
+        Some("agent-event") => SidecarStdoutKind::AgentEvent,
+        _ => {
+            if serde_json::from_value::<SidecarResponse>(value.clone()).is_ok() {
+                SidecarStdoutKind::Response
+            } else {
+                SidecarStdoutKind::Log
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct SidecarRuntimeStatus {
     pub running: bool,
@@ -169,25 +191,32 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                         // final responses. Progress carries kind="progress";
                         // a final response is everything else.
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if value.get("kind").and_then(|v| v.as_str()) == Some("progress") {
-                                if let Ok(prog) =
-                                    serde_json::from_value::<SidecarProgress>(value.clone())
-                                {
-                                    let _ = app_emit.emit("sidecar:progress", &prog);
+                            match classify_sidecar_stdout(&value) {
+                                SidecarStdoutKind::Progress => {
+                                    if let Ok(prog) =
+                                        serde_json::from_value::<SidecarProgress>(value.clone())
+                                    {
+                                        let _ = app_emit.emit("sidecar:progress", &prog);
+                                        continue;
+                                    }
+                                }
+                                SidecarStdoutKind::AgentEvent => {
+                                    // Phase 3 Stream B: agent events carry
+                                    // kind="agent-event". Pass the full envelope through
+                                    // unchanged as the "agent:event" payload for the
+                                    // frontend (Stream C) to parse.
+                                    let _ = app_emit.emit("agent:event", &value);
                                     continue;
                                 }
-                            }
-                            // Phase 3 Stream B: agent events carry
-                            // kind="agent-event". Pass the full envelope through
-                            // unchanged as the "agent:event" payload for the
-                            // frontend (Stream C) to parse.
-                            if value.get("kind").and_then(|v| v.as_str()) == Some("agent-event") {
-                                let _ = app_emit.emit("agent:event", &value);
-                                continue;
-                            }
-                            if let Ok(resp) = serde_json::from_value::<SidecarResponse>(value) {
-                                let _ = app_emit.emit("sidecar:response", &resp);
-                                continue;
+                                SidecarStdoutKind::Response => {
+                                    if let Ok(resp) =
+                                        serde_json::from_value::<SidecarResponse>(value)
+                                    {
+                                        let _ = app_emit.emit("sidecar:response", &resp);
+                                        continue;
+                                    }
+                                }
+                                SidecarStdoutKind::Log => {}
                             }
                         }
                         let _ = app_emit.emit("sidecar:log", &line);
@@ -327,5 +356,46 @@ pub fn tree_kill(pid: u32) {
         // Fallback: kill the leader directly in case the child wasn't in
         // its own process group.
         let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_sidecar_stdout, SidecarStdoutKind};
+    use serde_json::json;
+
+    #[test]
+    fn classifies_agent_event_stdout_for_tauri_passthrough() {
+        let value = json!({
+            "kind": "agent-event",
+            "run_id": "run-1",
+            "type": "text",
+            "text": "hello"
+        });
+
+        assert_eq!(classify_sidecar_stdout(&value), SidecarStdoutKind::AgentEvent);
+    }
+
+    #[test]
+    fn classifies_progress_and_final_response_separately() {
+        let progress = json!({
+            "id": "req-1",
+            "kind": "progress",
+            "phase": "build",
+            "substep": "run",
+            "state": "running",
+            "detail": null,
+            "ts": 1
+        });
+        let response = json!({
+            "id": "req-1",
+            "ok": true,
+            "output": null,
+            "error": null,
+            "data": null
+        });
+
+        assert_eq!(classify_sidecar_stdout(&progress), SidecarStdoutKind::Progress);
+        assert_eq!(classify_sidecar_stdout(&response), SidecarStdoutKind::Response);
     }
 }
