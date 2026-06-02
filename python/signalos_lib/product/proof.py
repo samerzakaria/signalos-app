@@ -50,6 +50,8 @@ def _start_server(command: str, repo_root: Path) -> subprocess.Popen:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         shell=True,
     )
 
@@ -69,11 +71,12 @@ def _poll_health(
     while time.monotonic() < deadline:
         try:
             start = time.perf_counter()
-            resp = urlopen(url, timeout=5)  # noqa: S310
+            with urlopen(url, timeout=5) as resp:  # noqa: S310
+                status_code = resp.status
             elapsed_ms = (time.perf_counter() - start) * 1000
             return {
                 "url": url,
-                "status_code": resp.status,
+                "status_code": status_code,
                 "responded": True,
                 "response_time_ms": round(elapsed_ms, 1),
             }
@@ -105,6 +108,11 @@ def _stop_server(proc: subprocess.Popen, *, grace_s: float = 3.0) -> str:
             stdout = proc.stdout.read() or ""
         except (OSError, ValueError):
             pass
+        finally:
+            try:
+                proc.stdout.close()
+            except (OSError, ValueError):
+                pass
     return stdout
 
 
@@ -188,8 +196,8 @@ def run_runtime_proof(
     html_snapshot = ""
     if health["responded"]:
         try:
-            resp = urlopen(url, timeout=5)  # noqa: S310
-            html_snapshot = resp.read().decode("utf-8", errors="replace")
+            with urlopen(url, timeout=5) as resp:  # noqa: S310
+                html_snapshot = resp.read().decode("utf-8", errors="replace")
         except (URLError, OSError, ConnectionError):
             html_snapshot = ""
 
@@ -269,9 +277,9 @@ def run_ux_proof(
     # shutting down the preview process.
     if html is None:
         try:
-            resp = urlopen(url, timeout=10)  # noqa: S310
-            html = resp.read().decode("utf-8", errors="replace")
-            status_code = resp.status
+            with urlopen(url, timeout=10) as resp:  # noqa: S310
+                html = resp.read().decode("utf-8", errors="replace")
+                status_code = resp.status
         except (URLError, OSError, ConnectionError) as exc:
             return {
                 "status": "failed",

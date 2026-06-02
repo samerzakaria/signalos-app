@@ -203,6 +203,10 @@ export const engine = {
   restart: () => invoke("restart_python_sidecar"),
 };
 
+// app-v2 flows call ipc.sidecar.restart() after saving provider keys.
+// Keep this alias so Core actually reloads fresh credentials.
+export const sidecar = engine;
+
 // Listen for async sidecar responses
 export function onSidecarResponse(cb) {
   if (!IS_TAURI || typeof listenTauri !== "function") return () => {};

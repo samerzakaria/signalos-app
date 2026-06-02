@@ -240,6 +240,8 @@ def capture_git_state(repo_root: Path) -> dict[str, Any]:
                 cwd=str(repo_root),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             if proc.returncode == 0:

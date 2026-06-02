@@ -739,7 +739,6 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
                 enforcement_provider=enforcement,
                 sign_fn=_DELIVERY_SIGN_FN,
             )
-            _ACTIVE_DELIVERIES[run_id] = orch
             gate = (
                 orch.state.current_gate
                 if orch.state.current_gate in GATE_SPECIALISTS
@@ -760,6 +759,7 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
                     "waived": list(getattr(orch.state, "waived", [])),
                     "resumed": True,
                 }
+                _ACTIVE_DELIVERIES.pop(run_id, None)
             elif orch.state.status == "stopped":
                 orch.emit({
                     "type": "error",
@@ -771,7 +771,9 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
                     "status": "stopped",
                     "resumed": True,
                 }
+                _ACTIVE_DELIVERIES.pop(run_id, None)
             else:
+                _ACTIVE_DELIVERIES[run_id] = orch
                 orch.state.current_gate = gate
                 orch.state.status = "awaiting-verdict"
                 orch.emit({

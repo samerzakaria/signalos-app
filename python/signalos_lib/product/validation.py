@@ -260,6 +260,8 @@ def _run_shell_command(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
         "shell": False,
     }
     if os.name == "nt":
