@@ -70,3 +70,4 @@ distribution/internal/
 .signalos/worktree-state.json
 .signalos/worktrees/
 .signalos/trust-tier-paths.json
+.signalos/evidence/v4-smoke/
