@@ -265,7 +265,7 @@ class LiteLLMAgentProvider:
     ) -> AgentResponse:
         litellm = self.litellm
         kwargs: dict[str, Any] = {
-            "model": model,
+            "model": _normalize_litellm_model(model),
             "messages": messages,
             "max_tokens": self._max_tokens,
         }
@@ -357,6 +357,32 @@ class LiteLLMAgentProvider:
                 # INV-4: surface a stream error rather than ending silently.
                 yield StreamDelta(kind="text", text=f"\n[stream error: {exc}]")
                 return
+
+
+def _normalize_litellm_model(model: str) -> str:
+    """Route a bare model name to the correct LiteLLM provider path.
+
+    A bare ``gemini-*`` name is ambiguous to LiteLLM and falls through to its
+    Vertex AI path, which requires a Google Cloud service account (the
+    ``ModuleNotFoundError: No module named 'google'`` failure). A ``GEMINI_API_KEY``
+    is a Google *AI Studio* key, which LiteLLM only routes when the model is
+    explicitly prefixed ``gemini/``. We add that prefix when an AI Studio key is
+    present and the caller has not already chosen a provider path (no ``/``).
+
+    Models that already carry a provider prefix (``gemini/``, ``vertex_ai/``,
+    ``openai/`` ...) are left untouched, as are anthropic/openai bare names that
+    LiteLLM resolves correctly on their own.
+    """
+    import os
+
+    m = (model or "").strip()
+    if "/" in m:
+        return m  # caller chose an explicit provider path — respect it
+    if m.lower().startswith("gemini") and (
+        os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    ):
+        return f"gemini/{m}"
+    return m
 
 
 def _is_auth_error(litellm: Any, exc: Exception) -> bool:

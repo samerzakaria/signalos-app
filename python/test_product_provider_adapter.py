@@ -18,6 +18,7 @@ from signalos_lib.product.provider_adapter import (  # noqa: E402
     ProviderAdapter,
     ProviderAuthError,
     ProviderCapabilities,
+    _normalize_litellm_model,
 )
 
 
@@ -112,6 +113,33 @@ class TestLiteLLMCallPath:
             assert False, "expected ProviderAuthError"
         except ProviderAuthError:
             pass
+
+    def test_gemini_routed_to_ai_studio_with_api_key(self, monkeypatch):
+        # A GEMINI_API_KEY is a Google AI Studio key; LiteLLM only routes it
+        # when the model carries the `gemini/` prefix. A bare name falls through
+        # to Vertex AI (needs a service account) and fails. The chat() call must
+        # forward the prefixed model.
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-ai-studio-key")
+        assert _normalize_litellm_model("gemini-2.0-flash") == "gemini/gemini-2.0-flash"
+        # explicit provider paths are respected, never double-prefixed
+        assert _normalize_litellm_model("vertex_ai/gemini-2.0-flash") == "vertex_ai/gemini-2.0-flash"
+        assert _normalize_litellm_model("gemini/gemini-2.0-flash") == "gemini/gemini-2.0-flash"
+        # other providers untouched
+        assert _normalize_litellm_model("claude-sonnet-4-5") == "claude-sonnet-4-5"
+        assert _normalize_litellm_model("gpt-4o") == "gpt-4o"
+        # end-to-end through chat(): the prefixed model reaches litellm.completion
+        lm = _fake_litellm(response=_text_response("ready"))
+        prov = LiteLLMAgentProvider(litellm_module=lm)
+        prov.chat(messages=[{"role": "user", "content": "hi"}], model="gemini-2.0-flash")
+        assert lm._captured["model"] == "gemini/gemini-2.0-flash"
+
+    def test_gemini_not_prefixed_without_key(self, monkeypatch):
+        # No AI Studio key set -> leave the model alone (the caller may have
+        # Vertex creds and expect the bare/explicit path).
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        assert _normalize_litellm_model("gemini-2.0-flash") == "gemini-2.0-flash"
 
     def test_adapter_drops_tools_when_unsupported(self):
         # ProviderAdapter must not forward tools if the provider can't use them.
