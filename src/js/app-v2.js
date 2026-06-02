@@ -1158,21 +1158,18 @@ async function openFile(path) {
 window.openFile = openFile;
 
 function showFileViewer(path, content) {
-  // Switch to terminal tab and show file content there
-  switchTab("terminal");
-  const body = document.getElementById("termBody");
-  if (!body) return;
-  const header = document.createElement("div");
-  header.className = "term-line t-bright";
-  header.textContent = "=== " + path + " ===";
-  body.appendChild(header);
-  (content || "").split("\n").slice(0, 100).forEach((line) => {
-    const d = document.createElement("div");
-    d.className = "term-line";
-    d.textContent = line;
-    body.appendChild(d);
-  });
-  body.scrollTop = body.scrollHeight;
+  // The Build conversation is the single surface (v4) — the terminal view is
+  // gone, so render an opened file as a code block in the chat instead.
+  switchTab("build");
+  try {
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID() : String(Date.now()) + Math.random();
+    const body = (content || "").split("\n").slice(0, 400).join("\n");
+    const md = "**" + path + "**\n\n```\n" + body + "\n```";
+    state.chatBubbles = [...(state.chatBubbles || []), { id, kind: "ai", text: md, ts: "file" }];
+  } catch (e) {
+    showError("Could not display file: " + errorMessage(e));
+  }
 }
 
 // ─── File write toast ──────────────────────────────────────────────────────────

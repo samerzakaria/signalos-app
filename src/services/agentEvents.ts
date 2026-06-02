@@ -1,4 +1,4 @@
-import { chatBubbles, busy, resumableRunId, type ChatBubble } from '../state';
+import { chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble } from '../state';
 import * as ipc from '../js/ipc.js';
 
 // Phase 3 Stream C - frontend subscription for the agent loop.
@@ -295,6 +295,11 @@ export function handle(evt: AgentEvent): void {
           caption: typeof evt.caption === 'string' ? evt.caption : undefined,
         },
       });
+      // 4.4: a live dev-server URL auto-opens the Preview tab.
+      if (url) {
+        previewUrl.value = url;
+        tab.value = 'preview';
+      }
       break;
     }
 

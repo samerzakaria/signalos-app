@@ -1,11 +1,10 @@
-// deliveryFlow.ts — delivery flow state machine extracted from DeliverView
+// deliveryFlow.ts — Build conversation delivery flow state machine
 // (Phase 1.1b of the Foundry v4 plan).
 //
 // This preserves the delivery wizard's phase model, labels, and helper logic
-// as a reusable service BEFORE DeliverView.tsx is deleted in Phase 4. The
-// Build conversation drives the same Brief → Design → Build → Validate →
-// Security → Launch → Handoff flow inline, so it consumes these definitions
-// instead of duplicating them.
+// as a reusable service. The Build conversation drives the Brief → Design →
+// Build → Validate → Security → Launch → Handoff flow inline, so it consumes
+// these definitions instead of duplicating them.
 //
 // Pure logic only — no Preact, no IPC, no DOM. Fully unit-testable.
 
@@ -99,7 +98,7 @@ export function businessStageForPhase(phase: string | null | undefined): string 
   return stage ? stage.label : null;
 }
 
-// ── Product-name derivation (preserved from DeliverView) ────────────────────
+// ── Product-name derivation ─────────────────────────────────────────────────
 
 /** Sanitise an arbitrary string into a filesystem-safe product folder name. */
 export function safeProductName(value: string): string {
@@ -145,7 +144,7 @@ export function isTechnicalQuestion(text: string): boolean {
 /**
  * Fold an incoming progress event into the running list of completed phases.
  * Returns the new completed-phase set (deduped, in canonical order) plus the
- * current phase. Mirrors the reducer DeliverView ran inline.
+ * current phase. Mirrors the reducer used by the guided delivery flow.
  */
 export function applyProgressEvent(
   prev: { completedPhases: string[]; currentPhase: string | null },

@@ -1,10 +1,9 @@
-// governedShell.ts — governed command routing extracted from TerminalView /
-// app-v2.js (Phase 1.1b of the Foundry v4 plan).
+// governedShell.ts — governed command routing for the Build conversation
+// (Phase 1.1b of the Foundry v4 plan).
 //
-// This preserves the terminal's command-routing logic as a reusable service
-// before TerminalView.tsx is deleted in Phase 4. The Build conversation (and
-// any future governed-shell tool execution) can call `runGovernedCommand()`
-// instead of reaching into app-v2.js.
+// This preserves command-routing logic as a reusable service. The Build
+// conversation and future governed-shell tool execution call
+// `runGovernedCommand()` instead of reaching into app-v2.js.
 //
 // IMPORTANT: this is a *governed* command surface, NOT an unrestricted OS
 // shell. Only an explicit allowlist of SignalOS / git / dev commands is

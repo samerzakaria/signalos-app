@@ -27,10 +27,8 @@ export function Toolbar() {
   const freezeHandler = waveFrozen.value ? () => window.unfreezeWave() : () => window.freezeWave();
   const activeTab = tab.value;
   const viewNames: Record<string, string> = {
-    deliver: 'Deliver',
     build: 'Build',
     preview: 'Preview',
-    terminal: 'Terminal',
     dashboard: 'Evidence',
     vault: 'Vault',
     settings: 'Settings',

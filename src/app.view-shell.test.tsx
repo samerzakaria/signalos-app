@@ -6,7 +6,7 @@ import { appVisible, mobileNavOpen, onboardingVisible, sbTab, tab } from './stat
 describe('App view shell isolation', () => {
   beforeEach(() => {
     cleanup();
-    tab.value = 'deliver';
+    tab.value = 'build';
     sbTab.value = 'projects';
     mobileNavOpen.value = false;
     onboardingVisible.value = false;
@@ -21,15 +21,15 @@ describe('App view shell isolation', () => {
     const activeViews = Array.from(container.querySelectorAll('.view.active'))
       .map((el) => el.getAttribute('data-view'));
 
-    expect(activeViews).toEqual(['deliver']);
+    expect(activeViews).toEqual(['build']);
     expect(container.querySelector('.view[data-view="dashboard"]')).not.toHaveClass('active');
   });
 
   it('updates active content without leaving the previous page visible', async () => {
     const { container } = render(<App />);
 
-    // 'preview' is one of the three project tabs that remain in nav after
-    // Phase 1.1 (Build / Preview / Evidence). Terminal was removed from nav.
+    // 'preview' is one of the product tabs that remain after the unified
+    // Build surface owns delivery and governed commands.
     tab.value = 'preview';
 
     await waitFor(() => {
@@ -72,7 +72,7 @@ describe('App view shell isolation', () => {
       expect(container.querySelector('.mobile-nav-backdrop')).not.toBeNull();
       const activeViews = Array.from(container.querySelectorAll('.view.active'))
         .map((el) => el.getAttribute('data-view'));
-      expect(activeViews).toEqual(['deliver']);
+      expect(activeViews).toEqual(['build']);
     });
 
     fireEvent.click(container.querySelector('.mobile-nav-backdrop') as HTMLElement);
