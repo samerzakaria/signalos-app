@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT / "python"))
 PROVIDERS = {
     "anthropic": ("ANTHROPIC_API_KEY", "claude-sonnet-4-5"),
     "openai": ("OPENAI_API_KEY", "gpt-4o"),
-    "gemini": ("GEMINI_API_KEY", "gemini-2.0-flash"),
+    "gemini": ("GEMINI_API_KEY", "gemini-2.5-flash"),
 }
 
 
