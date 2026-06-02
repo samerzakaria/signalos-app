@@ -373,7 +373,10 @@ mod tests {
             "text": "hello"
         });
 
-        assert_eq!(classify_sidecar_stdout(&value), SidecarStdoutKind::AgentEvent);
+        assert_eq!(
+            classify_sidecar_stdout(&value),
+            SidecarStdoutKind::AgentEvent
+        );
     }
 
     #[test]
@@ -395,7 +398,13 @@ mod tests {
             "data": null
         });
 
-        assert_eq!(classify_sidecar_stdout(&progress), SidecarStdoutKind::Progress);
-        assert_eq!(classify_sidecar_stdout(&response), SidecarStdoutKind::Response);
+        assert_eq!(
+            classify_sidecar_stdout(&progress),
+            SidecarStdoutKind::Progress
+        );
+        assert_eq!(
+            classify_sidecar_stdout(&response),
+            SidecarStdoutKind::Response
+        );
     }
 }
