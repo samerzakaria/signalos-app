@@ -10,9 +10,7 @@
 // routed; anything else raises so callers can surface an honest error
 // (INV-4: no silent failures).
 //
-// The implementation mirrors the original `runTerminalCommand()` in
-// app-v2.js so behaviour is identical. IPC access is injected so the service
-// stays testable.
+// IPC access is injected so the service stays testable.
 
 import * as defaultIpc from '../js/ipc.js';
 
@@ -60,9 +58,8 @@ const HELP_LINES = [
   '  signalos gates    show gate status',
   '  npm run dev       start the Preview tab dev server',
   '  git status        show branch, cleanliness, and worktrees',
-  '  clear             clear terminal output',
   '',
-  'This terminal is a governed SignalOS command surface, not an unrestricted OS shell.',
+  'This is a governed SignalOS command surface, not an unrestricted OS shell.',
 ];
 
 function prettyJson(value: unknown): string {

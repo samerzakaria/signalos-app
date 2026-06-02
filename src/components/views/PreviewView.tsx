@@ -62,7 +62,7 @@ export function PreviewView() {
               ) : status === 'error' ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: '12px', color: 'var(--danger-deep)' }}>
                   <i className="ti ti-alert-circle" style={{ fontSize: '32px' }}></i>
-                  <p>Dev server crashed. Check the Terminal tab for logs.</p>
+                  <p>Dev server crashed. Check the Build conversation for logs.</p>
                 </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: '12px', color: 'var(--ink-3)', textAlign: 'center', padding: '24px' }}>

@@ -99,7 +99,7 @@ export function HelpView() {
 
           <div className="vault-note" style={{ 'background': 'var(--accent-softer)', 'borderRadius': 'var(--r)' }}>
             <i className="ti ti-info-circle" style={{ 'color': 'var(--accent)' }}></i>
-            <p style={{ 'color': 'var(--accent-deep)' }}><strong>Terminal help.</strong> Type <code style={{ 'background': 'rgba(79,70,199,0.1)', 'padding': '1px 6px', 'borderRadius': '3px', 'fontFamily': 'var(--f-mono)', 'fontSize': '11.5px' }}>help</code> in the Terminal tab to see all available shell commands. Past Q&amp;A entries in the Brain also capture what SignalOS has already figured out for your project.</p>
+            <p style={{ 'color': 'var(--accent-deep)' }}><strong>Build command help.</strong> Type <code style={{ 'background': 'rgba(79,70,199,0.1)', 'padding': '1px 6px', 'borderRadius': '3px', 'fontFamily': 'var(--f-mono)', 'fontSize': '11.5px' }}>help</code> in the Build conversation to see available governed commands. Past Q&amp;A entries in the Brain also capture what SignalOS has already figured out for your project.</p>
           </div>
 
         </div>

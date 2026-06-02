@@ -44,8 +44,6 @@ export const productProfiles = signal([
   { id: 'generic', name: 'Generic Product Repo' },
   { id: 'react-vite', name: 'React + Vite' },
 ]);
-export const termHistory = signal<string[]>([]);
-export const termHistIdx = signal<number>(-1);
 export const modalOpen = signal<string | null>(null);
 
 export interface EnfRule {
@@ -98,17 +96,6 @@ export const bulkImportText = signal<string>('');
 export const bulkImportDiff = signal<BulkDiffResult | null>(null);
 export const bulkImportError = signal<string | null>(null);
 export const bulkImportAllowRemovals = signal<boolean>(false);
-
-export interface TermLine {
-  kind: 'output' | 'echo' | 'error' | 'loading' | 'dim';
-  text: string;
-  pathName?: string;
-}
-export const terminalLines = signal<TermLine[]>([
-  { kind: 'dim', text: 'SignalOS terminal' },
-  { kind: 'dim', text: "Type a command, or tap one below. New here? Try 'help'." },
-]);
-export const termInputValue = signal<string>('');
 
 export const obStep = signal<number>(1);
 export const provMoreOpen = signal<boolean>(false);

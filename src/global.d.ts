@@ -104,9 +104,6 @@ declare global {
     switchDevice: (mode: string) => void;
     switchSbTab: (tab: string) => void;
     switchTab: (tab: string) => void;
-    termChip: (cmd: string) => void;
-    termKey: (e: KeyboardEvent) => void;
-    termSubmit: (val?: string) => void;
     testEngine: () => void;
     toggleEnfPopover: () => void;
     toggleKey: () => void;
