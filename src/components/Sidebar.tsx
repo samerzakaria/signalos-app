@@ -16,6 +16,7 @@ import {
 import { gateCode, gateUiState } from './GateTimeline';
 import { TestDebtPanel } from './TestDebtPanel';
 import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
+import { project, testAutomation } from '../js/ipc.js';
 
 /** Whether the workspace has a .signalos/ directory — drives conditional rendering. */
 const hasSignalosDir = signal<boolean>(false);
@@ -33,12 +34,11 @@ async function probeTestDebt(ws: string) {
     return;
   }
   try {
-    const ipc = await import('../js/ipc.js');
-    const entries = await ipc.project.listDir('.signalos');
+    const entries = await project.listDir('.signalos');
     const dirExists = Array.isArray(entries) && entries.length > 0;
     hasSignalosDir.value = dirExists;
     if (dirExists) {
-      const debt = await ipc.testAutomation.listDebt();
+      const debt = await testAutomation.listDebt();
       const debtSummary = debt as { entries?: unknown[]; open_count?: number } | null;
       hasTestDebtData.value = Boolean(
         debtSummary &&

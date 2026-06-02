@@ -2,7 +2,7 @@
 // app-v2.js (Phase 1.1b of the Foundry v4 plan).
 //
 // This preserves the terminal's command-routing logic as a reusable service
-// BEFORE TerminalView.tsx is deleted in Phase 4. The Build conversation (and
+// before TerminalView.tsx is deleted in Phase 4. The Build conversation (and
 // any future governed-shell tool execution) can call `runGovernedCommand()`
 // instead of reaching into app-v2.js.
 //
@@ -13,7 +13,9 @@
 //
 // The implementation mirrors the original `runTerminalCommand()` in
 // app-v2.js so behaviour is identical. IPC access is injected so the service
-// stays testable and free of a hard dependency on the legacy bridge.
+// stays testable.
+
+import * as defaultIpc from '../js/ipc.js';
 
 /** Minimal IPC surface this service needs. Mirrors `js/ipc.js` shape. */
 export interface GovernedShellIpc {
@@ -37,7 +39,7 @@ export interface GovernedShellContext {
   workspace: string;
   /** True when the workspace is the SignalOS starter (not a product repo). */
   inStarterWorkspace: boolean;
-  /** IPC bridge (defaults to the legacy js/ipc.js module when omitted). */
+  /** IPC bridge (defaults to the installed app IPC module when omitted). */
   ipc?: GovernedShellIpc;
   /**
    * Called when a command wants to start the dev server / preview. Defaults
@@ -70,10 +72,7 @@ function prettyJson(value: unknown): string {
 
 async function resolveIpc(ctx: GovernedShellContext): Promise<GovernedShellIpc> {
   if (ctx.ipc) return ctx.ipc;
-  // Lazy import the legacy bridge so importing this service never forces the
-  // whole IPC layer to load (keeps unit tests light).
-  const mod = (await import('../js/ipc.js')) as unknown as GovernedShellIpc;
-  return mod;
+  return defaultIpc as unknown as GovernedShellIpc;
 }
 
 async function defaultStartPreview(ctx: GovernedShellContext): Promise<string> {
