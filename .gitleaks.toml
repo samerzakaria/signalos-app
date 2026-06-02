@@ -7,6 +7,11 @@
 #   - python/test_signalos_secret_guard.py -> tests the secret guard
 #   - python/signalos_lib/_bundle/core/execution/hooks/_lib/redact.py
 #                                         -> the redaction library's own corpus
+#   - src/services/chatResponseGuard.ts   -> the TS chat-response redaction
+#                                            module (defines secret-shaped
+#                                            regex patterns to strip secrets)
+#   - src/services/chatResponseGuard.test.ts -> its fixtures (example AKIA/ghp_
+#                                            strings proving redaction works)
 #
 # All of these are tagged in the human-readable scripts/test-gates.sh
 # secret_scan function as well; this file mirrors that exclusion for
@@ -28,4 +33,11 @@ paths = [
     # secret-shaped strings in their security-audit guidance. Same rule:
     # exclusion mirrors scripts/test-gates.sh secret_scan().
     '''python/signalos_lib/_bundle/.*''',
+    # TS chat-response redaction module + its fixtures: same rationale as
+    # redact.py — these files DEFINE secret-shaped patterns / example secrets
+    # so the guard can strip real ones. Allowlisted by path (history-wide), the
+    # only fix that suppresses the false positive in the original commit since
+    # gitleaks scans full history.
+    '''src/services/chatResponseGuard\.ts''',
+    '''src/services/chatResponseGuard\.test\.ts''',
 ]
