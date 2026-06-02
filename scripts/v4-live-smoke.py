@@ -37,12 +37,78 @@ sys.path.insert(0, str(ROOT / "python"))
 PROVIDERS = {
     "anthropic": ("ANTHROPIC_API_KEY", "claude-sonnet-4-5"),
     "openai": ("OPENAI_API_KEY", "gpt-4o"),
-    "gemini": ("GEMINI_API_KEY", "gemini-2.5-flash"),
+    # Gemini has no stable default here on purpose: AI Studio retires model
+    # names (gemini-2.0-flash -> 404), so hardcoding one is a guess that goes
+    # stale. _resolve_gemini_model() asks the key for its LIVE model list.
+    "gemini": ("GEMINI_API_KEY", ""),
 }
 
 
 def _available_providers() -> list[str]:
     return [name for name, (env, _) in PROVIDERS.items() if os.getenv(env)]
+
+
+def _discover_gemini_models(api_key: str) -> list[str]:
+    """List the generateContent-capable models this AI Studio key can use.
+
+    Hits the public ListModels endpoint with the key. Returns bare model names
+    (no 'models/' prefix). Raises on transport/HTTP error so the caller can
+    surface it (INV-4) rather than fall back to a guessed name.
+    """
+    import json as _json
+    import urllib.request
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    with urllib.request.urlopen(url, timeout=30) as r:  # noqa: S310 (https, key-scoped)
+        data = _json.loads(r.read().decode("utf-8"))
+    out = []
+    for m in data.get("models", []):
+        methods = m.get("supportedGenerationMethods", [])
+        if "generateContent" not in methods:
+            continue
+        name = (m.get("name") or "").split("/")[-1]
+        if name:
+            out.append(name)
+    return out
+
+
+def _pick_latest_gemini(models: list[str]) -> str:
+    """Pick the newest stable flash model from a live model list.
+
+    No guessing — only chooses from names the API actually returned. Prefers a
+    '*-latest' flash alias (Google's own 'newest' pointer) if present; else the
+    highest-versioned stable flash; else the highest-versioned stable model.
+    """
+    def _excluded(n: str) -> bool:
+        n = n.lower()
+        return any(t in n for t in ("preview", "exp", "tts", "image", "thinking", "embedding", "vision"))
+
+    stable = [m for m in models if not _excluded(m)]
+    # 1. an explicit "latest" flash alias is the API's own newest pointer
+    latest_alias = [m for m in stable if "flash" in m.lower() and m.lower().endswith("latest")]
+    if latest_alias:
+        return sorted(latest_alias)[-1]
+    # 2. highest-versioned stable flash (string sort orders 2.5 > 2.0 > 1.5)
+    flash = sorted(m for m in stable if "flash" in m.lower())
+    if flash:
+        return flash[-1]
+    # 3. any highest-versioned stable model
+    if stable:
+        return sorted(stable)[-1]
+    # 4. nothing stable — take whatever generateContent model exists
+    return sorted(models)[-1] if models else ""
+
+
+def _resolve_gemini_model(api_key: str) -> str:
+    """SIGNALOS_MODEL override wins; otherwise discover the live latest."""
+    override = os.getenv("SIGNALOS_MODEL")
+    if override:
+        return override
+    models = _discover_gemini_models(api_key)
+    chosen = _pick_latest_gemini(models)
+    if not chosen:
+        raise RuntimeError("Gemini key returned no generateContent-capable models")
+    return chosen
 
 
 def _record(results: list, test: str, status: str, detail: str) -> None:
@@ -81,8 +147,12 @@ def run() -> int:
         if not os.getenv(env):
             _record(results, test_id, "skip", f"no {env} -- honest skip, not a pass")
             continue
-        model = os.getenv("SIGNALOS_MODEL", default_model)
         try:
+            if name == "gemini":
+                model = _resolve_gemini_model(os.getenv(env))
+                print(f"    (gemini live model: {model})")
+            else:
+                model = os.getenv("SIGNALOS_MODEL", default_model)
             status, detail = _provider_responds(name, model)
         except Exception as exc:  # INV-4: surface
             status, detail = "fail", f"{type(exc).__name__}: {exc}"
@@ -125,7 +195,10 @@ def run() -> int:
             _record(results, t, "skip", "no provider key -- cannot run live delivery")
     else:
         primary = available[0]
-        model = os.getenv("SIGNALOS_MODEL", PROVIDERS[primary][1])
+        if primary == "gemini":
+            model = _resolve_gemini_model(os.getenv("GEMINI_API_KEY"))
+        else:
+            model = os.getenv("SIGNALOS_MODEL", PROVIDERS[primary][1])
         try:
             from signalos_lib.product.gate_orchestrator import GateOrchestrator
             from signalos_lib.product.provider_adapter import ProviderAdapter
