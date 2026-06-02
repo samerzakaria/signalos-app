@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -77,6 +78,12 @@ class ValidateLayer1Tests(unittest.TestCase):
         self.assertEqual(payload["status"], "PASS")
         self.assertEqual(payload["summary"]["total"], 12)
         self.assertEqual(payload["summary"]["failed"], 0)
+        security = next(
+            result
+            for result in payload["results"]
+            if result["name"] == "security-posture-guard"
+        )
+        self.assertEqual(security["details"]["method"], "python")
         self.assertEqual(
             {result["name"] for result in payload["results"]},
             {
@@ -94,6 +101,24 @@ class ValidateLayer1Tests(unittest.TestCase):
                 "security-posture-guard",
             },
         )
+
+    def test_layer1_security_posture_does_not_shell_out(self) -> None:
+        _make_layer1_repo(self.tmp)
+
+        with patch("signalos_lib.validate_cmd.subprocess.run") as run:
+            code, payload = self._run_validate([
+                "--repo-root",
+                str(self.tmp),
+                "--group",
+                "layer1",
+                "--validator",
+                "security-posture-guard",
+                "--json",
+            ])
+
+        self.assertEqual(code, 0, payload)
+        self.assertFalse(run.called)
+        self.assertEqual(payload["results"][0]["details"]["method"], "python")
 
     def test_layer1_agent_prompt_contracts_fail_when_installed_prompt_incomplete(self) -> None:
         _make_layer1_repo(self.tmp)

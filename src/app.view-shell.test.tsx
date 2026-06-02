@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/preact';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { App } from './app';
-import { appVisible, onboardingVisible, sbTab, tab } from './state';
+import { appVisible, mobileNavOpen, onboardingVisible, sbTab, tab } from './state';
 
 describe('App view shell isolation', () => {
   beforeEach(() => {
     cleanup();
     tab.value = 'deliver';
     sbTab.value = 'projects';
+    mobileNavOpen.value = false;
     onboardingVisible.value = false;
     appVisible.value = true;
     window.switchTab = vi.fn();
@@ -52,6 +53,33 @@ describe('App view shell isolation', () => {
     await waitFor(() => {
       expect(container.querySelector('#onboarding')).toHaveClass('active');
       expect(container.querySelector('#app')).not.toHaveClass('active');
+    });
+  });
+
+  it('keeps the 375px mobile shell usable without stacked pages', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+    window.dispatchEvent(new Event('resize'));
+
+    const { container } = render(<App />);
+
+    expect(container.querySelector('.sidebar')).not.toHaveClass('mobile-open');
+    expect(container.querySelector('.mobile-nav-backdrop')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /toggle navigation/i }));
+
+    await waitFor(() => {
+      expect(container.querySelector('.sidebar')).toHaveClass('mobile-open');
+      expect(container.querySelector('.mobile-nav-backdrop')).not.toBeNull();
+      const activeViews = Array.from(container.querySelectorAll('.view.active'))
+        .map((el) => el.getAttribute('data-view'));
+      expect(activeViews).toEqual(['deliver']);
+    });
+
+    fireEvent.click(container.querySelector('.mobile-nav-backdrop') as HTMLElement);
+
+    await waitFor(() => {
+      expect(container.querySelector('.sidebar')).not.toHaveClass('mobile-open');
+      expect(container.querySelector('.mobile-nav-backdrop')).toBeNull();
     });
   });
 });

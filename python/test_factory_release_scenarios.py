@@ -81,6 +81,8 @@ class FactoryReleaseScenarioTests(unittest.TestCase):
 
     def test_empty_repo_creation_reaches_layer1_valid_after_required_human_inputs(self) -> None:
         root = self.tmp / "task-management"
+        cwd_signalos = Path.cwd() / ".signalos"
+        cwd_signalos_existed = cwd_signalos.exists()
 
         _init_product(root, "Task Management")
         persist_prompt_source("Build a task management system", repo_root=root)
@@ -93,7 +95,11 @@ class FactoryReleaseScenarioTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["failed"], 0)
         self.assertTrue((root / ".signalos" / "sources" / "initial-intent.json").is_file())
         self.assertTrue((root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md").is_file())
-        self.assertFalse((Path.cwd() / ".signalos").exists(), "test must not create repo-root .signalos")
+        self.assertEqual(
+            cwd_signalos.exists(),
+            cwd_signalos_existed,
+            "test must not create repo-root .signalos",
+        )
 
     def test_existing_repo_adoption_preserves_files_and_reaches_layer1_valid(self) -> None:
         root = self.tmp / "adopted-product"

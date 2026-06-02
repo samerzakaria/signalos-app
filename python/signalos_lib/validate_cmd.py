@@ -554,11 +554,12 @@ def _check_security_posture(repo_root: Path) -> tuple[bool, str, dict[str, Any]]
     'security-surfaces', or 'security surfaces' in SOUL-DOCUMENT.md,
     CONSTITUTION.md, and AMENDMENTS.md.
 
-    On platforms where bash is available, delegates to the bundled shell script.
-    Otherwise performs the equivalent check in pure Python.
+    Layer 1 validation must be platform-neutral. The shell validator remains
+    bundled for hook/legacy surfaces, but this built-in validator uses the
+    equivalent Python check so Windows installs never depend on WSL/Git Bash
+    path translation.
     """
     import re as _re
-    import shutil
 
     docs = [
         repo_root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md",
@@ -566,41 +567,6 @@ def _check_security_posture(repo_root: Path) -> tuple[bool, str, dict[str, Any]]
         repo_root / "core" / "governance" / "Retro" / "AMENDMENTS.md",
     ]
 
-    # Try delegating to the shell script if bash is available
-    script = repo_root / "core" / "governance" / "Validators" / "security-posture-guard.sh"
-    if not script.exists():
-        # Fall back to bundled copy
-        bundle_script = (
-            Path(__file__).resolve().parent
-            / "_bundle" / "core" / "governance" / "Validators" / "security-posture-guard.sh"
-        )
-        if bundle_script.exists():
-            script = bundle_script
-
-    bash_path = shutil.which("bash")
-    if script.exists() and bash_path:
-        try:
-            proc = subprocess.run(
-                [bash_path, str(script), "--repo-root", str(repo_root)],
-                capture_output=True, text=True, timeout=30,
-                cwd=str(repo_root),
-            )
-            found = proc.returncode == 0
-            return (
-                found,
-                "security_surfaces declared" if found else "security_surfaces not declared in constitution",
-                {
-                    "method": "shell",
-                    "script": str(script),
-                    "exit_code": proc.returncode,
-                    "stdout": proc.stdout.strip(),
-                    "stderr": proc.stderr.strip(),
-                },
-            )
-        except Exception:
-            pass  # Fall through to Python check
-
-    # Pure Python fallback (Windows or missing bash)
     pattern = _re.compile(r"security[_\- ]surfaces", _re.IGNORECASE)
     checked: list[dict[str, Any]] = []
     found = False
