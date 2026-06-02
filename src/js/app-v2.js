@@ -791,18 +791,26 @@ window.resetSessionCost = resetSessionCost;
 async function changeProvider() {
   const p = state.ai;
   if (!p) return;
+  state.providerModels = [];
+  state.providerModelsError = null;
   try {
     await ipc.provider.setActive(p);
-    const models = await ipc.provider.fetchModels(p, null).catch(() => []);
+    const models = await ipc.provider.fetchModels(p, null);
     if (Array.isArray(models) && models.length > 0) {
       state.providerModels = models;
       if (!models.some((model) => model.id === state.aiModel)) {
         state.aiModel = models[0].id;
         await ipc.provider.setModel(p, state.aiModel);
       }
+    } else {
+      state.providerModelsError = `${p} returned no models. Refresh again or replace the key.`;
     }
   } catch (e) {
-    showError("Could not change provider: " + errorMessage(e));
+    if (isProviderAuthFailure(e)) {
+      try { await ipc.keychain.delete(p); } catch {}
+    }
+    state.providerModels = [];
+    state.providerModelsError = providerConnectionMessage(e, p);
   }
 }
 window.changeProvider = changeProvider;
@@ -819,34 +827,43 @@ async function changeModel() {
 window.changeModel = changeModel;
 
 async function refreshCurrentProviderModels(apiKey) {
-  const models = await ipc.provider.fetchModels(state.ai, apiKey || null);
-  if (!Array.isArray(models) || models.length === 0) {
-    throw new Error(`No models were returned for ${state.ai}.`);
+  state.providerModelsError = null;
+  try {
+    const models = await ipc.provider.fetchModels(state.ai, apiKey || null);
+    if (!Array.isArray(models) || models.length === 0) {
+      throw new Error(`No models were returned for ${state.ai}.`);
+    }
+    state.providerModels = models;
+    if (!models.some((model) => model.id === state.aiModel)) {
+      state.aiModel = models[0].id;
+    }
+    return models;
+  } catch (e) {
+    state.providerModels = [];
+    state.providerModelsError = providerConnectionMessage(e, state.ai);
+    throw e;
   }
-  state.providerModels = models;
-  if (!models.some((model) => model.id === state.aiModel)) {
-    state.aiModel = models[0].id;
-  }
-  return models;
 }
 
 async function replaceApiKey() {
   const key = prompt("Enter new API key:");
   if (!key) return;
   try {
+    await ipc.keychain.store(state.ai, key);
     await refreshCurrentProviderModels(key);
     await ipc.provider.setModel(state.ai, state.aiModel);
     const result = await ipc.provider.test(state.ai, key, state.aiModel);
     if (result?.ok || result === true) {
-      await ipc.keychain.store(state.ai, key);
       try { await ipc.sidecar.restart(); } catch {}
-      addAIBubble("API key updated and verified successfully.");
+      addAIBubble("API key saved, models fetched, and provider verified.");
     }
   } catch (e) {
     if (isProviderAuthFailure(e)) {
       try { await ipc.keychain.delete(state.ai); } catch {}
+      showError("Could not update API key: " + providerConnectionMessage(e, state.ai));
+    } else {
+      showWarning("API key saved, but models were not fetched: " + providerConnectionMessage(e, state.ai));
     }
-    showError("Could not update API key: " + providerConnectionMessage(e, state.ai));
   }
 }
 window.replaceApiKey = replaceApiKey;
@@ -1220,9 +1237,9 @@ async function finishOnboarding() {
 
     if (apiKey) {
       try {
+        await ipc.keychain.store(state.ai, apiKey);
         await refreshCurrentProviderModels(apiKey);
         await ipc.provider.test(state.ai, apiKey, state.aiModel);
-        await ipc.keychain.store(state.ai, apiKey);
         // Restart sidecar so it picks up the newly-stored key from keychain.
         // Without this, the sidecar (spawned at app launch before onboarding)
         // runs without the API key in its environment.

@@ -35,6 +35,10 @@ function isProviderAuthFailure(message: string): boolean {
   return /401|unauthori[sz]ed|invalid api key|invalid key|forbidden/i.test(message);
 }
 
+function isProviderNetworkBlock(message: string): boolean {
+  return /content is blocked|site owner|cloudflare|blocked by/i.test(message);
+}
+
 function providerDisplayName(provider: string): string {
   const names: Record<string, string> = {
     anthropic: 'Anthropic',
@@ -57,6 +61,9 @@ function providerConnectionMessage(provider: string, message: string): string {
   const name = providerDisplayName(provider);
   if (isProviderAuthFailure(message)) {
     return `${name} rejected the API key. Replace it in Settings, then refresh models.`;
+  }
+  if (isProviderNetworkBlock(message)) {
+    return `${name} model fetching is blocked by the provider or network. The key can stay saved; refresh models again or switch provider.`;
   }
   if (isExpectedMissingKey(message)) {
     return `${name} needs an API key before models can be fetched.`;

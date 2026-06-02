@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/preact';
-import { ai, aiModel, obStep, providerModels, providerModelsError, providerModelsLoading } from '../state';
+import { fireEvent, render, screen } from '@testing-library/preact';
+import { ai, aiModel, apiKeyInput, obStep, providerModels, providerModelsError, providerModelsLoading } from '../state';
 import { Onboarding } from './Onboarding';
+import { loadProviderModels } from '../services/providerModels';
 
 vi.mock('../services/providerModels', () => ({
   loadProviderModels: vi.fn(async () => []),
@@ -16,6 +17,7 @@ describe('Onboarding provider model selection', () => {
       { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
       { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
     ];
+    apiKeyInput.value = '';
     providerModelsError.value = null;
     providerModelsLoading.value = false;
     window.selectProv = vi.fn();
@@ -36,5 +38,14 @@ describe('Onboarding provider model selection', () => {
     const selectedProvider = container.querySelector('[data-ai="anthropic"]');
     expect(selectedProvider).toHaveClass('sel');
     expect(selectedProvider?.querySelector('.ai-rd i')).toHaveClass('ti-check');
+  });
+
+  it('tries saved provider keys quietly when changing provider during onboarding', () => {
+    const { container } = render(<Onboarding />);
+
+    const openAiCard = container.querySelector('[data-ai="openai"]') as HTMLElement;
+    fireEvent.click(openAiCard);
+
+    expect(loadProviderModels).toHaveBeenCalledWith('openai', null, { quietMissingKey: true });
   });
 });

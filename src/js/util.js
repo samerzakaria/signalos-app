@@ -61,6 +61,9 @@ export function providerConnectionMessage(error, provider = "provider") {
   if (/401|unauthori[sz]ed|invalid api key|invalid key|forbidden/i.test(raw)) {
     return `${name} rejected the API key. Setup can continue; replace the key in Settings when ready.`;
   }
+  if (/content is blocked|site owner|cloudflare|blocked by/i.test(raw)) {
+    return `${name} model fetching is blocked by the provider or network. Your key is saved; refresh models again or switch provider.`;
+  }
   if (/requires an api key|api key.*not found|no api key/i.test(raw)) {
     return `${name} needs an API key before models can be fetched.`;
   }

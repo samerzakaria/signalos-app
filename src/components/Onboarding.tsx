@@ -38,17 +38,22 @@ export function Onboarding() {
   const models = providerModels.value;
   const selectedModel = aiModel.value;
   const modelSelectValue = models.some((model) => model.id === selectedModel) ? selectedModel : '';
+  const providerNeedsKey = provider !== 'ollama';
   const modelHelp = providerModelsLoading.value
     ? 'Fetching models from the selected provider...'
     : providerModelsError.value
     ? providerModelsError.value
     : models.length > 0
     ? `${models.length} models available from ${provider}.`
-    : 'Fetch models after entering the provider key.';
+    : providerNeedsKey
+    ? 'Fetch models with the saved key, or paste a new key here first.'
+    : 'Fetch local models from Ollama.';
 
   const chooseProvider = (providerId: string, label: string) => {
     window.selectProv(providerId, '', label);
-    void loadProviderModels(providerId, apiKeyInput.value.trim() || null);
+    providerModels.value = [];
+    providerModelsError.value = null;
+    void loadProviderModels(providerId, apiKeyInput.value.trim() || null, { quietMissingKey: true });
   };
 
   const fetchModels = () => {

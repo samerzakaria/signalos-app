@@ -33,4 +33,10 @@ describe('providerConnectionMessage', () => {
     expect(providerConnectionMessage('Anthropic model list returned an unreadable response', 'Anthropic'))
       .toBe('Anthropic models could not be loaded right now. You can continue setup and refresh models later in Settings.');
   });
+
+  it('turns provider edge blocks into retry guidance without treating the key as rejected', () => {
+    expect(providerConnectionMessage('This content is blocked. Contact the site owner to fix the issue.', 'Anthropic'))
+      .toBe('Anthropic model fetching is blocked by the provider or network. Your key is saved; refresh models again or switch provider.');
+    expect(isProviderAuthFailure('This content is blocked. Contact the site owner to fix the issue.')).toBe(false);
+  });
 });

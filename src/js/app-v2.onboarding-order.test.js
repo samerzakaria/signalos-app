@@ -33,18 +33,21 @@ describe('app-v2 onboarding setup order', () => {
     expect(body).toContain('tested: providerReady');
   });
 
-  it('validates provider access before storing the typed API key', () => {
+  it('stores the typed API key before provider model fetch so retry can use keychain', () => {
     const body = finishOnboardingBody();
     const providerBlockStart = body.indexOf('if (apiKey)');
     const providerBlockEnd = body.indexOf('} else if (state.ai === "ollama")');
     const providerBlock = body.slice(providerBlockStart, providerBlockEnd);
 
+    const storeKey = providerBlock.indexOf('ipc.keychain.store(state.ai, apiKey)');
     const fetchModels = providerBlock.indexOf('refreshCurrentProviderModels(apiKey)');
     const testProvider = providerBlock.indexOf('ipc.provider.test(state.ai, apiKey, state.aiModel)');
-    const storeKey = providerBlock.indexOf('ipc.keychain.store(state.ai, apiKey)');
+    const deleteRejectedKey = providerBlock.indexOf('ipc.keychain.delete(state.ai)');
 
+    expect(storeKey).toBeGreaterThanOrEqual(0);
     expect(fetchModels).toBeGreaterThanOrEqual(0);
+    expect(fetchModels).toBeGreaterThan(storeKey);
     expect(testProvider).toBeGreaterThan(fetchModels);
-    expect(storeKey).toBeGreaterThan(testProvider);
+    expect(deleteRejectedKey).toBeGreaterThan(testProvider);
   });
 });
