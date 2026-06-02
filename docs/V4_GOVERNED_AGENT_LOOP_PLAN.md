@@ -730,6 +730,10 @@ Required E2E validation on 2026-06-02: T40/T43/T44 passed through `python -m pyt
 
 **57 tests. 47 required in CI. 8 optional smoke (live provider). 1 manual. 1 required release.**
 
+T56 evidence on 2026-06-02: commit `abab505273b0830ed492f48de322c4c7c5c6826f` passed Pages run `26843112515`, Smoke run `26843111914`, and test-automation run `26843111965`. The test-automation run completed green across L0 pre-commit gates, L1 build/verify on macOS/Windows/Ubuntu, L1 Docker sandbox integration, L2 installer smoke on macOS/Windows/Ubuntu, and L3 pre-prod gates including `Run extended test-gates`.
+
+T57 remains open until a tag-driven release workflow completes green across all required platforms. It is not counted as closed by the T56 CI evidence.
+
 ---
 
 ## Risk Assessment
