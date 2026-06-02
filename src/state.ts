@@ -20,6 +20,7 @@ export const userName = signal<string>("");
 export const userRole = signal<string>("");
 export const waveFrozen = signal<boolean>(false);
 export const busy = signal<boolean>(false);
+export const mobileNavOpen = signal<boolean>(false);
 export const currentGateId = signal<string | null>(null);
 export const gateOpen = signal<boolean>(false);
 export const enfOpen = signal<boolean>(false);

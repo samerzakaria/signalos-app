@@ -173,6 +173,20 @@ def build_tool_definitions() -> list[ToolDefinition]:
                 "required": ["pattern"],
             },
         ),
+        ToolDefinition(
+            name="list_directory",
+            description="List files and subdirectories of a workspace directory.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative directory; '' or '.' for root.",
+                    }
+                },
+                "required": ["path"],
+            },
+        ),
     ]
 
 
@@ -635,6 +649,17 @@ class AgentLoop:
                         f"allowlist.",
                         rule="trust-tier",
                     )
+        elif name == "list_directory":
+            path = str(args.get("path", "")).strip()
+            # Root ('' or '.') is always listable; sub-paths honor the read allowlist.
+            if enf.rule_enabled("trust-tier") and path not in ("", "."):
+                allow = enf.tier_paths("read")
+                if not _matches_glob(path, allow):
+                    raise ToolPolicyError(
+                        f"Path '{path}' is not in the {enf.trust_tier} read "
+                        f"allowlist.",
+                        rule="trust-tier",
+                    )
         # search_files has no governance restriction (read-only metadata).
 
     def _idempotent_skip(
@@ -698,6 +723,8 @@ class AgentLoop:
             return self._tool_run_command(str(args.get("command", "")))
         if name == "search_files":
             return self._tool_search_files(str(args.get("pattern", "")))
+        if name == "list_directory":
+            return self._tool_list_directory(str(args.get("path", "")))
         raise ToolPolicyError(f"Unknown tool '{name}'.")
 
     def _tool_read_file(self, rel_path: str) -> str:
@@ -794,6 +821,30 @@ class AgentLoop:
         if not matches:
             return f"No files match: {pattern}"
         return "\n".join(sorted(matches))
+
+    def _tool_list_directory(self, rel_path: str) -> str:
+        rel = (rel_path or "").strip()
+        lookup = "." if rel in ("", ".") else rel
+        target = self._resolve_in_workspace(lookup)
+        if target is None:
+            raise ToolPolicyError(
+                f"list_directory path escapes workspace: {rel_path}"
+            )
+        if not target.is_dir():
+            return f"ERROR: not a directory: {rel or '.'}"
+        entries: list[str] = []
+        # Directories first, then files; both alphabetical. Skip VCS/build noise.
+        for p in sorted(
+            target.iterdir(), key=lambda x: (x.is_file(), x.name.lower())
+        ):
+            if p.name in (".git", "node_modules", ".signalos"):
+                continue
+            entries.append(f"[{'dir' if p.is_dir() else 'file'}] {p.name}")
+            if len(entries) >= 500:
+                break
+        if not entries:
+            return f"(empty directory: {rel or '.'})"
+        return "\n".join(entries)
 
     def _scan_write_content(self, rel_path: str, content: str) -> list[str]:
         """Run the security gate's injection scan on write content (2.9)."""

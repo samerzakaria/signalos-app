@@ -189,6 +189,11 @@ def _create_runtime_state(target: Path) -> None:
     audit = sig / "AUDIT_TRAIL.jsonl"
     if not audit.is_file():
         audit.write_text("", encoding="utf-8")
+    # Trust-tier path allowlist for the governed agent loop (v4). Seeds
+    # .signalos/trust-tier-paths.json with the default per-tier read/write/
+    # execute allowlists + always-forbidden set. No-op if already present.
+    from signalos_lib.product.enforcement_state import seed_trust_tier_paths
+    seed_trust_tier_paths(target)
 
 
 def _render_plan_template(target: Path, project_name: str) -> None:

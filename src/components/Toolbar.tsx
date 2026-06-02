@@ -1,4 +1,4 @@
-import { enforcementRules, enfOpen, tab, waveFrozen } from '../state';
+import { enforcementRules, enfOpen, tab, waveFrozen, mobileNavOpen } from '../state';
 import { topTabClass } from './viewShell';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 
@@ -46,6 +46,7 @@ export function Toolbar() {
   return (
     <>
 <header className="toolbar">
+      <button type="button" className="mobile-nav-toggle" aria-label="Toggle navigation" onClick={() => { mobileNavOpen.value = !mobileNavOpen.value; }}><i className="ti ti-menu-2"></i></button>
       <div className="crumb">
         <WorkspaceSwitcher />
         <i className="ti ti-chevron-right"></i>

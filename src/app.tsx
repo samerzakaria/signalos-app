@@ -22,6 +22,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { OverrideModal } from './components/OverrideModal';
 import { ExitModal } from './components/ExitModal';
 import { stageClass } from './components/viewShell';
+import { mobileNavOpen } from './state';
 
 export function App() {
   return (
@@ -31,6 +32,7 @@ export function App() {
         <Onboarding />
         <div id="app" className={stageClass('app')}>
           <Sidebar />
+          {mobileNavOpen.value ? <div className="mobile-nav-backdrop" onClick={() => { mobileNavOpen.value = false; }}></div> : null}
           <section className="main">
             <Toolbar />
             <div className="views">

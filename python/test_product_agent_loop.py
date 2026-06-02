@@ -471,7 +471,8 @@ class TestToolDefinitions(unittest.TestCase):
         names = {t.name for t in build_tool_definitions()}
         self.assertEqual(
             names,
-            {"read_file", "write_file", "edit_file", "run_command", "search_files"},
+            {"read_file", "write_file", "edit_file", "run_command",
+             "search_files", "list_directory"},
         )
 
     def test_openai_tool_shape(self):
@@ -483,3 +484,77 @@ class TestToolDefinitions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# list_directory tool (Gap 5) + trust-tier-paths seed (Gap 6)
+# ---------------------------------------------------------------------------
+
+
+class TestListDirectoryAndSeed(unittest.TestCase):
+    def test_list_directory_lists_entries(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "sub").mkdir()
+            (root / "a.txt").write_text("a", encoding="utf-8")
+            (root / "b.txt").write_text("b", encoding="utf-8")
+            provider = AgentTestProvider(
+                script=[_tool_resp("list_directory", {"path": "."}), _end_resp()]
+            )
+            loop = _loop(root, provider)
+            result = loop.run("sys", "list root")
+            self.assertEqual(result.status, "completed")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            out = tool_msgs[0]["content"]
+            self.assertIn("[dir] sub", out)
+            self.assertIn("[file] a.txt", out)
+            self.assertIn("[file] b.txt", out)
+
+    def test_list_directory_is_sixth_tool(self):
+        names = {t.name for t in build_tool_definitions()}
+        self.assertIn("list_directory", names)
+        self.assertEqual(len(names), 6)
+
+    def test_list_directory_read_allowlist_enforced(self):
+        # On T2, reads outside the read allowlist (which is ** by default, so
+        # craft a tier with a narrow read list) are denied.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "secrets").mkdir()
+            enf = StaticEnforcementProvider(trust_tier="T2")
+            # Seed a restrictive read allowlist for T2.
+            import json as _json
+            sig = root / ".signalos"
+            sig.mkdir(parents=True, exist_ok=True)
+            (sig / "trust-tier-paths.json").write_text(
+                _json.dumps({"T2": {"read": ["src/**"], "write": [], "execute": []}}),
+                encoding="utf-8",
+            )
+            provider = AgentTestProvider(
+                script=[_tool_resp("list_directory", {"path": "secrets"}), _end_resp()]
+            )
+            loop = _loop(root, provider, enforcement=enf)
+            result = loop.run("sys", "peek")
+            # denial is surfaced as a tool message (INV-4), not a crash
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertTrue(
+                any("not in the T2 read allowlist" in m["content"] for m in tool_msgs)
+            )
+
+    def test_seed_trust_tier_paths_idempotent(self):
+        from signalos_lib.product.enforcement_state import (
+            seed_trust_tier_paths,
+            load_trust_tier_paths,
+        )
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = seed_trust_tier_paths(root)
+            self.assertTrue(p.is_file())
+            data = load_trust_tier_paths(root)
+            self.assertEqual(
+                sorted(data.keys()), ["T1", "T2", "T3", "forbidden_always"]
+            )
+            self.assertIn("rm -rf", data["forbidden_always"]["execute"])
+            # second call is a no-op (does not raise, file still valid)
+            seed_trust_tier_paths(root)
+            self.assertTrue(p.is_file())

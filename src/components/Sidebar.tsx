@@ -11,6 +11,7 @@ import {
   modalOpen,
   sbTab,
   tab,
+  mobileNavOpen,
 } from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
 import { TestDebtPanel } from './TestDebtPanel';
@@ -103,7 +104,7 @@ export function Sidebar() {
 
   return (
     <>
-<aside className="sidebar">
+<aside className={"sidebar" + (mobileNavOpen.value ? " mobile-open" : "")}>
     <div className="sb-head">
       <div className="sb-mark">
         <svg width="18" height="18" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="3.7" fill="currentColor"/><path d="M20.24 9.22 A8 8 0 0 1 20.24 22.78" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M11.76 9.22 A8 8 0 0 0 11.76 22.78" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M22.89 4.98 A13 13 0 0 1 22.89 27.02" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M9.11 4.98 A13 13 0 0 0 9.11 27.02" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/></svg>
