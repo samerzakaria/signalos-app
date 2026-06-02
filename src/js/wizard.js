@@ -137,7 +137,7 @@ function render() {
     <div class="wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <div class="wizard-card">
         <header class="wizard-header">
-          <div class="wizard-title" id="wizard-title">SignalOS &mdash; first-time setup</div>
+          <div class="wizard-title" id="wizard-title">Foundry &mdash; first-time setup</div>
         </header>
         <div class="wizard-dots" role="progressbar" aria-valuenow="${wizardState.current + 1}" aria-valuemin="1" aria-valuemax="${STEPS.length}">
           ${STEPS.map((id, i) => {
@@ -167,12 +167,12 @@ function renderStep(step) {
   switch (step) {
     case "welcome":
       return `
-        <h2>Welcome to SignalOS</h2>
+        <h2>Welcome to Foundry</h2>
         <p>Build apps with AI. Keep your folder, your keys, and your budget under your control.</p>
         <p>Before we start, we'll:</p>
         <ul class="wizard-list">
           <li>✓ Pick a project folder</li>
-          <li>✓ Decide what SignalOS may write to it</li>
+          <li>✓ Decide what Foundry may write to it</li>
           <li>✓ Connect an AI provider (cloud or local Ollama)</li>
           <li>✓ Set a monthly budget</li>
         </ul>
@@ -181,7 +181,7 @@ function renderStep(step) {
     case "folder":
       return `
         <h2>Where do you want to work?</h2>
-        <p>SignalOS will only ever read or write inside this folder.</p>
+        <p>Foundry will only ever read or write inside this folder.</p>
         <div class="wizard-row">
           <input type="text" id="wiz-folder" value="${escapeAttr(wizardState.folder)}" placeholder="C:\\Users\\you\\projects\\my-app" />
           <button class="secondary small" type="button" id="wiz-browse">Browse…</button>
@@ -192,10 +192,10 @@ function renderStep(step) {
       `;
     case "init":
       return `
-        <h2>What may SignalOS write to your folder?</h2>
-        <p>SignalOS scaffolds governance files (plan, runtime state, command library, IDE hooks) so it can guide your work.</p>
+        <h2>What may Foundry write to your folder?</h2>
+        <p>Foundry scaffolds SignalOS governance files (plan, runtime state, command library, IDE hooks) so it can guide your work.</p>
         <fieldset class="wizard-radios">
-          ${initOption("full", "Full SignalOS", "Write the entire bundle. Overwrites any colliding file. Use only on an empty or brand-new folder.")}
+          ${initOption("full", "Full Foundry setup", "Write the entire bundle. Overwrites any colliding file. Use only on an empty or brand-new folder.")}
           ${initOption("keep", "Keep my files (recommended)", "Write the bundle but never overwrite anything that already exists. Safe for non-empty folders.")}
           ${initOption("minimal", "Minimal", "Only the .signalos/ runtime state. No command library, no integrations.")}
           ${initOption("skip", "Skip for now", "Initialize later from Settings or the Setup step.")}
@@ -586,7 +586,7 @@ async function onNext() {
       // Probe artifacts to confirm scaffolding really landed.
       const artifacts = await ipc.project.artifacts();
       if (!artifacts?.initialized) {
-        const msg = `Init ran (${wizardState.initMode}) but expected SignalOS files are still missing.\n\n${text || ""}`;
+        const msg = `Init ran (${wizardState.initMode}) but expected Foundry governance files are still missing.\n\n${text || ""}`;
         if (result) result.innerHTML = `<div class="wizard-error">${escapeHtml(msg)}</div>`;
         throw new Error(msg);
       }
@@ -652,7 +652,7 @@ function basename(path) {
 }
 
 function initLabel(mode) {
-  return { full: "Full SignalOS", keep: "Keep my files", minimal: "Minimal", skip: "Skipped (run /signal-init later)" }[mode] || mode;
+  return { full: "Full Foundry setup", keep: "Keep my files", minimal: "Minimal", skip: "Skipped (run /signal-init later)" }[mode] || mode;
 }
 
 function providerName(id) {

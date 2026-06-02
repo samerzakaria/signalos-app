@@ -85,7 +85,7 @@ export function BuildView() {
                       <div className="bubble streaming" id={`stream-${b.id}`}>
                         <span className="stream-text"><Markdown text={b.text} /></span><span className="stream-cursor"></span>
                       </div>
-                      <div className="msg-meta">SignalOS · now</div>
+                      <div className="msg-meta">Foundry · now</div>
                     </div>
                   </div>
                 );
@@ -270,7 +270,7 @@ export function BuildView() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="msg-meta">SignalOS · plan</div>
+                      <div className="msg-meta">Foundry · plan</div>
                     </div>
                   </div>
                 );
@@ -316,7 +316,7 @@ export function BuildView() {
                   <div className="msg-av"><i className="ti ti-sparkles" style={{ 'fontSize': '17px' }}></i></div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div className="bubble"><Markdown text={b.text} /></div>
-                    {b.ts && !b.historical ? <div className="msg-meta">SignalOS · {b.ts}</div> : <div className="msg-meta">SignalOS</div>}
+                    {b.ts && !b.historical ? <div className="msg-meta">Foundry · {b.ts}</div> : <div className="msg-meta">Foundry</div>}
                   </div>
                 </div>
               );
@@ -447,13 +447,13 @@ export function BuildView() {
             </div>
             <div className={`composer${inputIsCommand ? ' composer-command' : ''}`}>
               {inputIsCommand ? (
-                <span className="composer-mode-badge" data-testid="composer-mode-command" title="Detected a SignalOS command">
+                <span className="composer-mode-badge" data-testid="composer-mode-command" title="Detected a governed command">
                   <i className="ti ti-terminal-2"></i> cmd
                 </span>
               ) : null}
               <input
                 id="chatInput"
-                placeholder="Tell SignalOS anything, or type / for commands…"
+                placeholder="Tell Foundry anything, or type / for commands…"
                 value={inputVal}
                 onInput={(e) => { chatInputValue.value = (e.target as HTMLInputElement).value; window.composerInput(e); }}
                 onKeyDown={(e) => window.composerKey(e)}

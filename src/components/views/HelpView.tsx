@@ -16,7 +16,7 @@ export function HelpView() {
               <div className="next-c">
                 <div style={{ 'fontSize': '22px', 'marginBottom': '7px' }}>🚀</div>
                 <div className="next-t">Start a new project</div>
-                <div className="next-d">Open Build, pick a folder, tell SignalOS what you want to make — it handles the rest.</div>
+                <div className="next-d">Open Build, pick a folder, tell Foundry what you want to make — it handles the rest.</div>
               </div>
               <div className="next-c">
                 <div style={{ 'fontSize': '22px', 'marginBottom': '7px' }}>🔐</div>
@@ -99,7 +99,7 @@ export function HelpView() {
 
           <div className="vault-note" style={{ 'background': 'var(--accent-softer)', 'borderRadius': 'var(--r)' }}>
             <i className="ti ti-info-circle" style={{ 'color': 'var(--accent)' }}></i>
-            <p style={{ 'color': 'var(--accent-deep)' }}><strong>Build command help.</strong> Type <code style={{ 'background': 'rgba(79,70,199,0.1)', 'padding': '1px 6px', 'borderRadius': '3px', 'fontFamily': 'var(--f-mono)', 'fontSize': '11.5px' }}>help</code> in the Build conversation to see available governed commands. Past Q&amp;A entries in the Brain also capture what SignalOS has already figured out for your project.</p>
+            <p style={{ 'color': 'var(--accent-deep)' }}><strong>Build command help.</strong> Type <code style={{ 'background': 'rgba(79,70,199,0.1)', 'padding': '1px 6px', 'borderRadius': '3px', 'fontFamily': 'var(--f-mono)', 'fontSize': '11.5px' }}>help</code> in the Build conversation to see available governed commands. Past Q&amp;A entries in the Brain also capture what Foundry has already figured out for your project.</p>
           </div>
 
         </div>

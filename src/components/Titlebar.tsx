@@ -29,7 +29,7 @@ export function Titlebar() {
   <div className="titlebar-center">
     <div className="cmd-pill" onClick={() => window.openSearch()}>
       <i className="ti ti-search"></i>
-      <span>Search projects or ask SignalOS…</span>
+      <span>Search projects or ask Foundry...</span>
       <span className="kbd">⌘K</span>
     </div>
   </div>
@@ -38,7 +38,7 @@ export function Titlebar() {
     <div className="tb-divider"></div>
     <div className="live-badge" id="liveBadge" style={{ 'borderRadius': '7px' }}><span className="dot"></span> <span id="provDisplay">{provName} · live</span></div>
     <div className="tb-divider" style={{ 'margin': '0 6px 0 10px' }}></div>
-    <button className="tb-btn tb-close" aria-label="Close SignalOS" onClick={() => window.openExit()} title="Close SignalOS"><i className="ti ti-x"></i></button>
+    <button className="tb-btn tb-close" aria-label="Close Foundry" onClick={() => window.openExit()} title="Close Foundry"><i className="ti ti-x"></i></button>
   </div>
 </div>
     </>

@@ -1,13 +1,13 @@
 [[set]]
 identifier = "workspace-core"
-description = "SignalOS desktop application commands exposed to the main window."
+description = "Foundry desktop application commands exposed to the main window."
 permissions = [
     "allow-app-commands",
 ]
 
 [[permission]]
 identifier = "allow-app-commands"
-description = "Allows the main SignalOS window to invoke registered application commands."
+description = "Allows the main Foundry window to invoke registered application commands."
 commands.allow = [
     "add_brain_entry",
     "add_test_debt",

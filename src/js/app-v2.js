@@ -32,7 +32,8 @@ function workspaceNameFromPath(path) {
 }
 
 function isStarterWorkspacePath(path) {
-  return workspaceNameFromPath(path) === "SignalOS Workspace";
+  const name = workspaceNameFromPath(path);
+  return name === "SignalOS Workspace" || name === "Foundry Workspace";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -883,7 +884,7 @@ async function switchWorkspace(path) {
 window.switchWorkspace = switchWorkspace;
 
 async function forgetWorkspace() {
-  if (!confirm("Remove this workspace from SignalOS? Your files stay on your computer.")) return;
+  if (!confirm("Remove this workspace from Foundry? Your files stay on your computer.")) return;
   try {
     await ipc.workspace.clear();
     state.workspace = "";
@@ -1082,7 +1083,7 @@ async function createProject() {
   if (!path) { showError("Choose a projects root in onboarding or enter a folder path"); return; }
 
   if (typeof window.createSignalosProject !== "function") {
-    showError("Project setup is not ready. Reload SignalOS and try again.");
+    showError("Project setup is not ready. Reload Foundry and try again.");
     return;
   }
 
@@ -1225,7 +1226,7 @@ async function finishOnboarding() {
   let providerWarning = "";
 
   try {
-    // Onboarding chooses the root folder where SignalOS will place product
+    // Onboarding chooses the root folder where Foundry will place product
     // repos. Product workspaces are created later by Deliver/New Project.
     if (!projectsRoot) {
       throw new Error("Choose a projects root folder.");

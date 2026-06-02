@@ -47,7 +47,7 @@ fn main() {
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sidecar::spawn_python_sidecar(&app_handle).await {
-                    eprintln!("[SignalOS] Failed to start Python sidecar: {e}");
+                    eprintln!("[Foundry] Failed to start Python sidecar: {e}");
                     let _ = app_handle.emit("sidecar:error", e.to_string());
                 }
             });
@@ -69,7 +69,7 @@ fn main() {
             }
 
             // â”€â”€ Log startup time (T5-6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            eprintln!("[SignalOS] startup ready in {}ms", t0.elapsed().as_millis());
+            eprintln!("[Foundry] startup ready in {}ms", t0.elapsed().as_millis());
 
             Ok(())
         })
@@ -157,7 +157,7 @@ fn main() {
             test_automation::read_mutation_score,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running SignalOS");
+        .expect("error while running Foundry");
 }
 
 // â”€â”€â”€ NATIVE MENU (T1-1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -245,7 +245,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         "Help",
         true,
         &[
-            &MenuItem::with_id(handle, "open-docs", "SignalOS Docs", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "open-docs", "Foundry Docs", true, None::<&str>)?,
             &MenuItem::with_id(
                 handle,
                 "check-update",
@@ -254,7 +254,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
                 None::<&str>,
             )?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "about", "About SignalOS", true, None::<&str>)?,
+            &MenuItem::with_id(handle, "about", "About Foundry", true, None::<&str>)?,
         ],
     )?;
 

@@ -275,7 +275,7 @@ async function sendMsg() {
           {
             id: nowId(),
             kind: 'system',
-            text: 'Plan didn\'t pass schema validation. Issues:\n• ' + detail + '\n\nAsk SignalOS to revise (e.g. "rewrite that plan with valid tiers").',
+            text: 'Plan didn\'t pass schema validation. Issues:\n• ' + detail + '\n\nAsk Foundry to revise (e.g. "rewrite that plan with valid tiers").',
           },
         ];
       }
@@ -410,7 +410,7 @@ async function runTranslatorOn(artifact) {
 window.attachFile = attachExternalDoc;
 
 // WAVE-ENGINE-DESIGN §7 — Tauri webview drag-drop registration.
-// When the user drops a file onto the SignalOS window, route the first
+// When the user drops a file onto the Foundry window, route the first
 // path through the same translator pipeline as the paperclip button.
 // Registered once at module load; non-Tauri dev environments silently
 // no-op because the @tauri-apps/api import resolves to a stub.

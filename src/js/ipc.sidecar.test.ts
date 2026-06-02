@@ -62,7 +62,7 @@ describe('ipc sidecar waits', () => {
     expect(listeners.has('sidecar:terminated')).toBe(true);
     listeners.get('sidecar:terminated')?.({ payload: 1 });
 
-    await expect(wait).rejects.toThrow(/SignalOS Core stopped/);
+    await expect(wait).rejects.toThrow(/Foundry engine stopped/);
   });
 
   it('does not reject a pending delivery when an unrelated stream error arrives', async () => {
@@ -99,7 +99,7 @@ describe('ipc sidecar waits', () => {
     await expect(wait).rejects.toThrow(/Delivery command failed/);
   });
 
-  it('names the underlying SignalOS command in timeout errors', async () => {
+  it('names the underlying Foundry engine command in timeout errors', async () => {
     const { signal } = await import('./ipc.js');
     const wait = signal.runAndWait('deliver', ['--json'], 5000);
     await invoke.mock.results[0].value;
@@ -109,6 +109,6 @@ describe('ipc sidecar waits', () => {
 
     vi.advanceTimersByTime(5000);
 
-    await expect(wait).rejects.toThrow(/Timed out waiting for SignalOS Core command "deliver"/);
+    await expect(wait).rejects.toThrow(/Timed out waiting for Foundry engine command "deliver"/);
   });
 });

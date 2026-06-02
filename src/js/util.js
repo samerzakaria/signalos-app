@@ -6,12 +6,12 @@ export function esc(s) {
 }
 
 export function showError(msg) {
-  console.error("[SignalOS]", msg);
+  console.error("[Foundry]", msg);
   showToast(msg, "var(--danger)", "#fff");
 }
 
 export function showWarning(msg) {
-  console.warn("[SignalOS]", msg);
+  console.warn("[Foundry]", msg);
   showToast(msg, "var(--amber-soft)", "var(--amber-deep)", "warningToast", 7000);
 }
 

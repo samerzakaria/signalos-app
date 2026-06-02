@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# update-manifest.sh - update a SignalOS update manifest locally.
+# update-manifest.sh - update a Foundry update manifest locally.
 #
 # Usage:
 #   ./scripts/update-manifest.sh <version> [stable|beta]
@@ -20,7 +20,7 @@ DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 REPO="samerzakaria/signalos-app"
 
 NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null | head -5 | tr '\n' ' ' || true)
-NOTES="${NOTES:-SignalOS v${VERSION}}"
+NOTES="${NOTES:-Foundry v${VERSION}}"
 
 if [[ "$CHANNEL" == "beta" ]]; then
   OUT="distribution/update-manifest/beta.json"
@@ -35,19 +35,19 @@ cat > "$OUT" << EOF
   "pub_date": "$DATE",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_aarch64.dmg",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/Foundry_${VERSION}_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64.dmg",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/Foundry_${VERSION}_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url": "https://github.com/$REPO/releases/download/v$VERSION/SignalOS_${VERSION}_x64-setup.exe",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/Foundry_${VERSION}_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url": "https://github.com/$REPO/releases/download/v$VERSION/signalos-app_${VERSION}_amd64.AppImage",
+      "url": "https://github.com/$REPO/releases/download/v$VERSION/Foundry_${VERSION}_amd64.AppImage",
       "signature": ""
     }
   }

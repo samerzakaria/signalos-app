@@ -69,7 +69,7 @@ function BulkImportModal() {
         </div>
         <div className="modal-body bulk-import-body">
           <p className="bulk-import-copy">
-            Paste a <code>.env</code> block below. SignalOS diffs it against the current file and shows what will change. Nothing is written until you confirm.
+            Paste a <code>.env</code> block below. Foundry diffs it against the current file and shows what will change. Nothing is written until you confirm.
           </p>
           <textarea
             className="env-textarea"
@@ -134,7 +134,7 @@ export function VaultView() {
 <div className={viewClass('vault')} data-view="vault">
         <div className="page-head">
           <h1>The Vault</h1>
-          <p>Every secret key, sealed tight. Not even SignalOS can read them.</p>
+          <p>Every secret key, sealed tight. Not even Foundry can read them.</p>
         </div>
         <div className="stack">
           <div className="vault-hero">
@@ -187,7 +187,7 @@ export function VaultView() {
           </div>
           <div className="vault-note">
             <i className="ti ti-eye-off"></i>
-            <p><strong>What "never sent to the AI" means.</strong> When SignalOS needs a key — to save your work to GitHub, say — the request goes straight from your computer to GitHub. The AI only ever sees that a key was used, never the key itself.</p>
+            <p><strong>What "never sent to the AI" means.</strong> When Foundry needs a key — to save your work to GitHub, say — the request goes straight from your computer to GitHub. The AI only ever sees that a key was used, never the key itself.</p>
           </div>
         </div>
       </div>

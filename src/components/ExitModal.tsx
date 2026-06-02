@@ -7,7 +7,7 @@ export function ExitModal() {
 <div className={cls} id="exitModal" onClick={() => window.closeModal('exitModal')}>
   <div className="modal" onClick={(e) => e.stopPropagation()} style={{ 'width': '400px' }}>
     <div className="modal-head">
-      <h3>Exit SignalOS?</h3>
+      <h3>Exit Foundry?</h3>
       <button className="ico" onClick={() => window.closeModal('exitModal')}><i className="ti ti-x"></i></button>
     </div>
     <div className="modal-body">

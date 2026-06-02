@@ -15,6 +15,7 @@ import {
   providerModelsLoading,
 } from '../state';
 import { loadProviderModels } from '../services/providerModels';
+import { FoundryMark } from './FoundryMark';
 import { stageClass } from './viewShell';
 
 const OB_TAGS = [
@@ -85,9 +86,9 @@ export function Onboarding() {
   <div className="ob-panel">
     <div className="ob-brand">
       <div className="ob-brand-mark">
-        <svg width="20" height="20" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="3.7" fill="currentColor"/><path d="M20.24 9.22 A8 8 0 0 1 20.24 22.78" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M11.76 9.22 A8 8 0 0 0 11.76 22.78" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M22.89 4.98 A13 13 0 0 1 22.89 27.02" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/><path d="M9.11 4.98 A13 13 0 0 0 9.11 27.02" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round"/></svg>
+        <FoundryMark size={24} />
       </div>
-      <span className="ob-brand-name">SignalOS</span>
+      <span className="ob-brand-name">Foundry <small>by SignalOS</small></span>
     </div>
     <div className="ob-art">
       <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
@@ -124,8 +125,8 @@ export function Onboarding() {
 
     <div className={stepCls(1)} data-step="1">
       <div className="ob-kicker">Step 1 — Welcome</div>
-      <h1>Hi, I'm SignalOS.<br/>Let's make<br/><em>something real.</em></h1>
-      <p className="ob-sub">Tell me what you want to build. I plan it, gate it, and build it with you — step by step. Setup takes under a minute.</p>
+      <h1>Hi, I'm Foundry.<br/>Let's make<br/><em>something real.</em></h1>
+      <p className="ob-sub">Tell me what you want to build. I plan it, gate it, and build it with you through SignalOS governance. Setup takes under a minute.</p>
       <div className="ob-body">
         <div className="feat-list">
           <div className="feat">
@@ -267,7 +268,7 @@ export function Onboarding() {
             type="text"
             className="plain-input"
             id="identFolder"
-            placeholder="C:\\Users\\you\\SignalOS Projects"
+            placeholder="C:\\Users\\you\\Foundry Projects"
             value={projectsRoot.value}
             onInput={(e) => { projectsRoot.value = (e.target as HTMLInputElement).value; }}
             style={{ flex: 1, fontFamily: 'var(--f-mono)', fontSize: '12px' }}
@@ -275,7 +276,7 @@ export function Onboarding() {
           <button className="btn btn-soft" onClick={browseProjectsRoot} style={{ flexShrink: 0 }}><i className="ti ti-folder-open"></i> Browse</button>
         </div>
         <div className="hint" style={{ marginTop: '6px' }}>
-          <i className="ti ti-info-circle"></i> SignalOS will create one folder per product inside this root.
+          <i className="ti ti-info-circle"></i> Foundry will create one folder per product inside this root.
         </div>
         <div className="callout success" style={{ marginTop: '14px' }}>
           <i className="ti ti-shield-check"></i>

@@ -1,8 +1,8 @@
 {
-  "name": "signalos-desktop",
+  "name": "foundry-desktop",
   "version": "3.0.0-internal.28",
   "private": true,
-  "description": "SignalOS guided AI workspace for non-technical founders",
+  "description": "Foundry by SignalOS: a governed AI product studio for non-technical founders",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",

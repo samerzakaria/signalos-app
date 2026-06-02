@@ -100,7 +100,7 @@ export function DashboardView() {
 <div className={viewClass('dashboard')} data-view="dashboard">
         <div className="page-head">
           <h1>Where we are</h1>
-          <p>SignalOS breaks each build into gates. A gate opens only when its work is done, its checks pass, and you sign it.</p>
+          <p>Foundry breaks each build into gates. A gate opens only when its work is done, its checks pass, and you sign it.</p>
         </div>
         <div className="stack">
           <div className="hero">
@@ -271,7 +271,7 @@ export function DashboardView() {
           ) : (
             <div className="card" style={{ padding: '24px', textAlign: 'center', color: 'var(--ink-3)' }}>
               <p style={{ fontSize: '13.5px', margin: 0 }}>
-                No active gate. Open the Build tab and ask SignalOS to build something — your plan will sign Gate 2 and start the wave.
+                No active gate. Open the Build tab and ask Foundry to build something — your plan will sign Gate 2 and start the wave.
               </p>
             </div>
           )}

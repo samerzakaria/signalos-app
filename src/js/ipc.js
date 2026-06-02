@@ -26,7 +26,7 @@ if (IS_TAURI && typeof listenTauri === "function") {
     if (resp.ok) {
       pending.resolve(resp.data ?? resp.output ?? null);
     } else {
-      pending.reject(new Error(resp.error || "SignalOS sidecar command failed"));
+      pending.reject(new Error(resp.error || "Foundry engine command failed"));
     }
   });
 
@@ -41,7 +41,7 @@ if (IS_TAURI && typeof listenTauri === "function") {
   listenTauri("sidecar:error", (e) => {
     const payload = e.payload;
     const id = payload && typeof payload === "object" ? payload.id : null;
-    const message = sidecarErrorMessage(payload, "SignalOS Core reported an engine error.");
+    const message = sidecarErrorMessage(payload, "Foundry engine reported an engine error.");
     if (id) {
       rejectPendingSidecar(id, message);
     } else {
@@ -51,7 +51,7 @@ if (IS_TAURI && typeof listenTauri === "function") {
 
   listenTauri("sidecar:terminated", (e) => {
     const code = e.payload == null ? "unknown" : String(e.payload);
-    rejectPendingSidecars(`SignalOS Core stopped before the command finished (exit code: ${code}).`);
+    rejectPendingSidecars(`Foundry engine stopped before the command finished (exit code: ${code}).`);
   });
 }
 
@@ -59,11 +59,11 @@ async function invoke(cmd, args = {}) {
   if (IS_TAURI) {
     return invokeTauri(cmd, args);
   }
-  // No mocks. SignalOS is a native installed app - if the Tauri runtime
+  // No mocks. Foundry is a native installed app - if the Tauri runtime
   // is missing, the shell is broken. Fail loudly so production never
   // silently renders fake data. (User directive: 2026-05-15.)
   throw new Error(
-    `SignalOS native runtime not available. The Tauri shell must be running for "${cmd}" to work.`
+    `Foundry native runtime not available. The Tauri shell must be running for "${cmd}" to work.`
   );
 }
 
@@ -78,7 +78,7 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
   if (completed) {
     completedSidecar.delete(id);
     if (completed.ok) return completed.data ?? completed.output ?? null;
-    throw new Error(completed.error || "SignalOS sidecar command failed");
+    throw new Error(completed.error || "Foundry engine command failed");
   }
 
   return new Promise((resolve, reject) => {
@@ -111,7 +111,7 @@ async function invokeSidecar(cmd, args = {}, timeoutMs = 30000, onId = null) {
 
 function describeSidecarCommand(cmd, args = {}) {
   if (cmd === "run_signal_command" && args?.command) {
-    return `SignalOS Core command "${args.command}"`;
+    return `Foundry engine command "${args.command}"`;
   }
   return cmd;
 }

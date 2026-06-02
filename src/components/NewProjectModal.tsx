@@ -33,7 +33,7 @@ export function NewProjectModal() {
           <option key={profile.id} value={profile.id}>{profile.name}</option>
         ))}
       </select>
-      <div className="hint"><i className="ti ti-info-circle"></i> Leave blank to create it under your projects root. SignalOS initializes each product folder separately.</div>
+      <div className="hint"><i className="ti ti-info-circle"></i> Leave blank to create it under your projects root. Foundry initializes each product folder separately.</div>
       <div className="hint" id="newProjStatus" role="status" aria-live="polite" style={{ 'marginTop': '10px' }}></div>
     </div>
     <div className="modal-foot">

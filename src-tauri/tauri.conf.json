@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SignalOS",
+  "productName": "Foundry",
   "version": "3.0.0-internal.28",
   "identifier": "com.signalos.desktop",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SignalOS",
+        "title": "Foundry",
         "width": 1200,
         "height": 780,
         "minWidth": 900,

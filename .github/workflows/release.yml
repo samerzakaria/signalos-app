@@ -304,10 +304,10 @@ jobs:
           }
           $version = "${{ steps.channel.outputs.version }}"
           $assets = @(
-            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe"; Name = "SignalOS_${version}_x64-setup.exe" },
-            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "SignalOS_*_x64-setup.exe.sig"; Name = "SignalOS_${version}_x64-setup.exe.sig" },
-            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "SignalOS_*_x64_en-US.msi"; Name = "SignalOS_${version}_x64_en-US.msi" },
-            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "SignalOS_*_x64_en-US.msi.sig"; Name = "SignalOS_${version}_x64_en-US.msi.sig" }
+            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "Foundry_*_x64-setup.exe"; Name = "Foundry_${version}_x64-setup.exe" },
+            @{ Dir = "src-tauri\target\release\bundle\nsis"; Pattern = "Foundry_*_x64-setup.exe.sig"; Name = "Foundry_${version}_x64-setup.exe.sig" },
+            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "Foundry_*_x64_en-US.msi"; Name = "Foundry_${version}_x64_en-US.msi" },
+            @{ Dir = "src-tauri\target\release\bundle\msi"; Pattern = "Foundry_*_x64_en-US.msi.sig"; Name = "Foundry_${version}_x64_en-US.msi.sig" }
           )
           foreach ($asset in $assets) {
             if (-not (Test-Path $asset.Dir)) { continue }
@@ -339,14 +339,14 @@ jobs:
             echo "macOS release asset upload does not apply to ${{ matrix.platform }}."
             exit 0
           fi
-          # Tauri's macOS bundler emits SignalOS.app.tar.gz without arch
+          # Tauri's macOS bundler emits Foundry.app.tar.gz without arch
           # suffix, so both matrix archs collide on the same filename in
           # the release. Rename per arch before upload.
           ARCH=$([ "${{ matrix.platform }}" = "macos-arm" ] && echo "aarch64" || echo "x64")
           MACOS_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
           for ext in ".app.tar.gz" ".app.tar.gz.sig"; do
-            src="$MACOS_DIR/SignalOS${ext}"
-            dst="$MACOS_DIR/SignalOS_${VERSION}_${ARCH}${ext}"
+            src="$MACOS_DIR/Foundry${ext}"
+            dst="$MACOS_DIR/Foundry_${VERSION}_${ARCH}${ext}"
             [ -f "$src" ] && mv "$src" "$dst"
           done
           FILES=( src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg \
@@ -459,10 +459,10 @@ jobs:
           }
 
           # Match against produced filenames (after the macOS arch-rename step).
-          SIG_MAC_ARM=$(read_sig "sigs/SignalOS_${{ steps.meta.outputs.version }}_aarch64.app.tar.gz.sig")
-          SIG_MAC_X64=$(read_sig "sigs/SignalOS_${{ steps.meta.outputs.version }}_x64.app.tar.gz.sig")
-          SIG_WIN=$(read_sig    "sigs/SignalOS_${{ steps.meta.outputs.version }}_x64-setup.exe.sig")
-          SIG_LIN=$(read_sig    "sigs/SignalOS_${{ steps.meta.outputs.version }}_amd64.AppImage.sig")
+          SIG_MAC_ARM=$(read_sig "sigs/Foundry_${{ steps.meta.outputs.version }}_aarch64.app.tar.gz.sig")
+          SIG_MAC_X64=$(read_sig "sigs/Foundry_${{ steps.meta.outputs.version }}_x64.app.tar.gz.sig")
+          SIG_WIN=$(read_sig    "sigs/Foundry_${{ steps.meta.outputs.version }}_x64-setup.exe.sig")
+          SIG_LIN=$(read_sig    "sigs/Foundry_${{ steps.meta.outputs.version }}_amd64.AppImage.sig")
 
           # Sig contents may be multi-line; use heredoc form for $GITHUB_OUTPUT.
           {
@@ -479,7 +479,7 @@ jobs:
         run: |
           V="${{ steps.meta.outputs.version }}"
           NOTES=$(awk "/^## \[$V\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md 2>/dev/null || true)
-          NOTES="${NOTES:-SignalOS v$V}"
+          NOTES="${NOTES:-Foundry v$V}"
           NOTES_LINE=$(echo "$NOTES" | head -3 | tr '\n' ' ' | sed 's/["\]/\\&/g')
           echo "line=$NOTES_LINE" >> $GITHUB_OUTPUT
 
@@ -500,19 +500,19 @@ jobs:
             "pub_date": "$DATE",
             "platforms": {
               "darwin-aarch64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.app.tar.gz",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_aarch64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_arm }}"
               },
               "darwin-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.app.tar.gz",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_x64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_x64 }}"
               },
               "windows-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64-setup.exe",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_x64-setup.exe",
                 "signature": "${{ steps.sigs.outputs.win }}"
               },
               "linux-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_amd64.AppImage",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_amd64.AppImage",
                 "signature": "${{ steps.sigs.outputs.lin }}"
               }
             }
@@ -536,19 +536,19 @@ jobs:
             "pub_date": "$DATE",
             "platforms": {
               "darwin-aarch64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_aarch64.app.tar.gz",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_aarch64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_arm }}"
               },
               "darwin-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64.app.tar.gz",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_x64.app.tar.gz",
                 "signature": "${{ steps.sigs.outputs.mac_x64 }}"
               },
               "windows-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_x64-setup.exe",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_x64-setup.exe",
                 "signature": "${{ steps.sigs.outputs.win }}"
               },
               "linux-x86_64": {
-                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/SignalOS_${V}_amd64.AppImage",
+                "url":       "https://github.com/${GITHUB_REPOSITORY}/releases/download/v$V/Foundry_${V}_amd64.AppImage",
                 "signature": "${{ steps.sigs.outputs.lin }}"
               }
             }

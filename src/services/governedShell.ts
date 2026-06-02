@@ -6,7 +6,7 @@
 // `runGovernedCommand()` instead of reaching into app-v2.js.
 //
 // IMPORTANT: this is a *governed* command surface, NOT an unrestricted OS
-// shell. Only an explicit allowlist of SignalOS / git / dev commands is
+// shell. Only an explicit allowlist of Foundry-governed / git / dev commands is
 // routed; anything else raises so callers can surface an honest error
 // (INV-4: no silent failures).
 //
@@ -34,7 +34,7 @@ export interface GovernedShellIpc {
 export interface GovernedShellContext {
   /** Absolute workspace path, or '' when no workspace is open. */
   workspace: string;
-  /** True when the workspace is the SignalOS starter (not a product repo). */
+  /** True when the workspace is the Foundry starter (not a product repo). */
   inStarterWorkspace: boolean;
   /** IPC bridge (defaults to the installed app IPC module when omitted). */
   ipc?: GovernedShellIpc;
@@ -59,7 +59,7 @@ const HELP_LINES = [
   '  npm run dev       start the Preview tab dev server',
   '  git status        show branch, cleanliness, and worktrees',
   '',
-  'This is a governed SignalOS command surface, not an unrestricted OS shell.',
+  'This is a governed Foundry command surface, not an unrestricted OS shell.',
 ];
 
 function prettyJson(value: unknown): string {
@@ -164,14 +164,14 @@ export async function runGovernedCommand(
   }
 
   if (lower.startsWith('signalos ')) {
-    throw new Error(`Unsupported SignalOS command: ${normalized}. Type help for supported commands.`);
+    throw new Error(`Unsupported governed command: ${normalized}. Type help for supported commands.`);
   }
 
   throw new Error(`Unsupported command: ${normalized}. Type help for supported commands.`);
 }
 
 /**
- * Detect whether a user-typed string is a SignalOS slash command
+ * Detect whether a user-typed string is a governed slash command
  * (`/signal-*` or `/state:*`). Used by the unified command input (1.7) to
  * route between the governed shell and natural-language chat.
  */

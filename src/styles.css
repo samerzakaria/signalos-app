@@ -80,6 +80,7 @@ a{color:inherit}
 .ob-brand{display:flex;align-items:center;gap:11px;position:relative;z-index:1}
 .ob-brand-mark{width:34px;height:34px;border-radius:9px;background:#F3F1EC;color:var(--panel);display:flex;align-items:center;justify-content:center;}
 .ob-brand-name{font-family:var(--f-display);font-weight:600;font-size:21px;letter-spacing:-0.01em}
+.ob-brand-name small{display:block;font-family:var(--f-body);font-size:9px;font-weight:700;line-height:1.1;letter-spacing:0.04em;text-transform:none;color:rgba(243,241,236,0.72)}
 .ob-art{position:relative;z-index:1;flex:1;display:flex;align-items:center;justify-content:center}
 .ob-art svg{width:252px;height:252px}
 .ob-foot{position:relative;z-index:1}

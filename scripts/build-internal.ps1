@@ -7,7 +7,7 @@
 # "signed by certificate".
 #
 # Output for each run:
-#   src-tauri/target/release/bundle/nsis/SignalOS_<version>_x64-setup.exe   (Windows)
+#   src-tauri/target/release/bundle/nsis/Foundry_<version>_x64-setup.exe   (Windows)
 #   distribution/internal/attestation-<commit>.json — signed-by-name record
 #
 # Note: MSI is intentionally NOT built here. Windows Installer requires
@@ -133,7 +133,7 @@ $Ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $Attestation = [ordered]@{
     schema        = "signalos.attestation.v1"
     release_type  = "internal-testing-unsigned"
-    product       = "SignalOS"
+    product       = "Foundry"
     version       = $Version
     builder       = @{
         name    = $BuilderName
