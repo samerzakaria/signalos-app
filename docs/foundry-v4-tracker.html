@@ -2,7 +2,7 @@
 {
   "name": "Foundry v4 Tracker",
   "schemaVersion": 1,
-  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup, the 2026-06-02 live-provider smoke matrix, deterministic closure of T26-T44 rows, and green Pages/Smoke/test-automation CI on commit abab505; T57 release proof remains open."
+  "description": "Foundry by SignalOS v4 - Governed Agent Loop build tracker. 4 implementation phases (33 steps) + 7 test suites (57 tests) = 90 tracked items. Click task circles to cycle status. Seeded progress reflects validated local work through P4 cleanup, the 2026-06-02 live-provider smoke matrix, deterministic closure of T26-T44 rows, green Pages/Smoke/test-automation CI, and green v3.0.0-internal.28 release proof."
 }
 </script>
 <html lang="en">
@@ -80,7 +80,7 @@
 <h1>Foundry v4 &#8212; Governed Agent Loop &#183; Build Tracker</h1>
 <div class="meta">
   <span class="branch-tag">feat/v4-governed-agent-loop</span>
-  <span class="session-tag">P1+P2 proof gaps closed &#183; vitest 246 + build green &#183; CI green through L3 pre-prod gates</span>
+  <span class="session-tag">P1+P2 proof gaps closed &#183; CI green through L3 pre-prod gates &#183; release v3.0.0-internal.28 green</span>
   <span>~251h agent est &#183; 169h build + 82h tests &#183; P1&#8741;P2 parallel &#183; 90 tracked items</span>
   <button class="reset-btn" onclick="resetToSeed()">&#8634; reset to plan seed</button>
 </div>
@@ -359,9 +359,10 @@ const SEED_STATE = {
   "T42": "done",
   "T43": "done",
   "T44": "done",
-  "T56": "done"
+  "T56": "done",
+  "T57": "done"
 };
-const SEED_VERSION = "v4-progress-2026-06-02-t56-ci-green";
+const SEED_VERSION = "v4-progress-2026-06-02-t57-release-green";
 const LS = "foundry-v4-tracker";
 
 function loadState() {

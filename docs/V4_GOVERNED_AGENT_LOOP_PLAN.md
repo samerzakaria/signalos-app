@@ -732,7 +732,7 @@ Required E2E validation on 2026-06-02: T40/T43/T44 passed through `python -m pyt
 
 T56 evidence on 2026-06-02: commit `abab505273b0830ed492f48de322c4c7c5c6826f` passed Pages run `26843112515`, Smoke run `26843111914`, and test-automation run `26843111965`. The test-automation run completed green across L0 pre-commit gates, L1 build/verify on macOS/Windows/Ubuntu, L1 Docker sandbox integration, L2 installer smoke on macOS/Windows/Ubuntu, and L3 pre-prod gates including `Run extended test-gates`.
 
-T57 remains open until a tag-driven release workflow completes green across all required platforms. It is not counted as closed by the T56 CI evidence.
+T57 evidence on 2026-06-02: tag `v3.0.0-internal.28` on commit `7824e4aa05900c2d8962e47f7fc309a96671777f` passed Release run `26845234306`. Required jobs completed green: RustSec audit policy, Build macOS ARM, Build macOS Intel, Build Windows, Build Linux, and Publish update manifest. The release workflow also pushed manifest commit `f7794f0` to `main`.
 
 ---
 
