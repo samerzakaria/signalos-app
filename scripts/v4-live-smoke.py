@@ -100,11 +100,20 @@ def _pick_latest_gemini(models: list[str]) -> str:
 
 
 def _resolve_gemini_model(api_key: str) -> str:
-    """SIGNALOS_MODEL override wins; otherwise discover the live latest."""
+    """Discover the live latest model; honor SIGNALOS_MODEL only if it's real.
+
+    A pinned SIGNALOS_MODEL that the key can no longer serve (e.g. a retired
+    gemini-2.0-flash) is the trap that keeps producing 404s. We validate the
+    override against the live model list and fall back to discovery (with a
+    loud warning) rather than blindly sending a dead model name.
+    """
+    models = _discover_gemini_models(api_key)
     override = os.getenv("SIGNALOS_MODEL")
     if override:
-        return override
-    models = _discover_gemini_models(api_key)
+        if override in models or f"models/{override}" in models:
+            return override
+        print(f"    (WARNING: SIGNALOS_MODEL={override!r} is not in this key's "
+              f"live model list -- likely retired; using discovery instead)")
     chosen = _pick_latest_gemini(models)
     if not chosen:
         raise RuntimeError("Gemini key returned no generateContent-capable models")
