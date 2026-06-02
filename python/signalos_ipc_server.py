@@ -725,19 +725,69 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
     enforcement = _build_agent_enforcement()
 
     if delivery_path.is_file():
-        from signalos_lib.product.gate_orchestrator import GateOrchestrator
+        from signalos_lib.product.gate_orchestrator import (
+            GATE_QUESTIONS,
+            GATE_SPECIALISTS,
+            resume_delivery,
+        )
         try:
-            orch = GateOrchestrator.load(
+            orch = resume_delivery(
                 repo_root,
+                run_id,
                 adapter,
                 _agent_emit(run_id),
-                run_id=run_id,
                 enforcement_provider=enforcement,
                 sign_fn=_DELIVERY_SIGN_FN,
-                project_id=project_id,
             )
             _ACTIVE_DELIVERIES[run_id] = orch
-            data = orch.resume()
+            gate = (
+                orch.state.current_gate
+                if orch.state.current_gate in GATE_SPECIALISTS
+                else "G0"
+            )
+            if orch.state.status == "complete":
+                ready = len(getattr(orch.state, "waived", [])) == 0
+                orch.emit({
+                    "type": "delivery_complete",
+                    "run_id": orch.state.run_id,
+                    "ready": ready,
+                    "waived": list(getattr(orch.state, "waived", [])),
+                })
+                data = {
+                    "run_id": orch.state.run_id,
+                    "status": "complete",
+                    "ready": ready,
+                    "waived": list(getattr(orch.state, "waived", [])),
+                    "resumed": True,
+                }
+            elif orch.state.status == "stopped":
+                orch.emit({
+                    "type": "error",
+                    "error": f"Delivery {orch.state.run_id} was stopped at {gate}.",
+                })
+                data = {
+                    "run_id": orch.state.run_id,
+                    "gate": gate,
+                    "status": "stopped",
+                    "resumed": True,
+                }
+            else:
+                orch.state.current_gate = gate
+                orch.state.status = "awaiting-verdict"
+                orch.emit({
+                    "type": "gate",
+                    "gate": gate,
+                    "title": f"{GATE_SPECIALISTS[gate]} - {gate}",
+                    "question": GATE_QUESTIONS[gate],
+                    "specialist": GATE_SPECIALISTS[gate],
+                })
+                orch._persist()
+                data = {
+                    "run_id": orch.state.run_id,
+                    "gate": gate,
+                    "status": orch.state.status,
+                    "resumed": True,
+                }
         except Exception as exc:
             _agent_emit(run_id)({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
             return err(req_id, f"agent:resume delivery failed: {type(exc).__name__}: {exc}")

@@ -160,20 +160,34 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(enforcementUnfreeze).not.toHaveBeenCalled();
   });
 
-  it('routes plain natural-language messages through the governed agent loop', async () => {
+  it('routes non-delivery natural-language messages through the governed agent loop', async () => {
     runAndWait.mockResolvedValueOnce({ run_id: 'agent-1', status: 'completed' });
+
+    chatInputValue.value = 'what happened in the last run?';
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(runAndWait).toHaveBeenCalledWith(
+      'agent:run',
+      [JSON.stringify({ prompt: 'what happened in the last run?' })],
+      600000,
+    );
+    expect(enforcementFreeze).not.toHaveBeenCalled();
+    expect(enforcementUnfreeze).not.toHaveBeenCalled();
+  });
+
+  it('routes explicit product build requests through governed delivery', async () => {
+    runAndWait.mockResolvedValueOnce({ run_id: 'delivery-1', status: 'awaiting-verdict' });
 
     chatInputValue.value = 'build a task management system';
     await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
 
     expect(runAndWait).toHaveBeenCalledTimes(1);
     expect(runAndWait).toHaveBeenCalledWith(
-      'agent:run',
+      'agent:deliver',
       [JSON.stringify({ prompt: 'build a task management system' })],
       600000,
     );
-    expect(enforcementFreeze).not.toHaveBeenCalled();
-    expect(enforcementUnfreeze).not.toHaveBeenCalled();
   });
 });
 

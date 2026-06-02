@@ -12,10 +12,21 @@ function nowId() {
 }
 
 // Phase 3 (3.7) — every plain natural-language message is routed to the
-// governed agent loop via the Python `agent:run` sidecar command. There is NO
-// feature flag: the agent loop IS the chat path. Streaming text, tool rows,
-// and turn completion arrive over the "agent:event" Tauri channel and are
-// rendered by src/services/agentEvents.ts. sendMsg() only fires the command.
+// governed agent loop. There is NO feature flag: the agent loop IS the chat
+// path. Streaming text, tool rows, gate pauses, and completion arrive over
+// the "agent:event" Tauri channel and are rendered by agentEvents.ts.
+//
+// Phase 5 (T39) — a "build X" / delivery request starts the governed G0->G5
+// walk (`agent:deliver` -> GateOrchestrator). Everything else is a normal
+// `agent:run` turn. The heuristic is intentionally conservative: it fires on
+// an explicit build/create intent paired with a product noun, so follow-up
+// chatter inside a delivery doesn't spuriously start a second one.
+const _DELIVERY_INTENT = /\b(build|create|make|develop|scaffold|generate|ship)\b[\s\S]*\b(app|application|system|tool|product|site|website|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot)\b/i;
+function isDeliveryIntent(text) {
+  const t = (text || '').trim();
+  if (!t || t.startsWith('/')) return false;
+  return _DELIVERY_INTENT.test(t);
+}
 
 // Milestone 2-a: keep the originating user prompt for each in-flight LLM
 // stream so the audit-trail entry (written when the response guard fires)
@@ -126,13 +137,13 @@ async function sendMsg() {
   // wave-engine + LLM-stream code remains below but is unreachable for NL.)
   {
     try {
-      // agent:run takes a single JSON object argument; the sidecar's
-      // _coerce_agent_args accepts a one-element list wrapping a JSON string
-      // (same convention as attachment:analyze). We don't await a streamed
-      // result — agent:event drives the UI. runAndWait still resolves with
-      // the final {run_id, status} summary, which we use only to clear busy
-      // defensively if no terminal event arrived.
-      await ipc.signal.runAndWait('agent:run', [JSON.stringify({ prompt: val })], 600000);
+      // A build/delivery request ("build a task manager", "create an app
+      // that...") starts the governed G0->G5 delivery via `agent:deliver`
+      // (GateOrchestrator). Any other message is a normal `agent:run` turn.
+      // Both stream via the "agent:event" channel; gate pauses, verdicts,
+      // and cancel/resume are driven by agentEvents.ts.
+      const command = isDeliveryIntent(val) ? 'agent:deliver' : 'agent:run';
+      await ipc.signal.runAndWait(command, [JSON.stringify({ prompt: val })], 600000);
     } catch (e) {
       state.chatBubbles = [...state.chatBubbles, {
         id: nowId(),

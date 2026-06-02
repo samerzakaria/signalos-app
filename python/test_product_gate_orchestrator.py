@@ -17,7 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.harness import AgentResponse, TokenUsage
 from signalos_lib.product.enforcement_state import StaticEnforcementProvider
-from signalos_lib.product.gate_orchestrator import GateOrchestrator, GATE_SPECIALISTS
+from signalos_lib.product.gate_orchestrator import (
+    GateOrchestrator,
+    GATE_SPECIALISTS,
+    resume_delivery,
+)
 
 
 class _EndAdapter:
@@ -135,27 +139,25 @@ class TestGateWalk(unittest.TestCase):
             self.assertEqual(res["gate"], "G1")
             self.assertNotIn("G0", [g for (g, _r, _v) in signed])  # INV-1: no sign
 
-    def test_load_resume_reemits_current_gate(self):
+    def test_resume_delivery_reconstructs_current_gate(self):
         with tempfile.TemporaryDirectory() as d:
             events, signed = [], []
             orch = _orch(d, events, signed)
             orch.start()
             events.clear()
 
-            loaded = GateOrchestrator.load(
+            loaded = resume_delivery(
                 Path(d),
+                orch.state.run_id,
                 _EndAdapter(),
                 events.append,
-                run_id=orch.state.run_id,
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
                 sign_fn=lambda *a, **k: [],
             )
-            res = loaded.resume()
 
-            self.assertTrue(res["resumed"])
-            self.assertEqual(res["gate"], "G0")
-            self.assertEqual(res["status"], "awaiting-verdict")
-            self.assertTrue(any(e.get("type") == "gate" and e.get("gate") == "G0" for e in events))
+            self.assertEqual(loaded.state.run_id, orch.state.run_id)
+            self.assertEqual(loaded.state.current_gate, "G0")
+            self.assertEqual(loaded.state.status, "awaiting-verdict")
 
 
 if __name__ == "__main__":
