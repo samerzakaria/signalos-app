@@ -8,6 +8,7 @@ import {
   recentlyChangedFiles,
   workspacePath,
   recentWorkspaces,
+  projectsRoot,
   modalOpen,
   sbTab,
   tab,
@@ -123,6 +124,17 @@ export function Sidebar() {
     
     <div className={sidebarPanelClass('projects')} id="sb-projects">
       <button type="button" className="nav accent" onClick={openProjectModal} data-testid="sidebar-new-project"><i className="ti ti-plus"></i> New project</button>
+      {projectsRoot.value ? (
+        <div
+          className="sb-projects-root"
+          title={projectsRoot.value}
+          data-testid="sidebar-projects-root"
+          style={{ padding:'6px 12px', fontSize:'11px', color:'var(--ink-3)', display:'flex', alignItems:'center', gap:'6px', overflow:'hidden' }}
+        >
+          <i className="ti ti-folder-cog" style={{ flexShrink:0 }}></i>
+          <span style={{ fontFamily:'var(--f-mono)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', direction:'rtl' }}>{projectsRoot.value}</span>
+        </div>
+      ) : null}
       <div className="sb-label">Projects</div>
       {recents.length > 0 ? (
         recents.map((project) => {

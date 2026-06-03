@@ -57,8 +57,22 @@ export function Onboarding() {
     void loadProviderModels(providerId, apiKeyInput.value.trim() || null, { quietMissingKey: true });
   };
 
-  const fetchModels = () => {
-    void loadProviderModels(provider, apiKeyInput.value.trim() || null);
+  const fetchModels = async () => {
+    // Persist the typed key to keychain BEFORE fetching, so the backend's
+    // `fetch_provider_models` resolves it the same way Settings does (via
+    // keychain lookup). Passing the raw value worked unevenly; the Settings
+    // "Replace key" flow stores-then-fetches and is the reference path.
+    const key = apiKeyInput.value.trim();
+    if (key && provider !== 'ollama') {
+      try {
+        const tauri = window.__TAURI__;
+        const invoke = tauri?.core?.invoke || tauri?.invoke;
+        if (invoke) await invoke('store_api_key', { provider, key });
+      } catch {
+        // Best-effort persist — keychain unavailable shouldn't block fetch.
+      }
+    }
+    void loadProviderModels(provider, null);
   };
 
   const browseProjectsRoot = async () => {

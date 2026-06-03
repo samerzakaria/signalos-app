@@ -1231,6 +1231,15 @@ async function finishOnboarding() {
     if (!projectsRoot) {
       throw new Error("Choose a projects root folder.");
     }
+    // The user picks a path in onboarding but Browse only returns existing
+    // dirs and typed paths aren't validated. mkdir-recursive here so the
+    // chosen root reliably exists on disk for the first New Project.
+    try {
+      const fsApi = window.__TAURI__?.fs;
+      if (fsApi?.mkdir) await fsApi.mkdir(projectsRoot, { recursive: true });
+    } catch {
+      // If mkdir fails, surface it via New Project later — don't block setup.
+    }
     try { await ipc.workspace.clear(); } catch {}
     state.workspace = "";
     state.userName = name;

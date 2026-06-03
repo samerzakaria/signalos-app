@@ -67,6 +67,11 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --hidden-import yaml `
   --hidden-import litellm `
   --collect-all litellm `
+  --hidden-import tiktoken `
+  --hidden-import tiktoken_ext `
+  --hidden-import tiktoken_ext.openai_public `
+  --collect-all tiktoken `
+  --collect-all tiktoken_ext `
   $entry
 
 $built = Join-Path $outDir $expectedFile
