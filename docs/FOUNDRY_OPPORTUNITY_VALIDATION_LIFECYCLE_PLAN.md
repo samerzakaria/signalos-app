@@ -281,7 +281,10 @@ Rules:
 
 - market numbers require sources or must be labeled as assumptions;
 - no fake market-share claims;
-- no closed-data claims without evidence.
+- no closed-data claims without evidence;
+- TAM/SAM/SOM must be derived bottom-up per the Evidence Sourcing Architecture
+  (computed from a cited entity count times labeled assumptions), never quoted
+  as a top-down figure.
 
 ### 5. Competitive Analysis
 
@@ -637,6 +640,111 @@ Rules:
 - never present estimates as facts;
 - keep source appendix in every consulting deck.
 
+## Evidence Sourcing Architecture
+
+This section operationalizes the Source and Evidence Rules above. Every external
+claim is resolved through a three-tier evidence resolver, in priority order. The
+goals: maximize "Sourced" claims, keep the dependency surface small, and make
+"Assumption" an honest fallback rather than a disguise for invented data.
+
+Design constraint: no proprietary or paywalled market-size feed is required or
+permitted as a dependency. Top-down market-size numbers (Gartner/IDC/Statista
+style) are license-restricted and cannot be redistributed. Authoritative market
+size is therefore built bottom-up from free primary sources, not quoted as a
+top-down figure.
+
+### Tier 1 - Provider-native web search (default)
+
+The primary channel. Uses the configured LiteLLM provider's built-in web search
+/ grounding tool, which returns citations:
+
+| Provider | Capability |
+|---|---|
+| Anthropic | web search tool (citations returned) |
+| OpenAI | web search tool (Responses API) |
+| Gemini | grounding with Google Search |
+
+A returned citation classifies a claim as Sourced. Provider-independent search
+(Tavily, Brave, Exa, Perplexity) may be configured as an alternative Tier 1
+channel; all are key-gated and optional.
+
+### Tier 2 - Free structured APIs (hard numbers)
+
+A small set of official, key-free, stable APIs for fields that need hard,
+citable numbers. A Tier 2 hit is an evidence booster: it raises a claim's
+confidence above a Tier 1 prose citation.
+
+| Source | Feeds | Provides |
+|---|---|---|
+| SEC EDGAR | Business Case | Public-competitor revenue and financials |
+| US Census (County Business Patterns) | Market Analysis | Firm counts by industry -> bottom-up TAM base |
+| World Bank Open Data | Market Analysis | Population and macro indicators |
+| GitHub API | Competitive Analysis | Dev-tool adoption (stars, activity) |
+| Hacker News (Algolia) | Customer Research | User language, complaints, rival launches |
+
+The starter set is deliberately five sources with no API keys and stable
+contracts. Additional official sources (Eurostat, OECD, BLS, FRED, USPTO,
+Wikidata, Regulations.gov) may be added behind the same adapter interface.
+
+Coverage caveat: this starter set skews toward US and software/dev-tool
+opportunities. For non-US markets or non-software products, Tier 2 coverage is
+thin and the resolver will fall back to Tier 1 and assumptions. The gate packet
+must surface that coverage gap rather than imply full evidence.
+
+### Tier 3 - Optional keyed sources
+
+Used only when the user opts in and supplies a key: provider-independent search
+(Tavily, Brave) and richer commercial data (Product Hunt, OpenCorporates,
+Reddit). Never required for a valid run.
+
+### Evidence resolver contract
+
+Every external lookup returns a normalized record:
+
+```json
+{
+  "claim": "string",
+  "value": "string | number",
+  "source_url": "string | null",
+  "tier": "T1 | T2 | T3",
+  "classification": "sourced | user-provided | inferred | assumption | unknown",
+  "confidence": "high | medium | low",
+  "retrieved_at": "ISO-8601 timestamp"
+}
+```
+
+Rules:
+
+- the resolver tries T1, then T2 for hard-number fields, then T3 if enabled;
+- a record with no `source_url` cannot be classified "sourced";
+- `retrieved_at` stamps every record, enabling the freshness rule below;
+- when no tier returns data, the claim is "assumption" or "unknown" - never
+  fabricated;
+- every external API call is rate-limited, retried with backoff, and degrades
+  to the next tier (or to "unknown") on failure - a source outage never blocks
+  a run silently and never produces a fabricated value.
+
+### Bottom-up market sizing rule
+
+Market size is computed, not quoted:
+
+```text
+TAM = target_entity_count (Tier 2, cited) x annual_value_assumption (labeled)
+SAM = TAM x reachable_segment_fraction (labeled)
+SOM = SAM x realistic_capture_fraction (labeled)
+```
+
+A bare TAM/SAM/SOM figure with no shown derivation is a blocker. The entity
+count must carry a Tier 2 citation; each fraction and the value assumption must
+carry an explicit assumption label and confidence.
+
+### Evidence freshness
+
+Each artifact records the oldest `retrieved_at` it depends on. A gate review
+surfaces any evidence older than a configurable staleness window (default 180
+days). Stale evidence does not auto-block, but the gate packet must display it
+so the user can choose to re-validate - no silent reliance on decayed data.
+
 ## Implementation Workstreams
 
 ### W1 - Lifecycle and State
@@ -725,6 +833,28 @@ Add gate UI and signing flow for O4:
 Only after O4 Go or Go-with-changes may Foundry generate the PRD baseline used
 by design and build agents.
 
+### W8 - Evidence Provider Layer
+
+Build-order note: foundational. Implement before W2 schemas and W3 prompts rely
+on it, even though it is numbered last.
+
+Add an `EvidenceProvider` adapter interface plus the three-tier resolver:
+
+- a single `resolve(claim, field_type)` entry point returning the evidence
+  resolver record defined above;
+- Tier 1 wired to the active provider's web-search/grounding tool via the
+  existing LiteLLM adapter;
+- five Tier 2 adapters (SEC EDGAR, US Census, World Bank, GitHub, Hacker News),
+  each key-free, rate-limited, retried with backoff, and individually
+  disableable;
+- Tier 3 adapters behind explicit opt-in + key;
+- a bottom-up sizing helper that enforces the TAM/SAM/SOM derivation rule;
+- per-source caching keyed on (claim, source) so a re-run does not re-hit a
+  rate-limited API, with `retrieved_at` preserved for the freshness rule.
+
+Each adapter returns the normalized record or a typed failure; failures degrade
+to the next tier and are logged to the audit trail (no silent swallow).
+
 ### W7 - Proof Cages
 
 Add tests that prove:
@@ -737,6 +867,12 @@ Add tests that prove:
 - deck contains decision page and source appendix;
 - deck/report uses Foundry design tokens and approved brand assets;
 - market facts require source or assumption label;
+- a claim with no source_url cannot be classified "sourced";
+- a bare TAM/SAM/SOM with no shown derivation is blocked;
+- a Tier 2 source outage degrades to the next tier (or "unknown"), never to a
+  fabricated value and never to a silent block;
+- stale evidence (older than the staleness window) is surfaced in the gate
+  packet, not hidden;
 - user decision is required.
 
 ## Proof Scenarios
@@ -754,6 +890,8 @@ proof/scenarios/266_override_build_anyway.sh
 proof/scenarios/267_consulting_deck_generation.sh
 proof/scenarios/268_prd_baseline_before_build.sh
 proof/scenarios/269_foundry_design_system_artifacts.sh
+proof/scenarios/270_evidence_resolver_tiers.sh
+proof/scenarios/271_bottom_up_market_sizing.sh
 ```
 
 ## Completion Levels
@@ -768,7 +906,7 @@ proof/scenarios/269_foundry_design_system_artifacts.sh
 | L5 | No-Go, Pivot, More Discovery, Override all work |
 | L6 | Consulting-grade deck outlines generated |
 | L7 | PPTX/PDF exports generated where tooling exists |
-| L8 | Web-backed research with citations and confidence |
+| L8 | Tiered evidence resolver live (provider search + free structured APIs), citations, confidence, bottom-up sizing |
 | L9 | End-to-end idea-to-production with commercial evidence and product proof |
 
 ## Definition of Done
@@ -779,6 +917,13 @@ This lane is complete when:
 - specialist agents generate those artifacts through governed packets;
 - every market/commercial claim has source, user-provided, inferred,
   assumption, or unknown classification;
+- the three-tier evidence resolver is wired (Tier 1 provider search, five
+  key-free Tier 2 APIs, optional Tier 3), with rate-limit/backoff/degrade and
+  audit logging;
+- TAM/SAM/SOM are derived bottom-up from a cited entity count and labeled
+  assumptions, never quoted top-down;
+- every evidence record carries retrieved_at and stale evidence is surfaced at
+  the gate;
 - SWOT includes TOWS strategy;
 - pricing and GTM exist for commercial products;
 - business case exists before Go/No-Go;
