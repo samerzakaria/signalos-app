@@ -1,4 +1,4 @@
-# test-gates.ps1 — Wave 5 / G4 — Test Automation L0+L1 gate runner (PowerShell)
+# test-gates.ps1 - Wave 5 / G4 - Test Automation L0+L1 gate runner (PowerShell)
 #
 # Runs the on-machine quality gates defined in docs/test-automation/:
 #   L0 (developer machine, pre-commit):
@@ -11,7 +11,7 @@
 #     - Full unit tests
 #     - SCA (npm audit, blocking cargo audit policy)
 #     - License check
-#     - Mutation testing (if `mutmut` / `stryker` present)
+#     - Mutation testing (if mutmut / stryker is present)
 #
 # Usage:
 #   pwsh scripts/test-gates.ps1            # runs L0
@@ -34,13 +34,44 @@ $Failed = @()
 $Skipped = @()
 $Passed = @()
 
+function Get-GateExitCode {
+    param([object]$Result)
+
+    $items = @($Result)
+    if ($items.Count -eq 0) {
+        return $LASTEXITCODE
+    }
+
+    if ($items.Count -gt 1) {
+        $items[0..($items.Count - 2)] | ForEach-Object {
+            if ($null -ne $_ -and [string]$_ -ne "") {
+                Write-Host $_
+            }
+        }
+    }
+
+    $candidate = $items[-1]
+    [int]$parsed = 0
+    if ($candidate -is [int]) {
+        return [int]$candidate
+    }
+    if ([int]::TryParse([string]$candidate, [ref]$parsed)) {
+        return $parsed
+    }
+    if ($null -ne $candidate -and [string]$candidate -ne "") {
+        Write-Host $candidate
+    }
+    return $LASTEXITCODE
+}
+
 function Run-Gate {
     param([string]$Name, [scriptblock]$Block, [switch]$Optional)
+
     Write-Host ""
-    Write-Host "── $Name ──────────────────────────────────────────────"
+    Write-Host "-- $Name ----------------------------------------------"
     try {
-        $code = & $Block
-        if ($null -eq $code) { $code = $LASTEXITCODE }
+        $result = & $Block
+        $code = Get-GateExitCode $result
         if ($code -eq 0) {
             Write-Host "  PASS" -ForegroundColor Green
             $script:Passed += $Name
@@ -64,7 +95,7 @@ function Run-Gate {
     }
 }
 
-# ─── L0 — Developer machine ───────────────────────────────────────────────────
+# L0 - Developer machine
 
 Run-Gate "L0: cargo fmt check" {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { return 0 }
@@ -117,19 +148,22 @@ Run-Gate "L0: secret scan (regex)" {
     # The in-tree secret regex set lives in python/signalos_secret_guard.py.
     # Scan tracked text files for high-confidence secret patterns.
     $bad = 0
-    # Excludes: binary blobs, the bundled SignalOS protocol files, the
-    # test-automation docs (worked examples), Python test fixtures (which
-    # deliberately contain fake-shaped secrets so the redaction layer can
-    # be tested against them), and the parity-test JS/TS test fixtures.
-    $files = git ls-files | Where-Object { $_ -notmatch '\.(png|jpg|jpeg|webp|ico|icns|pdf|docx|pptx|xlsx|exe|dll|so|dylib)$' -and $_ -notmatch '^python/signalos_lib/_bundle/' -and $_ -notmatch '^docs/test-automation/' -and $_ -notmatch '^python/test_' -and $_ -notmatch '\.test\.tsx?$' -and $_ -notmatch '^scripts/validate-installed-runtime\.ps1$' }
+    $files = git ls-files | Where-Object {
+        $_ -notmatch '\.(png|jpg|jpeg|webp|ico|icns|pdf|docx|pptx|xlsx|exe|dll|so|dylib)$' -and
+        $_ -notmatch '^python/signalos_lib/_bundle/' -and
+        $_ -notmatch '^docs/test-automation/' -and
+        $_ -notmatch '^python/test_' -and
+        $_ -notmatch '\.test\.tsx?$' -and
+        $_ -notmatch '^scripts/validate-installed-runtime\.ps1$'
+    }
     foreach ($f in $files) {
         if (-not (Test-Path $f)) { continue }
         $text = Get-Content $f -Raw -ErrorAction SilentlyContinue
         if (-not $text) { continue }
         if ($text -match '\bsk-ant-[A-Za-z0-9_\-]{20,}\b') { Write-Host "  hit: $f (Anthropic key)"; $bad++ }
         if ($text -match '\bsk-(proj-)?[A-Za-z0-9_\-]{30,}\b') { Write-Host "  hit: $f (OpenAI-shape key)"; $bad++ }
-        if ($text -match '\bAKIA[0-9A-Z]{16}\b')              { Write-Host "  hit: $f (AWS access key)"; $bad++ }
-        if ($text -match '-----BEGIN [A-Z ]*PRIVATE KEY-----'){ Write-Host "  hit: $f (PEM private key)"; $bad++ }
+        if ($text -match '\bAKIA[0-9A-Z]{16}\b') { Write-Host "  hit: $f (AWS access key)"; $bad++ }
+        if ($text -match '-----BEGIN [A-Z ]*PRIVATE KEY-----') { Write-Host "  hit: $f (PEM private key)"; $bad++ }
     }
     if ($bad -gt 0) { return 1 }
     return 0
@@ -141,7 +175,7 @@ Run-Gate "L0: Tauri command ACL" {
     return $LASTEXITCODE
 }
 
-# ─── L1 — CI build + verify ───────────────────────────────────────────────────
+# L1 - CI build + verify
 
 if ($Layer -eq "L1") {
     Run-Gate "L1: cargo test --release" {
@@ -173,10 +207,10 @@ if ($Layer -eq "L1") {
     }
 }
 
-# ─── Summary ──────────────────────────────────────────────────────────────────
+# Summary
 
 Write-Host ""
-Write-Host "──── Summary ────────────────────────────────────────────────"
+Write-Host "---- Summary ------------------------------------------"
 Write-Host "Passed:  $($Passed.Count)"
 foreach ($p in $Passed) { Write-Host "  + $p" -ForegroundColor Green }
 if ($Skipped.Count -gt 0) {
