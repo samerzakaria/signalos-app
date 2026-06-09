@@ -66,6 +66,7 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --hidden-import tiktoken_ext.openai_public \
   --collect-all tiktoken \
   --collect-all tiktoken_ext \
+  --runtime-hook "$ROOT_DIR/scripts/pyi-rthook-tiktoken.py" \
   "$IPC_ENTRY"
 
 if [[ ! -f "$SIDECAR_DIR/$SIDECAR_NAME" ]]; then

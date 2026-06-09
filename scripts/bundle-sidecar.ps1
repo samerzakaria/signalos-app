@@ -72,6 +72,7 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --hidden-import tiktoken_ext.openai_public `
   --collect-all tiktoken `
   --collect-all tiktoken_ext `
+  --runtime-hook (Join-Path $PSScriptRoot "pyi-rthook-tiktoken.py") `
   $entry
 
 $built = Join-Path $outDir $expectedFile
