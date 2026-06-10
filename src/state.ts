@@ -1,4 +1,22 @@
-import { signal } from '@preact/signals';
+import { signal, effect } from '@preact/signals';
+
+// Small helper: a signal whose value is persisted to localStorage so it
+// survives app restarts. Falls back to the default when storage is absent
+// (non-browser test envs) or unreadable.
+function persistedSignal(key: string, fallback: string) {
+  let initial = fallback;
+  try {
+    const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+    if (stored !== null) initial = stored;
+  } catch { /* ignore unreadable storage */ }
+  const s = signal<string>(initial);
+  effect(() => {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(key, s.value);
+    } catch { /* ignore unwritable storage */ }
+  });
+  return s;
+}
 
 export interface Identity {
   name: string;
@@ -101,7 +119,9 @@ export const obStep = signal<number>(1);
 export const provMoreOpen = signal<boolean>(false);
 export const keyLabel = signal<string>('Anthropic API key');
 export const apiKeyInput = signal<string>('');
-export const budgetInputValue = signal<string>('');
+// Monthly AI spend cap from onboarding. Persisted so the cap context shows on
+// every wave, not just the session it was entered in.
+export const budgetInputValue = persistedSignal('signalos.ai.monthlyCapUsd', '');
 
 export interface PlanTask {
   id: string;

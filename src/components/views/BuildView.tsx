@@ -1,5 +1,6 @@
 import type { ChatBubble } from '../../state';
-import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId } from '../../state';
+import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId, budgetInputValue } from '../../state';
+import { waveValueFraming } from '../../services/costFraming';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
@@ -241,10 +242,24 @@ export function BuildView() {
                           </div>
                         ) : null}
                         {costDelta !== null && (planStatus === 'completed' || planStatus === 'failed' || planStatus === 'cancelled') ? (
-                          <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-warm)', borderRadius: 'var(--r-sm)', fontSize: '12px', color: 'var(--ink-2)' }}>
-                            <span><i className="ti ti-coin" style={{ verticalAlign: 'middle' }}></i> Wave spend</span>
-                            <span style={{ fontFamily: 'var(--f-mono)', fontWeight: 600, color: 'var(--ink)' }}>${costDelta.toFixed(4)}</span>
-                          </div>
+                          (() => {
+                            const framing = waveValueFraming((b.filesWritten || []).length, budgetInputValue.value);
+                            return (
+                              <div style={{ marginTop: '10px', padding: '8px 12px', background: 'var(--surface-warm)', borderRadius: 'var(--r-sm)', fontSize: '12px', color: 'var(--ink-2)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span><i className="ti ti-coin" style={{ verticalAlign: 'middle' }}></i> Wave spend</span>
+                                  <span style={{ fontFamily: 'var(--f-mono)', fontWeight: 600, color: 'var(--ink)' }}>
+                                    ${costDelta.toFixed(4)}{framing.capLabel ? <span style={{ fontWeight: 400, color: 'var(--ink-3)' }}> {framing.capLabel}</span> : null}
+                                  </span>
+                                </div>
+                                {framing.hoursSavedLabel ? (
+                                  <div style={{ marginTop: '4px', color: 'var(--ink-3)' }}>
+                                    <i className="ti ti-clock-check" style={{ verticalAlign: 'middle' }}></i> {framing.hoursSavedLabel} of developer time saved <span style={{ opacity: 0.7 }}>(estimate)</span>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()
                         ) : null}
                         {(planStatus === 'completed' || planStatus === 'failed' || planStatus === 'cancelled')
                           && b.preWaveSha && !b.rolledBack ? (
