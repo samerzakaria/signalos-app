@@ -31,7 +31,7 @@ SignalOS enforces its way of working at build time and runtime:
 - **Constitution** -- supreme governing document for all agent behavior
 - **Trust tiers** -- T1 advisory, T2 review-required, T3 autonomous
 - **Gates** -- G0 through G5, each requiring a human signature to proceed
-- **Governance library** -- 287 bundled governance files; the orchestrator selects the relevant subset per agent role
+- **Governance library** -- 400+ bundled governance files (425 at time of writing); the orchestrator selects the relevant subset per agent role
 - **Runtime enforcement** -- 12 rules, strict mode, fails closed
 - **Privacy** -- GDPR Article 15 export and Article 17 erasure support
 - **Threat modeling** -- OWASP/STRIDE methodology applied during security gate

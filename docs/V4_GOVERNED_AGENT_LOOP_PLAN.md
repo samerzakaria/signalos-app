@@ -36,7 +36,7 @@
 
 ## Goal
 
-Build Foundry v4 -- the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 12 runtime rules, 287 governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally -- one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
+Build Foundry v4 -- the governed agent loop. Replace the current chat relay and fake terminal with a real provider-agnostic agent runtime powered by LiteLLM behind a capability-detecting adapter contract. The agent uses tool calling (file ops, shell, search) natively from any provider. SignalOS's entire governance layer (6 gates, 12 validators, 12 runtime rules, 400+ governance files, trust tiers, security scanning, audit trail, 5-verdict gate review, bounded rework, acceptance criteria, honest closeout) wraps every agent action. The agent works between gates and pauses at every gate for user review. The user talks naturally -- one conversation surface. Any AI provider. The user is the client. The agents are the team. Foundry is the software house.
 
 Every v3 module is either actively used, intentionally marked optional with justification, or de-scoped with proof. No forced integration. No fake usage.
 
@@ -454,7 +454,7 @@ Continue or rework (persisted run state survives restart)
 - `validate_cmd.py` -- 12 Layer 1 validators (incl security-posture-guard)
 - `security.py` -- OWASP/STRIDE, canary tokens
 - `data_privacy.py` -- GDPR export/purge
-- `_bundle/` -- 287 governance files (constitution, agent contracts, standards, rules)
+- `_bundle/` -- 400+ governance files (constitution, agent contracts, standards, rules)
 
 **Rust backend (Tauri):**
 - `enforcement.rs` -- 12 runtime rules
@@ -620,7 +620,7 @@ All tests in the test matrix must pass. No exceptions. No relaxing.
 | `keychain.rs` | Provider adapter setup | OS credential storage |
 | `sidecar.rs` | Agent event streaming | Sidecar spawn + event routing |
 | `governance.rs` | Audit trail | Gate state + audit append |
-| `_bundle/ (287 files)` | Gate agent system prompts | Constitution, contracts, standards |
+| `_bundle/ (400+ files)` | Gate agent system prompts | Constitution, contracts, standards |
 
 ---
 
