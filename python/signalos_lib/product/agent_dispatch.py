@@ -285,9 +285,10 @@ def dispatch_build_agent(
         "tokens_out": None,
     }
 
-    # Check API key availability
+    # Check API key availability (product secret wins, else app-level keychain).
     from .llm_provider import is_llm_available
-    if not is_llm_available():
+    from .secrets_resolver import apply_product_secrets
+    if not is_llm_available(repo_root):
         result["status"] = "no_api_key"
         result["errors"].append(
             "No LLM API key configured. Add a provider key in the "
@@ -295,29 +296,29 @@ def dispatch_build_agent(
         )
         return result
 
-    # Resolve provider
-    try:
-        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
-        provider = _resolve_provider(provider_name)
-    except Exception as exc:
-        result["errors"].append(f"Provider resolution failed: {exc}")
-        return result
-
     # Build prompt
     prompt = _build_agent_prompt(packet, governance)
-    use_model = model or DEFAULT_MODEL
 
-    # Call LLM
-    try:
-        response_text, tokens_in, tokens_out = provider.call(
-            f"{_SYSTEM_PROMPT}\n\n{prompt}",
-            use_model,
-        )
-        result["tokens_in"] = tokens_in
-        result["tokens_out"] = tokens_out
-    except Exception as exc:
-        result["errors"].append(f"LLM call failed: {exc}")
-        return result
+    # Resolve + call with the product's provider keys overlaid (product wins).
+    with apply_product_secrets(repo_root):
+        try:
+            from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+            provider = _resolve_provider(provider_name)
+            use_model = model or DEFAULT_MODEL
+        except Exception as exc:
+            result["errors"].append(f"Provider resolution failed: {exc}")
+            return result
+
+        try:
+            response_text, tokens_in, tokens_out = provider.call(
+                f"{_SYSTEM_PROMPT}\n\n{prompt}",
+                use_model,
+            )
+            result["tokens_in"] = tokens_in
+            result["tokens_out"] = tokens_out
+        except Exception as exc:
+            result["errors"].append(f"LLM call failed: {exc}")
+            return result
 
     # Parse response into files
     files = parse_agent_response(response_text)

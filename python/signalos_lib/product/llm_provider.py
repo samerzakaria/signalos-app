@@ -48,27 +48,33 @@ class LLMCallResult:
     tokens_out: int | None = None
 
 
-def is_llm_available() -> bool:
+def is_llm_available(root=None) -> bool:
     """Check if ANY LLM provider is configured.
 
-    Returns True if any provider API key or SIGNALOS_LLM_PROVIDER is
-    set in the environment. Tauri injects all keychain-stored keys at
-    sidecar spawn time.
+    Returns True if any provider API key or SIGNALOS_LLM_PROVIDER is set --
+    either at the app level (process env, injected from the OS keychain at
+    sidecar spawn) or, when ``root`` is given, at the product level (the
+    workspace .env files). Product and app both satisfy availability, so a
+    "no key" result only happens when both miss. See secrets_resolver for the
+    product-wins resolution order.
     """
-    if os.environ.get("SIGNALOS_DISABLE_LLM", "").strip().lower() in _DISABLE_VALUES:
-        return False
-    return any(os.environ.get(var) for var in _PROVIDER_ENV_VARS)
+    from .secrets_resolver import is_llm_available as _resolve_available
+    return _resolve_available(root)
 
 
 def call_llm(
     prompt: str,
     provider_name: str | None = None,
     model: str | None = None,
+    root=None,
 ) -> LLMCallResult:
     """Call the LLM provider and return the result.
 
     Never raises; returns LLMCallResult with success=False on any error.
     The caller sees the error message and can surface it to the user.
+
+    When ``root`` (a product workspace) is given, the product's own provider
+    keys override the app-level keys for the duration of the call.
     """
     try:
         from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
@@ -79,28 +85,33 @@ def call_llm(
             error=f"LLM harness not available: {exc}",
         )
 
-    try:
-        provider = _resolve_provider(provider_name)
-    except Exception as exc:
-        return LLMCallResult(
-            success=False,
-            text="",
-            error=f"Provider resolution failed: {exc}",
-        )
+    from .secrets_resolver import apply_product_secrets
 
-    try:
-        text, tokens_in, tokens_out = provider.call(
-            prompt, model or DEFAULT_MODEL,
-        )
-        return LLMCallResult(
-            success=True,
-            text=text,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-        )
-    except Exception as exc:
-        return LLMCallResult(
-            success=False,
-            text="",
-            error=f"LLM call failed: {exc}",
-        )
+    # Product keys win over app keys; provider *selection* and the call itself
+    # must both see the overlay, so wrap resolution and the call together.
+    with apply_product_secrets(root):
+        try:
+            provider = _resolve_provider(provider_name)
+        except Exception as exc:
+            return LLMCallResult(
+                success=False,
+                text="",
+                error=f"Provider resolution failed: {exc}",
+            )
+
+        try:
+            text, tokens_in, tokens_out = provider.call(
+                prompt, model or DEFAULT_MODEL,
+            )
+            return LLMCallResult(
+                success=True,
+                text=text,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+        except Exception as exc:
+            return LLMCallResult(
+                success=False,
+                text="",
+                error=f"LLM call failed: {exc}",
+            )
