@@ -1,0 +1,22 @@
+{
+  "name": "SignalOS / Foundry Dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
+    "ghcr.io/devcontainers/features/rust:1": { "version": "stable", "profile": "default" }
+  },
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tauri-apps.tauri-vscode",
+        "ms-python.python"
+      ]
+    }
+  },
+  "remoteEnv": {
+    "SIGNALOS_DISABLE_LLM": "1"
+  }
+}

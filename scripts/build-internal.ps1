@@ -76,6 +76,12 @@ Write-Host "  Version: $Version"
 
 # --- 4. Build the installer (unsigned) -------------------------------------
 if (-not $SkipBuild) {
+    # Preflight: the Tauri build needs the Rust toolchain. Fail with an
+    # actionable message up front instead of a raw error partway through.
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Write-Error "cargo not found on PATH - the Tauri build needs the Rust toolchain. Install from https://rustup.rs then 'cargo install tauri-cli', or re-run with -SkipBuild."
+        exit 1
+    }
     Write-Host "-- Building installer (unsigned) ----------------------------"
     # Rebuild the Windows sidecar before cargo runs. The binary is ignored by
     # git, so an existing file can be stale even when the Python source is

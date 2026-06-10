@@ -45,6 +45,15 @@ fi
 VERSION="$(awk -F'"' '/"version":/ {print $4; exit}' src-tauri/tauri.conf.json)"
 echo "  Version: $VERSION"
 
+# Preflight: the Tauri build needs the Rust toolchain. Fail with an actionable
+# message up front instead of a raw "command not found" partway through.
+if [[ "$SKIP_BUILD" == "0" ]] && ! command -v cargo >/dev/null 2>&1; then
+  echo "cargo not found on PATH — the Tauri build needs the Rust toolchain." >&2
+  echo "  Install Rust:  https://rustup.rs   then:  cargo install tauri-cli" >&2
+  echo "  Or re-run with --skip-build to attest without building." >&2
+  exit 1
+fi
+
 # 2. Build
 if [[ "$SKIP_BUILD" == "0" ]]; then
   echo "── Building installer (unsigned) ────────────────────────────"
