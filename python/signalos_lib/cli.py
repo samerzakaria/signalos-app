@@ -154,6 +154,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_diag.add_argument("--output", default=None, metavar="PATH")
     p_diag.add_argument("--json", action="store_true", dest="as_json")
 
+    p_replay = sub.add_parser("replay", help="Time-travel over the audit trail")
+    p_replay.add_argument("--repo-root", default=None)
+    p_replay.add_argument("--at", type=int, default=None,
+                          help="Reconstruct state at this entry index (0-based).")
+    p_replay.add_argument("--json", action="store_true", dest="as_json")
+
     p_val = sub.add_parser("validate", help="Run validator suite (W3.5)")
     p_val.add_argument("--repo-root", default=None)
     p_val.add_argument("--validator", default=None)
@@ -778,6 +784,17 @@ def main(argv: list[str]) -> int:
             extra += ["--wave", args.wave]
         if args.output:
             extra += ["--output", args.output]
+        if args.as_json:
+            extra += ["--json"]
+        return m.main(extra)
+
+    if cmd == "replay":
+        from signalos_lib.commands import replay as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", args.repo_root]
+        if args.at is not None:
+            extra += ["--at", str(args.at)]
         if args.as_json:
             extra += ["--json"]
         return m.main(extra)
