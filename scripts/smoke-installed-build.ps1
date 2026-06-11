@@ -548,7 +548,10 @@ function Test-NsisInstall {
   }
 
   if (Test-Path $target) {
-    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    # NSIS uninstaller returns before its self-cleanup child finishes, so files
+    # can vanish mid-enumeration. -ErrorAction SilentlyContinue doesn't suppress
+    # FileSystem provider errors raised during -Recurse; try/catch does.
+    try { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop } catch { }
   }
   Write-Host "[PASS] NSIS silent install smoke"
 }
