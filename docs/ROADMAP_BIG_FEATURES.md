@@ -4,6 +4,28 @@ These are the large product features from the findings analysis. Each is a
 multi-step feature; this doc records the concrete approach so they can be picked
 up incrementally. Status reflects work in this branch.
 
+**Status: a first, tested cut of every item has landed.** What remains per item
+is integration/UI polish, noted inline:
+- E1 canvas editor — landed (`visualEdit.ts` + PreviewView toggle). Remaining:
+  cross-origin previews need to include the picker snippet themselves.
+- E2 agentic QA — landed (`ux_friction.py`). Remaining: run before the Validate
+  gate and surface as a gate card.
+- E3 time-travel replay — landed (`audit_replay.py` + `signalos replay`).
+  Remaining: a visual scrubber in HistoryView over the timeline frames.
+- E4 competitor ingestion — landed (`competitor.py`). Remaining: wire into the
+  Brief phase and a UI to paste URLs.
+- E5 multi-player — read-only share snapshot landed (`share_export.py`).
+  Remaining: live co-editing needs a sync backend (separate project).
+- E6 day-2 observability — ingest contract + summary landed
+  (`observability.py`). Remaining: a thin SDK in generated apps + a view.
+- E7 GTM — landed (`gtm.py`). Remaining: call at closeout and write the assets
+  into the handoff bundle.
+- F1 brownfield governance — landed (`brownfield.py`). Remaining: invoke from
+  the existing-repo onboarding path.
+- D1/D2 — landed (macro strip in BuildView; sign-as-required-role).
+
+Original per-item approach notes follow.
+
 ## E2 — Simulated User Testing (Agentic QA) ✅ first cut landed
 
 `python/signalos_lib/product/ux_friction.py`. Evaluates a generated UI surface
