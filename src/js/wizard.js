@@ -193,7 +193,7 @@ function renderStep(step) {
     case "init":
       return `
         <h2>What may Foundry write to your folder?</h2>
-        <p>Foundry scaffolds SignalOS governance files (plan, runtime state, command library, IDE hooks) so it can guide your work.</p>
+        <p>Foundry scaffolds its governance files (plan, runtime state, command library, IDE hooks) so it can guide your work.</p>
         <fieldset class="wizard-radios">
           ${initOption("full", "Full Foundry setup", "Write the entire bundle. Overwrites any colliding file. Use only on an empty or brand-new folder.")}
           ${initOption("keep", "Keep my files (recommended)", "Write the bundle but never overwrite anything that already exists. Safe for non-empty folders.")}

@@ -140,7 +140,7 @@ export function Onboarding() {
     <div className={stepCls(1)} data-step="1">
       <div className="ob-kicker">Step 1 — Welcome</div>
       <h1>Hi, I'm Foundry.<br/>Let's make<br/><em>something real.</em></h1>
-      <p className="ob-sub">Tell me what you want to build. I plan it, gate it, and build it with you through SignalOS governance. Setup takes under a minute.</p>
+      <p className="ob-sub">Tell me what you want to build. I plan it, gate it, and build it with you through Foundry's governance. Setup takes under a minute.</p>
       <div className="ob-body">
         <div className="feat-list">
           <div className="feat">
