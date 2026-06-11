@@ -1,23 +1,23 @@
 {
   "version": "3.0.0-internal.28",
   "notes":   " ### Release smoke hardening (real fix, take 2)  ",
-  "pub_date": "2026-06-04T16:43:10Z",
+  "pub_date": "2026-06-11T13:14:17Z",
   "platforms": {
     "darwin-aarch64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_aarch64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2ovajlUeXVETjZxZ3c3ZVBXVWJzUGdTU3JtNzZJaUNKSzZDZzY0cW84TlhhUndJSWErK29GSFBqdjRkcmhQU2Q5eGozL3FmMldhZ2IrbVZXSlY4bFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwNTkxMDA3CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CnZGcU9hWTRrNjN0Znp6citTdXQxbzcvT3lTRFcwdXUzTWpJUFM2NlFXT0E4NGROa1pHcWg0MzFVaXZxMmlHeXhrdkl1ZWFZUm43cFFqZUhiTW9SZkFnPT0K"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3FqK24xRHhwTlRLUFY4YmtDdVh5R3c1d1pNakVDUytqR2N6b2V4NWVuTDZmdW1iTjlhc1hyU255cGxXRExzRWhXNEFtdnlUbGpqcGYvMFd6U1M3clFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMTgzMTU0CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CjBVNEdSYWkwTlNrZ3ZaT240L1YzVFVsM2xicjhPTGNRSWlHcytQS3U3U2NaK1l6akFZYmw1cHEvWU1aTm9RQnBETDZtc2FVYjJESU1nemFEblFJV0NBPT0K"
     },
     "darwin-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_x64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2k1SDVHRWN0c29WalNYbTZFY2JXQ21QanFQRy9WRWdvRDlYb2Mya2hpcklVVi9nUlZKWFhSYW5jeVBGazhieTUzQ1JiYmQyNE5La2t2WEdRc0NIQVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwNTkxMzQ1CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6Cm15TTdpVlI2Rkt1L3JscUNvTmF3RFJNdS9pejNya0ZJSStpVmRQeHhqbkMzdnhmSW9MdXFtQTlLeGpJOVlrZzJ1dE1ST2NWK04zaGtCam5HOWdrNkRRPT0K"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3FyczFOTXp5Tm5oQW5QU1hJSVVzT05oYkh3amMxY3RBcjZaYXFrQW5BZ3ZLMkdYZ2F5Q1VaME5uNkFHOWl6ZHJ0dzRQSnJpbjhDd1dabW9KUWxDVHdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMTgzNTQyCWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CjdSektRdWpUTThiM2lqaG1NbTFuZXdKa3F5U1c1dUFrS3dwV3BRai9zcUM5WlVndWJBM0c1MnlQNFlISmhiTFdjWVFDTVlMZ0d6Z3phVy9ORUZWQ0JRPT0K"
     },
     "windows-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2dpeXpWM3U0N2hyZ0w2TjZQcHNxTGprbHltUmNPNzM1VGtUeVBDZHR4UTJwWGhQeXJIRFpzVlYvV2svR20vdzBYaDQ0QVJ0b0Y4bTgrWGRNdFJMZ1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwNTkxMjExCWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF94NjQtc2V0dXAuZXhlCjV3NDlEekhqUnR5U2h6cjJMbmhiMGhvRDNyNm54dnFYOVA3S2djZFpIYUhpUWhDNHBOOHdJc1VLQkdEUjdib2NwVTBZaDlaUm9BVXNWV05nQm8vS0NBPT0K"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM25IUG0xclhUWXNRWExPQ2VibHN6ZlJxY2tpUEJ0ZnQrc0hpdDFGQ3RtMHN6R1A0TUdUbFIwMG4wWG91dG9hcERzVlQ4N2tadHJRTUlEVlV4bzFYaFFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMTgzNTU1CWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF94NjQtc2V0dXAuZXhlCnp6REVyQW1QYXFsVG5vU3pTVFZYYTRVZ0tyREN1d25sWE16WmRnVzlNSWlEajdBVTRkRHdtMDdjaUZ1VER2MGdjV2ZJRzYxdjF5OFdvTDkyVHpYbkNRPT0K"
     },
     "linux-x86_64": {
       "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_amd64.AppImage",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2hhK29nTGZ4WHVrT1ppSzRrc2prMUlJNTlyUlZXUzA5bTRSZDhMaHlVMjVrbG5aTkFWeHorQU5YS25ic2oxVWZ3UzNHcE9zelFhRXIyclY3bHV6bnd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgwNTkxMTExCWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF9hbWQ2NC5BcHBJbWFnZQpIZlJIU1N5K2oybEFtd1I2eUs4a3FLYndHUTg2VnNuSVR6NThiZkZqU0srY2txNjMzcjRGdEJ3dCtjK2NYR0tWcTJGVm5IRWpTVXVNNzhaNzFXanREQT09Cg=="
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2lJNUxhWFZ2clZEbXZGMzdIUTM0bFJZcXFtRTlYbmlJcjlCMi9sV3dWcDBxV1laU1JjWHVBWVhWSGM3eC9tNUEyK0hjWVkySkVMZ2FwRmFhTGNTM2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMTgzMzM1CWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF9hbWQ2NC5BcHBJbWFnZQo3N0lkM1Z0ODl5aVhMajFKcXdmUWtJL1NaSTgza0MxQnJYMTdMSFNrMlRDSUJhbm44WnVmYk8rb0FZRnJPdFIwOCtYMDVxWjVGbGlWZ3J4MGNGWklBUT09Cg=="
     }
   }
 }
