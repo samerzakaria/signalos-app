@@ -1,5 +1,8 @@
-import { previewDevice, previewUrl, previewStatus, workspacePath } from '../../state';
+import { previewDevice, previewUrl, previewStatus, workspacePath, chatInputValue, tab } from '../../state';
 import { viewClass } from '../viewShell';
+import { useEffect, useRef } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
+import { parseSelectMessage, describeTarget, PICKER_SNIPPET } from '../../services/visualEdit';
 
 export function PreviewView() {
   const device = previewDevice.value;
@@ -7,8 +10,41 @@ export function PreviewView() {
   const status = previewStatus.value;
   const ws = workspacePath.value;
   const devCls = (d: string) => device === d ? 'dev-b active' : 'dev-b';
+  const visualEdit = useSignal(false);
+  const frameRef = useRef<HTMLIFrameElement>(null);
 
   const isRunning = status === 'running' && !!url;
+
+  // Visual edit: when on, listen for the preview's foundry:select messages,
+  // then drop a scoped edit prompt into the Build chat for the user to finish.
+  useEffect(() => {
+    if (!isRunning || !visualEdit.value) return;
+    let allowedOrigin = '';
+    try { allowedOrigin = new URL(url).origin; } catch { allowedOrigin = ''; }
+
+    const onMessage = (e: MessageEvent) => {
+      if (allowedOrigin && e.origin !== allowedOrigin) return; // only trust the preview
+      const target = parseSelectMessage(e.data);
+      if (!target) return;
+      chatInputValue.value = `In the live preview, update ${describeTarget(target)}: `;
+      tab.value = 'build';
+      visualEdit.value = false;
+    };
+    window.addEventListener('message', onMessage);
+
+    // Best-effort: inject the picker (works when the preview is same-origin);
+    // otherwise a cooperating preview can include PICKER_SNIPPET itself.
+    try {
+      const doc = frameRef.current?.contentDocument;
+      if (doc && doc.body) {
+        const s = doc.createElement('script');
+        s.textContent = PICKER_SNIPPET;
+        doc.body.appendChild(s);
+      }
+    } catch { /* cross-origin preview — rely on a cooperating page */ }
+
+    return () => window.removeEventListener('message', onMessage);
+  }, [isRunning, visualEdit.value, url]);
   const isBusy = status === 'starting' || status === 'installing';
   const statusLabel = isBusy ? (status === 'installing' ? 'Installing…' : 'Starting…')
                     : status === 'error' ? 'Crashed'
@@ -35,6 +71,16 @@ export function PreviewView() {
             </div>
             {isRunning ? (
               <>
+                <div
+                  className={visualEdit.value ? 'ico active' : 'ico'}
+                  onClick={() => { visualEdit.value = !visualEdit.value; }}
+                  aria-label="Visual edit"
+                  aria-pressed={visualEdit.value}
+                  title={visualEdit.value ? 'Click an element in the preview…' : 'Visual edit: click an element to change it'}
+                  style={visualEdit.value ? { color: 'var(--brand, #6c5ce7)' } : undefined}
+                >
+                  <i className="ti ti-click"></i>
+                </div>
                 <div className="ico" onClick={() => window.previewReload()} aria-label="Reload" title="Reload"><i className="ti ti-refresh"></i></div>
                 <div className="ico" onClick={() => window.previewStop()} aria-label="Stop" title="Stop"><i className="ti ti-player-stop"></i></div>
                 <div className="ico" onClick={() => window.openExternal()} aria-label="Open externally" title="Open in browser"><i className="ti ti-external-link"></i></div>
@@ -49,6 +95,7 @@ export function PreviewView() {
             <div className={`pv-device ${device}`} id="pvDevice">
               {isRunning ? (
                 <iframe
+                  ref={frameRef}
                   src={url}
                   title="Live preview"
                   style={{ width: '100%', height: '100%', border: 0, background: '#fff' }}
