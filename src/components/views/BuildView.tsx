@@ -1,5 +1,6 @@
 import type { ChatBubble } from '../../state';
-import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId, budgetInputValue } from '../../state';
+import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId, budgetInputValue, govGatesList, currentGateInfo, releaseReadiness } from '../../state';
+import { summarizeMacro, macroLine } from '../../services/macroProgress';
 import { waveValueFraming } from '../../services/costFraming';
 import { requiredRoleForGate, roleLabel } from '../../services/gateRoles';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
@@ -54,6 +55,21 @@ export function BuildView() {
               : [node, <div className="phase-conn" key={`conn-${stage.label}`}></div>];
           })}
         </div>
+
+        {(() => {
+          const line = macroLine(summarizeMacro(govGatesList.value, currentGateInfo.value, releaseReadiness.value.result));
+          return line ? (
+            <div
+              className="macro-strip"
+              data-testid="macro-progress"
+              title="Macro progress — also on the Dashboard tab"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 14px', fontSize: '11.5px', color: 'var(--ink-3)' }}
+            >
+              <i className="ti ti-gauge" style={{ verticalAlign: 'middle' }}></i>
+              <span>{line}</span>
+            </div>
+          ) : null;
+        })()}
 
         <div className="chat-scroll" id="chatScroll">
           <div className="chat-inner" id="chatInner">
