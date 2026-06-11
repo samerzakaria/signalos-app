@@ -1,0 +1,84 @@
+{
+  "id": "saas-billing",
+  "display_name": "SaaS Subscription Starter",
+  "intent_match": {
+    "product_type": ["saas-billing", "subscription-saas"],
+    "entities": ["subscription", "plan", "invoice"],
+    "keywords": ["stripe", "billing", "subscription", "saas", "auth", "login", "signup", "paywall", "checkout", "plans", "pricing"]
+  },
+  "intent_defaults": {
+    "product_type": "saas-billing",
+    "product_name": "Subscription SaaS",
+    "target_users": ["founders", "subscribers", "billing admins"],
+    "primary_workflows": [
+      "sign up and authenticate",
+      "subscribe to a plan via Stripe Checkout",
+      "upgrade or downgrade a plan",
+      "cancel a subscription",
+      "reconcile Stripe webhooks into local billing state",
+      "view invoices and payment history",
+      "gate features behind an active subscription"
+    ],
+    "entities": [
+      "User",
+      "Account",
+      "Plan",
+      "Subscription",
+      "Invoice",
+      "PaymentMethod",
+      "WebhookEvent"
+    ],
+    "entity_relationships": [
+      "User belongs to Account",
+      "Subscription links Account to Plan",
+      "Invoice belongs to Subscription",
+      "PaymentMethod belongs to Account",
+      "WebhookEvent records a Stripe event applied to billing state"
+    ],
+    "ux_surfaces": ["auth", "pricing", "checkout", "billing-dashboard", "invoice-list", "account-settings"],
+    "api_surfaces": ["rest-api", "webhook"],
+    "data_sources": ["database", "stripe"],
+    "auth_requirements": ["login", "signup", "session", "password-reset"],
+    "permissions": ["owner", "admin", "member"],
+    "audit_requirements": ["audit-trail", "webhook-log"],
+    "security_constraints": ["pci-handled-by-stripe", "webhook-signature-verification", "no-card-data-stored", "secrets-in-vault"],
+    "performance_expectations": [
+      "Checkout session created in under 1 second",
+      "Webhook reconciliation is idempotent and completes in under 500 milliseconds"
+    ],
+    "deployment_intent": "docker",
+    "assumptions": [
+      "Stripe is the billing provider; card data never touches the app (Stripe Checkout / Elements).",
+      "Auth provider is pluggable (Auth0 or Supabase Auth); sessions are server-verified.",
+      "Provider secret keys are resolved from the product vault, never hardcoded."
+    ]
+  },
+  "required_intent_fields": ["product_name", "entities"],
+  "entities": [
+    {"name": "User", "fields": ["id", "email", "auth_provider", "auth_subject", "account_id", "role", "created_at"]},
+    {"name": "Account", "fields": ["id", "name", "owner_user_id", "stripe_customer_id", "created_at"]},
+    {"name": "Plan", "fields": ["id", "name", "stripe_price_id", "interval", "amount_cents", "currency", "features"]},
+    {"name": "Subscription", "fields": ["id", "account_id", "plan_id", "stripe_subscription_id", "status", "current_period_end", "cancel_at_period_end"]},
+    {"name": "Invoice", "fields": ["id", "subscription_id", "stripe_invoice_id", "amount_due_cents", "status", "hosted_invoice_url", "issued_at"]},
+    {"name": "PaymentMethod", "fields": ["id", "account_id", "stripe_payment_method_id", "brand", "last4", "exp_month", "exp_year"]},
+    {"name": "WebhookEvent", "fields": ["id", "stripe_event_id", "type", "received_at", "processed_at", "status"]}
+  ],
+  "workflows": [
+    {"name": "sign_up", "description": "Register a user via the auth provider and create their Account"},
+    {"name": "log_in", "description": "Authenticate a user and establish a server-verified session"},
+    {"name": "start_subscription", "description": "Create a Stripe Checkout session for a selected plan"},
+    {"name": "change_plan", "description": "Upgrade or downgrade the active subscription with proration"},
+    {"name": "cancel_subscription", "description": "Cancel at period end and reflect status locally"},
+    {"name": "handle_stripe_webhook", "description": "Verify the signature and idempotently reconcile billing state"},
+    {"name": "view_billing_history", "description": "List invoices and payment methods for the account"},
+    {"name": "gate_feature", "description": "Allow or block a feature based on subscription status and plan"}
+  ],
+  "api": ["POST /auth/signup", "POST /auth/login", "POST /auth/logout", "GET /plans", "POST /billing/checkout-session", "POST /billing/portal-session", "POST /billing/change-plan", "POST /billing/cancel", "POST /webhooks/stripe", "GET /billing/invoices", "GET /billing/subscription"],
+  "ui": ["signup-form", "login-form", "pricing-table", "checkout-redirect", "billing-dashboard", "invoice-list", "plan-switcher", "account-settings"],
+  "tests": ["signup-login", "checkout-session-created", "webhook-signature-verified", "webhook-idempotent", "change-plan-proration", "cancel-at-period-end", "feature-gating", "invoice-list"],
+  "seed_data": ["sample-plans", "sample-account", "sample-subscription", "sample-invoices"],
+  "security": ["auth-required", "webhook-signature-verification", "no-card-data-stored", "secrets-in-vault", "audit-trail"],
+  "quality_profile": "standard",
+  "default_deferrals": ["usage-based-billing", "multi-currency", "tax-automation", "dunning-emails"],
+  "profile_support": ["react-vite", "generic"]
+}
