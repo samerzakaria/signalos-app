@@ -1,4 +1,5 @@
-import { chatBubbles, workspacePath, userName, userRole, currentWave, currentCost, previewStatus, type ChatBubble, type PlanTask } from '../state';
+import { chatBubbles, workspacePath, userName, currentWave, currentCost, previewStatus, type ChatBubble, type PlanTask } from '../state';
+import { requiredRoleForGate } from './gateRoles';
 import { planToYaml, planToMarkdownTaskList } from './signalosPrompt';
 import { previewRun } from './preview';
 
@@ -143,9 +144,10 @@ export async function approvePlan(bubbleId: string): Promise<void> {
 
   pushBubble({ id: nowId(), kind: 'system', text: `Wrote PLAN.tasks.yaml + PLAN.md (${tasks.length} task${tasks.length !== 1 ? 's' : ''}) to ${ws}` });
 
-  // 2. Sign Gate 2
+  // 2. Sign Gate 2 — sign as the role this gate requires (no dropdown role-play;
+  // the accountable human is still recorded as the signer).
   const signer = (userName.value || 'User').trim();
-  const role = userRole.value || 'PO';
+  const role = requiredRoleForGate('G2');
   try {
     await runSignal('signal-sign', ['G2', '--signer', signer, '--role', role, '--verdict', 'pass']);
     pushBubble({ id: nowId(), kind: 'system', text: `Gate 2 signed by ${signer} (${role}). Audit trail updated.` });

@@ -1,6 +1,7 @@
 import type { ChatBubble } from '../../state';
 import { userName, chatBubbles, chatInputValue, cmdPaletteOpen, busy, resumableRunId, budgetInputValue } from '../../state';
 import { waveValueFraming } from '../../services/costFraming';
+import { requiredRoleForGate, roleLabel } from '../../services/gateRoles';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
@@ -125,6 +126,7 @@ export function BuildView() {
                     title={gr.title}
                     question={gr.question}
                     resolved={gr.resolvedVerdict ?? null}
+                    signingAs={roleLabel(requiredRoleForGate(gr.gate))}
                     onVerdict={(submission: GateReviewSubmission) => {
                       // Mark resolved locally; Phase 3 wires this to agent:verdict.
                       chatBubbles.value = chatBubbles.value.map((cb: ChatBubble) =>

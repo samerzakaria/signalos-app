@@ -40,6 +40,9 @@ export interface GateReviewCardProps {
   onVerdict?: (submission: GateReviewSubmission) => void;
   /** Disables interaction once a verdict has been submitted. */
   resolved?: GateVerdict | null;
+  /** Human-friendly capacity the signature is recorded under, e.g. "Principal Engineer".
+   *  When set, the card shows "Signing as …" so the user need not pick a role. */
+  signingAs?: string;
 }
 
 interface VerdictDef {
@@ -69,7 +72,7 @@ const FEEDBACK_VERDICTS = new Set<GateVerdict>([
   'waive',
 ]);
 
-export function GateReviewCard({ gate, title, question, children, onVerdict, resolved }: GateReviewCardProps) {
+export function GateReviewCard({ gate, title, question, children, onVerdict, resolved, signingAs }: GateReviewCardProps) {
   const selected = useSignal<GateVerdict | null>(null);
   const feedback = useSignal('');
   const error = useSignal<string | null>(null);
@@ -142,6 +145,11 @@ export function GateReviewCard({ gate, title, question, children, onVerdict, res
 
           {!isResolved ? (
             <div className="gate-review-actions">
+              {signingAs ? (
+                <span className="gate-signing-as" data-testid="gate-signing-as" style={{ fontSize: '12px', color: 'var(--ink-3)' }}>
+                  <i className="ti ti-id-badge-2" style={{ verticalAlign: 'middle' }}></i> Signing as {signingAs}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="btn btn-primary"
