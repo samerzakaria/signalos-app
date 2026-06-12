@@ -159,6 +159,13 @@ class GateOrchestrator:
             repo_root=self.repo_root,
             enforcement_provider=self.enforcement_provider,
             emit=self.emit,
+            execution_context="delivery",
+            active_gate=gate,
+            signed_gates=[
+                int(str(g).lstrip("G"))
+                for g in self.state.signed
+                if str(g).lstrip("G").isdigit()
+            ],
         )
         result = loop.run(system_prompt, self._gate_message(gate))
         if gate == "G3":

@@ -213,6 +213,32 @@ class TestAgentRun(_AgentIpcBase):
         self.assertTrue(error_events, msg=f"expected an error agent-event in {events}")
         self.assertEqual(error_events[0]["run_id"], "run-C")
 
+    def test_run_cannot_write_product_files(self):
+        srv._AGENT_ADAPTER_FACTORY = _adapter_factory(
+            [
+                _tool_resp(
+                    "write_file",
+                    {"path": "src/App.tsx", "content": "export default 1"},
+                ),
+                _end_resp("finished"),
+            ]
+        )
+        resp, events = self._run(
+            {
+                "command": "agent:run",
+                "id": "req-write",
+                "args": [json.dumps({"prompt": "change product files", "run_id": "run-W"})],
+            }
+        )
+        self.assertTrue(resp["ok"], msg=resp)
+        self.assertFalse((Path(os.getcwd()) / "src" / "App.tsx").exists())
+        denied = [
+            e for e in events
+            if e.get("kind") == "agent-event" and e.get("type") == "tool_denied"
+        ]
+        self.assertTrue(denied, msg=f"expected write denial event in {events}")
+        self.assertIn("governed delivery", denied[0]["reason"])
+
 
 # ---------------------------------------------------------------------------
 # agent:verdict

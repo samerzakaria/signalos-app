@@ -65,6 +65,9 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
     "T2": {
         "read": ["**"],
         "write": [
+            "core/governance/**",
+            "core/strategy/**",
+            "core/execution/**",
             "src/**",
             "public/**",
             "tests/**",

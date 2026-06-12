@@ -18,14 +18,17 @@ function nowId() {
 //
 // Phase 5 (T39) — a "build X" / delivery request starts the governed G0->G5
 // walk (`agent:deliver` -> GateOrchestrator). Everything else is a normal
-// `agent:run` turn. The heuristic is intentionally conservative: it fires on
-// an explicit build/create intent paired with a product noun, so follow-up
-// chatter inside a delivery doesn't spuriously start a second one.
-const _DELIVERY_INTENT = /\b(build|create|make|develop|scaffold|generate|ship)\b[\s\S]*\b(app|application|system|tool|product|site|website|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot)\b/i;
+// `agent:run` turn. The classifier stays broad on product-change verbs and
+// product artifacts, while pure questions remain conversational.
+const _DELIVERY_ACTION = /\b(build|create|make|develop|scaffold|generate|ship|implement|add|change|update|modify|edit|fix|repair|redesign|polish|improve|write)\b/i;
+const _DELIVERY_ARTIFACT = /\b(app|application|system|tool|product|site|website|web\s*page|html|css|javascript|typescript|component|page|screen|view|form|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot|workflow|ui|ux|file|code)\b/i;
+const _PRODUCT_OUTCOME = /\b(i\s+want|i\s+need|we\s+need|let'?s|please)\b[\s\S]*\b(app|application|system|tool|site|website|dashboard|game|tracker|manager|portal|store|bot|workflow|ui|page)\b/i;
+const _PURE_QUESTION = /^(what|why|how|when|where|who|which|explain|tell me|describe|show me|can you tell)\b/i;
 function isDeliveryIntent(text) {
   const t = (text || '').trim();
   if (!t || t.startsWith('/')) return false;
-  return _DELIVERY_INTENT.test(t);
+  if (_PURE_QUESTION.test(t) || t.endsWith('?')) return false;
+  return (_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t);
 }
 
 // Milestone 2-a: keep the originating user prompt for each in-flight LLM

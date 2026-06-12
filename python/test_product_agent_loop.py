@@ -352,6 +352,106 @@ class TestGovernance(unittest.TestCase):
             self.assertIn("OK", content)
             self.assertTrue((root / "src" / "App.tsx").exists())
 
+    def test_conversation_context_denies_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "x"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, execution_context="conversation")
+            result = loop.run("sys", "write source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("governed delivery", tool_msgs[0]["content"])
+            self.assertFalse((root / "src" / "App.tsx").exists())
+
+    def test_conversation_context_denies_commands(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("run_command", {"command": "npm test"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, execution_context="conversation")
+            result = loop.run("sys", "run command")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("governed delivery", tool_msgs[0]["content"])
+
+    def test_pre_build_gate_denies_implementation_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "x"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G3")
+            result = loop.run("sys", "write source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("not allowed during G3", tool_msgs[0]["content"])
+
+    def test_g4_denies_implementation_when_prior_gates_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "x"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2])
+            result = loop.run("sys", "write source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("G3", tool_msgs[0]["content"])
+
+    def test_g4_requires_test_first_for_implementation_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "x"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "write source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("test-first", tool_msgs[0]["content"])
+
+    def test_g4_allows_implementation_after_test_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.test.tsx", "content": "test('x',()=>{})"}, "c1"),
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "export default 1"}, "c2"),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "write test then source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("OK", tool_msgs[0]["content"])
+            self.assertIn("OK", tool_msgs[1]["content"])
+            self.assertTrue((root / "src" / "App.test.tsx").is_file())
+            self.assertTrue((root / "src" / "App.tsx").is_file())
+
 
 # ---------------------------------------------------------------------------
 # Audit ledger (T23)

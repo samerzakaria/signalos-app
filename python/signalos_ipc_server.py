@@ -554,6 +554,7 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
         run_id=run_id,
         emit=None,  # replaced below once run_id is finalized
         cancel_check=None,
+        execution_context="conversation",
     )
     # AgentLoop assigns its own run_id when None was passed; bind emit + cancel
     # to that final id so envelopes and cancellation share one key.
@@ -803,6 +804,7 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
         run_id=run_id,
         emit=_agent_emit(run_id),
         cancel_check=lambda rid=run_id, root=repo_root: _agent_cancel_requested(root, rid),
+        execution_context="conversation",
     )
     try:
         result = loop.resume()

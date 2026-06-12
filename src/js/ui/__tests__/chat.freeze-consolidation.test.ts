@@ -189,6 +189,36 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
       600000,
     );
   });
+
+  it('routes outcome-style product creation requests through governed delivery', async () => {
+    runAndWait.mockResolvedValueOnce({ run_id: 'delivery-2', status: 'awaiting-verdict' });
+
+    const prompt = 'please produce an interactive product UI';
+    chatInputValue.value = prompt;
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(runAndWait).toHaveBeenCalledWith(
+      'agent:deliver',
+      [JSON.stringify({ prompt })],
+      600000,
+    );
+  });
+
+  it('routes product modification requests through governed delivery', async () => {
+    runAndWait.mockResolvedValueOnce({ run_id: 'delivery-3', status: 'awaiting-verdict' });
+
+    const prompt = 'polish the dashboard UI';
+    chatInputValue.value = prompt;
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(runAndWait).toHaveBeenCalledWith(
+      'agent:deliver',
+      [JSON.stringify({ prompt })],
+      600000,
+    );
+  });
 });
 
 // Reference the module so unused-import lints don't drop it. (The

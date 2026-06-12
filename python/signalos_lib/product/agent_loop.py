@@ -244,6 +244,35 @@ def _is_governance_path(path: str) -> bool:
     return normed == ".signalos" or normed.startswith(".signalos/")
 
 
+def _is_test_path(path: str) -> bool:
+    normed = _norm(path)
+    name = normed.rsplit("/", 1)[-1].lower()
+    return (
+        normed.startswith("tests/")
+        or ".test." in name
+        or ".spec." in name
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
+
+
+def _is_implementation_path(path: str) -> bool:
+    normed = _norm(path)
+    if _is_test_path(normed):
+        return False
+    if normed.startswith(("src/", "public/", "app/", "pages/", "components/")):
+        return True
+    if normed in ("index.html", "package.json", "tsconfig.json", "vite.config.ts"):
+        return True
+    return bool(re.search(r"\.(tsx?|jsx?|html|css|scss|py|rs|go|java|cs)$", normed))
+
+
+def _required_prior_gate_numbers(gate: str | None) -> set[int]:
+    if gate != "G4":
+        return set()
+    return {0, 1, 2, 3}
+
+
 def _command_root(command: str) -> str:
     """Return a normalized leading token-pair for allowlist matching."""
     try:
@@ -349,6 +378,9 @@ class AgentLoop:
         tool_call_limit: int = DEFAULT_TOOL_CALL_LIMIT,
         cancel_check: Callable[[], bool] | None = None,
         emit: Callable[[dict[str, Any]], None] | None = None,
+        execution_context: str = "delivery",
+        active_gate: str | None = None,
+        signed_gates: list[int] | None = None,
     ) -> None:
         self.adapter = adapter
         self.repo_root = Path(repo_root)
@@ -358,6 +390,10 @@ class AgentLoop:
         self._cancel_check = cancel_check or (lambda: False)
         self._emit = emit or (lambda _e: None)
         self._enforcement: EnforcementState | None = None
+        self.execution_context = execution_context
+        self.active_gate = active_gate
+        self._context_signed_gates = set(signed_gates or [])
+        self._test_written_this_run = False
         self._seq = 0
 
     # --- run-state paths (INV-5) --------------------------------------------
@@ -703,6 +739,35 @@ class AgentLoop:
             path = str(args.get("path", "")).strip()
             if not path:
                 raise ToolPolicyError("write requires a non-empty path")
+            is_impl_write = _is_implementation_path(path)
+            if self.execution_context == "conversation":
+                raise ToolPolicyError(
+                    "Product file writes are only allowed inside governed delivery.",
+                    rule="gate-gating",
+                )
+            if self.active_gate and self.active_gate != "G4" and is_impl_write:
+                raise ToolPolicyError(
+                    f"Implementation write '{path}' is not allowed during {self.active_gate}; "
+                    "complete the delivery gates before build work.",
+                    rule="gate-gating",
+                )
+            required_gates = _required_prior_gate_numbers(self.active_gate)
+            if required_gates and is_impl_write:
+                signed = set(enf.signed_gates) | self._context_signed_gates
+                missing = sorted(required_gates - signed)
+                if missing:
+                    labels = ", ".join(f"G{n}" for n in missing)
+                    raise ToolPolicyError(
+                        f"Implementation write '{path}' is blocked until {labels} "
+                        "are signed or explicitly waived.",
+                        rule="gate-gating",
+                    )
+                if not self._test_written_this_run and not self._has_existing_test_for(path):
+                    raise ToolPolicyError(
+                        f"Implementation write '{path}' is blocked by test-first "
+                        "policy; write or update a matching test first.",
+                        rule="test-first",
+                    )
             if _is_governance_path(path):
                 raise ToolPolicyError(
                     f"Writing to governance path '{path}' is forbidden (.signalos/).",
@@ -727,6 +792,11 @@ class AgentLoop:
             command = str(args.get("command", "")).strip()
             if not command:
                 raise ToolPolicyError("run_command requires a non-empty command")
+            if self.execution_context == "conversation":
+                raise ToolPolicyError(
+                    "Commands that can change product state are only allowed inside governed delivery.",
+                    rule="gate-gating",
+                )
             denied = _command_denied(command, enf.forbidden_actions)
             if denied:
                 raise ToolPolicyError(
@@ -780,6 +850,28 @@ class AgentLoop:
         except (OSError, UnicodeDecodeError):
             return False
         return _sha256(existing) == content_sha
+
+    def _has_existing_test_for(self, rel_path: str) -> bool:
+        """Return True when a plausible test already exists for rel_path."""
+        normed = _norm(rel_path)
+        stem = normed.rsplit("/", 1)[-1].split(".", 1)[0]
+        candidates = [
+            f"tests/test_{stem}.py",
+            f"tests/{stem}_test.py",
+            f"src/{stem}.test.ts",
+            f"src/{stem}.test.tsx",
+            f"src/{stem}.spec.ts",
+            f"src/{stem}.spec.tsx",
+        ]
+        if normed.startswith("src/"):
+            base = normed.rsplit(".", 1)[0]
+            candidates.extend([
+                f"{base}.test.ts",
+                f"{base}.test.tsx",
+                f"{base}.spec.ts",
+                f"{base}.spec.tsx",
+            ])
+        return any((self.repo_root / c).is_file() for c in candidates)
 
     # --- execution (2.5) -----------------------------------------------------
 
@@ -860,6 +952,8 @@ class AgentLoop:
                 before = ""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        if _is_test_path(rel_path):
+            self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.
         self._emit({"type": "diff", "path": rel_path, "before": before, "after": content})
         msg = f"OK: wrote {len(content)} bytes to {rel_path}"
@@ -886,6 +980,8 @@ class AgentLoop:
         updated = original.replace(old, new, 1)
         warnings = self._scan_write_content(rel_path, updated)
         target.write_text(updated, encoding="utf-8")
+        if _is_test_path(rel_path):
+            self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.
         self._emit({"type": "diff", "path": rel_path, "before": original, "after": updated})
         msg = f"OK: edited {rel_path}"
