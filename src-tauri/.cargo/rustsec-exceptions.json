@@ -14,11 +14,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0416",
@@ -28,11 +28,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 system binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0388",
@@ -42,11 +42,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive macro helper pulled by keyring through secret-service/zbus; this is an unmaintained warning, not a reported vulnerability, and requires upstream replacement.",
       "mitigation": "Track keyring/secret-service/zbus updates and remove the exception as soon as the dependency path no longer requires derivative.",
-      "follow_up": "Evaluate a keyring major upgrade or alternate credential-store path before the exception expires."
+      "follow_up": "Renewal review 2026-06-25: keyring 4.x replaced the derivative-using path (now uses keyring-core + native backend stores). Upgrade keyring 2.3.3 -> 4.x in a focused PR to retire this exception before next renewal."
     },
     {
       "id": "RUSTSEC-2024-0412",
@@ -56,11 +56,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0418",
@@ -70,11 +70,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 system binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0411",
@@ -84,11 +84,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 Wayland binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0417",
@@ -98,11 +98,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 X11 binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0414",
@@ -112,11 +112,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 X11 system binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0415",
@@ -126,11 +126,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18 directly. Drop this exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0420",
@@ -140,11 +140,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 system binding pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0419",
@@ -154,11 +154,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Linux GTK3 macro crate pulled through Tauri/wry/webkit2gtk; SignalOS does not depend on this crate directly and upstream migration is required.",
       "mitigation": "Keep the exception time-boxed, track Tauri/wry GTK stack upgrades, and rerun cargo audit before each release.",
-      "follow_up": "Upgrade or replace the Tauri Linux GTK3 dependency path when upstream provides a maintained path."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18, so GTK3 stack remains upstream-blocked. Track Tauri GTK4 migration roadmap; drop exception once tauri ships a non-gtk-0.18 path."
     },
     {
       "id": "RUSTSEC-2024-0384",
@@ -168,11 +168,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive compatibility crate remains in Cargo.lock through upstream dependencies; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track dependency updates and remove the exception as soon as the dependency path no longer requires instant.",
-      "follow_up": "Run cargo tree before the expiry date and remove or replace the transitive dependency path."
+      "follow_up": "Renewal review 2026-06-25: not yet traced. Run `cargo tree -i instant` before next renewal to identify the still-blocking parent crate; many crates have moved to `web-time`."
     },
     {
       "id": "RUSTSEC-2024-0370",
@@ -182,11 +182,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive proc-macro helper remains in Cargo.lock through upstream crates; this is an unmaintained warning, not a reported runtime vulnerability.",
       "mitigation": "Track dependency updates and remove the exception as soon as the dependency path no longer requires proc-macro-error.",
-      "follow_up": "Run cargo tree before the expiry date and remove or replace the transitive dependency path."
+      "follow_up": "Renewal review 2026-06-25: not yet traced. Run `cargo tree -i proc-macro-error` before next renewal; many crates have migrated to `proc-macro-error2`."
     },
     {
       "id": "RUSTSEC-2025-0081",
@@ -196,11 +196,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Unicode helper pulled through Tauri urlpattern support; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track Tauri urlpattern dependency updates and remove the exception when the unic crate path disappears or is replaced.",
-      "follow_up": "Review Tauri/tauri-utils updates before the exception expiry and remove stale unic exceptions."
+      "follow_up": "Renewal review 2026-06-25: tauri-utils 2.9.3 (latest) still depends on urlpattern ^0.3 which pulls the unic crates. Track urlpattern releases or Tauri urlpattern replacement; drop exception once the unic transitive dep is gone."
     },
     {
       "id": "RUSTSEC-2025-0075",
@@ -210,11 +210,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Unicode helper pulled through Tauri urlpattern support; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track Tauri urlpattern dependency updates and remove the exception when the unic crate path disappears or is replaced.",
-      "follow_up": "Review Tauri/tauri-utils updates before the exception expiry and remove stale unic exceptions."
+      "follow_up": "Renewal review 2026-06-25: tauri-utils 2.9.3 (latest) still depends on urlpattern ^0.3 which pulls the unic crates. Track urlpattern releases or Tauri urlpattern replacement; drop exception once the unic transitive dep is gone."
     },
     {
       "id": "RUSTSEC-2025-0080",
@@ -224,11 +224,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Unicode helper pulled through Tauri urlpattern support; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track Tauri urlpattern dependency updates and remove the exception when the unic crate path disappears or is replaced.",
-      "follow_up": "Review Tauri/tauri-utils updates before the exception expiry and remove stale unic exceptions."
+      "follow_up": "Renewal review 2026-06-25: tauri-utils 2.9.3 (latest) still depends on urlpattern ^0.3 which pulls the unic crates. Track urlpattern releases or Tauri urlpattern replacement; drop exception once the unic transitive dep is gone."
     },
     {
       "id": "RUSTSEC-2025-0100",
@@ -238,11 +238,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Unicode helper pulled through Tauri urlpattern support; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track Tauri urlpattern dependency updates and remove the exception when the unic crate path disappears or is replaced.",
-      "follow_up": "Review Tauri/tauri-utils updates before the exception expiry and remove stale unic exceptions."
+      "follow_up": "Renewal review 2026-06-25: tauri-utils 2.9.3 (latest) still depends on urlpattern ^0.3 which pulls the unic crates. Track urlpattern releases or Tauri urlpattern replacement; drop exception once the unic transitive dep is gone."
     },
     {
       "id": "RUSTSEC-2025-0098",
@@ -252,11 +252,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked",
       "reason": "Transitive Unicode helper pulled through Tauri urlpattern support; this is an unmaintained warning, not a reported vulnerability.",
       "mitigation": "Track Tauri urlpattern dependency updates and remove the exception when the unic crate path disappears or is replaced.",
-      "follow_up": "Review Tauri/tauri-utils updates before the exception expiry and remove stale unic exceptions."
+      "follow_up": "Renewal review 2026-06-25: tauri-utils 2.9.3 (latest) still depends on urlpattern ^0.3 which pulls the unic crates. Track urlpattern releases or Tauri urlpattern replacement; drop exception once the unic transitive dep is gone."
     },
     {
       "id": "RUSTSEC-2024-0429",
@@ -266,11 +266,11 @@
       "owner": "release-owner",
       "approved_by": "Samer Zakaria",
       "approved_on": "2026-05-27",
-      "expires": "2026-06-26",
+      "expires": "2026-07-25",
       "risk_acceptance": "upstream-transitive-blocked-unsound-reviewed",
       "reason": "Transitive Linux GTK3 binding pulled through Tauri/wry/webkit2gtk; the fixed glib line is not compatible with the current upstream GTK3 dependency path.",
       "mitigation": "Treat this as the highest-risk exception, keep it time-boxed, monitor Tauri/wry GTK dependency updates, and block any new unsound advisory unless separately approved.",
-      "follow_up": "Prioritize removal by upgrading or replacing the Tauri Linux GTK3 dependency path before the exception expires."
+      "follow_up": "Renewal review 2026-06-25: tauri 2.11.3 (latest) still pins gtk ^0.18 which transitively requires glib 0.18.x. Highest-priority exception to retire alongside the GTK3->GTK4 migration."
     }
   ]
 }
