@@ -1,0 +1,20 @@
+---
+description: Use signalos validate-wave-status to prove Wave status has no Journey blockers.
+globs: ["core/governance/**", "core/strategy/**", "core/execution/**", ".signalos/AUDIT_TRAIL.jsonl"]
+alwaysApply: false
+---
+
+# validate-wave-status wiring rule
+
+Use `signalos validate-wave-status [--wave W<n>]` before treating a Wave as
+ready for merge, release, or closeout.
+
+- `signalos status` is advisory and may exit 0 while work remains.
+- `signalos validate-wave-status` is blocking and exits 1 when Journey blockers
+  remain.
+- Gate artifacts must be present, signed, hash-valid, audit-linked, and signed
+  by an allowed role for that artifact.
+- If `--wave` is provided, every gate audit link must carry the same normalized
+  wave id.
+- Do not pass `--api-url` unless the app runtime has a technology-independent
+  status API; current app validation is local-file based.

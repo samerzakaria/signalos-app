@@ -21,10 +21,10 @@ describe('HelpView', () => {
     expect(screen.getByText(/Understand gates/i)).toBeInTheDocument();
   });
 
-  it('mentions the gate model explicitly (G0..G7) so users can find it', () => {
+  it('mentions the gate model explicitly (G0..G5) so users can find it', () => {
     render(<HelpView />);
     // HelpView spells out the range in multiple tiles; that's fine, we
     // just need at least one to land for the orientation to work.
-    expect(screen.getAllByText(/G0.{1,3}G7/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/G0.{1,3}G5/).length).toBeGreaterThan(0);
   });
 });

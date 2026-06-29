@@ -1,0 +1,15 @@
+---
+description: Use signalos validate-worktree-sync before merge/release worktree gates.
+globs: [".signalos/worktree-sync/**", ".signalos/evidence/worktree-sync/**"]
+alwaysApply: false
+---
+
+# validate-worktree-sync wiring rule
+
+Run `signalos validate-worktree-sync --require-clean --json` before treating a
+worktree as merge- or release-ready.
+
+- Git state must be readable without mutation.
+- A snapshot must be persisted.
+- Dirty non-SignalOS files are blockers when `--require-clean` is used.
+- SignalOS bookkeeping under `.signalos/` is not counted as product dirt.

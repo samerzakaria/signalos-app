@@ -15,6 +15,7 @@ import pytest
 
 from signalos_lib.product.proof import (
     check_proof_completeness,
+    requires_browser_ux_proof,
     run_runtime_proof,
     run_ux_proof,
     write_proof_artifacts,
@@ -144,6 +145,37 @@ class TestUxProofNoPort:
         assert result["status"] == "failed"
         assert any("blank" in err.lower() for err in result["errors"])
 
+    def test_node_api_skips_browser_ux_even_with_runtime_port(self, tmp_path: Path) -> None:
+        result = run_ux_proof(tmp_path, "node-api", port=3000, html='{"status":"ok"}')
+
+        assert result["status"] == "skipped"
+        assert result["skip_reason"]
+
+    def test_fastapi_api_skips_browser_ux_even_with_runtime_port(self, tmp_path: Path) -> None:
+        result = run_ux_proof(tmp_path, "fastapi-api", port=8000, html='{"status":"ok"}')
+
+        assert result["status"] == "skipped"
+        assert result["skip_reason"]
+
+    def test_dotnet_minimal_api_skips_browser_ux_even_with_runtime_port(self, tmp_path: Path) -> None:
+        result = run_ux_proof(tmp_path, "dotnet-minimal-api", port=5050, html='{"status":"ok"}')
+
+        assert result["status"] == "skipped"
+        assert result["skip_reason"]
+
+    def test_go_api_skips_browser_ux_even_with_runtime_port(self, tmp_path: Path) -> None:
+        result = run_ux_proof(tmp_path, "go-api", port=8080, html='{"status":"ok"}')
+
+        assert result["status"] == "skipped"
+        assert result["skip_reason"]
+
+    def test_profile_ux_requirement_distinguishes_ui_and_api(self, tmp_path: Path) -> None:
+        assert requires_browser_ux_proof(tmp_path, "react-vite") is True
+        assert requires_browser_ux_proof(tmp_path, "node-api") is False
+        assert requires_browser_ux_proof(tmp_path, "fastapi-api") is False
+        assert requires_browser_ux_proof(tmp_path, "dotnet-minimal-api") is False
+        assert requires_browser_ux_proof(tmp_path, "go-api") is False
+
 
 # ------------------------------------------------------------------
 # write_proof_artifacts
@@ -232,6 +264,74 @@ class TestCheckProofCompleteness:
         assert result["complete"] is True
         assert result["runtime_status"] == "skipped"
         assert result["ux_status"] == "skipped"
+
+    def test_node_api_runtime_passed_with_skipped_ux_is_complete(self, tmp_path: Path) -> None:
+        rt = _make_runtime_result(
+            status="passed",
+            profile="node-api",
+            preview_command="npm start",
+            port=3000,
+        )
+        ux = _make_ux_result(status="skipped", skip_reason="Profile does not require browser UX proof")
+        write_proof_artifacts(rt, ux, tmp_path)
+
+        result = check_proof_completeness(tmp_path, "node-api")
+
+        assert result["complete"] is True
+        assert result["runtime_status"] == "passed"
+        assert result["ux_status"] == "skipped"
+        assert result["blockers"] == []
+
+    def test_fastapi_api_runtime_passed_with_skipped_ux_is_complete(self, tmp_path: Path) -> None:
+        rt = _make_runtime_result(
+            status="passed",
+            profile="fastapi-api",
+            preview_command="python -m uvicorn signalos_product_fastapi.app:app",
+            port=8000,
+        )
+        ux = _make_ux_result(status="skipped", skip_reason="Profile does not require browser UX proof")
+        write_proof_artifacts(rt, ux, tmp_path)
+
+        result = check_proof_completeness(tmp_path, "fastapi-api")
+
+        assert result["complete"] is True
+        assert result["runtime_status"] == "passed"
+        assert result["ux_status"] == "skipped"
+        assert result["blockers"] == []
+
+    def test_dotnet_minimal_api_runtime_passed_with_skipped_ux_is_complete(self, tmp_path: Path) -> None:
+        rt = _make_runtime_result(
+            status="passed",
+            profile="dotnet-minimal-api",
+            preview_command="dotnet run --project SignalOSProduct.Api/SignalOSProduct.Api.csproj",
+            port=5050,
+        )
+        ux = _make_ux_result(status="skipped", skip_reason="Profile does not require browser UX proof")
+        write_proof_artifacts(rt, ux, tmp_path)
+
+        result = check_proof_completeness(tmp_path, "dotnet-minimal-api")
+
+        assert result["complete"] is True
+        assert result["runtime_status"] == "passed"
+        assert result["ux_status"] == "skipped"
+        assert result["blockers"] == []
+
+    def test_go_api_runtime_passed_with_skipped_ux_is_complete(self, tmp_path: Path) -> None:
+        rt = _make_runtime_result(
+            status="passed",
+            profile="go-api",
+            preview_command="go run ./cmd/server",
+            port=8080,
+        )
+        ux = _make_ux_result(status="skipped", skip_reason="Profile does not require browser UX proof")
+        write_proof_artifacts(rt, ux, tmp_path)
+
+        result = check_proof_completeness(tmp_path, "go-api")
+
+        assert result["complete"] is True
+        assert result["runtime_status"] == "passed"
+        assert result["ux_status"] == "skipped"
+        assert result["blockers"] == []
 
     def test_round_trip_write_then_check(self, tmp_path: Path) -> None:
         """Write artifacts then check completeness -- round-trip."""

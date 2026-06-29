@@ -160,6 +160,34 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(enforcementUnfreeze).not.toHaveBeenCalled();
   });
 
+  it('routes visible signalos commands to the sidecar instead of agent:run', async () => {
+    runAndWait.mockResolvedValueOnce('status ok');
+
+    chatInputValue.value = 'signalos status';
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(runAndWait).toHaveBeenCalledWith('signal-status', [], 60000);
+    expect(enforcementFreeze).not.toHaveBeenCalled();
+    expect(enforcementUnfreeze).not.toHaveBeenCalled();
+  });
+
+  it('preserves quoted slash command arguments', async () => {
+    runAndWait.mockResolvedValueOnce('discovery ok');
+
+    chatInputValue.value = '/signal-discovery --name "Jane Doe" --summary "First signal"';
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(runAndWait).toHaveBeenCalledWith(
+      'signal-discovery',
+      ['--name', 'Jane Doe', '--summary', 'First signal'],
+      60000,
+    );
+    expect(enforcementFreeze).not.toHaveBeenCalled();
+    expect(enforcementUnfreeze).not.toHaveBeenCalled();
+  });
+
   it('routes non-delivery natural-language messages through the governed agent loop', async () => {
     runAndWait.mockResolvedValueOnce({ run_id: 'agent-1', status: 'completed' });
 

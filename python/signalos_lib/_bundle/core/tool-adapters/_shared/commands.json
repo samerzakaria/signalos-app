@@ -48,6 +48,12 @@
     "description": "Post-release signal monitoring \u2014 load belief context, read live metrics, check staleness, compare actual vs target, write observation evidence, route to debrief"
   },
   {
+    "name": "observe",
+    "source": "core/execution/commands/observe.md",
+    "phase": "observe",
+    "description": "App-native observability: listening-window lifecycle, deployment signals, structured journal events, and draft Keep/Kill/Iterate evidence."
+  },
+  {
     "name": "signal-debrief",
     "source": "core/execution/commands/signal-debrief.md",
     "phase": "retro",
@@ -141,6 +147,102 @@
     "amendment": "AMD-CORE-008"
   },
   {
+    "name": "worktree-snapshot",
+    "source": "core/execution/commands/worktree-snapshot.md",
+    "phase": "any",
+    "description": "Take and query read-only git WorktreeSync snapshots: take, latest, get by id, list by branch, and list by commit.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "trust-tier",
+    "source": "core/execution/commands/trust-tier.md",
+    "phase": "any",
+    "description": "Manage tenant-scoped Trust Tier surface declarations, nullable get-by-surface lookups, and touched-path validation against the declared session tier.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "release-proof",
+    "source": "core/execution/commands/release-proof.md",
+    "phase": "ship",
+    "description": "Validate technology-neutral release artifact proof: artifact digest, signature evidence, installer proof, clean-machine proof, and release-readiness linkage.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "ship",
+    "source": "core/execution/commands/ship.md",
+    "phase": "ship",
+    "description": "Run the executable Ship ceremony: verify Gate 5, clean worktree, release readiness, release proof, closeout honesty, optional local tag, and audit row.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "defer",
+    "source": "core/execution/commands/defer.md",
+    "phase": "plan",
+    "description": "Count and harvest DEFER markers, reconciling W<NN>+ source deferrals with PRD_TRACEABILITY.md DEFER rows.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "feature-gate",
+    "source": "core/execution/commands/feature-gate.md",
+    "phase": "build",
+    "description": "Evaluate a request against active wave backlog, expectation-map, and PRD BUILD scope before allowing mid-wave build work.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "trace",
+    "source": "core/execution/commands/trace.md",
+    "phase": "review",
+    "description": "Trace canonical backlog ticket ids to source, test, proof, and governance files that cite them.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "bundle",
+    "source": "core/execution/commands/bundle.md",
+    "phase": "registry",
+    "description": "List or extract embedded SignalOS framework bundle categories without requiring .NET resources.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "handoff",
+    "source": "core/execution/commands/handoff.md",
+    "phase": "handoff",
+    "description": "Package operator handoff evidence: live URL, run instructions, env requirements, tests, limitations, audit summary, release tag, and runbook.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "test",
+    "source": "core/execution/commands/test.md",
+    "phase": "quality",
+    "description": "Run the technology-neutral 12-phase test automation umbrella with evidence, audit rows, and exit code 8 for threshold or evidence violations.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "integrity-witness",
+    "source": "core/execution/commands/integrity-witness.md",
+    "phase": "governance",
+    "description": "Check, initialize, or refresh the human-approved governance integrity witness without replacing plugin registry verify.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "cost",
+    "source": "core/execution/commands/cost.md",
+    "phase": "governance",
+    "description": "Summarize local AI usage/cost ledgers and fail when known USD cost exceeds the configured budget.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
     "name": "intent",
     "source": "core/execution/commands/intent.md",
     "phase": "any",
@@ -177,6 +279,62 @@
     "source": "core/execution/commands/validate-cmd.md",
     "phase": "any",
     "description": "Run the full validator suite (HALT/BLOCK_MERGE/WARN tiers) or a single named validator. (W3.5, AMD-CORE-018).",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "detect-bypass",
+    "source": "core/execution/commands/detect-bypass.md",
+    "phase": "any",
+    "description": "Detect governance-bypass signatures in git diffs and SignalOS agent output.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-guidance-obligations",
+    "source": "core/execution/commands/validate-guidance-obligations.md",
+    "phase": "any",
+    "description": "Validate product-agent guidance obligations from SignalOS packets.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-traceability",
+    "source": "core/execution/commands/validate-traceability.md",
+    "phase": "any",
+    "description": "Validate product Belief artifacts, required provenance fields, required sections, and TRACEABILITY_MATRIX source links.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-prd-traceability",
+    "source": "core/execution/commands/validate-prd-traceability.md",
+    "phase": "any",
+    "description": "Validate PRD claims resolve to BELIEF, BUILD, DEC, or DEFER destinations with live target IDs.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-worktree-sync",
+    "source": "core/execution/commands/validate-worktree-sync.md",
+    "phase": "any",
+    "description": "Validate read-only git WorktreeSync snapshot state and optionally require a clean non-SignalOS worktree.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-gate",
+    "source": "core/execution/commands/validate-gate.md",
+    "phase": "any",
+    "description": "Validate one gate's artifact presence, non-draft signature, hash, audit link, and optional wave link.",
+    "wave": "W3.5",
+    "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "validate-wave-status",
+    "source": "core/execution/commands/validate-wave-status.md",
+    "phase": "any",
+    "description": "Validate Wave status, Journey blockers, signed gate evidence, audit status, scaffold status, and optional wave links.",
     "wave": "W3.5",
     "amendment": "AMD-CORE-018"
   },

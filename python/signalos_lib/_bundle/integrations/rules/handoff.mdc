@@ -1,0 +1,19 @@
+---
+description: Use signalos handoff before transferring operator ownership.
+globs: [".signalos/handoff/**", ".signalos/product/CLOSEOUT.json", ".signalos/AUDIT_TRAIL.jsonl", ".signalos/deploy/**"]
+alwaysApply: false
+---
+
+# handoff wiring rule
+
+Use `signalos handoff` when a generated or adopted product is ready to be
+transferred to an operator, release owner, or human reviewer.
+
+- Do not deploy, publish, push, or create provider releases from this command.
+- Include `--live-url` only when that exact URL exists and can be checked.
+- Include `--release-tag` when the handoff corresponds to a specific release.
+- Fill seeded demo data, test evidence, and known limitations when closeout
+  evidence is incomplete.
+- Treat `.signalos/handoff/handoff-manifest.json` as the package index.
+- Do not claim an operational handoff unless the package files exist and the
+  audit row `handoff-packaged` was written.

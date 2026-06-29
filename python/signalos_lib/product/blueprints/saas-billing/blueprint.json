@@ -80,5 +80,5 @@
   "security": ["auth-required", "webhook-signature-verification", "no-card-data-stored", "secrets-in-vault", "audit-trail"],
   "quality_profile": "standard",
   "default_deferrals": ["usage-based-billing", "multi-currency", "tax-automation", "dunning-emails"],
-  "profile_support": ["react-vite", "generic"]
+  "profile_support": ["react-vite", "node-api", "fastapi-api", "go-api", "generic"]
 }

@@ -54,6 +54,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
         help="Required when --verdict APPROVED-WITH-CONDITIONS.",
     )
     parser.add_argument("--repo-root", default=None, help="Repository root path.")
+    parser.add_argument("--wave", default=None, help="Optional wave id to stamp into AUDIT_TRAIL.jsonl.")
     parser.add_argument(
         "--oidc",
         action="store_true",
@@ -178,7 +179,16 @@ def main(argv: list[str]) -> int:  # noqa: C901
                 s.path, signer, role, gate, verdict, conditions,
                 oidc_sub_hash=oidc_sub_hash, oidc_issuer=oidc_issuer,
             )
-            sign_lib._append_audit(audit_log, signer, role, gate, s.rel_path, s.path, verdict)
+            sign_lib._append_audit(
+                audit_log,
+                signer,
+                role,
+                gate,
+                s.rel_path,
+                s.path,
+                verdict,
+                wave=args.wave,
+            )
             signed.append(s.label)
         except Exception as exc:
             errors.append(f"{s.label}: {exc}")

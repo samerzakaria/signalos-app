@@ -18,7 +18,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .acceptance import build_acceptance_matrix, write_acceptance_matrix
+from .acceptance import (
+    build_acceptance_matrix,
+    reconcile_acceptance_evidence,
+    write_acceptance_matrix,
+)
 from .blueprints.registry import (
     apply_blueprint_intent_defaults,
     load_blueprint,
@@ -51,6 +55,7 @@ from .generation import (
 )
 from .agent_packets import build_agent_packet, write_agent_packet
 from .assumptions import record_assumptions, write_assumptions
+from .capabilities import apply_capability_choices, build_capability_profile
 from .intent import extract_product_intent, refine_intent_with_llm, write_intent
 from .lifecycle import (
     create_delivery_state,
@@ -58,7 +63,12 @@ from .lifecycle import (
     update_delivery_phase,
 )
 from .ownership import build_delivery_ownership_map, write_delivery_ownership_map
-from .proof import run_runtime_proof, run_ux_proof, write_proof_artifacts
+from .proof import (
+    requires_browser_ux_proof,
+    run_runtime_proof,
+    run_ux_proof,
+    write_proof_artifacts,
+)
 from .questions import generate_questions
 from .gate_review import classify_review, handle_request_changes, handle_rejection
 from .repair_loop import run_repair_loop
@@ -126,6 +136,12 @@ def run_delivery(
     max_repair_cycles: int = 3,
     agent_mode: str = "auto",
     json_output: bool = False,
+    technologies: list[str] | None = None,
+    frontend: str = "auto",
+    database: str = "auto",
+    cache: str = "auto",
+    language: str = "auto",
+    deployment_target: str = "auto",
 ) -> dict:
     """Run the full product delivery pipeline.
 
@@ -183,17 +199,40 @@ def run_delivery(
             warnings.append(f"LLM intent refinement failed: {exc}")
             _emit_progress("intent", "refine", "error", f"AI refinement failed: {exc}")
 
+    intent = apply_capability_choices(
+        intent,
+        technologies=technologies,
+        frontend=frontend,
+        database=database,
+        cache=cache,
+        language=language,
+        deployment_target=deployment_target,
+        adapter_profile=profile,
+        source="delivery-cli",
+    )
+
     # Match the blueprint before questions so non-technical users get
     # blueprint-owned product defaults instead of technical interrogation.
     if blueprint == "auto":
-        blueprint_id = match_blueprint(intent)
+        blueprint_id = match_blueprint(intent, repo_root=repo_root)
     elif blueprint == "none":
         blueprint_id = None
     else:
         blueprint_id = blueprint
 
-    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    bp = load_blueprint(blueprint_id, repo_root=repo_root) if blueprint_id else None
     intent = apply_blueprint_intent_defaults(intent, bp)
+    intent = apply_capability_choices(
+        intent,
+        technologies=technologies,
+        frontend=frontend,
+        database=database,
+        cache=cache,
+        language=language,
+        deployment_target=deployment_target,
+        adapter_profile=profile,
+        source="delivery-cli",
+    )
     if name:
         intent["product_name"] = name
     product_name = intent.get("product_name") or name or repo_root.name
@@ -278,6 +317,10 @@ def run_delivery(
     actual_profile = scaffold_result.get("profile", profile)
     if actual_profile == "auto":
         actual_profile = detect_profile(repo_root)
+    capability_profile = build_capability_profile(
+        intent,
+        adapter_profile=actual_profile,
+    )
 
     # Ensure signalos dirs exist
     signalos_dir.mkdir(parents=True, exist_ok=True)
@@ -289,6 +332,7 @@ def run_delivery(
         blueprint_id=blueprint_id,
         profile=actual_profile,
         deploy_mode=deploy,
+        capability_profile=capability_profile,
     )
     try:
         write_delivery_ownership_map(ownership_map, signalos_dir)
@@ -377,7 +421,12 @@ def run_delivery(
     # 2c. ARCHITECTURE review artifact
     # ------------------------------------------------------------------
     try:
-        arch_review = _build_delivery_arch_review(intent, actual_profile, bp)
+        arch_review = _build_delivery_arch_review(
+            intent,
+            actual_profile,
+            bp,
+            capability_profile=capability_profile,
+        )
         arch_result = validate_arch_review(arch_review)
         if not arch_result.get("valid", False):
             errors.extend(f"arch review: {err}" for err in arch_result.get("errors", []))
@@ -408,6 +457,27 @@ def run_delivery(
         except Exception:
             pass
 
+    feature_gate_blocker = ""
+    _emit_progress("generation", "feature_gate", "running", "Evaluating active wave scope")
+    try:
+        feature_gate_run = _run_delivery_feature_gate(
+            repo_root=repo_root,
+            request=prompt,
+        )
+        if feature_gate_run.get("blocked"):
+            feature_gate_blocker = str(feature_gate_run.get("reason") or "feature gate blocked generation")
+            _emit_progress("generation", "feature_gate", "error", feature_gate_blocker)
+        else:
+            detail = (
+                str(feature_gate_run.get("reason"))
+                if not feature_gate_run.get("executed")
+                else f"Feature Gate verdict: {feature_gate_run.get('verdict')}"
+            )
+            _emit_progress("generation", "feature_gate", "done", detail)
+    except Exception as exc:
+        feature_gate_blocker = f"feature gate failed: {exc}"
+        _emit_progress("generation", "feature_gate", "error", str(exc))
+
     # ------------------------------------------------------------------
     # 4. GENERATION phase (builds packet -- does NOT write app code)
     # ------------------------------------------------------------------
@@ -416,6 +486,9 @@ def run_delivery(
     agent_packet = None
     _emit_progress("generation", "manifest", "running", "Preparing generation manifest")
     try:
+        if feature_gate_blocker:
+            raise RuntimeError(feature_gate_blocker)
+
         # Extract task IDs from acceptance criteria
         task_ids = (
             [f"T-{i+1:03d}" for i in range(len(acceptance.get("criteria", [])))]
@@ -504,7 +577,7 @@ def run_delivery(
             )
             packet_for_agent = agent_packet or generation_packet
             if agent_mode == "local" or (
-                agent_mode == "auto" and actual_profile in {"react-vite", "generic"}
+                agent_mode == "auto" and actual_profile in {"react-vite", "generic", "fastapi-api"}
             ):
                 agent_result = dispatch_local_build_agent(
                     repo_root=repo_root,
@@ -615,52 +688,92 @@ def run_delivery(
         _emit_progress("proof", "runtime", "error", str(exc))
         runtime_proof = {"status": "blocked", "errors": [str(exc)]}
 
-    _emit_progress("proof", "ux", "running", "Running UX proof")
-    try:
-        ux_port = (
-            runtime_proof.get("port")
-            if runtime_proof.get("status") == "passed"
-            else None
-        )
-        ux_html = (
-            runtime_proof.get("html_snapshot")
-            if runtime_proof.get("status") == "passed"
-            else None
-        )
-        ux_proof = run_ux_proof(
-            repo_root,
-            actual_profile,
-            port=ux_port,
-            html=ux_html if isinstance(ux_html, str) and ux_html else None,
-        )
-        _emit_progress("proof", "ux", "done", ux_proof.get("status", "UX proof complete"))
-    except Exception as exc:
-        errors.append(f"ux proof failed: {exc}")
-        _emit_progress("proof", "ux", "error", str(exc))
-        ux_proof = {"status": "blocked", "errors": [str(exc)]}
+    requires_ux_proof = requires_browser_ux_proof(repo_root, actual_profile)
+    if requires_ux_proof:
+        _emit_progress("proof", "ux", "running", "Running UX proof")
+        try:
+            ux_port = (
+                runtime_proof.get("port")
+                if runtime_proof.get("status") == "passed"
+                else None
+            )
+            ux_html = (
+                runtime_proof.get("html_snapshot")
+                if runtime_proof.get("status") == "passed"
+                else None
+            )
+            ux_proof = run_ux_proof(
+                repo_root,
+                actual_profile,
+                port=ux_port,
+                html=ux_html if isinstance(ux_html, str) and ux_html else None,
+            )
+            _emit_progress("proof", "ux", "done", ux_proof.get("status", "UX proof complete"))
+        except Exception as exc:
+            errors.append(f"ux proof failed: {exc}")
+            _emit_progress("proof", "ux", "error", str(exc))
+            ux_proof = {"status": "blocked", "errors": [str(exc)]}
+    else:
+        ux_proof = run_ux_proof(repo_root, actual_profile, port=None)
+        _emit_progress("proof", "ux", "skipped", ux_proof.get("skip_reason", "UX proof skipped"))
 
     try:
         write_proof_artifacts(runtime_proof, ux_proof, repo_root)
     except Exception as exc:
         errors.append(f"proof artifact write failed: {exc}")
 
-    requires_ux_proof = bool(runtime_proof.get("preview_command"))
+    requires_runtime_proof = bool(runtime_proof.get("preview_command"))
     proof_status = "complete" if (
         (
-            not requires_ux_proof
+            not requires_runtime_proof
             and runtime_proof.get("status") == "skipped"
             and ux_proof.get("status") == "skipped"
         )
         or (
-            requires_ux_proof
+            requires_runtime_proof
             and runtime_proof.get("status") == "passed"
-            and ux_proof.get("status") == "passed"
+            and (
+                ux_proof.get("status") == "passed"
+                if requires_ux_proof
+                else ux_proof.get("status") == "skipped"
+            )
         )
     ) else "partial"
     try:
         update_delivery_phase(repo_root, "proved", proof_status)
     except Exception:
         pass
+
+    # ------------------------------------------------------------------
+    # 6b. ACCEPTANCE RECONCILIATION phase
+    # ------------------------------------------------------------------
+    if acceptance is not None:
+        _emit_progress("acceptance", "reconcile", "running", "Reconciling acceptance evidence")
+        try:
+            acceptance = reconcile_acceptance_evidence(
+                acceptance,
+                repo_root,
+                validation_result=val_result,
+                runtime_proof=runtime_proof,
+                ux_proof=ux_proof,
+                security_result=security_result if "security_result" in locals() else None,
+            )
+            write_acceptance_matrix(acceptance, signalos_dir)
+            readiness = acceptance.get("reconciliation", {})
+            update_delivery_phase(
+                repo_root,
+                "acceptance",
+                "complete" if readiness.get("ready") else "partial",
+            )
+            _emit_progress(
+                "acceptance",
+                "reconcile",
+                "done",
+                f"Acceptance passed: {readiness.get('passed', 0)}",
+            )
+        except Exception as exc:
+            errors.append(f"acceptance reconciliation failed: {exc}")
+            _emit_progress("acceptance", "reconcile", "error", str(exc))
 
     # ------------------------------------------------------------------
     # 7. DEPLOY phase
@@ -700,6 +813,7 @@ def run_delivery(
             ux_proof=ux_proof if "ux_proof" in locals() else None,
             deploy_decision=deploy_decision,
             errors=errors,
+            requires_ux_proof=requires_ux_proof if "requires_ux_proof" in locals() else False,
         )
         readiness_result = validate_review_readiness(readiness)
         if not readiness_result.get("valid", False):
@@ -759,6 +873,7 @@ def run_delivery(
         "repo_root": str(repo_root),
         "product_name": product_name,
         "profile": actual_profile,
+        "capability_profile": capability_profile,
         "switch_recommended": True,
     }
 
@@ -768,6 +883,7 @@ def run_delivery(
         "product_name": product_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "profile": actual_profile,
+        "capability_profile": capability_profile,
     }
     try:
         workspace_path = signalos_dir / "product" / "WORKSPACE.json"
@@ -791,6 +907,45 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _run_delivery_feature_gate(repo_root: Path, request: str) -> dict[str, Any]:
+    from signalos_lib.commands.feature_gate import (
+        run_feature_gate,
+        write_feature_gate_evidence,
+    )
+
+    wave_pointer = repo_root / ".signalos" / "wave.json"
+    if not wave_pointer.is_file():
+        payload: dict[str, Any] = {
+            "executed": False,
+            "blocked": False,
+            "request": request,
+            "reason": ".signalos/wave.json not present; no active wave pointer was available.",
+            "delivery_phase": "before_generation",
+        }
+        write_feature_gate_evidence(payload, repo_root)
+        return payload
+
+    exit_code, result = run_feature_gate(
+        request,
+        repo_root=repo_root,
+    )
+    payload = {
+        **result,
+        "executed": True,
+        "exit_code": exit_code,
+        "blocked": exit_code != 0,
+        "delivery_phase": "before_generation",
+    }
+    if payload["blocked"]:
+        payload["reason"] = result.get("error") or (
+            f"feature-gate refused generation with exit code {exit_code}"
+        )
+    else:
+        payload.setdefault("reason", "feature-gate executed before writing product files.")
+    write_feature_gate_evidence(payload, repo_root)
+    return payload
+
 
 def _refresh_manifest_hashes(repo_root: Path, manifest: dict) -> None:
     for record in manifest.get("files", []):
@@ -887,17 +1042,27 @@ def _build_delivery_arch_review(
     intent: dict,
     profile: str,
     blueprint: dict | None,
+    capability_profile: dict | None = None,
 ) -> dict:
     entities = intent.get("entities") or ["product entity"]
     workflows = intent.get("primary_workflows") or ["core workflow"]
     surfaces = intent.get("ux_surfaces") or []
     integrations = intent.get("integrations") or []
+    capabilities = capability_profile or build_capability_profile(
+        intent,
+        adapter_profile=profile,
+    )
+    infra = capabilities.get("infrastructure", {})
+    layers = capabilities.get("application_layers", {})
 
     return build_arch_review(
         system_boundaries=[
             f"profile: {profile}",
             f"blueprint: {(blueprint or {}).get('id', 'custom')}",
             f"entities: {', '.join(str(e) for e in entities)}",
+            f"technology preferences: {', '.join(capabilities.get('technology_preferences', []) or ['auto'])}",
+            f"database choices: {', '.join(infra.get('databases', []) or ['auto'])}",
+            f"cache choices: {', '.join(infra.get('caches', []) or ['auto'])}",
         ],
         data_flow=[
             "User workflow input is captured by the product surface, validated, "
@@ -930,7 +1095,16 @@ def _build_delivery_arch_review(
         ],
         open_risks=[
             f"integration: {integration}" for integration in integrations
-        ] + ([f"ux surfaces: {', '.join(str(s) for s in surfaces)}"] if surfaces else []),
+        ] + (
+            [f"ux surfaces: {', '.join(str(s) for s in surfaces)}"]
+            if surfaces else []
+        ) + (
+            [f"frontend choices: {', '.join(layers.get('frontend', []))}"]
+            if layers.get("frontend") else []
+        ) + (
+            [f"backend choices: {', '.join(layers.get('backend', []))}"]
+            if layers.get("backend") else []
+        ),
         blocking_findings=[],
     )
 
@@ -975,6 +1149,7 @@ def _build_delivery_review_readiness(
     ux_proof: dict | None,
     deploy_decision: dict | None,
     errors: list[str],
+    requires_ux_proof: bool = False,
 ) -> dict:
     blocking_items: list[str] = []
     blocking_items.extend(strategy_errors)
@@ -994,7 +1169,6 @@ def _build_delivery_review_readiness(
         if deploy_decision is not None
         else "not_run"
     )
-    requires_ux_proof = bool((runtime_proof or {}).get("preview_command"))
     if requires_ux_proof and ux_status != "passed":
         blocking_items.append("UX proof must pass for UI products")
     ux_ready = (

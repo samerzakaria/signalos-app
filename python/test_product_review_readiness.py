@@ -113,6 +113,7 @@ def test_delivery_readiness_requires_ux_pass_for_ui_products() -> None:
         ux_proof={"status": "skipped"},
         deploy_decision={"mode": "none"},
         errors=[],
+        requires_ux_proof=True,
     )
 
     assert artifact["ready"] is False
@@ -134,3 +135,21 @@ def test_delivery_readiness_allows_skipped_ux_for_non_ui_products() -> None:
     )
 
     assert artifact["ready"] is True
+
+
+def test_delivery_readiness_allows_api_runtime_without_browser_ux() -> None:
+    artifact = _build_delivery_review_readiness(
+        strategy_errors=[],
+        scope_errors=[],
+        arch_result={"valid": True, "blocked": False, "errors": [], "blockers": []},
+        design={"schema_version": "signalos.design_system.v1"},
+        validation_result=_closeable_validation(),
+        runtime_proof={"status": "passed", "preview_command": "npm start"},
+        ux_proof={"status": "skipped"},
+        deploy_decision={"mode": "none"},
+        errors=[],
+        requires_ux_proof=False,
+    )
+
+    assert artifact["ready"] is True
+    assert "UX proof must pass for UI products" not in artifact["blocking_items"]

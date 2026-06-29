@@ -1,0 +1,17 @@
+---
+description: Use signalos validate-prd-traceability before relying on PRD claim coverage.
+globs: [".signalos/PRD_TRACEABILITY.md", ".signalos/Beliefs/**", "core/governance/Governance/DECISION-DNA.md"]
+alwaysApply: false
+---
+
+# validate-prd-traceability wiring rule
+
+Run `signalos validate-prd-traceability --json` before treating PRD coverage as
+complete.
+
+- Every row must resolve to BELIEF, BUILD, DEC, or DEFER.
+- BELIEF and BUILD rows must point to live Belief IDs.
+- DEC rows must point to live DECISION-DNA blocks.
+- DEFER rows must use `DEFER -> WNN` or `DEFER -> never`.
+- Principle-shaped PRD claims need measurable Belief signal thresholds or must
+  be reclassified as decisions.

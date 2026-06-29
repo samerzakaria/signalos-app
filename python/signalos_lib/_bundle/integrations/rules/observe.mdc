@@ -1,0 +1,16 @@
+---
+description: Use signalos observe for app-native listening windows, deployment signals, and journal events.
+globs: [".signalos/observability/**", ".signalos/evidence/observability/**"]
+alwaysApply: false
+---
+
+# observe wiring rule
+
+Use `signalos observe` for app-native observability evidence.
+
+- Listening windows are lifecycle artifacts, not gate signatures.
+- Deployment signals record evidence for Belief met/invalidated/no-signal calls.
+- Journal events are structured telemetry for downstream dashboards and hooks.
+- Keep/Kill/Iterate output is draft-only; final decisions require the human owner
+  and governance evidence.
+- Do not require .NET, ABP, SQL, Redis, or Postgres to use this command.

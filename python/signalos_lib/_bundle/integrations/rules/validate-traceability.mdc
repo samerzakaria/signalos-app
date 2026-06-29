@@ -1,0 +1,16 @@
+---
+description: Use signalos validate-traceability before Gate 1 product Belief closeout.
+globs: [".signalos/TRACEABILITY_MATRIX.md", ".signalos/Beliefs/**", "core/governance/Beliefs/**"]
+alwaysApply: false
+---
+
+# validate-traceability wiring rule
+
+Run `signalos validate-traceability --json` before treating product Beliefs as
+source-traced.
+
+- Every product Belief must carry required provenance front matter.
+- Every product Belief must appear in `.signalos/TRACEABILITY_MATRIX.md`.
+- Source artifacts named in Beliefs and matrix rows must resolve inside the
+  workspace.
+- Signal threshold, MIN N, and Zone history evidence are mandatory.

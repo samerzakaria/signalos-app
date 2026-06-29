@@ -1,0 +1,16 @@
+---
+description: Use signalos worktree-snapshot for read-only git state capture.
+globs: [".signalos/worktree-sync/**", ".signalos/evidence/worktree-sync/**"]
+alwaysApply: false
+---
+
+# worktree-snapshot wiring rule
+
+Use `signalos worktree-snapshot take --json` when a Wave needs a durable,
+read-only record of git state.
+
+- The command may write `.signalos/worktree-sync/snapshots.jsonl`.
+- It must not mutate git state.
+- Use `latest`, `get`, `list --branch`, or `list --commit` for query surfaces.
+- Use `validate-worktree-sync --require-clean` when a merge/release gate needs
+  a clean product worktree.

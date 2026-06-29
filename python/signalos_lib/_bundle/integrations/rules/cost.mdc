@@ -1,0 +1,17 @@
+---
+description: Use signalos cost for AI budget evidence.
+globs: [".signalos/sessions/*/metrics.jsonl", ".signalos/product/AI_USAGE.jsonl", ".signalos/product/COST_REPORT.json"]
+alwaysApply: false
+---
+
+# cost wiring rule
+
+Use `signalos cost` when AI usage, token totals, provider cost, or budget
+status must be reported.
+
+- Do not estimate cost from provider/model names unless a ledger row already
+  records a USD cost.
+- Treat unpriced rows as usage evidence with unknown cost.
+- Use `--budget-usd` or `SIGNALOS_AI_WAVE_BUDGET_USD` for budget enforcement.
+- Treat exit code `1` as an over-budget gate failure.
+- Keep the report local under `.signalos/product/COST_REPORT.json`.

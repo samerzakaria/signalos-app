@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "fastapi-api",
+  "name": "FastAPI API",
+  "description": "Backend/API product profile for Python FastAPI services with pip install, pytest validation, and uvicorn preview commands.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": "FastAPI CI templates are not emitted by init yet; runtime validation is owned by the product adapter."
+  },
+  "commands": {
+    "install": {
+      "name": "pip install editable dev",
+      "argv": ["python", "-m", "pip", "install", "-e", ".[dev]"],
+      "required": true
+    },
+    "build": {
+      "name": "python compileall",
+      "argv": ["python", "-m", "compileall", "src", "tests"],
+      "required": true
+    },
+    "test": {
+      "name": "pytest",
+      "argv": ["python", "-m", "pytest"],
+      "required": true
+    },
+    "lint": null,
+    "preview": {
+      "name": "uvicorn preview",
+      "argv": ["python", "-m", "uvicorn", "signalos_product_fastapi.app:app", "--host", "127.0.0.1", "--port", "8000"],
+      "required": true
+    }
+  },
+  "preview": {
+    "mode": "command",
+    "command": "preview",
+    "url": "http://127.0.0.1:8000/health",
+    "requires_install": true,
+    "disabled_reason": null
+  },
+  "validator_groups": ["layer1", "governance", "artifacts", "python", "fastapi"]
+}

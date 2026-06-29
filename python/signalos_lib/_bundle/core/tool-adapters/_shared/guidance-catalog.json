@@ -1,0 +1,90 @@
+[
+  {
+    "id": "test-driven-development",
+    "path": "core/execution/build/test-driven-development/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["build", "tests", "tdd"],
+    "active": true
+  },
+  {
+    "id": "test-generation",
+    "path": "core/execution/build/test-generation/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["build", "tests"],
+    "active": true
+  },
+  {
+    "id": "e2e-testing",
+    "path": "core/execution/build/e2e-testing/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["e2e", "browser", "workflow"],
+    "active": true
+  },
+  {
+    "id": "verification-before-completion",
+    "path": "core/execution/build/verification-before-completion/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["verification", "evidence"],
+    "active": true
+  },
+  {
+    "id": "comprehensive-code-review",
+    "path": "core/execution/review/comprehensive-code-review/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["review", "quality"],
+    "active": true
+  },
+  {
+    "id": "security-audit",
+    "path": "core/governance/SecurityAudit/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["security", "trust-tier"],
+    "active": true
+  },
+  {
+    "id": "design",
+    "path": "core/execution/skills/design/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["design", "artifact"],
+    "active": true
+  },
+  {
+    "id": "writing-plans",
+    "path": "core/execution/plan/writing-plans/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["plan", "scope"],
+    "active": true
+  },
+  {
+    "id": "operator-tooling",
+    "path": "core/execution/skills/operator-tooling/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["validators", "hooks", "operator"],
+    "active": true
+  },
+  {
+    "id": "review",
+    "path": "core/execution/skills/review/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["governance", "drift"],
+    "active": true
+  },
+  {
+    "id": "product-surface-mapping",
+    "path": "core/execution/skills/product-surface-mapping/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["surface", "trust-tier"],
+    "active": true
+  }
+]

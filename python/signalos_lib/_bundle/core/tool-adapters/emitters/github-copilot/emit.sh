@@ -13,12 +13,19 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/../../_shared/guidance-emitter.sh"
+
 parse_args() {
   local commands_json=""
   local skills_json=""
   local hooks_json=""
   local preamble=""
   local output_dir=""
+  local obligations_json=""
+  local guidance_catalog_json=""
+  local stack="any"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -27,6 +34,9 @@ parse_args() {
       --hooks-json)    hooks_json="$2"; shift 2 ;;
       --preamble)      preamble="$2"; shift 2 ;;
       --output-dir)    output_dir="$2"; shift 2 ;;
+      --obligations-json) obligations_json="$2"; shift 2 ;;
+      --guidance-catalog-json) guidance_catalog_json="$2"; shift 2 ;;
+      --stack) stack="$2"; shift 2 ;;
       *)               echo "Unknown argument: $1" >&2; return 1 ;;
     esac
   done
@@ -41,6 +51,9 @@ parse_args() {
   echo "$hooks_json"
   echo "$preamble"
   echo "$output_dir"
+  echo "$obligations_json"
+  echo "$guidance_catalog_json"
+  echo "$stack"
 }
 
 main() {
@@ -59,6 +72,9 @@ main() {
   local hooks_json=$(echo "$args" | sed -n '3p')
   local preamble=$(echo "$args" | sed -n '4p')
   local output_dir=$(echo "$args" | sed -n '5p')
+  local obligations_json=$(echo "$args" | sed -n '6p')
+  local guidance_catalog_json=$(echo "$args" | sed -n '7p')
+  local stack=$(echo "$args" | sed -n '8p')
 
   if [[ ! -f "$commands_json" ]]; then
     echo "Error: commands JSON file not found: $commands_json" >&2
@@ -146,6 +162,8 @@ main() {
     echo ""
     echo "]"
   } > "$output_dir/.github/copilot-chat-agents.json"
+
+  write_signalos_guidance_file "$output_dir" "$obligations_json" "$guidance_catalog_json" "$stack"
 
   echo "GitHub Copilot emitter: wrote instructions and chat agents to $output_dir/.github/"
 }

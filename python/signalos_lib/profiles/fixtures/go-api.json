@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "id": "go-api",
+  "name": "Go API",
+  "description": "Backend/API product profile for optional Go services with go test validation and standard-library HTTP preview.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": "Go API CI templates are not emitted by init yet; runtime validation is owned by the product adapter."
+  },
+  "commands": {
+    "install": null,
+    "build": {
+      "name": "go test",
+      "argv": ["go", "test", "./..."],
+      "required": true
+    },
+    "test": {
+      "name": "go test",
+      "argv": ["go", "test", "./..."],
+      "required": true
+    },
+    "lint": null,
+    "preview": {
+      "name": "go run",
+      "argv": ["go", "run", "./cmd/server"],
+      "required": true
+    }
+  },
+  "preview": {
+    "mode": "command",
+    "command": "preview",
+    "url": "http://127.0.0.1:8080/health",
+    "requires_install": false,
+    "disabled_reason": null
+  },
+  "validator_groups": ["layer1", "governance", "artifacts", "go", "api"]
+}

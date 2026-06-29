@@ -486,6 +486,37 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertTrue(any(path.startswith("src/") for path in source_files))
             self.assertTrue(any(path.startswith("tests/") for path in source_files))
 
+    def test_fastapi_local_agent_writes_api_app(self):
+        """FastAPI delivery writes API app code through the governed local agent path."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "fastapi-code-test"
+            closeout = run_delivery(
+                prompt="Build a FastAPI REST API for task management",
+                name="fastapi-code-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="fastapi-api",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+
+            self.assertEqual(closeout["profile"], "fastapi-api")
+            self.assertTrue((repo_root / "pyproject.toml").is_file())
+            self.assertTrue((repo_root / "src" / "signalos_product_fastapi" / "app.py").is_file())
+            self.assertTrue((repo_root / "src" / "signalos_product_fastapi" / "routes" / "task.py").is_file())
+            self.assertTrue((repo_root / "src" / "signalos_product_fastapi" / "models" / "task.py").is_file())
+            self.assertTrue((repo_root / "tests" / "test_task.py").is_file())
+
+            generation_packet = json.loads(
+                (repo_root / ".signalos" / "product" / "GENERATION_PACKET.json")
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                generation_packet["capability_profile"]["adapter_profile"],
+                "fastapi-api",
+            )
+
 
 class TestDeliveryRepairAndWiring(unittest.TestCase):
     """Tests for repair loop wiring, task IDs, and workspace metadata."""
@@ -624,6 +655,36 @@ class TestDeliveryRepairAndWiring(unittest.TestCase):
                 if f.get("acceptance_id") is not None
             ]
             self.assertGreater(len(files_with_acceptance), 0)
+
+    def test_real_generic_delivery_reconciles_acceptance_from_tests(self):
+        """A real local-agent delivery marks criteria passed from test evidence."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "accept-reconcile-real"
+            closeout = run_delivery(
+                prompt="Build a Python inventory package with products and warehouses",
+                name="accept-reconcile-real",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="none",
+                deploy="none",
+                dry_run=False,
+                agent_mode="auto",
+            )
+
+            acceptance = json.loads(
+                (repo_root / ".signalos" / "product" / "ACCEPTANCE_MATRIX.json")
+                .read_text(encoding="utf-8")
+            )
+            reconciliation = acceptance.get("reconciliation", {})
+
+            self.assertEqual(closeout["build_status"], "passed")
+            self.assertGreater(reconciliation.get("passed", 0), 0)
+            self.assertEqual(
+                closeout["acceptance_summary"]["passed"],
+                reconciliation.get("passed"),
+            )
+            self.assertNotEqual(closeout["closure_level"], "ready")
 
     def test_workspace_json_written(self):
         """WORKSPACE.json is written with correct content."""

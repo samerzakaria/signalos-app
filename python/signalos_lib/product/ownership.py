@@ -38,10 +38,12 @@ def build_delivery_ownership_map(
     blueprint_id: str | None,
     profile: str,
     deploy_mode: str,
+    capability_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the platform/agent/human responsibility map."""
     product_type = intent.get("product_type") or "custom"
     enterprise_slice = _enterprise_slice(intent)
+    capabilities = capability_profile or {}
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -52,11 +54,13 @@ def build_delivery_ownership_map(
         "blueprint": blueprint_id,
         "profile": profile,
         "deploy_mode": deploy_mode,
+        "capability_profile": capabilities,
         "minimum_prompt_contract": {
             "accepted_minimum_prompt": True,
             "inferred_enterprise_slice": enterprise_slice,
             "non_technical_user_mode": True,
             "technical_choices_owned_by": "signalos-system",
+            "technology_choices_are_capabilities": True,
         },
         "team_contract": {
             "agents_are_signalos_team": True,
@@ -109,7 +113,7 @@ def build_delivery_ownership_map(
                 "step": "scaffold_and_generation_packet",
                 "owner": "signalos-system",
                 "team": "Delivery Bridge",
-                "responsibility": "Choose the stack/profile, scaffold deployable project files, build acceptance criteria, and create scoped build packets.",
+                "responsibility": "Choose or honor the adapter/profile, scaffold deployable project files, build acceptance criteria, and create scoped build packets without hard-locking SignalOS to one product technology.",
                 "human_action": "No action unless a toolchain or policy blocker is reported.",
             },
             {

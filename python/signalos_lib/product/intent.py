@@ -248,12 +248,41 @@ _NON_ENTITY_PHRASES = [
     re.compile(r"\bauthorization\b", re.I),
 ]
 
+_TECH_ENTITY_STOPWORDS = {
+    "postgres",
+    "postgresql",
+    "postegres",
+    "sql",
+    "mysql",
+    "sqlite",
+    "mongodb",
+    "mongo",
+    "redis",
+    "redia",
+    "cache",
+    "database",
+    "db",
+    "node",
+    "nodejs",
+    "express",
+    "angular",
+    "react",
+    "vue",
+    "svelte",
+    "next",
+    "dotnet",
+    ".net",
+}
+
 
 def _is_non_entity(phrase: str) -> bool:
     """Return True if the phrase is a security/auth/audit term, not a domain entity."""
     for pat in _NON_ENTITY_PHRASES:
         if pat.search(phrase):
             return True
+    words = [word.strip(".,;:()[]{}") for word in phrase.lower().split()]
+    if words and all(word in _TECH_ENTITY_STOPWORDS for word in words):
+        return True
     return False
 
 
@@ -275,6 +304,14 @@ def _classify_entities(
         # Skip security/auth/audit phrases - not domain entities
         if _is_non_entity(lower):
             continue
+        words_without_tech = [
+            word for word in lower.split()
+            if word.strip(".,;:()[]{}") not in _TECH_ENTITY_STOPWORDS
+            and word.strip(".,;:()[]{}") not in _NOISE_WORDS
+        ]
+        if not words_without_tech:
+            continue
+        lower = " ".join(words_without_tech)
 
         # Check for compound role phrases first
         if lower in [rp.lower() for rp in _ROLE_PHRASES]:
@@ -458,6 +495,10 @@ _STACK_PATTERNS: dict[str, re.Pattern[str]] = {
     "django": re.compile(r"\bdjango\b", re.I),
     "flask": re.compile(r"\bflask\b", re.I),
     "node": re.compile(r"\bnode\.?js\b|\bnode\b|\bexpress\b", re.I),
+    "node-api": re.compile(r"\bnode\s+api\b|\bexpress\s+api\b", re.I),
+    "go-api": re.compile(r"\bgo\s+api\b|\bgolang\s+api\b", re.I),
+    "fastapi-api": re.compile(r"\bfastapi\b|\bfast-api\b", re.I),
+    "express": re.compile(r"\bexpress\.?js\b|\bexpress\b", re.I),
     "typescript": re.compile(r"\btypescript\b|\bts\b", re.I),
     "rust": re.compile(r"\brust\b|\btauri\b", re.I),
     "go": re.compile(r"\bgo\s*lang\b|\bgo\b", re.I),

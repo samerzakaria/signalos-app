@@ -125,8 +125,10 @@ def build_closeout(
         "pending": 0,
         "skipped": 0,
     }
+    acceptance_ready = False
     if acceptance_matrix is not None:
         readiness = check_closure_readiness(acceptance_matrix)
+        acceptance_ready = bool(readiness.get("ready"))
         acceptance_summary = {
             "total": (
                 readiness.get("passed", 0)
@@ -144,6 +146,12 @@ def build_closeout(
     known_limitations = _collect_limitations(
         closure, proof, acceptance_matrix, deploy_decision, profile,
     )
+
+    if acceptance_matrix is None:
+        known_limitations.append("Acceptance matrix is missing")
+
+    if closure_level == "ready" and not acceptance_ready:
+        closure_level = "partial"
 
     # --- Ownership map ---
     delivery_ownership = load_delivery_ownership_map(signalos_dir)
@@ -227,6 +235,34 @@ def _build_how_to_run(profile: str, repo_path: str) -> list[str]:
             "npm install",
             "npm run dev",
             "Open http://localhost:5173",
+        ]
+    if profile == "node-api":
+        return [
+            f"cd {repo_path}",
+            "npm install",
+            "npm start",
+            "Open http://localhost:3000/health",
+        ]
+    if profile == "fastapi-api":
+        return [
+            f"cd {repo_path}",
+            'python -m pip install -e ".[dev]"',
+            "python -m uvicorn signalos_product_fastapi.app:app --host 127.0.0.1 --port 8000",
+            "Open http://localhost:8000/health",
+        ]
+    if profile == "dotnet-minimal-api":
+        return [
+            f"cd {repo_path}",
+            "dotnet restore SignalOSProduct.Api/SignalOSProduct.Api.csproj",
+            "dotnet run --project SignalOSProduct.Api/SignalOSProduct.Api.csproj -- --urls http://127.0.0.1:5050",
+            "Open http://localhost:5050/health",
+        ]
+    if profile == "go-api":
+        return [
+            f"cd {repo_path}",
+            "go test ./...",
+            "go run ./cmd/server",
+            "Open http://localhost:8080/health",
         ]
     return [
         f"cd {repo_path}",
@@ -655,6 +691,12 @@ def check_closeout_honesty(closeout: dict[str, Any]) -> dict[str, Any]:
 
         if acc.get("failed", 0) > 0:
             issues.append("Claims ready but has failed acceptance criteria")
+
+        if acc.get("pending", 0) > 0:
+            issues.append("Claims ready but has pending acceptance criteria")
+
+        if acc.get("total", 0) == 0:
+            issues.append("Claims ready but has no acceptance criteria")
 
         # All tests skipped
         if tests and all(t.get("status") == "skipped" for t in tests):

@@ -6,9 +6,9 @@
 // `runGovernedCommand()` instead of reaching into app-v2.js.
 //
 // IMPORTANT: this is a *governed* command surface, NOT an unrestricted OS
-// shell. Only an explicit allowlist of Foundry-governed / git / dev commands is
-// routed; anything else raises so callers can surface an honest error
-// (INV-4: no silent failures).
+// shell. SignalOS commands route through the Python sidecar, which owns the
+// app-native command registry; everything else raises so callers can surface an
+// honest error (INV-4: no silent failures).
 //
 // IPC access is injected so the service stays testable.
 
@@ -56,6 +56,8 @@ const HELP_LINES = [
   '  signalos status   show governance/workspace status',
   '  signalos check    run release-readiness checks',
   '  signalos gates    show gate status',
+  '  signalos <cmd>    run an app-native SignalOS Core command',
+  '  /<cmd>            run an app-native SignalOS Core command',
   '  npm run dev       start the Preview tab dev server',
   '  git status        show branch, cleanliness, and worktrees',
   '',
@@ -64,6 +66,16 @@ const HELP_LINES = [
 
 function prettyJson(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2);
+}
+
+export function splitGovernedCommand(input: string): string[] {
+  const out: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|[^\s]+/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    out.push(match[1] ?? match[2] ?? match[0]);
+  }
+  return out;
 }
 
 async function resolveIpc(ctx: GovernedShellContext): Promise<GovernedShellIpc> {
@@ -154,8 +166,11 @@ export async function runGovernedCommand(
     return await start();
   }
 
-  if (normalized.startsWith('/signal-')) {
-    const tokens = normalized.replace(/^\//, '').split(/\s+/).filter(Boolean);
+  if (normalized.startsWith('/')) {
+    const tokens = splitGovernedCommand(normalized.replace(/^\//, ''));
+    if (tokens.length === 0) {
+      throw new Error('Unsupported command: /. Type help for supported commands.');
+    }
     return (await ipc.signal.runAndWait(
       tokens[0],
       tokens.slice(1),
@@ -164,7 +179,15 @@ export async function runGovernedCommand(
   }
 
   if (lower.startsWith('signalos ')) {
-    throw new Error(`Unsupported governed command: ${normalized}. Type help for supported commands.`);
+    const tokens = splitGovernedCommand(normalized).slice(1);
+    if (tokens.length === 0) {
+      throw new Error(`Unsupported governed command: ${normalized}. Type help for supported commands.`);
+    }
+    return (await ipc.signal.runAndWait(
+      tokens[0],
+      tokens.slice(1),
+      120000,
+    )) as GovernedCommandResult;
   }
 
   throw new Error(`Unsupported command: ${normalized}. Type help for supported commands.`);
@@ -177,7 +200,7 @@ export async function runGovernedCommand(
  */
 export function isGovernedCommand(input: string): boolean {
   const t = input.trim();
-  return t.startsWith('/signal-') || t.startsWith('/state:');
+  return t.startsWith('/') || /^signalos\s+\S+/i.test(t);
 }
 
 export { HELP_LINES };

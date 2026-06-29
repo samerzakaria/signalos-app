@@ -8,7 +8,7 @@ description: "Phase -1 onboarding. Runs once per product. Gathers Product DNA."
 
 Owner: PO. Runs **exactly once per product**, before `/signal-init`. Invokes the Onboarding agent (Team Charter §1).
 
-> `/signal-init` assumes a product-Constitution already exists. `/signal-onboard` is what produces that Constitution (and the Soul Document, the Surface Inventory, the seed Belief) when SignalOS is being dropped onto an existing codebase. Greenfield products may run `/signal-onboard` with an empty repo to get the same scaffolding; most will skip straight to `/signal-init`.
+> `/signal-init` assumes a product-Constitution already exists. `/signal-onboard` is what produces that Constitution, the Soul Document, the Surface Inventory, the permanently-T3 list, and the seed Belief. Run `/signal-onboard` for every product, including greenfield products with an empty repo, before `/signal-init`.
 
 ## Your first action
 

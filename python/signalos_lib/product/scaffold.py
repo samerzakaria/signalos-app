@@ -13,6 +13,7 @@ __all__ = [
     "run_scaffold",
 ]
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,32 @@ _PROFILE_EXPLANATIONS: dict[str, str] = {
     "react-vite": (
         "React + Vite detected: the repository contains a Vite dependency "
         "in package.json, indicating a modern React single-page application."
+    ),
+    "node-api": (
+        "Node.js API selected: the product intent or repository markers "
+        "indicate an API/backend service that can be delivered without a UI "
+        "stack or .NET lock-in."
+    ),
+    "fastapi-api": (
+        "FastAPI API selected: the product intent or repository markers "
+        "indicate a Python API/backend service that can be delivered without "
+        "a UI stack or .NET lock-in."
+    ),
+    "go-api": (
+        "Go API selected: the user or repository explicitly requested Go API "
+        "delivery. SignalOS will use Go as the product technology without "
+        "making it the default."
+    ),
+    "dotnet-minimal-api": (
+        ".NET Minimal API selected: the user or repository explicitly requested "
+        ".NET/C# API delivery. SignalOS will use .NET as the product technology "
+        "without forcing ABP or making .NET the default."
+    ),
+    "agent-selected": (
+        "Agent-selected technology selected: the user or agent requested a "
+        "technology without a native greenfield shell. SignalOS will keep the "
+        "delivery governed and require the produced repo's own build/test "
+        "commands before ready closeout."
     ),
     "existing-repo": (
         "Existing repository detected: the directory contains recognised "
@@ -74,6 +101,98 @@ def run_postflight(repo_root: Path, profile: str) -> dict[str, Any]:
 
     if profile == "react-vite":
         checks.extend(_postflight_react_vite(repo_root))
+    elif profile == "nextjs-app":
+        checks.extend(_postflight_package_stack(repo_root, "next", [
+            "app/layout.tsx",
+            "app/page.tsx",
+            "app/page.test.tsx",
+            "next.config.mjs",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "vue-vite":
+        checks.extend(_postflight_package_stack(repo_root, "vue", [
+            "src/App.vue",
+            "src/App.test.ts",
+            "src/main.ts",
+            "vite.config.ts",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "flutter-app":
+        checks.extend(_postflight_text_stack(repo_root, "pubspec.yaml", "flutter", [
+            "pubspec.yaml",
+            "lib/main.dart",
+            "test/widget_test.dart",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "expo-react-native":
+        checks.extend(_postflight_package_stack(repo_root, "expo", [
+            "app.json",
+            "App.js",
+            "src/productState.js",
+            "tests/productState.test.js",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "angular":
+        checks.extend(_postflight_package_stack(repo_root, "@angular/core", [
+            "angular.json",
+            "src/app/app.component.ts",
+            "src/app/app.component.spec.ts",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "node-api":
+        checks.extend(_postflight_node_api(repo_root))
+    elif profile == "nestjs-api":
+        checks.extend(_postflight_package_stack(repo_root, "@nestjs/core", [
+            "src/main.ts",
+            "src/app.module.ts",
+            "src/app.controller.ts",
+            "src/app.controller.spec.ts",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "fastapi-api":
+        checks.extend(_postflight_fastapi_api(repo_root))
+    elif profile == "django-api":
+        checks.extend(_postflight_python_stack(repo_root, "django", [
+            "manage.py",
+            "src/signalos_product_django/settings.py",
+            "src/signalos_product_django/urls.py",
+            "tests/test_health.py",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "flask-api":
+        checks.extend(_postflight_python_stack(repo_root, "flask", [
+            "src/signalos_product_flask/app.py",
+            "src/signalos_product_flask/main.py",
+            "tests/test_health.py",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "go-api":
+        checks.extend(_postflight_go_api(repo_root))
+    elif profile == "spring-boot-api":
+        checks.extend(_postflight_text_stack(repo_root, "pom.xml", "spring-boot", [
+            "pom.xml",
+            "src/main/java/com/signalos/product/ProductApplication.java",
+            "src/main/java/com/signalos/product/HealthController.java",
+            "src/test/java/com/signalos/product/HealthControllerTest.java",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "java-api":
+        checks.extend(_postflight_expected_files(repo_root, [
+            "src/main/java/com/signalos/product/ProductServer.java",
+            "src/test/java/com/signalos/product/ProductServerTest.java",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "rust-api":
+        checks.extend(_postflight_expected_files(repo_root, [
+            "Cargo.toml",
+            "src/lib.rs",
+            "src/main.rs",
+            ".signalos/profile.json",
+        ]))
+    elif profile == "dotnet-minimal-api":
+        checks.extend(_postflight_dotnet_minimal_api(repo_root))
+    elif profile == "agent-selected":
+        checks.extend(_postflight_agent_selected(repo_root))
     elif profile == "existing-repo":
         checks.extend(_postflight_existing_repo(repo_root))
     else:
@@ -82,6 +201,85 @@ def run_postflight(repo_root: Path, profile: str) -> dict[str, Any]:
 
     passed = all(c["passed"] for c in checks)
     return {"passed": passed, "checks": checks}
+
+
+def _postflight_expected_files(repo_root: Path, expected_files: list[str]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for rel in expected_files:
+        path = repo_root / rel
+        checks.append({
+            "name": f"{rel} exists",
+            "passed": path.is_file(),
+            "detail": f"{rel} found" if path.is_file() else f"{rel} not found",
+        })
+    return checks
+
+
+def _postflight_package_stack(
+    repo_root: Path,
+    dependency: str,
+    expected_files: list[str],
+) -> list[dict[str, Any]]:
+    checks = _postflight_expected_files(repo_root, ["package.json", *expected_files])
+    pkg_path = repo_root / "package.json"
+    has_dependency = False
+    if pkg_path.is_file():
+        try:
+            import json
+            pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            has_dependency = dependency in deps
+        except Exception:
+            pass
+    checks.append({
+        "name": f"{dependency} dependency exists",
+        "passed": has_dependency,
+        "detail": f"{dependency} found" if has_dependency else f"{dependency} dependency missing",
+    })
+    return checks
+
+
+def _postflight_python_stack(
+    repo_root: Path,
+    dependency: str,
+    expected_files: list[str],
+) -> list[dict[str, Any]]:
+    checks = _postflight_expected_files(repo_root, ["pyproject.toml", *expected_files])
+    pyproject = repo_root / "pyproject.toml"
+    has_dependency = False
+    if pyproject.is_file():
+        try:
+            has_dependency = dependency.lower() in pyproject.read_text(encoding="utf-8").lower()
+        except OSError:
+            pass
+    checks.append({
+        "name": f"{dependency} dependency exists",
+        "passed": has_dependency,
+        "detail": f"{dependency} found" if has_dependency else f"{dependency} dependency missing",
+    })
+    return checks
+
+
+def _postflight_text_stack(
+    repo_root: Path,
+    marker_file: str,
+    marker_text: str,
+    expected_files: list[str],
+) -> list[dict[str, Any]]:
+    checks = _postflight_expected_files(repo_root, expected_files)
+    marker = repo_root / marker_file
+    has_marker = False
+    if marker.is_file():
+        try:
+            has_marker = marker_text.lower() in marker.read_text(encoding="utf-8").lower()
+        except OSError:
+            pass
+    checks.append({
+        "name": f"{marker_text} marker exists",
+        "passed": has_marker,
+        "detail": f"{marker_text} found" if has_marker else f"{marker_text} marker missing",
+    })
+    return checks
 
 
 def _postflight_react_vite(repo_root: Path) -> list[dict[str, Any]]:
@@ -138,6 +336,225 @@ def _postflight_react_vite(repo_root: Path) -> list[dict[str, Any]]:
         "detail": f"{len(tsx_files)} .tsx file(s) found" if has_tsx else "no .tsx files found",
     })
 
+    return checks
+
+
+def _postflight_agent_selected(repo_root: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    signalos_exists = (repo_root / ".signalos").is_dir()
+    stack_decision_exists = (repo_root / "PRODUCT_STACK.md").is_file()
+    src_exists = (repo_root / "src").is_dir()
+    tests_exists = (repo_root / "tests").is_dir()
+    checks.extend([
+        {
+            "name": ".signalos/ directory exists",
+            "passed": signalos_exists,
+            "detail": ".signalos/ found" if signalos_exists else ".signalos/ not found",
+        },
+        {
+            "name": "PRODUCT_STACK.md exists",
+            "passed": stack_decision_exists,
+            "detail": (
+                "PRODUCT_STACK.md found"
+                if stack_decision_exists
+                else "PRODUCT_STACK.md not found"
+            ),
+        },
+        {
+            "name": "src/ directory exists",
+            "passed": src_exists,
+            "detail": "src/ found" if src_exists else "src/ not found",
+        },
+        {
+            "name": "tests/ directory exists",
+            "passed": tests_exists,
+            "detail": "tests/ found" if tests_exists else "tests/ not found",
+        },
+    ])
+    return checks
+
+
+def _postflight_node_api(repo_root: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+
+    pkg_path = repo_root / "package.json"
+    pkg_exists = pkg_path.is_file()
+    checks.append({
+        "name": "package.json exists",
+        "passed": pkg_exists,
+        "detail": str(pkg_path) if pkg_exists else "package.json not found",
+    })
+
+    has_express = False
+    has_scripts = False
+    if pkg_exists:
+        try:
+            import json
+            pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            has_express = "express" in deps
+            scripts = pkg.get("scripts", {})
+            has_scripts = "start" in scripts and "test" in scripts
+        except Exception:
+            pass
+
+    checks.append({
+        "name": "Express dependency exists",
+        "passed": has_express,
+        "detail": "express found" if has_express else "express dependency missing",
+    })
+    checks.append({
+        "name": "Node API scripts exist",
+        "passed": has_scripts,
+        "detail": "start/test scripts found" if has_scripts else "start/test scripts missing",
+    })
+
+    app_exists = (repo_root / "src" / "app.js").is_file()
+    server_exists = (repo_root / "src" / "server.js").is_file()
+    checks.append({
+        "name": "src/app.js exists",
+        "passed": app_exists,
+        "detail": "src/app.js found" if app_exists else "src/app.js not found",
+    })
+    checks.append({
+        "name": "src/server.js exists",
+        "passed": server_exists,
+        "detail": "src/server.js found" if server_exists else "src/server.js not found",
+    })
+
+    tests_exist = any((repo_root / "tests").glob("*.test.js")) if (repo_root / "tests").is_dir() else False
+    checks.append({
+        "name": "Node test file exists",
+        "passed": tests_exist,
+        "detail": "tests/*.test.js found" if tests_exist else "no tests/*.test.js found",
+    })
+
+    return checks
+
+
+def _postflight_fastapi_api(repo_root: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+
+    pyproject = repo_root / "pyproject.toml"
+    pyproject_exists = pyproject.is_file()
+    checks.append({
+        "name": "pyproject.toml exists",
+        "passed": pyproject_exists,
+        "detail": str(pyproject) if pyproject_exists else "pyproject.toml not found",
+    })
+
+    has_fastapi = False
+    has_uvicorn = False
+    if pyproject_exists:
+        try:
+            content = pyproject.read_text(encoding="utf-8").lower()
+            has_fastapi = "fastapi" in content
+            has_uvicorn = "uvicorn" in content
+        except OSError:
+            pass
+    checks.append({
+        "name": "FastAPI dependency exists",
+        "passed": has_fastapi,
+        "detail": "fastapi found" if has_fastapi else "fastapi dependency missing",
+    })
+    checks.append({
+        "name": "Uvicorn dependency exists",
+        "passed": has_uvicorn,
+        "detail": "uvicorn found" if has_uvicorn else "uvicorn dependency missing",
+    })
+
+    expected_files = [
+        "src/signalos_product_fastapi/__init__.py",
+        "src/signalos_product_fastapi/app.py",
+        "src/signalos_product_fastapi/main.py",
+        "src/signalos_product_fastapi/routes/__init__.py",
+        "src/signalos_product_fastapi/models/__init__.py",
+        "tests/test_health.py",
+        ".signalos/profile.json",
+    ]
+    for rel in expected_files:
+        path = repo_root / rel
+        checks.append({
+            "name": f"{rel} exists",
+            "passed": path.is_file(),
+            "detail": f"{rel} found" if path.is_file() else f"{rel} not found",
+        })
+
+    return checks
+
+
+def _postflight_go_api(repo_root: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    expected_files = [
+        "go.mod",
+        "cmd/server/main.go",
+        "internal/app/app.go",
+        "internal/app/app_test.go",
+        "tests/acceptance-map.md",
+        ".signalos/profile.json",
+    ]
+    for rel in expected_files:
+        path = repo_root / rel
+        checks.append({
+            "name": f"{rel} exists",
+            "passed": path.is_file(),
+            "detail": f"{rel} found" if path.is_file() else f"{rel} not found",
+        })
+
+    go_mod = repo_root / "go.mod"
+    has_module = False
+    if go_mod.is_file():
+        try:
+            has_module = go_mod.read_text(encoding="utf-8").startswith("module ")
+        except OSError:
+            pass
+    checks.append({
+        "name": "Go module exists",
+        "passed": has_module,
+        "detail": "module declaration found" if has_module else "module declaration missing",
+    })
+    return checks
+
+
+def _postflight_dotnet_minimal_api(repo_root: Path) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    expected_files = [
+        "SignalOSProduct.Api/SignalOSProduct.Api.csproj",
+        "SignalOSProduct.Api/Program.cs",
+        "SignalOSProduct.Api/ProductRoutes.cs",
+        "tests/acceptance-map.md",
+        ".signalos/profile.json",
+    ]
+    for rel in expected_files:
+        path = repo_root / rel
+        checks.append({
+            "name": f"{rel} exists",
+            "passed": path.is_file(),
+            "detail": f"{rel} found" if path.is_file() else f"{rel} not found",
+        })
+
+    csproj = repo_root / "SignalOSProduct.Api" / "SignalOSProduct.Api.csproj"
+    has_web_sdk = False
+    has_net_target = False
+    if csproj.is_file():
+        try:
+            content = csproj.read_text(encoding="utf-8")
+            has_web_sdk = "Microsoft.NET.Sdk.Web" in content
+            has_net_target = bool(
+                re.search(r"<TargetFramework>net\d+\.0</TargetFramework>", content)
+            )
+        except OSError:
+            pass
+    checks.append({
+        "name": ".NET Web SDK project exists",
+        "passed": has_web_sdk,
+        "detail": "Microsoft.NET.Sdk.Web found" if has_web_sdk else "Web SDK not found",
+    })
+    checks.append({
+        "name": ".NET target framework exists",
+        "passed": has_net_target,
+        "detail": ".NET target framework found" if has_net_target else ".NET target framework not found",
+    })
     return checks
 
 
@@ -412,10 +829,54 @@ def select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
         for pref in intent.get("stack_preferences", [])
         if str(pref).strip()
     }
+    if stack_preferences & {"flutter", "flutter-app", "dart"}:
+        return "flutter-app"
+    if stack_preferences & {
+        "react-native", "react native", "expo", "expo-react-native",
+    }:
+        return "expo-react-native"
     if stack_preferences & {"react", "vite", "react-vite", "frontend", "web-ui"}:
         return "react-vite"
-    if stack_preferences & {"python", "library", "cli", "api", "generic"}:
+    if stack_preferences & {"angular", "ng"}:
+        return "angular"
+    if stack_preferences & {"next", "nextjs", "next.js", "nextjs-app"}:
+        return "nextjs-app"
+    if stack_preferences & {"vue", "vuejs", "vue.js", "vue-vite"}:
+        return "vue-vite"
+    if stack_preferences & {"fastapi", "fastapi-api"}:
+        return "fastapi-api"
+    if stack_preferences & {"django", "django-api"}:
+        return "django-api"
+    if stack_preferences & {"flask", "flask-api"}:
+        return "flask-api"
+    if stack_preferences & {"go", "go-api", "golang"}:
+        return "go-api"
+    if stack_preferences & {"nestjs", "nestjs-api", "nest", "nest.js"}:
+        return "nestjs-api"
+    if stack_preferences & {"spring", "spring-boot", "springboot", "spring-boot-api"}:
+        return "spring-boot-api"
+    if stack_preferences & {"java", "java-api"}:
+        return "java-api"
+    if stack_preferences & {"rust", "rust-api"}:
+        return "rust-api"
+    if stack_preferences & {
+        "dotnet-minimal-api", ".net", "dotnet", "aspnet", "asp.net",
+        "aspnetcore", "asp.net-core", "minimal-api", "csharp", "c#",
+    }:
+        return "dotnet-minimal-api"
+    if stack_preferences & {"node", "node-api", "express", "backend", "api", "rest-api"}:
+        return "node-api"
+    if stack_preferences & {"python", "library", "cli", "generic"}:
+        api_surfaces = {
+            str(surface).lower()
+            for surface in intent.get("api_surfaces", [])
+            if str(surface).strip()
+        }
+        if api_surfaces & {"rest-api", "webhook", "graphql"}:
+            return "fastapi-api"
         return "generic"
+    if stack_preferences & {"svelte", "blazor", "mobile", "mobile-app", "android", "ios"}:
+        return "agent-selected"
 
     surfaces = {
         str(surface).lower()
@@ -436,6 +897,14 @@ def select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
     }
     if product_type in ui_product_types:
         return "react-vite"
+
+    api_surfaces = {
+        str(surface).lower()
+        for surface in intent.get("api_surfaces", [])
+        if str(surface).strip()
+    }
+    if api_surfaces & {"rest-api", "webhook", "graphql"}:
+        return "node-api"
 
     return "generic"
 

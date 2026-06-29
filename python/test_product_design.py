@@ -121,6 +121,19 @@ class TestUILibrarySelection:
         design = build_design_system(intent, "react-vite")
         assert design["ui_library"]["name"] == "@mantine/core"
 
+    def test_node_api_gets_non_ui_design_stub(self):
+        design = build_design_system(_financial_dashboard_intent(), "node-api")
+        assert design["ui_library"]["name"] == ""
+        assert get_design_dependencies(design) == {}
+
+    def test_agent_selected_does_not_emit_react_dependencies(self):
+        intent = _financial_dashboard_intent()
+        intent["stack_preferences"] = ["angular"]
+        design = build_design_system(intent, "agent-selected")
+        assert design["ui_library"]["name"] == ""
+        assert "Agent-selected" in design["ui_library"]["reason"]
+        assert get_design_dependencies(design) == {}
+
 
 # ---------------------------------------------------------------------------
 # State management

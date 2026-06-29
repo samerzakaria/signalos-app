@@ -6,6 +6,7 @@ import { loadEnforcement, updateCostDisplay } from '../app-v2.js';
 import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/signalosPrompt.ts';
 import { scanChatResponse, summariseRedactions } from '../../services/chatResponseGuard.ts';
 import { tryBegin as waveEngineTryBegin, translateExternal as waveEngineTranslateExternal } from '../../services/waveEngineClient.ts';
+import { isGovernedCommand, splitGovernedCommand } from '../../services/governedShell.ts';
 
 function nowId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
@@ -29,6 +30,29 @@ function isDeliveryIntent(text) {
   if (!t || t.startsWith('/')) return false;
   if (_PURE_QUESTION.test(t) || t.endsWith('?')) return false;
   return (_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t);
+}
+
+function parseGovernedChatCommand(value) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  const lower = normalized.toLowerCase();
+  if (lower === 'signalos status' || lower === '/signal-status') {
+    return { command: 'signal-status', args: [], timeoutMs: 60000 };
+  }
+  if (lower === 'signalos check' || lower === '/signal-release-readiness') {
+    return { command: 'signal-release-readiness', args: [], timeoutMs: 120000 };
+  }
+  if (lower === 'signalos gates' || lower === '/state:gates') {
+    return { command: 'state:gates', args: [], timeoutMs: 60000 };
+  }
+  if (normalized.startsWith('/')) {
+    const tokens = splitGovernedCommand(normalized.replace(/^\//, ''));
+    return { command: tokens[0] || '', args: tokens.slice(1), timeoutMs: 60000 };
+  }
+  if (lower.startsWith('signalos ')) {
+    const tokens = splitGovernedCommand(normalized).slice(1);
+    return { command: tokens[0] || '', args: tokens.slice(1), timeoutMs: 60000 };
+  }
+  return { command: '', args: [], timeoutMs: 60000 };
 }
 
 // Milestone 2-a: keep the originating user prompt for each in-flight LLM
@@ -84,14 +108,12 @@ async function sendMsg() {
   // Auto-switch sidebar to the relevant tab based on message keywords.
   autoSwitchSidebarForIntent(val);
 
-  // Slash commands route to the Python sidecar (signalos CLI), not to the AI provider.
-  // Anything starting with "/signal-" hits dispatch_cli in signalos_ipc_server.py.
-  if (val.startsWith('/signal-') || val.startsWith('/')) {
+  // Governed commands route to the Python sidecar, not to the AI provider.
+  if (isGovernedCommand(val)) {
     try {
-      const tokens = val.replace(/^\//, '').split(/\s+/).filter(Boolean);
-      const command = tokens[0];
-      const args = tokens.slice(1);
-      const output = await ipc.signal.runAndWait(command, args, 60000);
+      const { command, args, timeoutMs } = parseGovernedChatCommand(val);
+      if (!command) throw new Error(`Unsupported command: ${val}`);
+      const output = await ipc.signal.runAndWait(command, args, timeoutMs);
       addAIBubble(typeof output === 'string' ? output : JSON.stringify(output ?? '(no output)'));
 
       // Milestone 2-b / AMD-CORE-107 — freeze-state consolidation.

@@ -1,0 +1,17 @@
+---
+description: Use signalos validate-guidance-obligations to prove product agents loaded required SignalOS guidance for the touched paths and stack.
+globs: ["**/*", ".signalos/GUIDANCE.md", "core/tool-adapters/**"]
+alwaysApply: false
+---
+
+# validate-guidance-obligations wiring rule
+
+Run `signalos validate-guidance-obligations` when product-agent work is created,
+reviewed, or handed off.
+
+- Missing required guidance is a blocker.
+- The validator must use the same stack/action context as the agent packet.
+- `--loaded` should point at the guidance material actually presented to the
+  agent whenever that evidence exists.
+- Do not mark guidance compliance from catalog presence alone; validate the
+  loaded packet against touched paths.

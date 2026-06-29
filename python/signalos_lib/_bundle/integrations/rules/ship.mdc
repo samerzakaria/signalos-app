@@ -1,0 +1,17 @@
+---
+description: Use signalos ship for the executable Ship stage.
+globs: [".signalos/evidence/**/ship.json", ".signalos/AUDIT_TRAIL.jsonl", "core/governance/QUALITY_CHECK.md"]
+alwaysApply: false
+---
+
+# ship wiring rule
+
+Use `signalos ship <wave>` before stating that a Wave has shipped.
+
+- Use `--dry-run --json` first when validating readiness without writes.
+- Do not replace `signalos ship` with raw `git tag`, raw publish, raw deploy,
+  or narrative claims.
+- A live run may create a local tag and append the audit row; it never pushes
+  the tag or deploys.
+- Run `release-readiness` and `release-proof` before live shipment when a
+  package or installer artifact is part of the handoff.

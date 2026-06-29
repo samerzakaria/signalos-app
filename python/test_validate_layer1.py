@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,7 +77,7 @@ class ValidateLayer1Tests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "signalos.validate.v1")
         self.assertEqual(payload["group"], "layer1")
         self.assertEqual(payload["status"], "PASS")
-        self.assertEqual(payload["summary"]["total"], 12)
+        self.assertEqual(payload["summary"]["total"], 14)
         self.assertEqual(payload["summary"]["failed"], 0)
         security = next(
             result
@@ -96,6 +97,8 @@ class ValidateLayer1Tests(unittest.TestCase):
                 "layer1-unknowns",
                 "layer1-profile",
                 "layer1-path-safety",
+                "detect-bypass",
+                "validate-guidance-obligations",
                 "agent-prompt-contracts",
                 "constitution-integrity",
                 "security-posture-guard",
@@ -197,6 +200,128 @@ class ValidateLayer1Tests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(code, 0, payload)
         self.assertEqual(payload["group"], "layer1")
+
+    def test_top_level_detect_bypass_reports_agent_scope_violation(self) -> None:
+        from signalos_lib.product.agent_packets import build_agent_packet, write_agent_packet
+
+        _make_layer1_repo(self.tmp)
+        packet = build_agent_packet(
+            repo_root=self.tmp,
+            intent={
+                "product_name": "Task App",
+                "product_type": "task-management",
+                "entities": ["task"],
+                "primary_workflows": ["create task"],
+            },
+            blueprint={"id": "task-management"},
+            acceptance_matrix={"criteria": []},
+            profile="generic",
+            wave="1",
+            tasks=[{"id": "T1", "title": "Implement task creation"}],
+            allowed_paths=["src/**", "tests/**"],
+        )
+        run_dir = write_agent_packet(packet, self.tmp)
+        _write(
+            run_dir / "RESULT.json",
+            json.dumps({
+                "run_id": packet["run_id"],
+                "status": "completed",
+                "files_written": [".signalos/hack.json"],
+                "actions_taken": [],
+                "validation_results": {},
+            }) + "\n",
+        )
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            code = cli.main([
+                "signalos",
+                "detect-bypass",
+                "--repo-root",
+                str(self.tmp),
+                "--json",
+            ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 1, payload)
+        self.assertEqual(payload["status"], "FAIL")
+        self.assertTrue(any("agent result" in item for item in payload["violations"]))
+
+    def test_top_level_guidance_obligations_writes_evidence(self) -> None:
+        from signalos_lib.product.generation import prepare_generation
+
+        _make_layer1_repo(self.tmp)
+        prepare_generation(
+            repo_root=self.tmp,
+            intent={
+                "product_name": "Task App",
+                "product_type": "task-management",
+                "entities": ["task"],
+                "primary_workflows": ["create task"],
+                "ux_surfaces": ["task list"],
+            },
+            blueprint={
+                "id": "task-management",
+                "entities": [{"name": "Task", "fields": []}],
+                "workflows": [{"name": "create task"}],
+                "ui": ["task-list"],
+            },
+            profile="generic",
+            acceptance_matrix={"criteria": []},
+        )
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            code = cli.main([
+                "signalos",
+                "validate-guidance-obligations",
+                "--repo-root",
+                str(self.tmp),
+                "--json",
+            ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["status"], "PASS")
+        self.assertTrue((self.tmp / payload["evidence_path"]).is_file())
+
+    def test_top_level_guidance_obligations_resolves_staged_paths(self) -> None:
+        _make_layer1_repo(self.tmp)
+        subprocess.run(["git", "init"], cwd=self.tmp, check=True, capture_output=True, text=True)
+        _write(self.tmp / "src" / "components" / "TaskList.tsx", "export function TaskList() { return null; }\n")
+        subprocess.run(["git", "add", "src/components/TaskList.tsx"], cwd=self.tmp, check=True, capture_output=True, text=True)
+        loaded = self.tmp / ".signalos" / "loaded-guidance.txt"
+        _write(
+            loaded,
+            "\n".join([
+                "test-driven-development",
+                "test-generation",
+                "verification-before-completion",
+                "design",
+                "e2e-testing",
+            ]) + "\n",
+        )
+        stdout = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout):
+            code = cli.main([
+                "signalos",
+                "validate-guidance-obligations",
+                "--repo-root",
+                str(self.tmp),
+                "--staged",
+                "--loaded",
+                str(loaded),
+                "--stack",
+                "react-vite",
+                "--json",
+            ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["mode"], "staged")
+        self.assertIn("src/components/TaskList.tsx", payload["touched_paths"])
+        self.assertTrue(payload["resolved_obligations"]["resolved"])
 
 
 if __name__ == "__main__":

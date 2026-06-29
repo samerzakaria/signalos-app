@@ -296,7 +296,7 @@ export async function retryTask(bubbleId: string, taskId: string): Promise<void>
  *
  * Calls /signal-rollback in the sidecar, which:
  *   1. Verifies the captured pre-wave SHA is still reachable
- *   2. Runs `git reset --hard <sha>` (wipes tracked-file changes)
+ *   2. Restores tracked files to the captured checkpoint
  *   3. Deletes any of the wave-written files that are now untracked
  *   4. Appends a wave_rolled_back entry to AUDIT_TRAIL.jsonl
  *
@@ -331,7 +331,7 @@ export async function rollbackWave(bubbleId: string): Promise<void> {
     ? window.confirm(
         `Roll back this wave?\n\n` +
         `This will:\n` +
-        `  • git reset --hard ${wave}\n` +
+        `  • restore tracked files to checkpoint ${wave}\n` +
         `  • delete ${fileCount} file(s) the wave wrote\n\n` +
         `Unrelated changes you made manually after approval may also be lost.\n` +
         `This cannot be undone.`,

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "agent-selected",
+  "name": "Agent-selected Technology",
+  "description": "Technology-neutral profile for user or agent selected stacks that do not yet have a native greenfield shell.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": "The agent-selected profile delegates CI shape to the selected product technology."
+  },
+  "commands": {
+    "install": null,
+    "build": null,
+    "test": null,
+    "lint": null,
+    "preview": null
+  },
+  "preview": {
+    "mode": "none",
+    "command": null,
+    "url": null,
+    "requires_install": false,
+    "disabled_reason": "Preview is discovered from the generated repository after the agent selects a technology."
+  },
+  "validator_groups": ["layer1", "governance", "artifacts"]
+}

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "node-api",
+  "name": "Node.js API",
+  "description": "Backend/API product profile for Node.js services with npm build, test, and preview commands.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": "Node API CI templates are not emitted by init yet; runtime validation is owned by the product adapter."
+  },
+  "commands": {
+    "install": {
+      "name": "npm install",
+      "argv": ["npm", "install"],
+      "required": true
+    },
+    "build": {
+      "name": "npm run build",
+      "argv": ["npm", "run", "build"],
+      "required": true
+    },
+    "test": {
+      "name": "npm test",
+      "argv": ["npm", "test"],
+      "required": true
+    },
+    "lint": null,
+    "preview": {
+      "name": "npm start",
+      "argv": ["npm", "start"],
+      "required": true
+    }
+  },
+  "preview": {
+    "mode": "npm-script",
+    "command": "preview",
+    "url": "http://127.0.0.1:3000/health",
+    "requires_install": true,
+    "disabled_reason": null
+  },
+  "validator_groups": ["layer1", "governance", "artifacts", "node"]
+}

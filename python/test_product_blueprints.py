@@ -16,6 +16,7 @@ from signalos_lib.product.blueprints.registry import (
     match_blueprint,
     validate_blueprint,
 )
+from signalos_lib.product.stacks import list_adapters
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +292,9 @@ class TestNoCrossContamination:
 class TestProfileSupport:
     """Both blueprints must list only valid profile_support values."""
 
-    _VALID = {"react-vite", "generic", "existing-repo"}
+    @property
+    def _VALID(self) -> set[str]:
+        return {adapter["id"] for adapter in list_adapters()}
 
     def test_task_management_profiles_valid(self):
         bp = load_blueprint("task-management")

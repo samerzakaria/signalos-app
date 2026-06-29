@@ -1,0 +1,20 @@
+---
+description: Use signalos feature-gate before accepting mid-wave scope changes.
+globs: [".signalos/wave.json", ".signalos/waves/**", ".signalos/PRD_TRACEABILITY.md", ".signalos/backlog/**"]
+alwaysApply: false
+---
+
+# feature-gate wiring rule
+
+Use `signalos feature-gate` before building a request that may be outside the
+active wave's approved scope.
+
+- The command requires `.signalos/wave.json` with `status: ACTIVE`.
+- Run it against the literal user request or ticket title.
+- If the result is `NEEDS_ANSWERS`, answer Q1 and Q2 explicitly:
+  Q1 asks whether the work is required for the active Belief to be testable;
+  Q2 asks whether safety, security, or audit risk cannot wait.
+- If the verdict is `DEFER`, add a `DEFER: W<NN>+` marker, a PRD DEFER row, or
+  a wave-backlog item instead of silently building the new scope.
+- Do not use a product stack choice, agent preference, or framework adapter as
+  scope authority. The active wave artifacts own scope.

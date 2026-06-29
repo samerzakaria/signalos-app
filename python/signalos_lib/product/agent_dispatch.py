@@ -122,6 +122,31 @@ def _build_agent_prompt(
             )
         lines.append("")
 
+    lesson_context = packet.get("lesson_context", {})
+    selected_lessons = (
+        lesson_context.get("selected_lessons", [])
+        if isinstance(lesson_context, dict)
+        else []
+    )
+    if selected_lessons:
+        lines.append("## Product Lessons")
+        lines.append("")
+        lines.append(
+            "Account for every required lesson in RESULT.json using "
+            "applied_lessons plus lesson_evidence, or not_applicable_lessons "
+            "with a concrete reason."
+        )
+        lines.append("")
+        for lesson in selected_lessons:
+            lines.append(
+                f"- `{lesson.get('id', '')}` "
+                f"[{lesson.get('enforcement', '')}, {lesson.get('lesson_kind', '')}]: "
+                f"{lesson.get('summary', '')}"
+            )
+            if lesson.get("required_evidence"):
+                lines.append(f"  Evidence: {lesson['required_evidence']}")
+        lines.append("")
+
     # Product context
     gen = packet.get("generation", packet)
     product = gen.get("product", "")
@@ -374,6 +399,8 @@ def dispatch_local_build_agent(
         files = _render_react_vite_files(gen)
     elif profile == "generic":
         files = _render_generic_python_files(gen)
+    elif profile == "fastapi-api":
+        files = _render_fastapi_files(gen)
     else:
         result["status"] = "partial"
         result["errors"].append(
@@ -564,6 +591,217 @@ def _render_generic_python_files(gen: dict[str, Any]) -> dict[str, str]:
             files[path] = _render_python_entity(spec)
 
     return files
+
+
+def _render_fastapi_files(gen: dict[str, Any]) -> dict[str, str]:
+    file_specs = gen.get("file_specs", [])
+    files: dict[str, str] = {}
+    route_modules: list[tuple[str, str]] = []
+    entity_specs = [
+        spec
+        for spec in file_specs
+        if spec.get("entity") and str(spec.get("path", "")).replace("\\", "/").endswith(".py")
+    ]
+
+    for spec in file_specs:
+        path = str(spec.get("path", "")).replace("\\", "/")
+        if not path:
+            continue
+        if path.endswith("__init__.py"):
+            files[path] = ""
+        elif path.endswith("/store.py"):
+            files[path] = _render_fastapi_store()
+        elif path.endswith("/app.py"):
+            # app.py is rendered after route modules are known below.
+            continue
+        elif "/models/" in path and path.endswith(".py"):
+            files[path] = _render_fastapi_model(spec)
+        elif "/routes/" in path and path.endswith(".py"):
+            module = Path(path).stem
+            entity = _to_pascal(str(spec.get("entity") or module))
+            route_modules.append((module, _route_prefix(module)))
+            files[path] = _render_fastapi_route(spec)
+        elif path.endswith(".py") and spec.get("kind") == "test":
+            files[path] = _render_fastapi_test(spec, entity_specs)
+        elif path.endswith("/workflows.py"):
+            files[path] = _render_fastapi_workflows()
+
+    for spec in file_specs:
+        path = str(spec.get("path", "")).replace("\\", "/")
+        if path.endswith("/app.py"):
+            files[path] = _render_fastapi_app(route_modules)
+
+    return files
+
+
+def _render_fastapi_store() -> str:
+    return """\
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+from uuid import uuid4
+
+
+class InMemoryStore:
+    def __init__(self, namespace: str) -> None:
+        self.namespace = namespace
+        self._items: dict[str, dict[str, Any]] = {}
+
+    def list(self) -> list[dict[str, Any]]:
+        return [deepcopy(item) for item in self._items.values()]
+
+    def create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        item = {"id": str(uuid4()), **payload}
+        self._items[item["id"]] = item
+        return deepcopy(item)
+
+    def get(self, item_id: str) -> dict[str, Any] | None:
+        item = self._items.get(item_id)
+        return deepcopy(item) if item is not None else None
+"""
+
+
+def _render_fastapi_model(spec: dict[str, Any]) -> str:
+    entity = _to_pascal(str(spec.get("entity") or Path(str(spec.get("path", "record.py"))).stem))
+    fields = [field for field in _python_fields_from_spec(spec) if field != "id"]
+    create_fields = "\n".join(f"    {field}: str | None = None" for field in fields) or "    name: str | None = None"
+    record_fields = "\n".join(f"    {field}: str | None = None" for field in fields) or "    name: str | None = None"
+    return f"""\
+from __future__ import annotations
+
+from pydantic import BaseModel
+
+
+class {entity}Create(BaseModel):
+{create_fields}
+
+
+class {entity}Record({entity}Create):
+    id: str
+{record_fields}
+"""
+
+
+def _render_fastapi_route(spec: dict[str, Any]) -> str:
+    entity = _to_pascal(str(spec.get("entity") or Path(str(spec.get("path", "record.py"))).stem))
+    module = _to_snake(entity)
+    return f"""\
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
+
+from signalos_product_fastapi.models.{module} import {entity}Create, {entity}Record
+from signalos_product_fastapi.store import InMemoryStore
+
+
+router = APIRouter()
+_store = InMemoryStore({json.dumps(_route_prefix(module))})
+
+
+@router.get("/", response_model=list[{entity}Record])
+def list_{module}() -> list[dict]:
+    return _store.list()
+
+
+@router.post("/", response_model={entity}Record, status_code=201)
+def create_{module}(payload: {entity}Create) -> dict:
+    return _store.create(payload.model_dump(exclude_none=True))
+
+
+@router.get("/{{item_id}}", response_model={entity}Record)
+def get_{module}(item_id: str) -> dict:
+    item = _store.get(item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="{entity} not found")
+    return item
+"""
+
+
+def _render_fastapi_app(route_modules: list[tuple[str, str]]) -> str:
+    imports: list[str] = []
+    includes: list[str] = []
+    for module, prefix in sorted(dict(route_modules).items()):
+        alias = f"{module}_router"
+        imports.append(f"from signalos_product_fastapi.routes.{module} import router as {alias}")
+        includes.append(f"app.include_router({alias}, prefix='/api/{prefix}', tags=['{prefix}'])")
+
+    imports_text = "\n".join(imports)
+    includes_text = "\n".join(includes)
+    if includes_text:
+        includes_text += "\n"
+    return f"""\
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+{imports_text}
+
+app = FastAPI(title="SignalOS FastAPI Product")
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {{"status": "ok"}}
+
+
+{includes_text}"""
+
+
+def _render_fastapi_test(spec: dict[str, Any], entity_specs: list[dict[str, Any]]) -> str:
+    entity = _to_pascal(str(spec.get("entity") or "ProductResource"))
+    module = _to_snake(entity)
+    fields = [field for field in _python_fields_from_spec(spec) if field != "id"]
+    payload = {field: _sample_python_value(field) for field in (fields or ["name"])}
+    route = _route_prefix(module)
+    if spec.get("entity"):
+        return f"""\
+from fastapi.testclient import TestClient
+
+from signalos_product_fastapi.app import app
+
+
+def test_{module}_api_create_and_list() -> None:
+    client = TestClient(app)
+    create_response = client.post("/api/{route}/", json={json.dumps(payload, sort_keys=True)})
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["id"]
+
+    list_response = client.get("/api/{route}/")
+    assert list_response.status_code == 200
+    assert any(item["id"] == created["id"] for item in list_response.json())
+"""
+    route_assert = ""
+    for candidate in entity_specs:
+        candidate_entity = _to_snake(str(candidate.get("entity") or ""))
+        if candidate_entity:
+            route_assert = f'\n    assert client.get("/api/{_route_prefix(candidate_entity)}/").status_code == 200'
+            break
+    return f"""\
+from fastapi.testclient import TestClient
+
+from signalos_product_fastapi.app import app
+
+
+def test_app_health_and_routes() -> None:
+    client = TestClient(app)
+    assert client.get("/health").json() == {{"status": "ok"}}{route_assert}
+"""
+
+
+def _render_fastapi_workflows() -> str:
+    return """\
+from __future__ import annotations
+
+
+def record_workflow_event(name: str, payload: dict) -> dict:
+    return {"workflow": name, "payload": payload, "status": "recorded"}
+"""
+
+
+def _route_prefix(module: str) -> str:
+    return module if module.endswith("s") else f"{module}s"
 
 
 def _render_python_entity(spec: dict[str, Any]) -> str:

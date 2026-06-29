@@ -1,0 +1,21 @@
+---
+description: Use release-proof before claiming an artifact is releasable.
+globs: [".signalos/evidence/**/release-proof.json", "dist/**", "build/**", "release/**"]
+alwaysApply: false
+---
+
+# release-proof wiring rule
+
+Use `signalos release-proof validate` before a generated product is described as
+ready for installation, packaging, or publication.
+
+- Pass `--artifact <path>` for the exact file being handed off.
+- Add `--require-signature` when release policy requires signed artifacts.
+- Add `--require-installer-proof` when a package or installer flow must be
+  proven.
+- Add `--require-clean-machine` when the release claim depends on a fresh
+  install environment.
+- Add `--require-readiness` when release proof must be tied to a passing
+  `release-readiness.json` gate.
+- Do not infer that a release is signed, installable, or clean-machine verified
+  from build success alone.

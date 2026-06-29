@@ -78,5 +78,5 @@
   "security": ["auth-required", "role-based-access", "tenant-isolation", "audit-trail"],
   "quality_profile": "standard",
   "default_deferrals": ["real-time-sync", "file-attachments", "notifications"],
-  "profile_support": ["react-vite", "generic"]
+  "profile_support": ["react-vite", "node-api", "fastapi-api", "go-api", "generic"]
 }

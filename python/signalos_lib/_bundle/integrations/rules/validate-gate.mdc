@@ -1,0 +1,16 @@
+---
+description: Use signalos validate-gate to prove a gate artifact is signed, hash-valid, and audit-linked.
+globs: ["core/governance/**", "core/strategy/**", "core/execution/**", ".signalos/AUDIT_TRAIL.jsonl"]
+alwaysApply: false
+---
+
+# validate-gate wiring rule
+
+Use `signalos validate-gate --gate G<n> [--wave W<n>]` before treating a gate
+artifact as passed.
+
+- A missing artifact is a HALT failure.
+- A missing or draft signature is a HALT failure.
+- A signature hash mismatch is a HALT failure.
+- A missing audit row is a HALT failure.
+- If `--wave` is provided, the audit row must carry the same normalized wave id.

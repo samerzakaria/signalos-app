@@ -142,6 +142,8 @@ None.
 
 The app-side installed-user journey is implemented in this repository. The items below are external proof gates or live validation gates. They are not acceptable to fake with placeholders and cannot be truthfully marked complete without the real installer environment, signing credentials, release assets, or live provider accounts.
 
+Note: this statement is scoped to the installed-app user journey reviewed on 2026-05-14. The broader SignalOS.NET concept parity audit from 2026-06-29 tracks additional operating-system parity gaps in `docs/SIGNALOS_NET_CONCEPT_PARITY_AUDIT.md`.
+
 ## External Release Proof Gates
 
 - Physical or VM clean-machine Windows UI validation from only the generated installer. The installer-only runtime path is proven locally; manual UI clicking still needs a separate clean machine.

@@ -1,0 +1,19 @@
+---
+description: Use integrity-witness for governance artifact drift checks.
+globs: [".signalos/INTEGRITY_WITNESS.yaml", "core/execution/hooks/**", "core/governance/**", ".signalos/*.md"]
+alwaysApply: false
+---
+
+# integrity-witness wiring rule
+
+Use `signalos integrity-witness` when governance artifacts or execution hooks
+need a human-approved drift witness.
+
+- Do not use a bot, agent, assistant, or automation identity as the approving
+  actor for `--init` or `--refresh`.
+- Refresh only after a human approves the changed governance artifacts.
+- Treat exit code `1` as integrity drift that must be reviewed.
+- Keep `signalos verify` available for plugin registry verification; the
+  governance witness command is `signalos integrity-witness`.
+- Do not ignore new watched files. Add them to the witness through a human
+  approved refresh.

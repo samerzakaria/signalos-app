@@ -268,9 +268,12 @@ def build_design_system(
     UI library, design tokens, state management, data layer, form handling,
     component conventions, and consistency rules.
     """
-    # Generic / non-UI profiles get a minimal stub
-    if profile == "generic":
-        return _empty_design()
+    # Non-UI and agent-selected profiles must not receive React-specific
+    # dependency recommendations.
+    if profile in {"generic", "node-api", "fastapi-api", "go-api", "dotnet-minimal-api"}:
+        return _empty_design(f"{profile} profile")
+    if profile == "agent-selected":
+        return _portable_design(intent, profile)
 
     # Try LLM architect agent first
     if is_llm_available():
@@ -442,10 +445,60 @@ def _derive_color_scheme(intent: dict) -> str:
 # Empty design (generic / non-UI profiles)
 # ---------------------------------------------------------------------------
 
-def _empty_design() -> dict:
+def _portable_design(intent: dict, profile: str) -> dict:
+    """Technology-neutral design brief for agent-selected stacks."""
     return {
         "schema_version": "signalos.design_system.v1",
-        "ui_library": {"name": "", "version": None, "reason": "Non-UI profile"},
+        "ui_library": {
+            "name": "",
+            "version": None,
+            "reason": (
+                "Agent-selected profile: design principles apply, but package "
+                "choices belong to the selected product technology."
+            ),
+        },
+        "design_tokens": {
+            "color_scheme": "light",
+            "primary_color": _derive_color_scheme(intent),
+            "border_radius": "8px",
+            "font_family": "Inter, sans-serif",
+            "spacing_unit": 8,
+        },
+        "state_management": {
+            "name": "",
+            "version": None,
+            "reason": "State library depends on the selected product technology.",
+        },
+        "data_layer": {
+            "name": "",
+            "version": None,
+            "reason": "Data layer depends on the selected product technology.",
+        },
+        "form_handling": {
+            "name": "",
+            "version": None,
+            "reason": "Form handling depends on the selected product technology.",
+        },
+        "additional_deps": {},
+        "component_conventions": {
+            "file_structure": "adapter-selected",
+            "naming": "follow selected stack conventions",
+            "test_co_location": False,
+            "shared_ui_path": "",
+            "theme_path": "",
+        },
+        "consistency_rules": [
+            "Use the capability profile as the source of truth for framework choices",
+            "Keep design tokens portable across the selected framework",
+            "Do not add React-specific dependencies unless React is selected",
+        ],
+    }
+
+
+def _empty_design(reason: str = "Non-UI profile") -> dict:
+    return {
+        "schema_version": "signalos.design_system.v1",
+        "ui_library": {"name": "", "version": None, "reason": reason},
         "design_tokens": {
             "color_scheme": "light",
             "primary_color": "#3b82f6",
@@ -453,9 +506,9 @@ def _empty_design() -> dict:
             "font_family": "Inter, sans-serif",
             "spacing_unit": 8,
         },
-        "state_management": {"name": "", "version": None, "reason": "Non-UI profile"},
-        "data_layer": {"name": "", "version": None, "reason": "Non-UI profile"},
-        "form_handling": {"name": "", "version": None, "reason": "Non-UI profile"},
+        "state_management": {"name": "", "version": None, "reason": reason},
+        "data_layer": {"name": "", "version": None, "reason": reason},
+        "form_handling": {"name": "", "version": None, "reason": reason},
         "additional_deps": {},
         "component_conventions": {
             "file_structure": "feature-based",

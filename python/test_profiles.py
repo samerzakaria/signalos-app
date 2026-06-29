@@ -22,8 +22,17 @@ from signalos_lib.profiles.loader import PROFILE_SCHEMA_VERSION  # noqa: E402
 
 class ProfileLoaderTests(unittest.TestCase):
     def test_lists_builtin_profiles(self) -> None:
-        self.assertEqual(list_profile_ids(), ["generic", "react-vite"])
-        self.assertEqual([profile.id for profile in list_profiles()], ["generic", "react-vite"])
+        expected = [
+            "agent-selected",
+            "dotnet-minimal-api",
+            "fastapi-api",
+            "generic",
+            "go-api",
+            "node-api",
+            "react-vite",
+        ]
+        self.assertEqual(list_profile_ids(), expected)
+        self.assertEqual([profile.id for profile in list_profiles()], expected)
 
     def test_loads_generic_profile_with_disabled_ci_and_preview(self) -> None:
         profile = load_profile("generic")
@@ -53,6 +62,82 @@ class ProfileLoaderTests(unittest.TestCase):
         self.assertEqual(profile.preview.mode, "npm-script")
         self.assertEqual(profile.preview.command, "preview")
         self.assertTrue(profile.preview.requires_install)
+
+    def test_loads_node_api_profile_with_commands(self) -> None:
+        profile = load_profile("node-api")
+
+        self.assertEqual(profile.id, "node-api")
+        self.assertFalse(profile.ci.enabled)
+        self.assertEqual(profile.command("install").argv, ("npm", "install"))  # type: ignore[union-attr]
+        self.assertEqual(profile.command("build").argv, ("npm", "run", "build"))  # type: ignore[union-attr]
+        self.assertEqual(profile.command("test").argv, ("npm", "test"))  # type: ignore[union-attr]
+        self.assertEqual(profile.preview.command, "preview")
+        self.assertTrue(profile.preview.requires_install)
+
+    def test_loads_fastapi_api_profile_with_commands(self) -> None:
+        profile = load_profile("fastapi-api")
+
+        self.assertEqual(profile.id, "fastapi-api")
+        self.assertFalse(profile.ci.enabled)
+        self.assertEqual(
+            profile.command("install").argv,
+            ("python", "-m", "pip", "install", "-e", ".[dev]"),
+        )  # type: ignore[union-attr]
+        self.assertEqual(
+            profile.command("test").argv,
+            ("python", "-m", "pytest"),
+        )  # type: ignore[union-attr]
+        self.assertEqual(profile.preview.mode, "command")
+        self.assertEqual(profile.preview.command, "preview")
+        self.assertEqual(profile.preview.url, "http://127.0.0.1:8000/health")
+
+    def test_loads_dotnet_minimal_api_profile_with_commands(self) -> None:
+        profile = load_profile("dotnet-minimal-api")
+
+        self.assertEqual(profile.id, "dotnet-minimal-api")
+        self.assertFalse(profile.ci.enabled)
+        self.assertEqual(
+            profile.command("install").argv,
+            ("dotnet", "restore", "SignalOSProduct.Api/SignalOSProduct.Api.csproj"),
+        )  # type: ignore[union-attr]
+        self.assertEqual(
+            profile.command("build").argv,
+            (
+                "dotnet",
+                "build",
+                "SignalOSProduct.Api/SignalOSProduct.Api.csproj",
+                "--no-restore",
+            ),
+        )  # type: ignore[union-attr]
+        self.assertEqual(profile.preview.mode, "command")
+        self.assertEqual(profile.preview.command, "preview")
+        self.assertEqual(profile.preview.url, "http://127.0.0.1:5050/health")
+
+    def test_loads_go_api_profile_with_commands(self) -> None:
+        profile = load_profile("go-api")
+
+        self.assertEqual(profile.id, "go-api")
+        self.assertFalse(profile.ci.enabled)
+        self.assertEqual(
+            profile.command("build").argv,
+            ("go", "test", "./..."),
+        )  # type: ignore[union-attr]
+        self.assertEqual(
+            profile.command("test").argv,
+            ("go", "test", "./..."),
+        )  # type: ignore[union-attr]
+        self.assertEqual(profile.preview.mode, "command")
+        self.assertEqual(profile.preview.command, "preview")
+        self.assertEqual(profile.preview.url, "http://127.0.0.1:8080/health")
+
+    def test_loads_agent_selected_profile_without_assumed_commands(self) -> None:
+        profile = load_profile("agent-selected")
+
+        self.assertEqual(profile.id, "agent-selected")
+        self.assertFalse(profile.ci.enabled)
+        self.assertEqual(profile.preview.mode, "none")
+        self.assertIsNone(profile.command("install"))
+        self.assertIsNone(profile.command("build"))
 
     def test_missing_profile_raises_specific_error(self) -> None:
         self.assertFalse(profile_exists("missing"))

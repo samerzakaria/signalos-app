@@ -76,18 +76,29 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
     different roles (e.g. G3) by signing each artifact with an authorised role."""
     from .. import artifacts
     audit_log = repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    wave = _current_wave_id(repo_root)
     present = [a for a in artifacts.resolve_gate_artifacts(repo_root, gate)
                if a.path.is_file()]
     if present and all(role in a.required_roles for a in present):
         return sign.sign_gate(repo_root, gate, signer, role, verdict,
-                              conditions, audit_log=audit_log)
+                              conditions, audit_log=audit_log, wave=wave)
     signed = []
     for a in present:
         r = role if role in a.required_roles else a.required_roles[0]
         sign.sign_artifact(a.path, signer, r, gate, verdict, conditions)
-        sign._append_audit(audit_log, signer, r, gate, a.rel_path, a.path, verdict)
+        sign._append_audit(audit_log, signer, r, gate, a.rel_path, a.path, verdict, wave=wave)
         signed.append(a.rel_path)
     return signed
+
+
+def _current_wave_id(repo_root: Path) -> str | None:
+    try:
+        from ..status import get_wave_status
+
+        wave = str(get_wave_status(repo_root).get("wave_id") or "").strip()
+    except Exception:
+        return None
+    return None if not wave or wave == "\u2014" else wave
 
 
 class GateOrchestrator:

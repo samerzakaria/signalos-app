@@ -26,7 +26,7 @@ export function HelpView() {
               <div className="next-c">
                 <div style={{ 'fontSize': '22px', 'marginBottom': '7px' }}>🏛️</div>
                 <div className="next-t">Understand gates</div>
-                <div className="next-d">Gates G0–G7 checkpoint each wave. Sign with your role to advance the phase.</div>
+                <div className="next-d">Gates G0-G5 checkpoint each wave. Sign with your role to advance the phase.</div>
               </div>
               <div className="next-c">
                 <div style={{ 'fontSize': '22px', 'marginBottom': '7px' }}>🧠</div>
@@ -40,7 +40,7 @@ export function HelpView() {
             <div className="secrets-head"><h3>Slash commands</h3></div>
             <div className="srow">
               <div className="s-ic" style={{ 'background': 'var(--accent-softer)', 'color': 'var(--accent)' }}><i className="ti ti-hammer"></i></div>
-              <div className="s-info"><div className="s-nm">/signal-build</div><div className="s-meta">Run the full build pipeline — lint, test, bundle</div></div>
+              <div className="s-info"><div className="s-nm">signalos deliver --prompt "..."</div><div className="s-meta">Run governed product delivery with gates, proof, and closeout</div></div>
               <div className="s-val" style={{ 'fontSize': '11px', 'color': 'var(--ink-3)', 'whiteSpace': 'nowrap' }}>Build phase</div>
             </div>
             <div className="srow">
@@ -50,29 +50,29 @@ export function HelpView() {
             </div>
             <div className="srow">
               <div className="s-ic" style={{ 'background': 'var(--accent-softer)', 'color': 'var(--accent)' }}><i className="ti ti-palette"></i></div>
-              <div className="s-info"><div className="s-nm">/signal-design</div><div className="s-meta">Generate or refine UI from a description or sketch</div></div>
+              <div className="s-info"><div className="s-nm">signalos pre-design --wave W01</div><div className="s-meta">Scope design work before generating variants</div></div>
               <div className="s-val" style={{ 'fontSize': '11px', 'color': 'var(--ink-3)', 'whiteSpace': 'nowrap' }}>Build phase</div>
             </div>
             <div className="srow">
               <div className="s-ic" style={{ 'background': 'var(--accent-softer)', 'color': 'var(--accent)' }}><i className="ti ti-clipboard-check"></i></div>
-              <div className="s-info"><div className="s-nm">/signal-debrief</div><div className="s-meta">Summarise what was built this wave for the Brain</div></div>
+              <div className="s-info"><div className="s-nm">/signal-debrief --wave W01</div><div className="s-meta">Record the wave retrospective and next belief candidate</div></div>
               <div className="s-val" style={{ 'fontSize': '11px', 'color': 'var(--ink-3)', 'whiteSpace': 'nowrap' }}>Check phase</div>
             </div>
             <div className="srow">
               <div className="s-ic" style={{ 'background': 'var(--success-soft)', 'color': 'var(--success)' }}><i className="ti ti-git-branch"></i></div>
-              <div className="s-info"><div className="s-nm">/signal-ship</div><div className="s-meta">Tag, push, and record the release in AUDIT_TRAIL</div></div>
+              <div className="s-info"><div className="s-nm">/signal-ship W01 --dry-run</div><div className="s-meta">Validate ship readiness before recording release evidence</div></div>
               <div className="s-val" style={{ 'fontSize': '11px', 'color': 'var(--ink-3)', 'whiteSpace': 'nowrap' }}>Ship phase</div>
             </div>
             <div className="srow">
               <div className="s-ic" style={{ 'background': 'var(--amber-soft)', 'color': 'var(--amber-deep)' }}><i className="ti ti-shield-check"></i></div>
-              <div className="s-info"><div className="s-nm">/signal-gate</div><div className="s-meta">Open the gate sign form for the current checkpoint</div></div>
+              <div className="s-info"><div className="s-nm">signalos validate-gate --gate 5</div><div className="s-meta">Validate signed gate evidence and audit linkage</div></div>
               <div className="s-val" style={{ 'fontSize': '11px', 'color': 'var(--ink-3)', 'whiteSpace': 'nowrap' }}>Gate checkpoints</div>
             </div>
           </div>
 
           <div className="card card-pad">
             <h3 style={{ 'fontFamily': 'var(--f-display)', 'fontWeight': '500', 'fontSize': '17px', 'marginBottom': '10px' }}>Gate &amp; wave model</h3>
-            <p style={{ 'fontSize': '13px', 'color': 'var(--ink-2)', 'lineHeight': '1.65', 'marginBottom': '14px' }}>Work moves in <strong style={{ 'color': 'var(--ink)' }}>waves</strong> through four phases — Plan → Build → Check → Ship — guarded by eight gates (G0–G7). Each gate is signed by the role responsible at that checkpoint.</p>
+            <p style={{ 'fontSize': '13px', 'color': 'var(--ink-2)', 'lineHeight': '1.65', 'marginBottom': '14px' }}>Work moves in <strong style={{ 'color': 'var(--ink)' }}>waves</strong> through governed phases guarded by six gates (G0-G5). Each gate is signed by the role responsible at that checkpoint.</p>
             <div className="vstats" style={{ 'gridTemplateColumns': 'repeat(4,1fr)' }}>
               <div className="vstat">
                 <div className="vstat-l">G0 – G3</div>

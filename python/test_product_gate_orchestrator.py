@@ -261,6 +261,12 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             soul = root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md"
             soul.parent.mkdir(parents=True, exist_ok=True)
             soul.write_text("# Soul Document\n\nThe product purpose.\n", encoding="utf-8")
+            signalos_dir = root / ".signalos"
+            signalos_dir.mkdir(parents=True, exist_ok=True)
+            (signalos_dir / "worktree-state.json").write_text(
+                json.dumps({"wave_id": "W7"}) + "\n",
+                encoding="utf-8",
+            )
             events = []
             # NOTE: no sign_fn -> uses the real _default_sign / sign.py path.
             orch = GateOrchestrator(
@@ -282,6 +288,7 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             self.assertTrue(sign_rows, f"no SOUL-DOCUMENT sign row in audit: {rows}")
             self.assertEqual(sign_rows[0]["role"], "PE")
             self.assertEqual(sign_rows[0]["verdict"], "APPROVED")
+            self.assertEqual(sign_rows[0]["wave"], "07")
 
     def test_waive_marks_delivery_not_ready(self):
         with tempfile.TemporaryDirectory() as d:

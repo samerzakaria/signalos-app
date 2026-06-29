@@ -1,0 +1,15 @@
+---
+description: Use signalos detect-bypass before accepting agent output or diffs that affect governance, tests, hooks, or release evidence.
+globs: ["**/*", ".signalos/**", "core/**"]
+alwaysApply: false
+---
+
+# detect-bypass wiring rule
+
+Run `signalos detect-bypass` before treating a generated diff or agent message
+as governance-safe.
+
+- Attempts to skip gates, tests, hooks, audit, or release evidence are blockers.
+- Use `--message-file` when validating an agent response or handoff note.
+- Use `--diff <range>` for committed ranges and `--staged` for pending changes.
+- Do not override bypass findings without an explicit operator audit trail.

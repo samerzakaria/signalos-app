@@ -16,11 +16,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.product.intent import extract_product_intent
-from signalos_lib.product.blueprints.registry import load_blueprint
+from signalos_lib.product.blueprints.registry import (
+    apply_blueprint_intent_defaults,
+    load_blueprint,
+)
+from signalos_lib.product.capabilities import apply_capability_choices
 from signalos_lib.product.acceptance import (
     build_acceptance_matrix,
     check_closure_readiness,
     load_acceptance_matrix,
+    reconcile_acceptance_evidence,
     update_criterion_status,
     write_acceptance_matrix,
 )
@@ -94,6 +99,35 @@ class TestTaskManagementMatrix:
         # Blueprint criteria should reference task-management acceptance outcomes
         outcomes = {c["description"] for c in bp_criteria}
         assert any("task" in o.lower() for o in outcomes)
+
+    def test_frontend_none_removes_blueprint_ui_surface_criteria(self, task_blueprint):
+        intent = extract_product_intent("Build a REST API for task management")
+        intent = apply_capability_choices(
+            intent,
+            technologies=["node"],
+            frontend="none",
+            database="postgresql",
+            cache="redis",
+        )
+        intent = apply_blueprint_intent_defaults(intent, task_blueprint)
+        intent = apply_capability_choices(
+            intent,
+            technologies=["node"],
+            frontend="none",
+            database="postgresql",
+            cache="redis",
+        )
+
+        m = build_acceptance_matrix(intent, task_blueprint, "node-api")
+        descriptions = [c["description"] for c in m["criteria"]]
+
+        assert not any(description.startswith("UX surface") for description in descriptions)
+        assert not any("dashboard shows" in description.lower() for description in descriptions)
+        assert any("GET /kpis" in description for description in descriptions)
+        assert all(
+            scenario["profile_target"].startswith("tests/")
+            for scenario in m["test_scenarios"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +254,77 @@ class TestStatusUpdate:
         original_statuses = [c["status"] for c in m["criteria"]]
         update_criterion_status(m, "AC-999", "passed")
         assert [c["status"] for c in m["criteria"]] == original_statuses
+
+
+# ---------------------------------------------------------------------------
+# Evidence reconciliation
+# ---------------------------------------------------------------------------
+
+def _validation_result(*, dry_run: bool = False) -> dict:
+    return {
+        "dry_run": dry_run,
+        "results": {
+            "build": {"status": "passed"},
+            "test": {"status": "passed"},
+            "security": {"status": "passed"},
+        },
+    }
+
+
+class TestAcceptanceReconciliation:
+    def test_reconciles_passed_criteria_from_real_test_evidence(self, task_intent, tmp_path):
+        m = build_acceptance_matrix(task_intent, None, "generic")
+        first = m["test_scenarios"][0]
+        target = tmp_path / first["profile_target"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("import unittest\n", encoding="utf-8")
+        reconciled = reconcile_acceptance_evidence(
+            m,
+            tmp_path,
+            validation_result=_validation_result(),
+            runtime_proof={"status": "skipped"},
+            ux_proof={"status": "skipped"},
+            security_result={"status": "passed"},
+        )
+
+        first_criterion = reconciled["criteria"][0]
+        assert first_criterion["status"] == "passed"
+        assert "build/test validation passed" in first_criterion["evidence"]
+        assert reconciled["reconciliation"]["passed"] >= 1
+
+    def test_dry_run_validation_keeps_acceptance_pending(self, task_intent, tmp_path):
+        m = build_acceptance_matrix(task_intent, None, "generic")
+        first = m["test_scenarios"][0]
+        target = tmp_path / first["profile_target"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("import unittest\n", encoding="utf-8")
+
+        reconciled = reconcile_acceptance_evidence(
+            m,
+            tmp_path,
+            validation_result=_validation_result(dry_run=True),
+            runtime_proof={"status": "skipped"},
+            ux_proof={"status": "skipped"},
+            security_result={"status": "passed"},
+        )
+
+        assert reconciled["criteria"][0]["status"] == "pending"
+        assert any("dry-run" in b for b in reconciled["reconciliation"]["blockers"])
+
+    def test_missing_test_target_keeps_acceptance_pending(self, task_intent, tmp_path):
+        m = build_acceptance_matrix(task_intent, None, "generic")
+
+        reconciled = reconcile_acceptance_evidence(
+            m,
+            tmp_path,
+            validation_result=_validation_result(),
+            runtime_proof={"status": "skipped"},
+            ux_proof={"status": "skipped"},
+            security_result={"status": "passed"},
+        )
+
+        assert reconciled["criteria"][0]["status"] == "pending"
+        assert any("missing" in b for b in reconciled["reconciliation"]["blockers"])
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 __all__ = [
     "check_proof_completeness",
+    "requires_browser_ux_proof",
     "run_runtime_proof",
     "run_ux_proof",
     "write_proof_artifacts",
@@ -17,6 +18,7 @@ __all__ = [
 
 import json
 import os
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -44,15 +46,25 @@ def _proof_timeout_s(default_s: int) -> int:
 
 def _start_server(command: str, repo_root: Path) -> subprocess.Popen:
     """Start a dev/preview server as a subprocess."""
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(repo_root),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "shell": True,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
+        )
+    else:
+        popen_kwargs["start_new_session"] = True
+
     return subprocess.Popen(
         command,
-        cwd=str(repo_root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        shell=True,
+        **popen_kwargs,
     )
 
 
@@ -95,25 +107,68 @@ def _poll_health(
 
 def _stop_server(proc: subprocess.Popen, *, grace_s: float = 3.0) -> str:
     """Terminate the server process and return captured output."""
-    try:
-        proc.terminate()
-        proc.wait(timeout=grace_s)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=2)
+    if os.name == "nt":
+        _kill_process_tree(proc)
+    else:
+        _terminate_process_group(proc)
 
-    stdout = ""
-    if proc.stdout is not None:
+    try:
+        stdout, _ = proc.communicate(timeout=grace_s)
+        return stdout or ""
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
         try:
-            stdout = proc.stdout.read() or ""
-        except (OSError, ValueError):
+            stdout, _ = proc.communicate(timeout=2)
+            return stdout or ""
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        try:
+            proc.kill()
+        except (AttributeError, OSError):
             pass
-        finally:
-            try:
-                proc.stdout.close()
-            except (OSError, ValueError):
-                pass
-    return stdout
+        return
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+            return
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        try:
+            proc.terminate()
+        except (AttributeError, OSError):
+            pass
+        return
+
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
 
 
 def run_runtime_proof(
@@ -236,6 +291,26 @@ _ERROR_INDICATORS = [
 ]
 
 
+def requires_browser_ux_proof(repo_root: Path, profile: str) -> bool:
+    """Return whether *profile* must prove browser UX evidence.
+
+    Runtime proof is useful for any runnable product. Browser UX proof is only
+    meaningful for profiles that actually deliver an HTML UI. API-only profiles
+    still need runtime health proof, but a JSON endpoint must not be judged as a
+    failed browser page.
+    """
+    if profile == "react-vite":
+        return True
+    if profile in {"generic", "node-api", "fastapi-api", "dotnet-minimal-api", "go-api", "agent-selected"}:
+        return False
+
+    try:
+        detection = get_adapter(profile).detect(repo_root)
+    except (KeyError, OSError):
+        return False
+    return bool(detection.get("can_deliver_ui"))
+
+
 def run_ux_proof(
     repo_root: Path,
     profile: str,
@@ -262,6 +337,14 @@ def run_ux_proof(
         snapshot instead of making another network call after the preview
         process has been stopped.
     """
+    if not requires_browser_ux_proof(repo_root, profile):
+        return {
+            "status": "skipped",
+            "checks": [],
+            "errors": [],
+            "skip_reason": "Profile does not require browser UX proof",
+        }
+
     if port is None and html is None:
         return {
             "status": "skipped",
@@ -424,6 +507,8 @@ def check_proof_completeness(
     preview = adapter.preview_plan(repo_root)
     has_preview = preview.get("command") is not None
 
+    requires_ux = requires_browser_ux_proof(repo_root, profile)
+
     if has_preview:
         # Profile expects runtime proof
         if not runtime_exists:
@@ -435,18 +520,24 @@ def check_proof_completeness(
         elif runtime_status is None:
             blockers.append("Runtime proof artifact is corrupt")
 
-        if not ux_exists:
-            blockers.append("UX proof artifact missing")
-        elif ux_status == "failed":
-            blockers.append("UX proof failed")
-        elif ux_status is None:
-            blockers.append("UX proof artifact is corrupt")
+        if requires_ux:
+            if not ux_exists:
+                blockers.append("UX proof artifact missing")
+            elif ux_status == "failed":
+                blockers.append("UX proof failed")
+            elif ux_status is None:
+                blockers.append("UX proof artifact is corrupt")
+        elif ux_exists and ux_status not in {"skipped", "passed"}:
+            blockers.append("Optional UX proof artifact is not skipped")
 
         complete = (
             runtime_exists
-            and ux_exists
             and runtime_status in ("passed",)
-            and ux_status in ("passed",)
+            and (
+                ux_status in ("passed",)
+                if requires_ux
+                else (not ux_exists or ux_status in {"skipped", "passed"})
+            )
         )
     else:
         # Generic / no-preview profile: both skipped is acceptable

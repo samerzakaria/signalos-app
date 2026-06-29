@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .capabilities import build_capability_profile
 from .stacks import get_adapter
 
 
@@ -299,6 +300,26 @@ def _entity_by_name(
     return None
 
 
+def _resolve_entities_to_gen(
+    bp_entities: list[dict], intent: dict
+) -> list[dict]:
+    """Resolve the entity list a builder should generate code for.
+
+    Behavior-preserving extraction of the entity-resolution preamble shared
+    by the API ``_build_*_file_specs`` builders: prefer blueprint entities,
+    fall back to PascalCased intent entities, and default to a single
+    ``ProductResource`` entity when neither is present.
+    """
+    entities_to_gen = (
+        bp_entities
+        if bp_entities
+        else [{"name": _to_pascal(e), "fields": []} for e in intent.get("entities", [])]
+    )
+    if not entities_to_gen:
+        entities_to_gen = [{"name": "ProductResource", "fields": []}]
+    return entities_to_gen
+
+
 # ---------------------------------------------------------------------------
 # Public: build_generation_packet
 # ---------------------------------------------------------------------------
@@ -376,6 +397,70 @@ def build_generation_packet(
         file_specs = _build_react_vite_file_specs(
             intent, blueprint, targets, design,
         )
+    elif profile == "nextjs-app":
+        file_specs = _build_nextjs_file_specs(
+            intent, blueprint, targets, design,
+        )
+    elif profile == "vue-vite":
+        file_specs = _build_vue_vite_file_specs(
+            intent, blueprint, targets, design,
+        )
+    elif profile == "flutter-app":
+        file_specs = _build_flutter_app_file_specs(
+            intent, blueprint, targets, design,
+        )
+    elif profile == "expo-react-native":
+        file_specs = _build_expo_react_native_file_specs(
+            intent, blueprint, targets, design,
+        )
+    elif profile == "node-api":
+        file_specs = _build_node_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "nestjs-api":
+        file_specs = _build_nestjs_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "fastapi-api":
+        file_specs = _build_fastapi_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "django-api":
+        file_specs = _build_django_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "flask-api":
+        file_specs = _build_flask_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "go-api":
+        file_specs = _build_go_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "java-api":
+        file_specs = _build_java_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "spring-boot-api":
+        file_specs = _build_spring_boot_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "rust-api":
+        file_specs = _build_rust_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "dotnet-minimal-api":
+        file_specs = _build_dotnet_minimal_api_file_specs(
+            intent, blueprint, targets,
+        )
+    elif profile == "angular":
+        file_specs = _build_angular_file_specs(
+            intent, blueprint, targets, design,
+        )
+    elif profile == "agent-selected":
+        file_specs = _build_agent_selected_file_specs(
+            intent, blueprint, targets,
+        )
     else:
         file_specs = _build_generic_file_specs(
             intent, blueprint, targets,
@@ -405,6 +490,10 @@ def build_generation_packet(
 
     # Design constraints
     design_constraints = _extract_design_constraints(design)
+    capability_profile = build_capability_profile(
+        intent,
+        adapter_profile=profile,
+    )
 
     # Allowed / forbidden paths
     source_base = targets.get("source", "src")
@@ -433,6 +522,7 @@ def build_generation_packet(
         "workflows": bp_workflows,
         "acceptance_criteria": acceptance_criteria,
         "design_constraints": design_constraints,
+        "capability_profile": capability_profile,
         "allowed_paths": allowed_paths,
         "forbidden_paths": forbidden_paths,
         "validation_commands": validation_commands,
@@ -717,6 +807,1651 @@ def _build_react_vite_file_specs(
 
 
 # ---------------------------------------------------------------------------
+# Internal: build file specs for agent-selected profile
+# ---------------------------------------------------------------------------
+
+def _build_agent_selected_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build technology-neutral file specs for agent-selected products."""
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", "tests")
+    product_type = intent.get("product_type") or (blueprint or {}).get("id", "custom")
+    return [
+        {
+            "path": "PRODUCT_STACK.md",
+            "kind": "config",
+            "description": (
+                "Technology decision record for the generated product. Must "
+                "name the selected stack, runtime, package manager, database, "
+                "cache, build command, test command, and preview command when applicable."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Honor explicit user technology preferences from the capability profile",
+                "Do not choose .NET or ABP unless the user explicitly requested it",
+                "Explain unsupported choices as blockers instead of silently changing technology",
+            ],
+        },
+        {
+            "path": "README.md",
+            "kind": "config",
+            "description": (
+                f"Runbook for the {product_type} product, including local setup, "
+                "environment variables, build, test, and preview instructions."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Commands must match real files written by the agent",
+                "No production secrets or fake endpoints",
+            ],
+        },
+        {
+            "path": f"{source_base}/.keep",
+            "kind": "config",
+            "description": "Placeholder keeping the source root available for the agent-selected stack.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Agent may replace this with real framework source files inside allowed paths",
+            ],
+        },
+        {
+            "path": f"{test_base}/acceptance-map.md",
+            "kind": "test",
+            "description": (
+                "Acceptance-to-test map for the chosen technology. Must list "
+                "which real test files cover each acceptance criterion."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Reference real test files once generated",
+                "Keep pending criteria explicit",
+            ],
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Internal: build file specs for API profiles
+# ---------------------------------------------------------------------------
+
+def _build_dotnet_minimal_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the .NET Minimal API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "SignalOSProduct.Api")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    route_names: list[str] = []
+    for entity in entities_to_gen:
+        name = entity["name"]
+        pascal = _to_pascal(name)
+        snake = _to_snake(name)
+        route_names.append(pascal)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+
+        model_rel = f"{source_base}/Models/{pascal}.cs".lstrip("/")
+        route_rel = f"{source_base}/Routes/{pascal}Routes.cs".lstrip("/")
+        test_rel = f"{test_base}/{snake}.http".lstrip("/")
+
+        if not _is_reserved(model_rel):
+            file_specs.append({
+                "path": model_rel,
+                "kind": "source",
+                "description": (
+                    f"C# record/model definitions for the {pascal} resource.{fields_desc} "
+                    "Keep request and response contracts explicit."
+                ),
+                "entity": pascal,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use nullable-aware C# types",
+                    "Separate create/update request shapes when behavior differs",
+                    "Do not embed secrets or concrete production connection strings",
+                ],
+            })
+
+        if not _is_reserved(route_rel):
+            file_specs.append({
+                "path": route_rel,
+                "kind": "source",
+                "description": (
+                    f"Minimal API route extension methods for the {pascal} resource.{fields_desc} "
+                    "Expose endpoints that can be mapped from ProductRoutes.Map."
+                ),
+                "entity": pascal,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use MapGet/MapPost/MapPut/MapDelete as appropriate",
+                    "Return typed Results or JSON payloads",
+                    "Keep persistence adapter-ready: in-memory is acceptable until a database adapter is configured",
+                ],
+            })
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"HTTP acceptance checks for the {pascal} Minimal API routes. "
+                    "List health, list, create/update, and validation requests."
+                ),
+                "entity": pascal,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use localhost:5050 unless a proof runner supplies another base URL",
+                    "Include expected HTTP status and JSON shape comments",
+                    "Do not require a real database unless the capability profile explicitly provides one",
+                ],
+            })
+
+    store_path = f"{source_base}/Stores/InMemoryStore.cs"
+    if not _is_reserved(store_path):
+        file_specs.append({
+            "path": store_path,
+            "kind": "config",
+            "description": (
+                "Small repository/store layer used by generated Minimal API routes. "
+                "Keep it replaceable by PostgreSQL, SQL Server, MySQL, Redis, or another selected infrastructure adapter."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export explicit read/write operations",
+                "Keep infrastructure choices injectable",
+                "Do not hardcode production secrets or connection strings",
+            ],
+        })
+
+    product_routes = f"{source_base}/ProductRoutes.cs"
+    if not _is_reserved(product_routes):
+        file_specs.append({
+            "path": product_routes,
+            "kind": "registration",
+            "description": (
+                "Minimal API route registration. Preserve /health and import/map generated routes for: "
+                + ", ".join(route_names)
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve the Health method used by --self-test",
+                "Map generated route extension methods",
+                "Keep /health responding with status=ok",
+            ],
+        })
+
+    if bp_workflows:
+        workflow_path = f"{source_base}/Workflows/ProductWorkflows.cs"
+        if not _is_reserved(workflow_path):
+            file_specs.append({
+                "path": workflow_path,
+                "kind": "source",
+                "description": (
+                    "Workflow orchestration helpers for Minimal API handlers: "
+                    + ", ".join(str(workflow.get("name", workflow)) for workflow in bp_workflows)
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep workflow logic testable outside HTTP handlers",
+                    "Do not call external services without injected adapters",
+                ],
+            })
+
+    return file_specs
+
+
+def _build_go_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Go API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "internal/app")
+    test_base = targets.get("tests", source_base)
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    route_names: list[str] = []
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+        route_names.append(snake)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+
+        test_rel = f"{test_base}/{snake}_test.go".lstrip("/")
+        source_rel = f"{source_base}/{snake}.go".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Go test coverage for the {name} API route. "
+                    "Covers health, list, create/update behavior where applicable, validation errors, and JSON responses."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use testing and net/http/httptest",
+                    "Exercise NewHandler on an in-memory recorder",
+                    "Assert HTTP status codes and JSON payloads",
+                    "Do not require a real database unless the capability profile explicitly provides one",
+                ],
+            })
+
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": (
+                    f"Go HTTP handlers and route registration helpers for the {name} resource.{fields_desc} "
+                    "Keep handlers mountable from NewHandler."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use only standard library net/http unless the stack decision adds a dependency",
+                    "Validate request bodies before mutating state",
+                    "Keep persistence adapter-ready: in-memory is acceptable until a database adapter is configured",
+                ],
+            })
+
+    store_path = f"{source_base}/store.go"
+    if not _is_reserved(store_path):
+        file_specs.append({
+            "path": store_path,
+            "kind": "config",
+            "description": (
+                "Small repository/store layer used by generated Go API handlers. "
+                "Keep it replaceable by PostgreSQL, SQL Server, MySQL, Redis, or another selected infrastructure adapter."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export explicit read/write methods",
+                "Keep infrastructure choices injectable",
+                "Do not hardcode production secrets or connection strings",
+            ],
+        })
+
+    app_path = f"{source_base}/app.go"
+    if not _is_reserved(app_path):
+        file_specs.append({
+            "path": app_path,
+            "kind": "registration",
+            "description": (
+                "Go API handler registration. Preserve /health and mount generated handlers for: "
+                + ", ".join(route_names)
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve NewHandler and /health",
+                "Use http.NewServeMux or a documented standard-library compatible router",
+                "Keep handlers testable through httptest",
+            ],
+        })
+
+    if bp_workflows:
+        workflow_path = f"{source_base}/workflows.go"
+        workflow_test_path = f"{test_base}/workflows_test.go"
+        if not _is_reserved(workflow_test_path):
+            file_specs.append({
+                "path": workflow_test_path,
+                "kind": "test",
+                "description": "Go tests for workflow/service functions.",
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use testing",
+                    "Cover at least one success and one invalid-input path",
+                ],
+            })
+        if not _is_reserved(workflow_path):
+            file_specs.append({
+                "path": workflow_path,
+                "kind": "source",
+                "description": (
+                    "Workflow/service functions for blueprint workflows: "
+                    + ", ".join(str(workflow.get("name", workflow)) for workflow in bp_workflows)
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep business workflow logic separate from HTTP handlers",
+                    "Export pure functions where practical",
+                ],
+            })
+
+    return file_specs
+
+
+def _build_rust_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Rust API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    modules: list[str] = []
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+        modules.append(snake)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        test_rel = f"{test_base}/{snake}_api.rs".lstrip("/")
+        source_rel = f"{source_base}/{snake}.rs".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Rust API tests for the {name} resource. Cover health, list, create/update behavior, "
+                    "validation errors, and serialized JSON contract."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use cargo test",
+                    "Keep tests deterministic without external services unless configured",
+                    "Do not require a live database unless capability profile selects one",
+                ],
+            })
+
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": (
+                    f"Rust module for {name} request/response types and handlers.{fields_desc} "
+                    "Keep functions callable from lib.rs and main.rs."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep public functions testable without a network socket",
+                    "Validate input before mutation",
+                    "Keep persistence replaceable by selected infrastructure adapters",
+                ],
+            })
+
+    lib_path = f"{source_base}/lib.rs"
+    if not _is_reserved(lib_path):
+        file_specs.append({
+            "path": lib_path,
+            "kind": "registration",
+            "description": "Rust library module registration for generated API resources: " + ", ".join(modules),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve health_payload",
+                "Expose generated modules",
+                "Keep cargo test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_java_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Java API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/main/java/com/signalos/product")
+    test_base = targets.get("tests", "src/test/java/com/signalos/product")
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    resources: list[str] = []
+    for entity in entities_to_gen:
+        name = _to_pascal(entity["name"])
+        resources.append(name)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        source_rel = f"{source_base}/{name}Resource.java".lstrip("/")
+        test_rel = f"{test_base}/{name}ResourceTest.java".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Java tests for the {name} resource contract. Cover request validation, "
+                    "happy path, and JSON response shape."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep tests runnable by the adapter validation command",
+                    "Avoid external services unless the capability profile selects them",
+                ],
+            })
+
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": (
+                    f"Java API resource/service for {name}.{fields_desc} "
+                    "Keep it mountable from ProductServer."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use explicit request/response shapes",
+                    "Keep business logic testable without the HTTP server",
+                    "Keep persistence replaceable by selected infrastructure adapters",
+                ],
+            })
+
+    server_path = f"{source_base}/ProductServer.java"
+    if not _is_reserved(server_path):
+        file_specs.append({
+            "path": server_path,
+            "kind": "registration",
+            "description": "Java API route registration. Preserve /health and register resources: " + ", ".join(resources),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve healthPayload",
+                "Register generated resource handlers",
+                "Keep validation commands runnable without hidden setup",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_spring_boot_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Spring Boot API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/main/java/com/signalos/product")
+    test_base = targets.get("tests", "src/test/java/com/signalos/product")
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    controllers: list[str] = []
+    for entity in entities_to_gen:
+        name = _to_pascal(entity["name"])
+        package_segment = _to_snake(name).replace("_", "")
+        controllers.append(name)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        base = f"{source_base}/{package_segment}"
+        test_dir = f"{test_base}/{package_segment}"
+        dto_rel = f"{base}/{name}Dto.java".lstrip("/")
+        service_rel = f"{base}/{name}Service.java".lstrip("/")
+        controller_rel = f"{base}/{name}Controller.java".lstrip("/")
+        test_rel = f"{test_dir}/{name}ControllerTest.java".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"JUnit coverage for the {name} Spring Boot controller/service contract. "
+                    "Cover validation errors, happy path, and JSON response shape."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use JUnit 5 and Spring Boot test support where needed",
+                    "Avoid live infrastructure unless the capability profile selects it",
+                    "Keep tests runnable by mvn test",
+                ],
+            })
+        for rel, desc in (
+            (dto_rel, f"Spring Boot DTOs and validation helpers for {name}.{fields_desc}"),
+            (service_rel, f"Spring service for {name} business behavior and repository boundary.{fields_desc}"),
+            (controller_rel, f"Spring REST controller for the {name} API resource.{fields_desc}"),
+        ):
+            if not _is_reserved(rel):
+                file_specs.append({
+                    "path": rel,
+                    "kind": "source",
+                    "description": desc,
+                    "entity": name,
+                    "acceptance_id": None,
+                    "task_id": None,
+                    "constraints": [
+                        "Use Spring Boot idioms without hiding infrastructure choices",
+                        "Keep storage replaceable by selected adapters",
+                        "Do not hardcode production secrets or connection strings",
+                    ],
+                })
+
+    app_path = f"{source_base}/ProductApplication.java"
+    if not _is_reserved(app_path):
+        file_specs.append({
+            "path": app_path,
+            "kind": "registration",
+            "description": "Spring Boot application registration. Preserve health endpoints and package scanning for: " + ", ".join(controllers),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve application startup",
+                "Keep generated controllers under scanned packages",
+                "Keep mvn test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_django_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Django API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/signalos_product_django")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    for init_rel in (
+        f"{source_base}/product/__init__.py",
+        f"{source_base}/product/models.py",
+    ):
+        if not _is_reserved(init_rel):
+            file_specs.append({
+                "path": init_rel,
+                "kind": "config",
+                "description": "Django app package marker/model registration file.",
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": ["Keep importable by Django"],
+            })
+
+    views: list[str] = []
+    for entity in entities_to_gen:
+        name = _to_pascal(entity["name"])
+        snake = _to_snake(name)
+        views.append(snake)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        test_rel = f"{test_base}/test_{snake}.py".lstrip("/")
+        view_rel = f"{source_base}/product/{snake}_views.py".lstrip("/")
+        serializer_rel = f"{source_base}/product/{snake}_schemas.py".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Pytest/Django Client coverage for the {name} API route. "
+                    "Cover list, create/update behavior where applicable, validation errors, and JSON responses."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use django.test.Client",
+                    "Assert HTTP status codes and JSON payloads",
+                    "Do not require a real database unless capability profile selects one",
+                ],
+            })
+
+        if not _is_reserved(serializer_rel):
+            file_specs.append({
+                "path": serializer_rel,
+                "kind": "source",
+                "description": (
+                    f"Typed request/response helpers for the {name} Django API.{fields_desc} "
+                    "Keep validation explicit even without a DRF dependency."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Avoid hidden framework dependencies not declared in pyproject.toml",
+                    "Keep request validation explicit",
+                ],
+            })
+
+        if not _is_reserved(view_rel):
+            file_specs.append({
+                "path": view_rel,
+                "kind": "source",
+                "description": (
+                    f"Django view functions for the {name} API resource.{fields_desc} "
+                    "Export URL patterns for registration."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use JsonResponse",
+                    "Validate request bodies before mutation",
+                    "Keep persistence adapter-ready",
+                ],
+            })
+
+    urls_path = f"{source_base}/urls.py"
+    if not _is_reserved(urls_path):
+        file_specs.append({
+            "path": urls_path,
+            "kind": "registration",
+            "description": "Django URL registration. Preserve /health and mount generated views for: " + ", ".join(views),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve health endpoint",
+                "Register generated API routes",
+                "Keep Django Client tests passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_flask_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Flask API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/signalos_product_flask")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    for init_rel in (
+        f"{source_base}/routes/__init__.py",
+        f"{source_base}/store.py",
+    ):
+        if not _is_reserved(init_rel):
+            file_specs.append({
+                "path": init_rel,
+                "kind": "config",
+                "description": "Flask route/store package support file.",
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep imports lightweight",
+                    "Keep infrastructure choices injectable",
+                ],
+            })
+
+    route_modules: list[str] = []
+    for entity in entities_to_gen:
+        name = _to_pascal(entity["name"])
+        snake = _to_snake(name)
+        route_modules.append(snake)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        test_rel = f"{test_base}/test_{snake}.py".lstrip("/")
+        route_rel = f"{source_base}/routes/{snake}.py".lstrip("/")
+        schema_rel = f"{source_base}/routes/{snake}_schemas.py".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Pytest/Flask client coverage for the {name} API route. "
+                    "Cover list, create/update behavior where applicable, validation errors, and JSON responses."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use create_app().test_client()",
+                    "Assert HTTP status codes and JSON payloads",
+                    "Do not require a real database unless the capability profile selects one",
+                ],
+            })
+        if not _is_reserved(schema_rel):
+            file_specs.append({
+                "path": schema_rel,
+                "kind": "source",
+                "description": f"Explicit validation helpers for the {name} Flask route.{fields_desc}",
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Avoid undeclared framework dependencies",
+                    "Keep request validation explicit",
+                ],
+            })
+        if not _is_reserved(route_rel):
+            file_specs.append({
+                "path": route_rel,
+                "kind": "source",
+                "description": f"Flask Blueprint routes for the {name} API resource.{fields_desc}",
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use flask.Blueprint",
+                    "Export the blueprint for app registration",
+                    "Keep persistence adapter-ready",
+                ],
+            })
+
+    app_path = f"{source_base}/app.py"
+    if not _is_reserved(app_path):
+        file_specs.append({
+            "path": app_path,
+            "kind": "registration",
+            "description": "Flask app factory registration. Preserve /health and register blueprints: " + ", ".join(route_modules),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Keep create_app exported for tests and runtime",
+                "Preserve /health",
+                "Register generated route blueprints under /api/<resource>",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_angular_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Angular profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/app")
+    components = _derive_components_from_blueprint(blueprint or {}) if blueprint else []
+    if not components:
+        entities = intent.get("entities", []) or ["Product"]
+        components = [
+            {
+                "component": f"{_to_pascal(entity)}Component",
+                "entity_name": _to_pascal(entity),
+                "surface": _to_snake(str(entity)),
+            }
+            for entity in entities
+        ]
+
+    for component in components:
+        component_name = component.get("component") or "ProductComponent"
+        entity_name = component.get("entity_name") or component_name.replace("Component", "")
+        folder = _to_snake(component_name.replace("Component", "")).replace("_", "-")
+        class_name = component_name if component_name.endswith("Component") else f"{component_name}Component"
+        spec_rel = f"{source_base}/{folder}/{folder}.component.spec.ts".lstrip("/")
+        component_rel = f"{source_base}/{folder}/{folder}.component.ts".lstrip("/")
+        template_rel = f"{source_base}/{folder}/{folder}.component.html".lstrip("/")
+        style_rel = f"{source_base}/{folder}/{folder}.component.css".lstrip("/")
+
+        if not _is_reserved(spec_rel):
+            file_specs.append({
+                "path": spec_rel,
+                "kind": "test",
+                "description": f"Angular component test for {class_name} covering the {entity_name} workflow.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use Angular TestBed",
+                    "Assert rendered user-facing states and empty/loading/error states",
+                    "Keep tests deterministic without live backend calls",
+                ],
+            })
+        for rel, kind, desc in (
+            (component_rel, "source", f"Standalone Angular component class for {entity_name}."),
+            (template_rel, "source", f"Accessible Angular template for {entity_name}."),
+            (style_rel, "source", f"Scoped Angular styles for {entity_name}."),
+        ):
+            if not _is_reserved(rel):
+                file_specs.append({
+                    "path": rel,
+                    "kind": kind,
+                    "description": desc,
+                    "entity": entity_name,
+                    "acceptance_id": None,
+                    "task_id": None,
+                    "constraints": [
+                        "Use standalone Angular component conventions",
+                        "Keep visible text concise and domain-specific",
+                        "Do not hardcode production secrets or fake API keys",
+                    ],
+                })
+
+    app_rel = f"{source_base}/app.component.ts"
+    if not _is_reserved(app_rel):
+        file_specs.append({
+            "path": app_rel,
+            "kind": "registration",
+            "description": "Angular app shell registration that imports and renders generated standalone components.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve app bootstrap compatibility",
+                "Import generated standalone components explicitly",
+                "Keep npm run build and npm test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_nextjs_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Next.js App Router profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "app")
+    components = _derive_components_from_blueprint(blueprint or {}) if blueprint else []
+    if not components:
+        entities = intent.get("entities", []) or ["Product"]
+        components = [
+            {
+                "component": _to_pascal(entity),
+                "entity_name": _to_pascal(entity),
+                "surface": _to_snake(str(entity)),
+            }
+            for entity in entities
+        ]
+
+    for component in components:
+        component_name = _to_pascal(component.get("component") or "ProductPanel")
+        if component_name.endswith("Component"):
+            component_name = component_name[:-9]
+        entity_name = component.get("entity_name") or component_name
+        test_rel = f"{source_base}/components/{component_name}.test.tsx".lstrip("/")
+        source_rel = f"{source_base}/components/{component_name}.tsx".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": f"Next.js component test for {component_name} covering {entity_name} user states.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use Testing Library and Vitest",
+                    "Cover empty/loading/error and primary success states",
+                    "Do not require a live backend unless selected infrastructure is configured",
+                ],
+            })
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": f"Next.js UI component for {entity_name}, implemented as an accessible React component.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep component compatible with the App Router",
+                    "Use explicit props and typed data shapes",
+                    "Do not hardcode production secrets or fake API keys",
+                ],
+            })
+
+    page_rel = f"{source_base}/page.tsx"
+    if not _is_reserved(page_rel):
+        file_specs.append({
+            "path": page_rel,
+            "kind": "registration",
+            "description": "Next.js App Router page that imports and renders generated product components.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve route compatibility",
+                "Import generated components explicitly",
+                "Keep npm run build and npm test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_vue_vite_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Vue + Vite profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src")
+    components = _derive_components_from_blueprint(blueprint or {}) if blueprint else []
+    if not components:
+        entities = intent.get("entities", []) or ["Product"]
+        components = [
+            {
+                "component": _to_pascal(entity),
+                "entity_name": _to_pascal(entity),
+                "surface": _to_snake(str(entity)),
+            }
+            for entity in entities
+        ]
+
+    for component in components:
+        component_name = _to_pascal(component.get("component") or "ProductPanel")
+        if component_name.endswith("Component"):
+            component_name = component_name[:-9]
+        entity_name = component.get("entity_name") or component_name
+        test_rel = f"{source_base}/components/{component_name}.spec.ts".lstrip("/")
+        source_rel = f"{source_base}/components/{component_name}.vue".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": f"Vue component test for {component_name} covering {entity_name} user states.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use @vue/test-utils with Vitest",
+                    "Assert rendered accessible states",
+                    "Keep tests deterministic without live backend calls",
+                ],
+            })
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": f"Vue single-file component for {entity_name}.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use Vue 3 composition conventions",
+                    "Keep props and emitted events explicit",
+                    "Do not hardcode production secrets or fake API keys",
+                ],
+            })
+
+    app_rel = f"{source_base}/App.vue"
+    if not _is_reserved(app_rel):
+        file_specs.append({
+            "path": app_rel,
+            "kind": "registration",
+            "description": "Vue app shell that imports and renders generated product components.",
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve Vite bootstrap compatibility",
+                "Import generated components explicitly",
+                "Keep npm run build and npm test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_flutter_app_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Flutter mobile profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "lib")
+    test_base = targets.get("tests", "test")
+    components = _derive_components_from_blueprint(blueprint or {}) if blueprint else []
+    if not components:
+        entities = intent.get("entities", []) or ["Product"]
+        components = [
+            {
+                "component": f"{_to_pascal(entity)}Screen",
+                "entity_name": _to_pascal(entity),
+                "surface": _to_snake(str(entity)),
+            }
+            for entity in entities
+        ]
+
+    screens: list[str] = []
+    for component in components:
+        base_name = _to_pascal(component.get("component") or "ProductScreen")
+        if base_name.endswith("Component"):
+            base_name = base_name[:-9] + "Screen"
+        if not base_name.endswith("Screen"):
+            base_name = f"{base_name}Screen"
+        entity_name = component.get("entity_name") or base_name.replace("Screen", "")
+        snake = _to_snake(base_name)
+        screens.append(base_name)
+        test_rel = f"{test_base}/{snake}_test.dart".lstrip("/")
+        source_rel = f"{source_base}/screens/{snake}.dart".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": f"Flutter widget test for {base_name} covering {entity_name} mobile states.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use flutter_test",
+                    "Cover empty/loading/error and primary success states",
+                    "Keep tests deterministic without live backend calls",
+                ],
+            })
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": f"Flutter screen widget for {entity_name} with accessible mobile layout and state handling.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use Material widgets unless the design packet chooses otherwise",
+                    "Keep state and data dependencies injectable",
+                    "Do not hardcode production secrets or fake API keys",
+                ],
+            })
+
+    app_rel = f"{source_base}/main.dart"
+    if not _is_reserved(app_rel):
+        file_specs.append({
+            "path": app_rel,
+            "kind": "registration",
+            "description": "Flutter app registration that imports and routes generated screens: " + ", ".join(screens),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve runnable main() entry point",
+                "Register generated screens explicitly",
+                "Keep flutter analyze and flutter test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_expo_react_native_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+    design: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Expo React Native mobile profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", "tests")
+    components = _derive_components_from_blueprint(blueprint or {}) if blueprint else []
+    if not components:
+        entities = intent.get("entities", []) or ["Product"]
+        components = [
+            {
+                "component": f"{_to_pascal(entity)}Screen",
+                "entity_name": _to_pascal(entity),
+                "surface": _to_snake(str(entity)),
+            }
+            for entity in entities
+        ]
+
+    screens: list[str] = []
+    for component in components:
+        base_name = _to_pascal(component.get("component") or "ProductScreen")
+        if base_name.endswith("Component"):
+            base_name = base_name[:-9] + "Screen"
+        if not base_name.endswith("Screen"):
+            base_name = f"{base_name}Screen"
+        entity_name = component.get("entity_name") or base_name.replace("Screen", "")
+        snake = _to_snake(base_name)
+        screens.append(base_name)
+        test_rel = f"{test_base}/{snake}.test.js".lstrip("/")
+        source_rel = f"{source_base}/screens/{base_name}.js".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": f"Node/React Native compatible tests for {base_name} behavior and data-state helpers.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use node:test for pure state helpers or declared React Native test utilities",
+                    "Cover empty/loading/error and primary success states",
+                    "Keep tests deterministic without live backend calls",
+                ],
+            })
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": f"Expo React Native screen for {entity_name} with accessible mobile layout and state handling.",
+                "entity": entity_name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use React Native components and Expo-compatible imports",
+                    "Keep data dependencies injectable",
+                    "Do not hardcode production secrets or fake API keys",
+                ],
+            })
+
+    app_rel = "App.js"
+    if not _is_reserved(app_rel):
+        file_specs.append({
+            "path": app_rel,
+            "kind": "registration",
+            "description": "Expo app registration that imports and renders generated screens: " + ", ".join(screens),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve Expo-compatible default export",
+                "Register generated screens explicitly",
+                "Keep npm run build and npm test passing",
+            ],
+        })
+
+    return file_specs
+
+
+def _build_fastapi_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the FastAPI API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src/signalos_product_fastapi")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    for init_rel in (
+        f"{source_base}/routes/__init__.py",
+        f"{source_base}/models/__init__.py",
+    ):
+        if not _is_reserved(init_rel):
+            file_specs.append({
+                "path": init_rel,
+                "kind": "config",
+                "description": "Package marker for generated FastAPI modules.",
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": ["Keep importable by Python"],
+            })
+
+    route_modules: list[str] = []
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+        route_modules.append(snake)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+
+        test_rel = f"{test_base}/test_{snake}.py".lstrip("/")
+        source_rel = f"{source_base}/routes/{snake}.py".lstrip("/")
+        model_rel = f"{source_base}/models/{snake}.py".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": (
+                    f"Pytest/FastAPI TestClient coverage for the {name} API route. "
+                    "Covers list, create/update behavior where applicable, validation errors, and JSON responses."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use fastapi.testclient.TestClient",
+                    "Import app from signalos_product_fastapi.app",
+                    "Assert HTTP status codes and JSON payloads",
+                    "Do not require a real database unless the capability profile explicitly provides one",
+                ],
+            })
+
+        if not _is_reserved(model_rel):
+            file_specs.append({
+                "path": model_rel,
+                "kind": "source",
+                "description": (
+                    f"Pydantic model definitions for the {name} resource.{fields_desc} "
+                    "Keep request and response models explicit."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use pydantic BaseModel or FastAPI-compatible models",
+                    "Define create/update request models separately when behavior differs",
+                    "Keep fields typed and validation-oriented",
+                ],
+            })
+
+        if not _is_reserved(source_rel):
+            file_specs.append({
+                "path": source_rel,
+                "kind": "source",
+                "description": (
+                    f"FastAPI APIRouter module for the {name} resource.{fields_desc} "
+                    "Export router for registration in app.py."
+                ),
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use fastapi.APIRouter",
+                    "Export router",
+                    "Validate request bodies with typed models",
+                    "Keep persistence adapter-ready: in-memory is acceptable until a database adapter is configured",
+                ],
+            })
+
+    store_path = f"{source_base}/store.py"
+    if not _is_reserved(store_path):
+        file_specs.append({
+            "path": store_path,
+            "kind": "config",
+            "description": (
+                "Small repository/store layer used by generated FastAPI routes. "
+                "Keep it replaceable by PostgreSQL, SQL Server, MySQL, Redis, or another selected infrastructure adapter."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export explicit read/write functions",
+                "Do not hardcode production secrets or connection strings",
+                "Keep infrastructure choices injectable",
+            ],
+        })
+
+    app_test_path = f"{test_base}/test_app.py"
+    if not _is_reserved(app_test_path):
+        file_specs.append({
+            "path": app_test_path,
+            "kind": "test",
+            "description": (
+                "Pytest file for root app registration. Verifies health and generated routes are mounted."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use fastapi.testclient.TestClient",
+                "Assert /health responds",
+                "Assert at least one generated API route responds",
+            ],
+        })
+
+    app_path = f"{source_base}/app.py"
+    if not _is_reserved(app_path):
+        file_specs.append({
+            "path": app_path,
+            "kind": "registration",
+            "description": (
+                "FastAPI app registration. Import generated routers and include "
+                f"routes for: {', '.join(route_modules)}."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve /health",
+                "Use app.include_router(router, prefix='/api/<resource>')",
+                "Keep app exported for tests and uvicorn",
+            ],
+        })
+
+    if bp_workflows:
+        workflow_path = f"{source_base}/workflows.py"
+        if not _is_reserved(workflow_path):
+            file_specs.append({
+                "path": workflow_path,
+                "kind": "source",
+                "description": (
+                    "Workflow orchestration helpers for FastAPI handlers: "
+                    + ", ".join(str(workflow.get("name", workflow)) for workflow in bp_workflows)
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep workflow logic testable outside HTTP handlers",
+                    "Do not call external services without injected adapters",
+                ],
+            })
+
+    return file_specs
+
+
+def _build_node_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the Node.js API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", "tests")
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    route_names: list[str] = []
+    for entity in entities_to_gen:
+        name = entity["name"]
+        snake = _to_snake(name)
+        route_names.append(snake)
+        fields = entity.get("fields", [])
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+
+        test_rel = f"{test_base}/{snake}.test.js".lstrip("/")
+        source_rel = f"{source_base}/routes/{snake}.js".lstrip("/")
+
+        if _is_reserved(test_rel) or _is_reserved(source_rel):
+            continue
+
+        file_specs.append({
+            "path": test_rel,
+            "kind": "test",
+            "description": (
+                f"Node test file for the {name} API route. Covers list, "
+                "create/update behavior where applicable, validation errors, "
+                "and JSON responses."
+            ),
+            "entity": name,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use node:test and node:assert/strict",
+                "Start the Express app on an ephemeral port",
+                "Assert HTTP status codes and JSON payloads",
+                "Do not require a real database unless the capability profile explicitly provides one",
+            ],
+        })
+        file_specs.append({
+            "path": source_rel,
+            "kind": "source",
+            "description": (
+                f"Express Router module for the {name} resource.{fields_desc} "
+                "Export a router that can be mounted by src/app.js."
+            ),
+            "entity": name,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use express.Router()",
+                "Export the router as default",
+                "Validate request bodies before mutating state",
+                "Keep persistence adapter-ready: in-memory is acceptable until a database adapter is configured",
+            ],
+        })
+
+    store_path = f"{source_base}/store.js"
+    if not _is_reserved(store_path):
+        file_specs.append({
+            "path": store_path,
+            "kind": "config",
+            "description": (
+                "Small repository/store layer used by generated API routes. "
+                "Keep it replaceable by PostgreSQL, SQL Server, MySQL, Redis, "
+                "or another selected infrastructure adapter."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export explicit read/write functions",
+                "Do not hardcode production secrets or connection strings",
+                "Keep infrastructure choices injectable",
+            ],
+        })
+
+    app_test_path = f"{test_base}/app.test.js"
+    if not _is_reserved(app_test_path):
+        file_specs.append({
+            "path": app_test_path,
+            "kind": "test",
+            "description": (
+                "Node test file for root app registration. Verifies health and "
+                "generated routes are mounted."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Use node:test and node:assert/strict",
+                "Assert /health responds",
+                "Assert at least one generated API route responds",
+            ],
+        })
+
+    app_path = f"{source_base}/app.js"
+    if not _is_reserved(app_path):
+        file_specs.append({
+            "path": app_path,
+            "kind": "registration",
+            "description": (
+                "Express app registration. Import generated routers and mount "
+                f"routes for: {', '.join(route_names)}."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve /health",
+                "Use app.use('/api/<resource>', router)",
+                "Keep createApp exported for tests",
+            ],
+        })
+
+    if bp_workflows:
+        workflow_test_path = f"{test_base}/workflows.test.js"
+        if not _is_reserved(workflow_test_path):
+            file_specs.append({
+                "path": workflow_test_path,
+                "kind": "test",
+                "description": "Node test file for workflow/service functions.",
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Use node:test and node:assert/strict",
+                    "Cover at least one success and one invalid-input path",
+                ],
+            })
+        workflow_path = f"{source_base}/workflows.js"
+        if not _is_reserved(workflow_path):
+            file_specs.append({
+                "path": workflow_path,
+                "kind": "source",
+                "description": (
+                    "Workflow/service functions for blueprint workflows: "
+                    + ", ".join(str(w.get("name", w)) for w in bp_workflows)
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep business workflow logic separate from route handlers",
+                    "Export pure functions where practical",
+                ],
+            })
+
+    return file_specs
+
+
+def _build_nestjs_api_file_specs(
+    intent: dict,
+    blueprint: dict | None,
+    targets: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Build file spec list for the NestJS API profile."""
+    file_specs: list[dict[str, Any]] = []
+    source_base = targets.get("source", "src")
+    test_base = targets.get("tests", "src")
+    bp_entities = (blueprint or {}).get("entities", [])
+    bp_workflows = (blueprint or {}).get("workflows", [])
+
+    entities_to_gen = _resolve_entities_to_gen(bp_entities, intent)
+
+    modules: list[str] = []
+    for entity in entities_to_gen:
+        name = _to_pascal(entity["name"])
+        kebab = _to_snake(name).replace("_", "-")
+        modules.append(kebab)
+        fields = [str(field) for field in entity.get("fields", [])]
+        fields_desc = f" Fields: {', '.join(fields)}." if fields else ""
+        test_rel = f"{test_base}/{kebab}/{kebab}.controller.spec.ts".lstrip("/")
+        controller_rel = f"{source_base}/{kebab}/{kebab}.controller.ts".lstrip("/")
+        service_rel = f"{source_base}/{kebab}/{kebab}.service.ts".lstrip("/")
+        dto_rel = f"{source_base}/{kebab}/{kebab}.dto.ts".lstrip("/")
+
+        if not _is_reserved(test_rel):
+            file_specs.append({
+                "path": test_rel,
+                "kind": "test",
+                "description": f"Vitest coverage for the {name} NestJS controller and service contract.",
+                "entity": name,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Instantiate controller/service directly or through Nest testing utilities",
+                    "Cover validation errors and happy paths",
+                    "Do not require live infrastructure unless selected",
+                ],
+            })
+        for rel, desc in (
+            (dto_rel, f"Typed DTOs and validation helpers for {name}.{fields_desc}"),
+            (service_rel, f"NestJS service for {name} business behavior and persistence boundary.{fields_desc}"),
+            (controller_rel, f"NestJS controller exposing the {name} API routes.{fields_desc}"),
+        ):
+            if not _is_reserved(rel):
+                file_specs.append({
+                    "path": rel,
+                    "kind": "source",
+                    "description": desc,
+                    "entity": name,
+                    "acceptance_id": None,
+                    "task_id": None,
+                    "constraints": [
+                        "Use NestJS decorators and dependency injection",
+                        "Keep storage replaceable by selected infrastructure adapters",
+                        "Do not hardcode production secrets or connection strings",
+                    ],
+                })
+
+    app_module = f"{source_base}/app.module.ts"
+    if not _is_reserved(app_module):
+        file_specs.append({
+            "path": app_module,
+            "kind": "registration",
+            "description": "NestJS module registration for generated controllers/services: " + ", ".join(modules),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Preserve health controller registration",
+                "Register generated controllers and providers explicitly",
+                "Keep npm run build and npm test passing",
+            ],
+        })
+
+    if bp_workflows:
+        workflow_rel = f"{source_base}/workflows/workflows.service.ts"
+        if not _is_reserved(workflow_rel):
+            file_specs.append({
+                "path": workflow_rel,
+                "kind": "source",
+                "description": (
+                    "NestJS workflow service for blueprint workflows: "
+                    + ", ".join(str(workflow.get("name", workflow)) for workflow in bp_workflows)
+                ),
+                "entity": None,
+                "acceptance_id": None,
+                "task_id": None,
+                "constraints": [
+                    "Keep workflow logic testable outside HTTP controllers",
+                    "Do not call external services without injected adapters",
+                ],
+            })
+
+    return file_specs
+
+
+# ---------------------------------------------------------------------------
 # Internal: build file specs for generic (Python) profile
 # ---------------------------------------------------------------------------
 
@@ -834,6 +2569,7 @@ def build_generation_manifest(
     task_ids: list[str],
     files: list[dict],
     validation_commands: list[str],
+    capability_profile: dict | None = None,
 ) -> dict:
     """Build the generation manifest."""
     return {
@@ -845,6 +2581,7 @@ def build_generation_manifest(
         "task_ids": task_ids,
         "files": files,
         "validation_commands": validation_commands,
+        "capability_profile": capability_profile or {},
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -997,6 +2734,7 @@ def prepare_generation(
         task_ids=task_ids,
         files=manifest_files,
         validation_commands=packet["validation_commands"],
+        capability_profile=packet.get("capability_profile"),
     )
 
     # Write manifest and packet
@@ -1106,19 +2844,26 @@ def validate_generation_output(
     test_paths = {s["path"] for s in file_specs if s["kind"] == "test"}
     for src in source_paths:
         # Derive expected test path
+        alternatives: set[str] = set()
         if src.endswith(".tsx"):
-            expected_test = src.replace(".tsx", ".test.tsx")
+            alternatives.add(src.replace(".tsx", ".test.tsx"))
         elif src.endswith(".ts"):
-            expected_test = src.replace(".ts", ".test.ts")
+            alternatives.add(src.replace(".ts", ".test.ts"))
         elif src.endswith(".py"):
             parts = src.rsplit("/", 1)
             if len(parts) == 2:
-                expected_test = f"{parts[0]}/test_{parts[1]}"
+                alternatives.add(f"{parts[0]}/test_{parts[1]}")
             else:
-                expected_test = f"test_{parts[0]}"
+                alternatives.add(f"test_{parts[0]}")
+            basename = parts[-1]
+            alternatives.add(f"tests/test_{basename}")
+        elif src.endswith(".js"):
+            basename = src.rsplit("/", 1)[-1].replace(".js", "")
+            alternatives.add(f"tests/{basename}.test.js")
+            alternatives.add(src.replace(".js", ".test.js"))
         else:
             continue
-        if expected_test not in test_paths:
+        if not alternatives & test_paths:
             violations.append(f"Missing test file for source: {src}")
 
     # Check for unexpected files (files on disk in source dirs not in specs)

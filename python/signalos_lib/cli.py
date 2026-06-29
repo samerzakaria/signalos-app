@@ -103,7 +103,58 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sign.add_argument("--verdict", choices=["APPROVED","APPROVED-WITH-CONDITIONS","WAIVED"], default=None)
     p_sign.add_argument("--conditions", default="")
     p_sign.add_argument("--repo-root", default=None)
+    p_sign.add_argument("--wave", default=None)
     p_sign.add_argument("--oidc", action="store_true", help="OIDC browser auth before signing (W6.3)")
+
+    p_validate_gate = sub.add_parser(
+        "validate-gate",
+        help="Validate a gate artifact is signed and audit-linked",
+    )
+    p_validate_gate.add_argument("--repo-root", default=None)
+    p_validate_gate.add_argument("--gate", required=True, help="Gate id: G0..G5 or 0..5")
+    p_validate_gate.add_argument("--wave", default=None, help="Optional wave id, e.g. 01 or W01")
+    p_validate_gate.add_argument("--json", action="store_true", dest="as_json")
+    p_validate_gate.add_argument("--no-evidence", action="store_true")
+
+    p_validate_wave_status = sub.add_parser(
+        "validate-wave-status",
+        help="Validate Wave status, Journey blockers, and signed gate evidence",
+    )
+    p_validate_wave_status.add_argument("--repo-root", default=None)
+    p_validate_wave_status.add_argument("--wave", default=None, help="Optional wave id, e.g. 01 or W01")
+    p_validate_wave_status.add_argument("--api-url", default=None, help="Reserved for future runtime API validation")
+    p_validate_wave_status.add_argument("--token", default=None, help="Reserved bearer token for --api-url")
+    p_validate_wave_status.add_argument("--json", action="store_true", dest="as_json")
+    p_validate_wave_status.add_argument("--no-evidence", action="store_true")
+
+    p_validate_traceability = sub.add_parser(
+        "validate-traceability",
+        help="Validate product Belief artifacts and source traceability",
+    )
+    p_validate_traceability.add_argument("--repo-root", default=None)
+    p_validate_traceability.add_argument("--json", action="store_true", dest="as_json")
+    p_validate_traceability.add_argument("--no-evidence", action="store_true")
+
+    p_validate_prd_traceability = sub.add_parser(
+        "validate-prd-traceability",
+        help="Validate PRD claims resolve to BELIEF, BUILD, DEC, or DEFER",
+    )
+    p_validate_prd_traceability.add_argument("--repo-root", default=None)
+    p_validate_prd_traceability.add_argument("--matrix-path", default=None)
+    p_validate_prd_traceability.add_argument("--json", action="store_true", dest="as_json")
+    p_validate_prd_traceability.add_argument("--no-evidence", action="store_true")
+
+    p_validate_worktree_sync = sub.add_parser(
+        "validate-worktree-sync",
+        help="Validate read-only git worktree snapshot state",
+    )
+    p_validate_worktree_sync.add_argument("--repo-root", default=None)
+    p_validate_worktree_sync.add_argument("--require-clean", action="store_true")
+    p_validate_worktree_sync.add_argument("--json", action="store_true", dest="as_json")
+    p_validate_worktree_sync.add_argument("--no-evidence", action="store_true")
+
+    p_trust_tier = sub.add_parser("trust-tier", help="Trust Tier surface lifecycle and validation")
+    p_trust_tier.add_argument("trust_tier_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
     p_plan = sub.add_parser("plan", help="Machine-readable task schema (W3.4)")
     p_plan.add_argument("action", choices=["render", "validate", "list"])
@@ -166,6 +217,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--group", choices=["core", "layer1"], default=None)
     p_val.add_argument("--json", action="store_true", dest="as_json")
 
+    p_detect_bypass = sub.add_parser("detect-bypass", help="Detect governance-bypass signatures")
+    p_detect_bypass.add_argument("--repo-root", default=None)
+    p_detect_bypass.add_argument("--staged", action="store_true", default=False)
+    p_detect_bypass.add_argument("--diff", default=None)
+    p_detect_bypass.add_argument("--message-file", default=None)
+    p_detect_bypass.add_argument("--json", action="store_true", dest="as_json")
+    p_detect_bypass.add_argument("--no-evidence", action="store_true")
+
+    p_guidance = sub.add_parser(
+        "validate-guidance-obligations",
+        help="Validate product-agent guidance obligations",
+    )
+    p_guidance.add_argument("--repo-root", default=None)
+    p_guidance.add_argument("--staged", action="store_true", default=False)
+    p_guidance.add_argument("--diff", default=None)
+    p_guidance.add_argument("--loaded", default=None)
+    p_guidance.add_argument("--stack", default="any")
+    p_guidance.add_argument("--action", default="edit")
+    p_guidance.add_argument("--json", action="store_true", dest="as_json")
+    p_guidance.add_argument("--no-evidence", action="store_true")
+
     p_verify_product = sub.add_parser("verify-product", help="Run product build/test verification and evidence capture")
     p_verify_product.add_argument("--repo-root", type=Path, default=None)
     p_verify_product.add_argument("--wave", default=None)
@@ -185,6 +257,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_release_readiness.add_argument("--timeout-sec", type=int, default=300)
     p_release_readiness.add_argument("--run-verification", action="store_true")
     p_release_readiness.add_argument("--json", action="store_true", dest="as_json")
+
+    p_release_proof = sub.add_parser("release-proof", help="Validate release artifact proof")
+    p_release_proof.add_argument("release_proof_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_ship = sub.add_parser("ship", help="Verify Gate 5 ship readiness and append audit")
+    p_ship.add_argument("wave", help="Wave id or number, e.g. 1 or W01")
+    p_ship.add_argument("--repo-root", type=Path, default=None)
+    p_ship.add_argument("--dry-run", action="store_true")
+    p_ship.add_argument("--no-tag", action="store_true")
+    p_ship.add_argument("--allow-dirty", action="store_true")
+    p_ship.add_argument("--tag-format", default="wave-{W}")
+    p_ship.add_argument("--actor", default=None)
+    p_ship.add_argument("--no-evidence", action="store_true")
+    p_ship.add_argument("--json", action="store_true", dest="as_json")
 
     p_hooks = sub.add_parser("hooks", help="Hook lifecycle management (W3.5)")
     p_hooks.add_argument("action", choices=["test"])
@@ -391,7 +477,65 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Count or harvest // DEFER: markers into the wave backlog")
     p_defer.add_argument("defer_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    p_feature_gate = sub.add_parser(
+        "feature-gate",
+        help="Evaluate a request against active wave scope",
+    )
+    p_feature_gate.add_argument(
+        "feature_gate_args",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+    )
+
+    p_cost = sub.add_parser(
+        "cost",
+        help="Summarize AI usage and enforce a USD budget",
+    )
+    p_cost.add_argument("cost_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_trace = sub.add_parser(
+        "trace",
+        help="Trace governance tickets to source/proof files",
+    )
+    p_trace.add_argument("trace_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_bundle = sub.add_parser(
+        "bundle",
+        help="Inspect or extract embedded SignalOS bundle files",
+    )
+    p_bundle.add_argument("bundle_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_handoff = sub.add_parser(
+        "handoff",
+        help="Package operator handoff evidence",
+    )
+    p_handoff.add_argument("handoff_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_test = sub.add_parser(
+        "test",
+        help="Run the technology-neutral 12-phase test automation umbrella",
+    )
+    p_test.add_argument("test_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    p_integrity_witness = sub.add_parser(
+        "integrity-witness",
+        help="Check or create the governance integrity witness",
+    )
+    p_integrity_witness.add_argument(
+        "integrity_witness_args",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+    )
+
     # Phase 13 hardening — constitution hash-lock and verify
+    from signalos_lib.commands.ceremonies import CEREMONY_COMMANDS
+    for ceremony_command in sorted(CEREMONY_COMMANDS):
+        p_ceremony = sub.add_parser(
+            ceremony_command,
+            help=f"Run the app-native {ceremony_command} governance ceremony",
+        )
+        p_ceremony.add_argument("ceremony_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     p_const = sub.add_parser("constitution",
         help="Hash-lock and verify the governance constitution")
     p_const.add_argument("constitution_args", nargs=argparse.REMAINDER, metavar="ARGS")
@@ -410,11 +554,24 @@ def _build_parser() -> argparse.ArgumentParser:
     from signalos_lib.commands.deliver import register as _register_deliver
     _register_deliver(sub)
 
+    # Product factory workflows
+    p_product = sub.add_parser("product", help="Product factory workflows")
+    p_product.add_argument("product_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    # App-native observability workflows
+    p_observe = sub.add_parser("observe", help="Observe signal windows and evidence")
+    p_observe.add_argument("observe_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
+    # App-native WorktreeSync snapshot workflows
+    p_worktree_snapshot = sub.add_parser("worktree-snapshot", help="Take/query read-only git snapshots")
+    p_worktree_snapshot.add_argument("worktree_snapshot_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # Product delivery bridge — intent preview
     p_di = sub.add_parser("deliver-intent",
         help="Preview product intent extraction (no full delivery)")
     p_di.add_argument("--prompt", required=True, help="Product request prompt")
     p_di.add_argument("--name", default=None, help="Product/repo name")
+    _add_product_capability_args(p_di)
     p_di.add_argument("--json", action="store_true", dest="as_json")
 
     # Product delivery bridge — design preview
@@ -423,6 +580,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dd.add_argument("--prompt", required=True, help="Product request prompt")
     p_dd.add_argument("--name", default=None, help="Product/repo name")
     p_dd.add_argument("--profile", default="auto")
+    p_dd.add_argument("--repo-root", default=None, help="Repo root for profile detection")
+    _add_product_capability_args(p_dd)
     p_dd.add_argument("--json", action="store_true", dest="as_json")
 
     # Product delivery bridge — visual design preview HTML
@@ -432,6 +591,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dp.add_argument("--name", default=None, help="Product/repo name")
     p_dp.add_argument("--profile", default="auto")
     p_dp.add_argument("--repo-root", default=None, help="Repo root for output")
+    _add_product_capability_args(p_dp)
     p_dp.add_argument("--json", action="store_true", dest="as_json")
 
     # W7 Sprint QA — Browser-driven scenario suite (gating + non-gating)
@@ -485,6 +645,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_qa_only.add_argument("--quiet", dest="qa_verbose", action="store_false")
 
     return parser
+
+
+def _add_product_capability_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--technology",
+        action="append",
+        dest="technologies",
+        default=[],
+        help="Technology or infrastructure capability preference.",
+    )
+    p.add_argument("--frontend", default="auto", help="Frontend preference.")
+    p.add_argument("--database", default="auto", help="Database preference.")
+    p.add_argument("--cache", default="auto", help="Cache preference.")
+    p.add_argument("--language", default="auto", help="Product language preference.")
+    p.add_argument("--deploy-target", default="auto", help="Deploy target preference.")
 
 
 def _dispatch_daemon(args: argparse.Namespace) -> int:
@@ -640,6 +815,13 @@ def main(argv: list[str]) -> int:
 
     rest = remainder
 
+    def command_tail() -> list[str]:
+        try:
+            idx = argv[1:].index(cmd) + 2
+        except ValueError:
+            return []
+        return list(argv[idx:])
+
     if cmd == "session":
         from signalos_lib.commands import session as m
         action = [args.action] + ([args.session_id] if args.session_id else [])
@@ -730,9 +912,76 @@ def main(argv: list[str]) -> int:
             extra += ["--conditions", args.conditions]
         if args.repo_root:
             extra += ["--repo-root", str(args.repo_root)]
+        if args.wave:
+            extra += ["--wave", args.wave]
         if getattr(args, "oidc", False):
             extra += ["--oidc"]
         return m.main(extra)
+    if cmd == "validate-gate":
+        from signalos_lib.commands import validate_gate as m
+        extra = ["--gate", args.gate]
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.wave:
+            extra += ["--wave", args.wave]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "validate-wave-status":
+        from signalos_lib.commands import validate_wave_status as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.wave:
+            extra += ["--wave", args.wave]
+        if args.api_url:
+            extra += ["--api-url", args.api_url]
+        if args.token:
+            extra += ["--token", args.token]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "validate-traceability":
+        from signalos_lib.commands import validate_traceability as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "validate-prd-traceability":
+        from signalos_lib.commands import validate_prd_traceability as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.matrix_path:
+            extra += ["--matrix-path", str(args.matrix_path)]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "validate-worktree-sync":
+        from signalos_lib.commands import validate_worktree_sync as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.require_clean:
+            extra += ["--require-clean"]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "trust-tier":
+        from signalos_lib.commands import trust_tier as m
+        return m.main(list(getattr(args, "trust_tier_args", None) or []))
     if cmd == "intent":
         from signalos_lib.commands import intent as m
         extra = []
@@ -810,6 +1059,42 @@ def main(argv: list[str]) -> int:
         if args.as_json:
             extra += ["--json"]
         return m.main(extra)
+    if cmd == "detect-bypass":
+        from signalos_lib.commands import detect_bypass as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", args.repo_root]
+        if args.staged:
+            extra += ["--staged"]
+        if args.diff:
+            extra += ["--diff", args.diff]
+        if args.message_file:
+            extra += ["--message-file", args.message_file]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
+    if cmd == "validate-guidance-obligations":
+        from signalos_lib.commands import validate_guidance_obligations as m
+        extra = []
+        if args.repo_root:
+            extra += ["--repo-root", args.repo_root]
+        if args.staged:
+            extra += ["--staged"]
+        if args.diff:
+            extra += ["--diff", args.diff]
+        if args.loaded:
+            extra += ["--loaded", args.loaded]
+        if args.stack:
+            extra += ["--stack", args.stack]
+        if args.action:
+            extra += ["--action", args.action]
+        if args.as_json:
+            extra += ["--json"]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
+        return m.main(extra)
     if cmd == "verify-product":
         from signalos_lib.commands import verify_product as m
         extra = []
@@ -846,6 +1131,29 @@ def main(argv: list[str]) -> int:
             extra += ["--timeout-sec", str(args.timeout_sec)]
         if args.run_verification:
             extra += ["--run-verification"]
+        if args.as_json:
+            extra += ["--json"]
+        return m.main(extra)
+    if cmd == "release-proof":
+        from signalos_lib.commands import release_proof as m
+        return m.main(list(getattr(args, "release_proof_args", None) or []))
+    if cmd == "ship":
+        from signalos_lib.commands import ship as m
+        extra = [args.wave]
+        if args.repo_root:
+            extra += ["--repo-root", str(args.repo_root)]
+        if args.dry_run:
+            extra += ["--dry-run"]
+        if args.no_tag:
+            extra += ["--no-tag"]
+        if args.allow_dirty:
+            extra += ["--allow-dirty"]
+        if args.tag_format != "wave-{W}":
+            extra += ["--tag-format", args.tag_format]
+        if args.actor:
+            extra += ["--actor", args.actor]
+        if args.no_evidence:
+            extra += ["--no-evidence"]
         if args.as_json:
             extra += ["--json"]
         return m.main(extra)
@@ -1179,9 +1487,42 @@ def main(argv: list[str]) -> int:
     # Phase 13 hardening — defer count/harvest
     if cmd == "defer":
         from signalos_lib.commands import defer as m
-        return m.main(list(getattr(args, "defer_args", None) or []))
+        return m.main(command_tail())
+
+    if cmd == "feature-gate":
+        from signalos_lib.commands import feature_gate as m
+        return m.main(command_tail())
+
+    if cmd == "trace":
+        from signalos_lib.commands import trace as m
+        return m.main(command_tail())
+
+    if cmd == "bundle":
+        from signalos_lib.commands import bundle as m
+        return m.main(command_tail())
+
+    if cmd == "handoff":
+        from signalos_lib.commands import handoff as m
+        return m.main(command_tail())
+
+    if cmd == "test":
+        from signalos_lib.commands import test_automation as m
+        return m.main(command_tail())
+
+    if cmd == "integrity-witness":
+        from signalos_lib.commands import integrity_witness as m
+        return m.main(command_tail())
+
+    if cmd == "cost":
+        from signalos_lib.commands import cost as m
+        return m.main(command_tail())
 
     # Phase 13 hardening — constitution lock/verify
+    from signalos_lib.commands.ceremonies import CEREMONY_COMMANDS
+    if cmd in CEREMONY_COMMANDS:
+        from signalos_lib.commands import ceremonies as m
+        return m.main(cmd, command_tail())
+
     if cmd == "constitution":
         from signalos_lib.commands import constitution as m
         return m.main(list(getattr(args, "constitution_args", None) or []))
@@ -1197,6 +1538,18 @@ def main(argv: list[str]) -> int:
         return cmd_signal_velocity(list(getattr(args, "velocity_args", None) or []))
 
     # Product delivery bridge
+    if cmd == "product":
+        from signalos_lib.commands import product as m
+        return m.main(list(getattr(args, "product_args", None) or []))
+
+    if cmd == "observe":
+        from signalos_lib.commands import observe as m
+        return m.main(list(getattr(args, "observe_args", None) or []))
+
+    if cmd == "worktree-snapshot":
+        from signalos_lib.commands import worktree_snapshot as m
+        return m.main(list(getattr(args, "worktree_snapshot_args", None) or []))
+
     if cmd == "deliver":
         from signalos_lib.commands.deliver import cmd_deliver
         return cmd_deliver(args)
@@ -1225,3 +1578,7 @@ def main_cli() -> None:  # pragma: no cover
     would call sys.exit and abort the test runner.
     """
     sys.exit(main(sys.argv))
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main_cli()

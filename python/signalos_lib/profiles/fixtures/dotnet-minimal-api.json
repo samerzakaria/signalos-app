@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "dotnet-minimal-api",
+  "name": ".NET Minimal API",
+  "description": "Backend/API product profile for optional .NET Minimal API services with dotnet restore, build, self-test, and preview commands.",
+  "required_templates": [
+    {
+      "source": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "destination": "core/governance/Governance/SOUL-DOCUMENT.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/CONSTITUTION.md",
+      "destination": "core/governance/Governance/CONSTITUTION.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/Governance/DECISION-DNA.md",
+      "destination": "core/governance/Governance/DECISION-DNA.md",
+      "group": "governance"
+    },
+    {
+      "source": "core/governance/QUALITY_CHECK.md",
+      "destination": "core/governance/QUALITY_CHECK.md",
+      "group": "quality"
+    },
+    {
+      "source": "core/governance/Templates/plan-template.md",
+      "destination": "core/strategy/PLAN.md",
+      "group": "planning"
+    }
+  ],
+  "ci": {
+    "enabled": false,
+    "files": [],
+    "templates": [],
+    "disabled_reason": ".NET Minimal API CI templates are not emitted by init yet; runtime validation is owned by the product adapter."
+  },
+  "commands": {
+    "install": {
+      "name": "dotnet restore",
+      "argv": ["dotnet", "restore", "SignalOSProduct.Api/SignalOSProduct.Api.csproj"],
+      "required": true
+    },
+    "build": {
+      "name": "dotnet build",
+      "argv": ["dotnet", "build", "SignalOSProduct.Api/SignalOSProduct.Api.csproj", "--no-restore"],
+      "required": true
+    },
+    "test": {
+      "name": "dotnet self-test",
+      "argv": ["dotnet", "run", "--project", "SignalOSProduct.Api/SignalOSProduct.Api.csproj", "--no-build", "--", "--self-test"],
+      "required": true
+    },
+    "lint": null,
+    "preview": {
+      "name": "dotnet run",
+      "argv": ["dotnet", "run", "--project", "SignalOSProduct.Api/SignalOSProduct.Api.csproj", "--no-build", "--", "--urls", "http://127.0.0.1:5050"],
+      "required": true
+    }
+  },
+  "preview": {
+    "mode": "command",
+    "command": "preview",
+    "url": "http://127.0.0.1:5050/health",
+    "requires_install": true,
+    "disabled_reason": null
+  },
+  "validator_groups": ["layer1", "governance", "artifacts", "dotnet", "api"]
+}

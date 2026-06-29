@@ -1,0 +1,21 @@
+---
+description: Use signalos defer to reconcile source DEFER markers with PRD traceability.
+globs: ["src/**", "test/**", "tests/**", "proof/**", ".signalos/PRD_TRACEABILITY.md", ".signalos/backlog/**"]
+alwaysApply: false
+---
+
+# defer wiring rule
+
+Use `signalos defer` whenever implementation work adds, edits, or reviews
+source-level `DEFER:` markers.
+
+- Prefer `DEFER: W<NN>+ <reason>` for deferrals that intentionally move work to
+  a later wave.
+- Run `signalos defer count --json` before closeout when source markers exist.
+- Treat exit code `100` as an unreconciled governance gap: add a matching
+  `.signalos/PRD_TRACEABILITY.md` DEFER row, harvest the work into a wave
+  backlog, or remove the stale marker.
+- Use `signalos defer harvest --wave <n> --json` when deferred work should enter
+  `.signalos/backlog/wave-<n>.yaml`.
+- Do not claim deferred work is governed unless the marker is visible in PRD
+  traceability or the wave backlog.

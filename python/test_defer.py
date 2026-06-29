@@ -53,6 +53,69 @@ class DeferCountTests(unittest.TestCase):
         self.assertEqual(payload["by_file"]["src/a.ts"][0]["note"], "add caching")
         self.assertEqual(payload["by_file"]["src/b.py"][0]["note"], "revisit error handling")
 
+    def test_count_reconciles_wave_markers_against_prd_defer_rows(self) -> None:
+        _write(self.tmp / "src" / "feature.ts", "// DEFER: W02+ add caching\n")
+        _write(
+            self.tmp / ".signalos" / "PRD_TRACEABILITY.md",
+            "| Claim | Destination | Source |\n"
+            "| C-1 | DEFER -> W02+ | src/feature.ts |\n",
+        )
+
+        code, payload = self._run(["count", "--repo-root", str(self.tmp), "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["target_markers"], 1)
+        self.assertEqual(payload["reconciled_count"], 1)
+        self.assertEqual(payload["unreconciled_count"], 0)
+        self.assertEqual(payload["markers"][0]["target_wave"], "W02+")
+        self.assertEqual(payload["by_file"]["src/feature.ts"][0]["target_wave"], "W02+")
+
+    def test_count_returns_review_code_for_unreconciled_wave_marker(self) -> None:
+        _write(self.tmp / "src" / "feature.ts", "// DEFER: W03+ add audit export\n")
+
+        code, payload = self._run(["count", "--repo-root", str(self.tmp), "--json"])
+
+        self.assertEqual(code, defer.EXIT_UNRECONCILED)
+        self.assertEqual(payload["target_markers"], 1)
+        self.assertEqual(payload["reconciled_count"], 0)
+        self.assertEqual(payload["unreconciled_count"], 1)
+        self.assertEqual(payload["unreconciled_markers"][0]["file"], "src/feature.ts")
+        self.assertEqual(payload["unreconciled_markers"][0]["target_wave"], "W03+")
+
+    def test_count_reconciles_when_prd_row_cites_only_file_name(self) -> None:
+        _write(self.tmp / "proof" / "release.md", "// DEFER: W04+ publish proof\n")
+        _write(
+            self.tmp / ".signalos" / "PRD_TRACEABILITY.md",
+            "| Claim | Destination | Source |\n"
+            "| C-2 | DEFER | release.md |\n",
+        )
+
+        code, payload = self._run(["count", "--repo-root", str(self.tmp), "--json"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["reconciled_count"], 1)
+        self.assertEqual(payload["unreconciled_count"], 0)
+        # The bare scalar duplicates must be gone -- only the canonical
+        # `_count` keys remain.
+        self.assertNotIn("reconciled", payload)
+        self.assertNotIn("unreconciled", payload)
+
+    def test_count_payload_omits_bare_scalar_duplicates(self) -> None:
+        """Schema is de-duplicated: only canonical *_count keys, no bare scalars."""
+        _write(self.tmp / "src" / "feature.ts", "// DEFER: W03+ add audit export\n")
+
+        code, payload = self._run(["count", "--repo-root", str(self.tmp), "--json"])
+
+        self.assertEqual(code, defer.EXIT_UNRECONCILED)
+        # Canonical keys present...
+        self.assertIn("reconciled_count", payload)
+        self.assertIn("unreconciled_count", payload)
+        self.assertIn("unreconciled_markers", payload)
+        # ...and the bare duplicates are removed.
+        self.assertNotIn("reconciled", payload)
+        self.assertNotIn("unreconciled", payload)
+
     def test_count_groups_multiple_hits_per_file(self) -> None:
         body = (
             "// DEFER: one\n"

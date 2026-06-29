@@ -8,8 +8,13 @@ without hard-coded branches in higher-level code.
 from __future__ import annotations
 
 from .stacks import (
+    AgentSelectedAdapter,
+    DotNetMinimalApiAdapter,
     GenericAdapter,
     ExistingRepoAdapter,
+    FastApiAdapter,
+    NodeApiAdapter,
+    GoApiAdapter,
     ReactViteAdapter,
     StackAdapter,
     detect_profile,
@@ -18,8 +23,13 @@ from .stacks import (
 )
 
 __all__ = [
+    "AgentSelectedAdapter",
+    "DotNetMinimalApiAdapter",
     "GenericAdapter",
     "ExistingRepoAdapter",
+    "FastApiAdapter",
+    "NodeApiAdapter",
+    "GoApiAdapter",
     "ReactViteAdapter",
     "StackAdapter",
     "detect_profile",

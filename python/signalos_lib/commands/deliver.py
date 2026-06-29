@@ -22,6 +22,7 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
         default="auto",
     )
     p.add_argument("--profile", default="auto")
+    _add_capability_options(p)
     p.add_argument("--blueprint", default="auto")
     p.add_argument(
         "--deploy",
@@ -40,6 +41,44 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
     return p
 
 
+def _add_capability_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--technology",
+        action="append",
+        dest="technologies",
+        default=[],
+        help=(
+            "Requested product technology or infrastructure capability. "
+            "Repeat or comma-separate values, e.g. node,postgresql,redis."
+        ),
+    )
+    p.add_argument("--frontend", default="auto", help="Frontend preference, or auto.")
+    p.add_argument("--database", default="auto", help="Database preference, or auto/none.")
+    p.add_argument("--cache", default="auto", help="Cache preference, or auto/none.")
+    p.add_argument("--language", default="auto", help="Product language preference, or auto.")
+    p.add_argument(
+        "--deploy-target",
+        default="auto",
+        help="Deploy target preference such as docker, vercel, fly, or auto.",
+    )
+
+
+def _apply_capability_args(intent: dict, args: argparse.Namespace) -> dict:
+    from ..product.capabilities import apply_capability_choices
+
+    return apply_capability_choices(
+        intent,
+        technologies=getattr(args, "technologies", []),
+        frontend=getattr(args, "frontend", "auto"),
+        database=getattr(args, "database", "auto"),
+        cache=getattr(args, "cache", "auto"),
+        language=getattr(args, "language", "auto"),
+        deployment_target=getattr(args, "deploy_target", "auto"),
+        adapter_profile=getattr(args, "profile", "auto"),
+        source="cli",
+    )
+
+
 def cmd_deliver_intent(args: argparse.Namespace) -> int:
     """Preview intent extraction without running full delivery."""
     import json as _json
@@ -53,10 +92,12 @@ def cmd_deliver_intent(args: argparse.Namespace) -> int:
     intent = extract_product_intent(args.prompt)
     if args.name:
         intent["product_name"] = args.name
+    intent = _apply_capability_args(intent, args)
 
     questions = generate_questions(intent)
     assumptions = record_assumptions(intent)
-    blueprint_id = match_blueprint(intent)
+    repo_root = Path(getattr(args, "repo_root", None) or Path.cwd())
+    blueprint_id = match_blueprint(intent, repo_root=repo_root)
 
     payload = {
         "intent": intent,
@@ -80,15 +121,18 @@ def cmd_deliver_design(args: argparse.Namespace) -> int:
     from ..product.blueprints.registry import load_blueprint, match_blueprint
     from ..product.design import build_design_system, get_design_dependencies
     from ..product.scaffold import select_greenfield_profile
+    from ..product.capabilities import build_capability_profile
 
     intent = extract_product_intent(args.prompt)
     if args.name:
         intent["product_name"] = args.name
+    intent = _apply_capability_args(intent, args)
 
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
     profile = args.profile if args.profile != "auto" else select_greenfield_profile(repo_root, intent)
-    blueprint_id = match_blueprint(intent)
-    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    repo_root = Path(getattr(args, "repo_root", None) or Path.cwd())
+    blueprint_id = match_blueprint(intent, repo_root=repo_root)
+    bp = load_blueprint(blueprint_id, repo_root=repo_root) if blueprint_id else None
     design = build_design_system(intent, profile, bp)
     deps = get_design_dependencies(design)
 
@@ -97,6 +141,10 @@ def cmd_deliver_design(args: argparse.Namespace) -> int:
         "dependencies": deps,
         "blueprint_id": blueprint_id,
         "profile": profile,
+        "capability_profile": build_capability_profile(
+            intent,
+            adapter_profile=profile,
+        ),
     }
 
     if getattr(args, "as_json", True):
@@ -119,11 +167,13 @@ def cmd_deliver_design_preview(args: argparse.Namespace) -> int:
     intent = extract_product_intent(args.prompt)
     if args.name:
         intent["product_name"] = args.name
+    intent = _apply_capability_args(intent, args)
 
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else Path.cwd()
     profile = args.profile if args.profile != "auto" else select_greenfield_profile(repo_root, intent)
-    blueprint_id = match_blueprint(intent)
-    bp = load_blueprint(blueprint_id) if blueprint_id else None
+    repo_root = Path(getattr(args, "repo_root", None) or Path.cwd())
+    blueprint_id = match_blueprint(intent, repo_root=repo_root)
+    bp = load_blueprint(blueprint_id, repo_root=repo_root) if blueprint_id else None
     design = build_design_system(intent, profile, bp)
 
     preview_html = generate_design_preview_html(design, intent)
@@ -168,6 +218,12 @@ def cmd_deliver(args: argparse.Namespace) -> int:
             max_repair_cycles=args.max_repair_cycles,
             agent_mode=args.agent,
             json_output=args.as_json,
+            technologies=getattr(args, "technologies", []),
+            frontend=getattr(args, "frontend", "auto"),
+            database=getattr(args, "database", "auto"),
+            cache=getattr(args, "cache", "auto"),
+            language=getattr(args, "language", "auto"),
+            deployment_target=getattr(args, "deploy_target", "auto"),
         )
 
     if args.as_json:

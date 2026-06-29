@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runGovernedCommand, isGovernedCommand, type GovernedShellIpc } from './governedShell';
+import {
+  runGovernedCommand,
+  isGovernedCommand,
+  splitGovernedCommand,
+  type GovernedShellIpc,
+} from './governedShell';
 
 function fakeIpc(overrides: Partial<GovernedShellIpc> = {}): GovernedShellIpc {
   return {
@@ -10,10 +15,23 @@ function fakeIpc(overrides: Partial<GovernedShellIpc> = {}): GovernedShellIpc {
 }
 
 describe('isGovernedCommand', () => {
-  it('detects /signal-* and /state: commands', () => {
+  it('detects any slash or signalos command as governed', () => {
     expect(isGovernedCommand('/signal-status')).toBe(true);
+    expect(isGovernedCommand('/validate-gate')).toBe(true);
     expect(isGovernedCommand('  /state:gates ')).toBe(true);
+    expect(isGovernedCommand('signalos validate-gate --gate 5')).toBe(true);
     expect(isGovernedCommand('build me an app')).toBe(false);
+  });
+});
+
+describe('splitGovernedCommand', () => {
+  it('preserves quoted Windows paths', () => {
+    expect(splitGovernedCommand('signalos cost --ledger "C:\\tmp\\ai usage.jsonl"')).toEqual([
+      'signalos',
+      'cost',
+      '--ledger',
+      'C:\\tmp\\ai usage.jsonl',
+    ]);
   });
 });
 
@@ -29,6 +47,51 @@ describe('runGovernedCommand', () => {
     const out = await runGovernedCommand('/signal-status', { workspace: '/w', inStarterWorkspace: false, ipc });
     expect(ipc.signal.runAndWait).toHaveBeenCalledWith('signal-status', [], 60000);
     expect((out as string[])[0]).toBe('ran signal-status');
+  });
+
+  it('routes arbitrary slash commands through the signal IPC', async () => {
+    const ipc = fakeIpc();
+    await runGovernedCommand('/bundle list --category commands', {
+      workspace: '/w',
+      inStarterWorkspace: false,
+      ipc,
+    });
+
+    expect(ipc.signal.runAndWait).toHaveBeenCalledWith(
+      'bundle',
+      ['list', '--category', 'commands'],
+      120000,
+    );
+  });
+
+  it('preserves quoted args for arbitrary slash commands', async () => {
+    const ipc = fakeIpc();
+    await runGovernedCommand('/signal-discovery --name "Jane Doe"', {
+      workspace: '/w',
+      inStarterWorkspace: false,
+      ipc,
+    });
+
+    expect(ipc.signal.runAndWait).toHaveBeenCalledWith(
+      'signal-discovery',
+      ['--name', 'Jane Doe'],
+      120000,
+    );
+  });
+
+  it('routes arbitrary signalos commands through the signal IPC', async () => {
+    const ipc = fakeIpc();
+    await runGovernedCommand('signalos validate-gate --gate 5 --json', {
+      workspace: '/w',
+      inStarterWorkspace: false,
+      ipc,
+    });
+
+    expect(ipc.signal.runAndWait).toHaveBeenCalledWith(
+      'validate-gate',
+      ['--gate', '5', '--json'],
+      120000,
+    );
   });
 
   it('guards governance commands in the starter workspace', async () => {

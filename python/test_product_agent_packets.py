@@ -99,7 +99,7 @@ class TestBuildAgentPacket:
             "team_contract", "blueprint_id", "profile", "wave", "tasks",
             "acceptance_criteria", "allowed_paths", "forbidden_paths",
             "forbidden_actions", "validation_commands", "skills_catalog",
-            "applicable_skills", "result_schema",
+            "applicable_skills", "lesson_context", "result_schema",
         ]
         for field in required:
             assert field in packet, f"Missing field: {field}"
@@ -201,6 +201,15 @@ class TestBuildAgentPacket:
         assert "verification-before-completion" in keys
         assert all(entry.get("content") for entry in packet["applicable_skills"])
 
+    def test_lesson_context_selects_required_product_lessons(self, packet):
+        context = packet["lesson_context"]
+        assert context["schema_version"] == "signalos.product_lesson_context.v1"
+        assert context["pack_sha256_lf"]
+        selected = {lesson["id"]: lesson for lesson in context["selected_lessons"]}
+        assert "lesson.tests-before-ready" in selected
+        assert "lesson.no-fabricated-proof" in selected
+        assert selected["lesson.tests-before-ready"]["enforcement"] == "required"
+
     def test_ui_and_security_context_adds_domain_skills(
         self, repo, intent, acceptance_matrix, tasks, allowed_paths
     ):
@@ -238,7 +247,7 @@ class TestWriteAgentPacket:
             "PACKET.md", "scope.json", "skills-catalog.json",
             "applicable-skills.md", "files-allowed.txt",
             "commands-allowed.txt", "validation-plan.json",
-            "result.schema.json",
+            "result.schema.json", "lesson-context.json",
         ]
         for name in expected_files:
             assert (run_dir / name).is_file(), f"Missing file: {name}"
@@ -282,6 +291,8 @@ class TestWriteAgentPacket:
         assert "`test-driven-development`" in md
         assert "## Applicable SignalOS Skills" in md
         assert "Test-Driven Development" in md
+        assert "## Product Lessons" in md
+        assert "lesson.tests-before-ready" in md
 
     def test_skills_files_are_written_for_packet_only_agents(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)
@@ -306,6 +317,8 @@ class TestWriteAgentPacket:
         assert "## Repair/Rework Policy" in prompt
         assert "## SignalOS Team Contract" in prompt
         assert "not as a separate user-managed agent" in prompt
+        assert "## Product Lessons" in prompt
+        assert "lesson.tests-before-ready" in prompt
 
     def test_files_allowed_txt(self, repo, packet):
         run_dir = write_agent_packet(packet, repo)
@@ -322,6 +335,7 @@ class TestWriteAgentPacket:
         assert plan["evidence_required"] == packet["evidence_required"]
         assert plan["forbidden_rules"] == packet["forbidden_rules"]
         assert plan["repair_policy"] == packet["repair_policy"]
+        assert plan["lesson_context"] == packet["lesson_context"]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +347,41 @@ class TestValidateAgentResult:
         """Write packet and return run_dir."""
         return write_agent_packet(packet, repo)
 
+    def _completed_lesson_accounting(self, packet):
+        required = [
+            lesson["id"]
+            for lesson in packet["lesson_context"]["selected_lessons"]
+            if lesson["enforcement"] == "required"
+        ]
+        return {
+            "applied_lessons": required,
+            "lesson_evidence": [
+                {"id": lesson_id, "detail": "validated by focused product test"}
+                for lesson_id in required
+            ],
+            "not_applicable_lessons": [],
+        }
+
     def test_passes_for_result_within_allowed_paths(self, repo, packet):
+        run_dir = self._setup_run(repo, packet)
+        result = {
+            "run_id": packet["run_id"],
+            "status": "completed",
+            "files_written": ["src/components/TaskList.tsx"],
+            "actions_taken": [],
+            "validation_results": {},
+            **self._completed_lesson_accounting(packet),
+        }
+        (run_dir / "RESULT.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        validation = validate_agent_result(run_dir, repo, None)
+        assert validation["valid"] is True
+        assert len(validation["violations"]) == 0
+        assert validation["acceptance"] == "accepted"
+        assert validation["next_action"] == "none"
+
+    def test_fails_completed_result_missing_required_lesson_accounting(self, repo, packet):
         run_dir = self._setup_run(repo, packet)
         result = {
             "run_id": packet["run_id"],
@@ -346,10 +394,27 @@ class TestValidateAgentResult:
             json.dumps(result), encoding="utf-8"
         )
         validation = validate_agent_result(run_dir, repo, None)
-        assert validation["valid"] is True
-        assert len(validation["violations"]) == 0
-        assert validation["acceptance"] == "accepted"
-        assert validation["next_action"] == "none"
+        assert validation["valid"] is False
+        assert any("required lesson not accounted" in v for v in validation["violations"])
+        assert validation["next_action"] == "repair_packet"
+
+    def test_fails_when_result_cites_unselected_lesson(self, repo, packet):
+        run_dir = self._setup_run(repo, packet)
+        result = {
+            "run_id": packet["run_id"],
+            "status": "completed",
+            "files_written": ["src/components/TaskList.tsx"],
+            "actions_taken": [],
+            "validation_results": {},
+            **self._completed_lesson_accounting(packet),
+        }
+        result["applied_lessons"].append("lesson.not-selected")
+        (run_dir / "RESULT.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        validation = validate_agent_result(run_dir, repo, None)
+        assert validation["valid"] is False
+        assert any("unselected lesson" in v for v in validation["violations"])
 
     def test_fails_for_result_writing_to_forbidden_paths(self, repo, packet):
         run_dir = self._setup_run(repo, packet)

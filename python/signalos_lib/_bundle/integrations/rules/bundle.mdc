@@ -1,0 +1,17 @@
+---
+description: Use signalos bundle to inspect embedded governance and agent assets.
+globs: ["python/signalos_lib/_bundle/**", "core/**", "integrations/**"]
+alwaysApply: false
+---
+
+# bundle wiring rule
+
+Use `signalos bundle` when a workflow needs to verify or extract embedded
+SignalOS governance, command, hook, prompt, or integration assets.
+
+- Use `signalos bundle list --count` to prove category coverage.
+- Use `signalos bundle list --category <name>` to inspect logical paths.
+- Use `signalos bundle extract --category <name> --output <dir>` to copy one
+  category for review or adopter packaging.
+- Do not require .NET assembly resources to inspect the app bundle; the app owns
+  its bundled Python package data directly.

@@ -8,7 +8,8 @@
 /// Adding a new model or a new provider = edit providers.json. No recompile.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -396,13 +397,13 @@ pub struct CostAccumulator {
 }
 
 impl CostAccumulator {
-    pub fn record(&mut self, tokens_in: u64, tokens_out: u64, cfg: &ProviderConfig) {
+    pub fn record(&mut self, tokens_in: u64, tokens_out: u64, cfg: &ProviderConfig) -> f64 {
         self.tokens_in += tokens_in;
         self.tokens_out += tokens_out;
-        let cost = (tokens_in as f64 / 1_000_000.0) * cfg.price_in_1m
-            + (tokens_out as f64 / 1_000_000.0) * cfg.price_out_1m;
+        let cost = provider_cost_usd(tokens_in, tokens_out, cfg);
         self.session_usd += cost;
         self.monthly_usd += cost;
+        cost
     }
 
     pub fn over_budget(&self) -> bool {
@@ -600,6 +601,7 @@ pub fn record_token_usage(
     tokens_in: u64,
     tokens_out: u64,
     state: State<ProviderState>,
+    workspace: State<crate::ipc::WorkspaceState>,
 ) -> CostAccumulator {
     let provider = state.active.lock().unwrap().clone();
     let configs = state.configs.lock().unwrap();
@@ -613,7 +615,16 @@ pub fn record_token_usage(
         });
     drop(configs);
     let mut cost = state.cost.lock().unwrap();
-    cost.record(tokens_in, tokens_out, &cfg);
+    let cost_usd = cost.record(tokens_in, tokens_out, &cfg);
+    append_usage_ledger_best_effort(
+        active_workspace_path(&workspace),
+        provider.id(),
+        &cfg.model,
+        "manual-record",
+        tokens_in,
+        tokens_out,
+        configured_cost_usd(provider.id(), &cfg, cost_usd),
+    );
     cost.clone()
 }
 
@@ -796,6 +807,7 @@ pub async fn send_provider_message_stream(
     message: String,
     app: AppHandle,
     state: State<'_, ProviderState>,
+    workspace: State<'_, crate::ipc::WorkspaceState>,
 ) -> Result<ProviderChatResponse, String> {
     let provider_id = provider.trim().to_lowercase();
     let provider_enum =
@@ -922,7 +934,14 @@ pub async fn send_provider_message_stream(
                     model: selected_model.clone(),
                 },
             );
-            record_chat_cost(&state, provider_enum.id(), tokens_in, tokens_out);
+            record_chat_cost(
+                &state,
+                Some(&workspace),
+                provider_enum.id(),
+                "chat-stream",
+                tokens_in,
+                tokens_out,
+            );
             Ok(ProviderChatResponse {
                 text,
                 tokens_in,
@@ -1221,6 +1240,7 @@ pub async fn send_provider_message(
     model: Option<String>,
     message: String,
     state: State<'_, ProviderState>,
+    workspace: State<'_, crate::ipc::WorkspaceState>,
 ) -> Result<ProviderChatResponse, String> {
     let provider_id = provider.trim().to_lowercase();
     let provider_enum =
@@ -1297,7 +1317,9 @@ pub async fn send_provider_message(
 
     record_chat_cost(
         &state,
+        Some(&workspace),
         provider_enum.id(),
+        "chat",
         response.tokens_in,
         response.tokens_out,
     );
@@ -1569,7 +1591,9 @@ fn resolve_model(
 
 fn record_chat_cost(
     state: &State<'_, ProviderState>,
+    workspace: Option<&State<'_, crate::ipc::WorkspaceState>>,
     provider_id: &str,
+    stage: &str,
     tokens_in: Option<u64>,
     tokens_out: Option<u64>,
 ) {
@@ -1581,11 +1605,252 @@ fn record_chat_cost(
         return;
     };
     drop(configs);
-    state
+    let cost_usd = state
         .cost
         .lock()
         .unwrap()
         .record(tokens_in, tokens_out, &cfg);
+    append_usage_ledger_best_effort(
+        workspace.and_then(active_workspace_path),
+        provider_id,
+        &cfg.model,
+        stage,
+        tokens_in,
+        tokens_out,
+        configured_cost_usd(provider_id, &cfg, cost_usd),
+    );
+}
+
+fn active_workspace_path(workspace: &State<'_, crate::ipc::WorkspaceState>) -> Option<PathBuf> {
+    workspace.0.lock().unwrap().clone()
+}
+
+fn provider_cost_usd(tokens_in: u64, tokens_out: u64, cfg: &ProviderConfig) -> f64 {
+    (tokens_in as f64 / 1_000_000.0) * cfg.price_in_1m
+        + (tokens_out as f64 / 1_000_000.0) * cfg.price_out_1m
+}
+
+fn configured_cost_usd(provider_id: &str, cfg: &ProviderConfig, cost_usd: f64) -> Option<f64> {
+    if provider_id == "ollama" || cfg.price_in_1m > 0.0 || cfg.price_out_1m > 0.0 {
+        Some(cost_usd)
+    } else {
+        None
+    }
+}
+
+fn append_usage_ledger_best_effort(
+    workspace: Option<PathBuf>,
+    provider_id: &str,
+    model: &str,
+    stage: &str,
+    tokens_in: u64,
+    tokens_out: u64,
+    cost_usd: Option<f64>,
+) {
+    let Some(workspace) = workspace else {
+        return;
+    };
+    if let Err(err) = append_usage_ledger(
+        &workspace,
+        provider_id,
+        model,
+        stage,
+        tokens_in,
+        tokens_out,
+        cost_usd,
+    ) {
+        eprintln!("[cost-ledger] failed to append AI usage: {err}");
+    }
+}
+
+fn append_usage_ledger(
+    workspace: &Path,
+    provider_id: &str,
+    model: &str,
+    stage: &str,
+    tokens_in: u64,
+    tokens_out: u64,
+    cost_usd: Option<f64>,
+) -> Result<PathBuf, String> {
+    let ledger_path = workspace
+        .join(".signalos")
+        .join("product")
+        .join("AI_USAGE.jsonl");
+    let parent = ledger_path
+        .parent()
+        .ok_or_else(|| "AI usage ledger path has no parent".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("Could not create AI usage ledger directory: {e}"))?;
+
+    let mut row = serde_json::json!({
+        "ts": crate::ipc::ipc_chrono_iso8601(),
+        "schema_version": 1,
+        "source": "foundry-desktop-provider",
+        "provider": provider_id,
+        "model": model,
+        "stage": stage,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "total_tokens": tokens_in + tokens_out,
+        "currency": "USD",
+        "cost_basis": if cost_usd.is_some() { "configured-provider-pricing" } else { "unpriced-provider-config" },
+    });
+    if let Some(wave) = read_active_wave_id(workspace) {
+        row["wave"] = serde_json::Value::String(wave);
+    }
+    if let Some(cost) = cost_usd.and_then(format_cost_usd) {
+        row["cost_usd"] = serde_json::Value::String(cost);
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&ledger_path)
+        .map_err(|e| format!("Could not open AI usage ledger: {e}"))?;
+    writeln!(file, "{row}").map_err(|e| format!("Could not append AI usage ledger: {e}"))?;
+    Ok(ledger_path)
+}
+
+fn read_active_wave_id(workspace: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(workspace.join(".signalos").join("wave.json")).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if !status.eq_ignore_ascii_case("active") {
+        return None;
+    }
+    value
+        .get("wave")
+        .or_else(|| value.get("wave_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn format_cost_usd(cost_usd: f64) -> Option<String> {
+    if !cost_usd.is_finite() || cost_usd < 0.0 {
+        return None;
+    }
+    let mut out = format!("{cost_usd:.8}");
+    while out.contains('.') && out.ends_with('0') {
+        out.pop();
+    }
+    if out.ends_with('.') {
+        out.push('0');
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod cost_ledger_tests {
+    use super::{
+        append_usage_ledger, configured_cost_usd, format_cost_usd, provider_cost_usd,
+        read_active_wave_id, ProviderConfig,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_workspace(name: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("signalos-provider-{name}-{nonce}"));
+        std::fs::create_dir_all(&root).expect("create temp workspace");
+        root
+    }
+
+    #[test]
+    fn cost_formula_uses_configured_provider_pricing() {
+        let cfg = ProviderConfig {
+            model: "gpt-test".into(),
+            price_in_1m: 1.0,
+            price_out_1m: 2.0,
+        };
+
+        let cost = provider_cost_usd(1_000, 2_000, &cfg);
+
+        assert_eq!(format_cost_usd(cost).as_deref(), Some("0.005"));
+        assert_eq!(
+            configured_cost_usd("openai", &cfg, cost).and_then(format_cost_usd).as_deref(),
+            Some("0.005")
+        );
+    }
+
+    #[test]
+    fn unknown_zero_priced_cloud_provider_remains_unpriced() {
+        let cfg = ProviderConfig {
+            model: "provider-model".into(),
+            price_in_1m: 0.0,
+            price_out_1m: 0.0,
+        };
+
+        assert!(configured_cost_usd("openrouter", &cfg, 0.0).is_none());
+        assert_eq!(configured_cost_usd("ollama", &cfg, 0.0), Some(0.0));
+    }
+
+    #[test]
+    fn appends_usage_ledger_row_with_wave_and_cost() {
+        let root = temp_workspace("ledger-cost");
+        std::fs::create_dir_all(root.join(".signalos")).expect("create signalos dir");
+        std::fs::write(
+            root.join(".signalos").join("wave.json"),
+            r#"{"wave":"W07","status":"ACTIVE"}"#,
+        )
+        .expect("write wave");
+
+        let path = append_usage_ledger(
+            &root,
+            "openai",
+            "gpt-test",
+            "chat",
+            1_000,
+            2_000,
+            Some(0.005),
+        )
+        .expect("append ledger");
+
+        let text = std::fs::read_to_string(path).expect("read ledger");
+        let row: serde_json::Value = serde_json::from_str(text.trim()).expect("parse ledger row");
+        assert_eq!(row["source"], "foundry-desktop-provider");
+        assert_eq!(row["provider"], "openai");
+        assert_eq!(row["model"], "gpt-test");
+        assert_eq!(row["stage"], "chat");
+        assert_eq!(row["tokens_in"], 1_000);
+        assert_eq!(row["tokens_out"], 2_000);
+        assert_eq!(row["total_tokens"], 3_000);
+        assert_eq!(row["cost_usd"], "0.005");
+        assert_eq!(row["wave"], "W07");
+        assert_eq!(read_active_wave_id(&root).as_deref(), Some("W07"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn appends_usage_ledger_row_without_cost_when_unpriced() {
+        let root = temp_workspace("ledger-unpriced");
+
+        let path = append_usage_ledger(
+            &root,
+            "openrouter",
+            "custom-model",
+            "chat-stream",
+            10,
+            20,
+            None,
+        )
+        .expect("append ledger");
+
+        let text = std::fs::read_to_string(path).expect("read ledger");
+        let row: serde_json::Value = serde_json::from_str(text.trim()).expect("parse ledger row");
+        assert!(row.get("cost_usd").is_none());
+        assert_eq!(row["cost_basis"], "unpriced-provider-config");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 async fn chat_anthropic(

@@ -1,0 +1,163 @@
+[
+  {
+    "rule_id": "OBL-APP-001",
+    "title": "Product implementation edits must load TDD, test generation, and completion verification guidance",
+    "when": {
+      "path_globs": [
+        "src/**",
+        "app/**",
+        "apps/**",
+        "server/**",
+        "api/**",
+        "packages/**",
+        "python/**",
+        "lib/**"
+      ],
+      "action_any_of": ["edit", "create", "implement", "add_endpoint", "generate"],
+      "stack_any_of": ["any", "react-vite", "node-api", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "test-driven-development",
+      "test-generation",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-002",
+    "title": "Test edits must load test-generation and verification guidance",
+    "when": {
+      "path_globs": [
+        "test/**",
+        "tests/**",
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "**/test_*.py",
+        "**/*_test.py",
+        "**/*Tests.cs",
+        "**/*Test.java"
+      ],
+      "action_any_of": ["edit", "create", "generate_tests", "test"],
+      "stack_any_of": ["any", "react-vite", "node-api", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "test-generation",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-003",
+    "title": "User-facing UI edits must load design and end-to-end workflow guidance",
+    "when": {
+      "path_globs": [
+        "src/**/*.tsx",
+        "src/**/*.jsx",
+        "src/**/*.css",
+        "src/**/*.html",
+        "app/**/*.tsx",
+        "app/**/*.jsx",
+        "ui/**",
+        "public/**"
+      ],
+      "action_any_of": ["edit", "create", "design", "implement"],
+      "stack_any_of": ["any", "react-vite", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "design",
+      "e2e-testing",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-004",
+    "title": "Security-sensitive edits must load security audit and review guidance",
+    "when": {
+      "path_globs": [
+        "**/*auth*",
+        "**/*security*",
+        "**/*permission*",
+        "**/*secret*",
+        "**/*token*",
+        "**/*payment*",
+        "**/*tenant*",
+        "infra/**",
+        "deploy/**",
+        ".github/workflows/**"
+      ],
+      "action_any_of": ["edit", "create", "review", "implement", "deploy"],
+      "stack_any_of": ["any", "react-vite", "node-api", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "security-audit",
+      "comprehensive-code-review",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-005",
+    "title": "Plans and architecture edits must load planning and review guidance",
+    "when": {
+      "path_globs": [
+        "PLAN*.md",
+        "docs/**/*.md",
+        "architecture/**",
+        "specs/**",
+        ".signalos/plans/**"
+      ],
+      "action_any_of": ["edit", "create", "plan", "review"],
+      "stack_any_of": ["any", "react-vite", "node-api", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "writing-plans",
+      "review",
+      "verification-before-completion"
+    ],
+    "mode": "autoload"
+  },
+  {
+    "rule_id": "OBL-APP-006",
+    "title": "Governance and SignalOS runtime edits must load operator and drift-review guidance",
+    "when": {
+      "path_globs": [
+        ".signalos/**",
+        "core/governance/**",
+        "python/signalos_lib/commands/**",
+        "python/signalos_lib/validators/**",
+        "python/signalos_lib/product/**"
+      ],
+      "action_any_of": ["edit", "create", "review", "validate"],
+      "stack_any_of": ["any", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "operator-tooling",
+      "review",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-007",
+    "title": "Product factory and surface mapping edits must load surface and review guidance",
+    "when": {
+      "path_globs": [
+        "python/signalos_lib/product/blueprints/**",
+        "python/signalos_lib/product/stacks.py",
+        "python/signalos_lib/product/capabilities.py",
+        "python/signalos_lib/profiles/**"
+      ],
+      "action_any_of": ["edit", "create", "review", "implement"],
+      "stack_any_of": ["any", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "product-surface-mapping",
+      "review",
+      "verification-before-completion"
+    ],
+    "mode": "autoload_enforce"
+  }
+]

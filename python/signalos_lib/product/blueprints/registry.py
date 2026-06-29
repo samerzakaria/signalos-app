@@ -9,10 +9,12 @@ from __future__ import annotations
 
 __all__ = [
     "apply_blueprint_intent_defaults",
+    "load_combined_registry",
     "load_registry",
     "load_blueprint",
     "list_blueprints",
     "match_blueprint",
+    "validate_blueprint_registry",
     "validate_blueprint",
 ]
 
@@ -27,6 +29,7 @@ from typing import Any
 
 _BLUEPRINTS_DIR = Path(__file__).resolve().parent
 _REGISTRY_PATH = _BLUEPRINTS_DIR / "registry.json"
+_CUSTOM_REGISTRY_REL = Path(".signalos") / "product" / "blueprints" / "registry.custom.json"
 
 # Sub-files that are merged into a loaded blueprint
 _SUB_FILES = ("api", "ui", "tests", "seed", "acceptance")
@@ -50,7 +53,15 @@ _REQUIRED_KEYS = frozenset({
 })
 
 # Valid profile_support values (must match stack adapter ids)
-_VALID_PROFILES = frozenset({"react-vite", "generic", "existing-repo"})
+_VALID_PROFILES = frozenset({
+    "react-vite",
+    "node-api",
+    "fastapi-api",
+    "go-api",
+    "agent-selected",
+    "generic",
+    "existing-repo",
+})
 
 _DEFAULTABLE_LIST_FIELDS = frozenset({
     "target_users",
@@ -89,22 +100,60 @@ def load_registry() -> dict[str, Any]:
     return json.loads(text)
 
 
-def load_blueprint(blueprint_id: str) -> dict[str, Any] | None:
+def load_combined_registry(repo_root: Path | str | None = None) -> dict[str, Any]:
+    """Load built-in plus adopter-owned custom blueprint registry entries."""
+    registry = load_registry()
+    combined = {
+        "schema_version": registry.get("schema_version", 1),
+        "blueprints": [
+            {**entry, "origin": entry.get("origin", "builtin")}
+            for entry in registry.get("blueprints", [])
+            if isinstance(entry, dict)
+        ],
+    }
+    root = Path(repo_root).resolve() if repo_root is not None else None
+    if root is None:
+        return combined
+
+    custom_path = root / _CUSTOM_REGISTRY_REL
+    if not custom_path.is_file():
+        return combined
+    try:
+        custom = _load_json(custom_path)
+    except (OSError, json.JSONDecodeError):
+        return combined
+    for entry in custom.get("blueprints", []):
+        if not isinstance(entry, dict):
+            continue
+        combined["blueprints"].append({
+            **entry,
+            "origin": entry.get("origin", "custom"),
+            "registry_path": str(custom_path),
+        })
+    return combined
+
+
+def load_blueprint(
+    blueprint_id: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any] | None:
     """Load a blueprint by id, merging its sub-files.
 
     Returns the merged blueprint dict, or ``None`` if the id is not
     found in the registry.
     """
-    registry = load_registry()
+    registry = load_combined_registry(repo_root)
     entry = _find_entry(registry, blueprint_id)
     if entry is None:
         return None
 
-    bp_path = _BLUEPRINTS_DIR / entry["path"]
+    bp_path = _resolve_entry_path(entry, repo_root)
     if not bp_path.is_file():
         return None
 
     blueprint = _load_json(bp_path)
+    blueprint.setdefault("origin", entry.get("origin", "builtin"))
+    blueprint.setdefault("registry_path", entry.get("registry_path"))
     bp_dir = bp_path.parent
 
     # Merge sub-files
@@ -116,24 +165,32 @@ def load_blueprint(blueprint_id: str) -> dict[str, Any] | None:
     return blueprint
 
 
-def list_blueprints() -> list[dict[str, str]]:
+def list_blueprints(repo_root: Path | str | None = None) -> list[dict[str, str]]:
     """Return lightweight metadata for every registered blueprint."""
-    registry = load_registry()
+    registry = load_combined_registry(repo_root)
     result: list[dict[str, str]] = []
     for entry in registry.get("blueprints", []):
-        bp_path = _BLUEPRINTS_DIR / entry["path"]
+        bp_path = _resolve_entry_path(entry, repo_root)
         if bp_path.is_file():
             bp = _load_json(bp_path)
             result.append({
                 "id": bp["id"],
                 "display_name": bp.get("display_name", bp["id"]),
+                "origin": entry.get("origin", "builtin"),
             })
         else:
-            result.append({"id": entry["id"], "display_name": entry["id"]})
+            result.append({
+                "id": entry["id"],
+                "display_name": entry["id"],
+                "origin": entry.get("origin", "builtin"),
+            })
     return result
 
 
-def match_blueprint(intent: dict[str, Any]) -> str | None:
+def match_blueprint(
+    intent: dict[str, Any],
+    repo_root: Path | str | None = None,
+) -> str | None:
     """Match a product intent to the best blueprint id.
 
     Match priority:
@@ -143,8 +200,8 @@ def match_blueprint(intent: dict[str, Any]) -> str | None:
 
     Returns the blueprint id or ``None`` if no match.
     """
-    registry = load_registry()
-    blueprints = _load_all_blueprints(registry)
+    registry = load_combined_registry(repo_root)
+    blueprints = _load_all_blueprints(registry, repo_root)
 
     if not blueprints:
         return None
@@ -189,6 +246,82 @@ def match_blueprint(intent: dict[str, Any]) -> str | None:
         return best_id
 
     return None
+
+
+def validate_blueprint_registry(
+    repo_root: Path | str | None = None,
+    blueprint_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate built-in and optional custom blueprint registry entries."""
+    registry = load_combined_registry(repo_root)
+    entries = registry.get("blueprints", [])
+    results: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            issues.append({
+                "severity": "error",
+                "scope": "registry",
+                "message": "registry entry must be an object",
+            })
+            continue
+        entry_id = str(entry.get("id", ""))
+        if blueprint_id and entry_id != blueprint_id:
+            continue
+        if entry_id in seen:
+            issues.append({
+                "severity": "error",
+                "scope": f"registry:{entry_id}",
+                "message": f"duplicate blueprint id: {entry_id}",
+            })
+        seen.add(entry_id)
+
+        bp_path = _resolve_entry_path(entry, repo_root)
+        bp = load_blueprint(entry_id, repo_root)
+        if bp is None:
+            bp_issues = [f"blueprint file not found: {bp_path}"]
+        else:
+            bp_issues = validate_blueprint(bp)
+            bp_issues.extend(_validate_component_files(bp_path.parent))
+        for message in bp_issues:
+            issues.append({
+                "severity": "error",
+                "scope": entry_id or "unknown",
+                "message": message,
+            })
+        results.append({
+            "id": entry_id,
+            "origin": entry.get("origin", "builtin"),
+            "path": str(bp_path),
+            "valid": not bp_issues,
+            "issues": bp_issues,
+        })
+
+    if blueprint_id and not results:
+        issues.append({
+            "severity": "error",
+            "scope": blueprint_id,
+            "message": f"unknown blueprint id: {blueprint_id}",
+        })
+
+    ok = not any(issue["severity"] == "error" for issue in issues)
+    return {
+        "schema_version": "signalos.blueprint_registry_validation.v1",
+        "ok": ok,
+        "status": "PASS" if ok else "FAIL",
+        "repo_root": str(Path(repo_root).resolve()) if repo_root is not None else None,
+        "blueprint_id": blueprint_id,
+        "blueprints": results,
+        "issues": issues,
+        "summary": {
+            "total": len(results),
+            "valid": sum(1 for result in results if result["valid"]),
+            "invalid": sum(1 for result in results if not result["valid"]),
+            "issues": len(issues),
+        },
+    }
 
 
 def validate_blueprint(blueprint: dict[str, Any]) -> list[str]:
@@ -342,13 +475,42 @@ def _find_entry(registry: dict[str, Any], blueprint_id: str) -> dict[str, Any] |
     return None
 
 
-def _load_all_blueprints(registry: dict[str, Any]) -> list[dict[str, Any]]:
+def _load_all_blueprints(
+    registry: dict[str, Any],
+    repo_root: Path | str | None = None,
+) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for entry in registry.get("blueprints", []):
-        bp_path = _BLUEPRINTS_DIR / entry["path"]
+        bp_path = _resolve_entry_path(entry, repo_root)
         if bp_path.is_file():
             result.append(_load_json(bp_path))
     return result
+
+
+def _resolve_entry_path(entry: dict[str, Any], repo_root: Path | str | None) -> Path:
+    path = Path(str(entry.get("path", "")))
+    if path.is_absolute():
+        return path
+    if entry.get("origin") == "custom" and repo_root is not None:
+        return Path(repo_root).resolve() / path
+    return _BLUEPRINTS_DIR / path
+
+
+def _validate_component_files(bp_dir: Path) -> list[str]:
+    errors: list[str] = []
+    for sub in _SUB_FILES:
+        path = bp_dir / f"{sub}.json"
+        if not path.is_file():
+            errors.append(f"missing component file: {sub}.json")
+            continue
+        try:
+            data = _load_json(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"component file {sub}.json is not valid JSON: {exc}")
+            continue
+        if not isinstance(data, dict) or not data:
+            errors.append(f"component file {sub}.json must be a non-empty object")
+    return errors
 
 
 def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:

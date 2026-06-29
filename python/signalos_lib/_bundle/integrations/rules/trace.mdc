@@ -1,0 +1,18 @@
+---
+description: Use signalos trace to connect backlog tickets to implementation evidence.
+globs: ["src/**", "test/**", "tests/**", "proof/**", ".signalos/**", "core/**"]
+alwaysApply: false
+---
+
+# trace wiring rule
+
+Use `signalos trace ticket --id <ticket>` when a Wave, closeout, review, or
+handoff claim depends on a backlog ticket being implemented.
+
+- Cite canonical ticket ids such as `T-W04-001` in source, tests, proof, or
+  governance evidence when work is completed.
+- Treat exit code `100` as missing trace evidence, not as implementation proof.
+- Do not mark a ticket complete only because it exists in backlog; it must link
+  to implementation, test, proof, or governance files.
+- Prefer adding the ticket id near the relevant test/proof assertion rather than
+  only in broad narrative documentation.

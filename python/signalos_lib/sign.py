@@ -231,6 +231,7 @@ def sign_gate(
     verdict: str,
     conditions: str = "",
     audit_log: Path | None = None,
+    wave: str | None = None,
 ) -> list[str]:
     """
     Sign every present artifact in *gate*.  Returns rel-paths of signed files.
@@ -269,7 +270,7 @@ def sign_gate(
             )
         sign_artifact(p, signer, role, gate, verdict, conditions)
         if audit_log is not None:
-            _append_audit(audit_log, signer, role, gate, artifact.rel_path, p, verdict)
+            _append_audit(audit_log, signer, role, gate, artifact.rel_path, p, verdict, wave=wave)
         signed.append(artifact.rel_path)
 
     # M4: after a successful G5 sign, push the local commits to origin
@@ -545,6 +546,7 @@ def _append_audit(
     rel_path: str,
     artifact_path: Path,
     verdict: str,
+    wave: str | None = None,
 ) -> None:
     """Append one row to AUDIT_TRAIL.jsonl after a successful signature."""
     audit_log.parent.mkdir(parents=True, exist_ok=True)
@@ -561,5 +563,20 @@ def _append_audit(
         "hash": h,
         "verdict": verdict,
     }
+    normalized_wave = _normalize_wave(wave)
+    if normalized_wave:
+        row["wave"] = normalized_wave
     with audit_log.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _normalize_wave(value: str | int | None) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip().upper()
+    if not raw:
+        return None
+    raw = raw.removeprefix("W").strip()
+    if raw.isdigit():
+        return f"{int(raw):02d}"
+    return raw

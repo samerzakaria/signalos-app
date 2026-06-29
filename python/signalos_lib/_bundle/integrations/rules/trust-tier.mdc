@@ -1,0 +1,21 @@
+---
+description: Use signalos trust-tier to classify surfaces and validate touched paths.
+globs: [".signalos/trust-tiers/**", ".signalos/evidence/trust-tiers/**"]
+alwaysApply: false
+---
+
+# trust-tier wiring rule
+
+Use `signalos trust-tier` whenever a Wave declares, changes, or validates
+surface Trust Tiers.
+
+- Register sensitive surfaces with `--tier T3 --permanent` when they should not
+  be relaxed by ordinary Wave work.
+- Use `--tenant-id <id>` when the classification belongs to a tenant namespace;
+  the same surface may be classified differently per tenant.
+- Use `surface get-by-surface` when a workflow needs a nullable lookup instead
+  of treating an absent surface as an error.
+- A promotion must move toward `T3`; a demotion must move toward `T1`.
+- Permanently-T3 surfaces cannot be demoted.
+- Before merge/release readiness, run `signalos trust-tier validate` with every
+  touched path and the session's declared tier.

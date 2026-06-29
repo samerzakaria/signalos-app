@@ -174,6 +174,218 @@ class TestFinancialDashboardReactVite:
 
 
 # ---------------------------------------------------------------------------
+# Node API and agent-selected generation profiles
+# ---------------------------------------------------------------------------
+
+
+class TestTechnologyNeutralProfiles:
+    def test_node_api_generates_js_route_and_test_specs(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "node-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+        assert "src/routes/task.js" in paths
+        assert "tests/task.test.js" in paths
+        assert "src/app.js" in paths
+        assert packet["capability_profile"]["adapter_profile"] == "node-api"
+
+    def test_agent_selected_does_not_force_react_python_or_dotnet(self, tmp_repo, task_intent):
+        task_intent["stack_preferences"] = ["angular", "postgresql", "redis"]
+        packet = prepare_generation(
+            tmp_repo, task_intent, None, "agent-selected",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+        assert "PRODUCT_STACK.md" in paths
+        assert "README.md" in paths
+        assert "src/App.tsx" not in paths
+        assert not any(path.endswith(".py") for path in paths)
+        assert packet["capability_profile"]["application_layers"]["frontend"] == ["angular"]
+
+    def test_fastapi_api_generates_python_routes_models_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "fastapi-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/signalos_product_fastapi/routes/task.py" in paths
+        assert "src/signalos_product_fastapi/models/task.py" in paths
+        assert "tests/test_task.py" in paths
+        assert "src/signalos_product_fastapi/app.py" in paths
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "fastapi-api"
+
+    def test_dotnet_minimal_api_generates_csharp_routes_models_and_http_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "dotnet-minimal-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "SignalOSProduct.Api/Models/Task.cs" in paths
+        assert "SignalOSProduct.Api/Routes/TaskRoutes.cs" in paths
+        assert "tests/task.http" in paths
+        assert "SignalOSProduct.Api/Stores/InMemoryStore.cs" in paths
+        assert "SignalOSProduct.Api/ProductRoutes.cs" in paths
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert not any(path.endswith(".py") for path in paths)
+        assert packet["capability_profile"]["adapter_profile"] == "dotnet-minimal-api"
+
+    def test_go_api_generates_go_handlers_store_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "go-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "internal/app/task.go" in paths
+        assert "internal/app/task_test.go" in paths
+        assert "internal/app/store.go" in paths
+        assert "internal/app/app.go" in paths
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert not any(path.endswith(".py") for path in paths)
+        assert packet["capability_profile"]["adapter_profile"] == "go-api"
+
+    def test_angular_generates_component_specs_without_react_fallback(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "angular",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert any(path.endswith(".component.spec.ts") for path in paths)
+        assert any(path.endswith(".component.ts") for path in paths)
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "angular"
+
+    def test_nextjs_generates_app_router_specs_without_react_vite_fallback(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "nextjs-app",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert any(path.startswith("app/components/") and path.endswith(".tsx") for path in paths)
+        assert any(path.startswith("app/components/") and path.endswith(".test.tsx") for path in paths)
+        assert "app/page.tsx" in paths
+        assert "src/App.tsx" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "nextjs-app"
+
+    def test_vue_vite_generates_vue_specs_without_react_fallback(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "vue-vite",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert any(path.startswith("src/components/") and path.endswith(".vue") for path in paths)
+        assert any(path.startswith("src/components/") and path.endswith(".spec.ts") for path in paths)
+        assert "src/App.vue" in paths
+        assert "src/App.tsx" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "vue-vite"
+
+    def test_flutter_generates_mobile_screen_specs_without_web_fallback(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "flutter-app",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert any(path.startswith("lib/screens/") and path.endswith(".dart") for path in paths)
+        assert any(path.startswith("test/") and path.endswith("_test.dart") for path in paths)
+        assert "lib/main.dart" in paths
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "flutter-app"
+
+    def test_expo_react_native_generates_mobile_screen_specs_without_web_fallback(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "expo-react-native",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert any(path.startswith("src/screens/") and path.endswith(".js") for path in paths)
+        assert any(path.startswith("tests/") and path.endswith(".test.js") for path in paths)
+        assert "App.js" in paths
+        assert "src/App.tsx" not in paths
+        assert "src/app.js" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "expo-react-native"
+
+    def test_django_api_generates_django_views_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "django-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/signalos_product_django/product/task_views.py" in paths
+        assert "src/signalos_product_django/product/task_schemas.py" in paths
+        assert "tests/test_task.py" in paths
+        assert "src/signalos_product_django/urls.py" in paths
+        assert "src/signalos_product_fastapi/app.py" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "django-api"
+
+    def test_flask_api_generates_flask_blueprints_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "flask-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/signalos_product_flask/routes/task.py" in paths
+        assert "src/signalos_product_flask/routes/task_schemas.py" in paths
+        assert "tests/test_task.py" in paths
+        assert "src/signalos_product_flask/app.py" in paths
+        assert "src/signalos_product_fastapi/app.py" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "flask-api"
+
+    def test_nestjs_api_generates_controller_service_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "nestjs-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/task/task.controller.ts" in paths
+        assert "src/task/task.service.ts" in paths
+        assert "src/task/task.controller.spec.ts" in paths
+        assert "src/app.module.ts" in paths
+        assert "src/app.js" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "nestjs-api"
+
+    def test_java_api_generates_java_resources_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "java-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/main/java/com/signalos/product/TaskResource.java" in paths
+        assert "src/test/java/com/signalos/product/TaskResourceTest.java" in paths
+        assert "src/main/java/com/signalos/product/ProductServer.java" in paths
+        assert "src/App.tsx" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "java-api"
+
+    def test_spring_boot_api_generates_spring_controllers_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "spring-boot-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/main/java/com/signalos/product/task/TaskController.java" in paths
+        assert "src/main/java/com/signalos/product/task/TaskService.java" in paths
+        assert "src/test/java/com/signalos/product/task/TaskControllerTest.java" in paths
+        assert "src/main/java/com/signalos/product/ProductApplication.java" in paths
+        assert "src/main/java/com/signalos/product/ProductServer.java" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "spring-boot-api"
+
+    def test_rust_api_generates_rust_modules_and_tests(self, tmp_repo, task_intent, task_blueprint):
+        packet = prepare_generation(
+            tmp_repo, task_intent, task_blueprint, "rust-api",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+
+        assert "src/task.rs" in paths
+        assert "tests/task_api.rs" in paths
+        assert "src/lib.rs" in paths
+        assert "src/App.tsx" not in paths
+        assert packet["capability_profile"]["adapter_profile"] == "rust-api"
+
+
+# ---------------------------------------------------------------------------
 # TDD order: tests before source in file specs
 # ---------------------------------------------------------------------------
 

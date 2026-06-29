@@ -1,0 +1,20 @@
+---
+description: Use signalos test for phase-named quality evidence.
+globs: [".signalos/quality/test-automation/**", ".signalos/product/TEST_AUTOMATION_RESULT.json", ".signalos/AUDIT_TRAIL.jsonl"]
+alwaysApply: false
+---
+
+# test wiring rule
+
+Use `signalos test <phase>` when a product needs SignalOS-style test
+automation evidence across the 12 phases.
+
+- Keep phase semantics SignalOS-native and technology-neutral.
+- Do not force the product stack to .NET, Go, ABP, or any other framework.
+- Use the selected product profile, existing evidence, and app-native gates.
+- Treat missing evidence as `pending` or `blocked`, not `pass`.
+- Use `--dry-run` only for wiring proof; it does not close product quality.
+- Use `--emit-audit` when a phase execution should be visible in
+  `.signalos/AUDIT_TRAIL.jsonl`.
+- Treat exit code `8` as a threshold or evidence violation that must be fixed
+  or explicitly deferred by governance.

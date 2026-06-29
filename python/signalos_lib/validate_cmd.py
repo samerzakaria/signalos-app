@@ -32,6 +32,8 @@ VALIDATOR_SEVERITY: dict[str, str] = {
     "tier-sheet-guard":             "BLOCK_MERGE",
     "artifact-shape-guard":         "BLOCK_MERGE",
     "path-consistency-guard":       "BLOCK_MERGE",
+    "detect-bypass":                "HALT",
+    "validate-guidance-obligations": "BLOCK_MERGE",
     "expectation-redline-guard":    "BLOCK_MERGE",
     "security-posture-guard":       "BLOCK_MERGE",
     "decision-dna-guard":           "WARN",
@@ -242,10 +244,24 @@ def _layer1_checks() -> list[Layer1Check]:
         ("layer1-unknowns", "BLOCK_MERGE", _check_unknowns),
         ("layer1-profile", "BLOCK_MERGE", _check_profile),
         ("layer1-path-safety", "HALT", _check_path_safety),
+        ("detect-bypass", "HALT", _check_detect_bypass),
+        ("validate-guidance-obligations", "BLOCK_MERGE", _check_guidance_obligations),
         ("agent-prompt-contracts", "BLOCK_MERGE", _check_agent_prompt_contracts),
         ("constitution-integrity", "BLOCK_MERGE", _check_constitution_integrity),
         ("security-posture-guard", "BLOCK_MERGE", _check_security_posture),
     ]
+
+
+def _check_detect_bypass(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    from signalos_lib.validators.governance_runtime import detect_governance_bypass
+
+    return detect_governance_bypass(repo_root)
+
+
+def _check_guidance_obligations(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:
+    from signalos_lib.validators.governance_runtime import validate_guidance_obligations
+
+    return validate_guidance_obligations(repo_root)
 
 
 def _check_constitution_integrity(repo_root: Path) -> tuple[bool, str, dict[str, Any]]:

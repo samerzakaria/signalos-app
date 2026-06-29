@@ -8,11 +8,12 @@ import sys
 
 import datetime
 import os
+import shlex
 import subprocess
 import traceback
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
-from importlib import resources
+from functools import lru_cache
 from io import StringIO
 from typing import Any
 
@@ -124,7 +125,6 @@ PHASE_CONTRACTS = {
     ],
 }
 
-
 def handle(req: dict) -> dict:
     req_id = req.get("id", "unknown")
     command = req.get("command", "")
@@ -171,13 +171,27 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
         return ok(req_id, output=terminal_help_text())
 
     if terminal_alias in {"signalos status", "/signal-status"}:
-        return ok(req_id, output=dispatch_cli("signal-status", args, req_id, project_id=project_id))
+        return dispatch_cli_response(req_id, "signal-status", args, project_id=project_id)
 
     if terminal_alias in {"signalos check", "/signal-release-readiness"}:
-        return ok(req_id, output=dispatch_cli("signal-release-readiness", args, req_id, project_id=project_id))
+        return dispatch_cli_response(req_id, "signal-release-readiness", args, project_id=project_id)
 
     if terminal_alias in {"signalos gates", "/state:gates"}:
         return ok(req_id, output=json.dumps(get_gate_states(project_id=project_id), indent=2))
+
+    signalos_alias = parse_signalos_alias(command)
+    if signalos_alias and (
+        is_core_cli_command(signalos_alias[0])
+        or map_slash_command(signalos_alias[0], [*signalos_alias[1:], *args], os.getcwd()) is not None
+    ):
+        cli_command = signalos_alias[0]
+        inline_args = signalos_alias[1:]
+        return dispatch_cli_response(
+            req_id,
+            cli_command,
+            [*inline_args, *args],
+            project_id=project_id,
+        )
 
     if terminal_alias == "git status":
         return ok(req_id, output=git_status_text(Path.cwd()))
@@ -191,9 +205,12 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             ),
         )
 
-    direct_cli_commands = {"deliver", "deliver-intent", "deliver-design", "deliver-design-preview"}
-    if command in direct_cli_commands or command.startswith("/signal-") or command.startswith("signal-"):
-        return ok(req_id, output=dispatch_cli(command.lstrip("/"), args, req_id, project_id=project_id))
+    normalized_command = command.lstrip("/")
+    if is_dispatchable_cli_command(normalized_command, args, os.getcwd()):
+        return dispatch_cli_response(req_id, normalized_command, args, project_id=project_id)
+
+    if command.startswith("/") or normalized_command.startswith(("signal-", "signalos-")):
+        return err(req_id, f"Unknown SignalOS command: /{normalized_command}")
 
     if command == "state:wave":
         return ok(req_id, data=get_wave_state(project_id=project_id))
@@ -252,7 +269,19 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
         return ok(req_id, data={"ok": True})
 
     if command == "cost:summary":
-        return ok(req_id, data={"note": "cost tracked in Rust provider layer"})
+        from signalos_lib.commands.cost import build_cost_report
+
+        wave = args[0] if args else None
+        budget = args[1] if len(args) > 1 else os.environ.get("SIGNALOS_AI_WAVE_BUDGET_USD")
+        return ok(
+            req_id,
+            data=build_cost_report(
+                Path.cwd(),
+                wave=wave,
+                budget_usd=budget,
+                write_evidence=True,
+            ),
+        )
 
     if command == "security:secrets":
         return ok(req_id, data=scan_secret_files(os.getcwd()))
@@ -837,12 +866,80 @@ def terminal_help_text() -> str:
         "  signalos status   show governance/workspace status",
         "  signalos check    run release-readiness checks",
         "  signalos gates    show gate status",
+        "  signalos cost     summarize AI usage and budget evidence",
+        "  signalos test     run the test automation umbrella",
+        "  signalos bundle   inspect embedded SignalOS bundle files",
+        "  signalos trace    trace governance tickets to evidence",
         "  npm run dev       start the Preview tab dev server",
         "  git status        show branch and working tree status",
         "  clear             clear terminal output",
         "",
         "This terminal is a governed SignalOS command surface, not an unrestricted OS shell.",
     ])
+
+
+def parse_signalos_alias(command: str) -> list[str] | None:
+    try:
+        lexer = shlex.shlex(command.strip(), posix=False)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = [
+            token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'} else token
+            for token in lexer
+        ]
+    except ValueError:
+        return None
+    if len(tokens) < 2 or tokens[0].lower() != "signalos":
+        return None
+    return [tokens[1].lower(), *tokens[2:]]
+
+
+@lru_cache(maxsize=1)
+def core_cli_command_names() -> frozenset[str]:
+    choices: dict[str, Any] = {}
+    from signalos_lib.cli import _build_parser
+
+    parser = _build_parser()
+    for action in parser._actions:
+        if hasattr(action, "choices") and action.choices:
+            choices.update(action.choices)
+    if not choices:
+        raise RuntimeError("SignalOS Core CLI command registry is empty.")
+    return frozenset(str(name) for name in choices)
+
+
+def is_core_cli_command(command: str) -> bool:
+    return command in core_cli_command_names()
+
+
+SPECIAL_DISPATCH_CLI_COMMANDS = frozenset({
+    "signal-checkpoint",
+    "signal-rollback",
+    "signal-sandbox",
+    "signal-init",
+})
+
+
+def is_dispatchable_cli_command(command: str, args: list[str], cwd: str) -> bool:
+    normalized = command.lstrip("/")
+    return (
+        normalized in SPECIAL_DISPATCH_CLI_COMMANDS
+        or is_core_cli_command(normalized)
+        or map_slash_command(normalized, args, cwd) is not None
+    )
+
+
+def dispatch_cli_response(
+    req_id: str,
+    command: str,
+    args: list[str],
+    *,
+    project_id: str = "default",
+) -> dict:
+    try:
+        return ok(req_id, output=dispatch_cli(command, args, req_id, project_id=project_id))
+    except Exception as exc:
+        return err(req_id, str(exc))
 
 
 def git_status_text(repo_root: Path) -> str:
@@ -922,19 +1019,13 @@ def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: st
                 emitter.done("Setup complete")
             else:
                 emitter.error(text or f"init exited {rc}")
+        if rc != 0:
+            raise RuntimeError(text or f"Command failed with exit code {rc}.")
         if text:
             return text
         return f"Command completed with exit code {rc}."
 
-    spec = read_command_spec(command)
-    if spec:
-        return (
-            f"/{command} is available as a SignalOS protocol command. "
-            "This beta shows the command brief here; conversational execution is next.\n\n"
-            f"{redact_text(spec)}"
-        )
-
-    return f"Unknown SignalOS command: /{command}"
+    raise ValueError(f"Unknown SignalOS CLI command: /{command}")
 
 
 def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | None:
@@ -945,6 +1036,29 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
 
     if command == "signal-release-readiness":
         return ["release-readiness", "--repo-root", cwd, *cleaned_args]
+
+    alias_map = {
+        "signal-pause": ["pause"],
+        "signalos-session": ["session"],
+        "harness-call": ["harness", "call"],
+        "signalos-install": ["install"],
+        "signalos-publish": ["publish"],
+        "signalos-verify": ["verify"],
+        "context-expand": ["context", "expand"],
+        "signalos-orchestrate": ["orchestrate"],
+        "signalos-status": ["status", "--repo-root", cwd],
+        "plan-schema": ["plan"],
+        "validate-cmd": ["validate"],
+        "signal-pre-design": ["pre-design"],
+        "signal-design": ["design"],
+        "signal-design-review": ["design-review"],
+        "signal-design-html": ["design-html"],
+        "signalos-brain": ["brain"],
+        "signal-observe": ["observe"],
+        "signal-ship": ["ship"],
+    }
+    if command in alias_map:
+        return [*alias_map[command], *cleaned_args]
 
     if command == "signal-init":
         # Init modes - Wave 1 / G0-1. The wizard (G0-2) is the user-facing
@@ -985,9 +1099,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         return ["brain", "search", " ".join(cleaned_args), "--repo-root", cwd]
 
     if command == "signal-plan":
-        if cleaned_args and cleaned_args[0] in {"render", "validate", "list"}:
-            return ["plan", *cleaned_args]
-        return None
+        return ["plan", *cleaned_args]
 
     if command in {"signal-qa", "signal-qa-only"}:
         return [command, *cleaned_args]
@@ -1012,6 +1124,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         return None
 
     direct = {
+        *core_cli_command_names(),
         "signal-learn",
         "signal-cso",
         "signal-autoplan",
@@ -1077,20 +1190,6 @@ def run_core_cli(argv: list[str], req_id: str = "") -> tuple[int, str, str]:
         else:
             os.environ["SIGNALOS_PROGRESS_REQ_ID"] = previous_progress_req
     return rc, out.getvalue(), err_buf.getvalue()
-
-
-def read_command_spec(command: str) -> str:
-    for base, rel in (
-        ("signalos_lib._bundle.core.execution.commands", f"{command}.md"),
-        ("signalos_lib._bundle.integrations.rules", f"{command}.mdc"),
-    ):
-        try:
-            text = resources.files(base).joinpath(rel).read_text(encoding="utf-8")
-        except Exception:
-            continue
-        text = text.strip()
-        return text[:5000] + ("\n\n[trimmed]" if len(text) > 5000 else "")
-    return ""
 
 
 def get_wave_state(project_id: str = "default") -> dict:
@@ -1351,7 +1450,7 @@ def handle_rollback(args: list[str], cwd: str) -> str:
     if rc != 0:
         return json.dumps({
             "ok": False,
-            "error": f"git reset --hard {sha[:8]} failed: {err_text.strip()}",
+            "error": f"restoring checkpoint {sha[:8]} failed: {err_text.strip()}",
         })
 
     # 3. Delete the wave's untracked files. We prefer the explicit list

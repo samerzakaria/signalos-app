@@ -328,6 +328,22 @@ class TestBuildCloseout:
         assert acc["failed"] == 1
         assert acc["pending"] == 2
 
+    def test_pending_acceptance_degrades_ready_validation_to_partial(
+        self, tmp_path: Path,
+    ):
+        _make_delivery_state(tmp_path)
+        _make_generation_manifest(tmp_path)
+        _make_validation_result(tmp_path)
+        _make_proof_artifacts(tmp_path)
+        _make_acceptance_matrix(tmp_path, passed=1, failed=0, pending=1)
+
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+
+        assert closeout["build_status"] == "passed"
+        assert closeout["closure_level"] == "partial"
+        assert closeout["acceptance_summary"]["pending"] == 1
+        assert any("pending" in item for item in closeout["known_limitations"])
+
 
 # ------------------------------------------------------------------
 # write_closeout / load_closeout tests
@@ -535,6 +551,22 @@ class TestCheckCloseoutHonesty:
         result = check_closeout_honesty(closeout)
         assert result["honest"] is False
         assert any("failed acceptance criteria" in i for i in result["issues"])
+
+    def test_catches_ready_with_pending_acceptance(self, tmp_path: Path):
+        closeout = {
+            "closure_level": "ready",
+            "build_status": "passed",
+            "acceptance_summary": {"total": 3, "passed": 2, "failed": 0, "pending": 1, "skipped": 0},
+            "tests_executed": [
+                {"category": "build", "status": "passed", "duration_s": 1.0},
+            ],
+            "known_limitations": [],
+            "deploy_status": "none",
+        }
+
+        result = check_closeout_honesty(closeout)
+        assert result["honest"] is False
+        assert any("pending acceptance criteria" in i for i in result["issues"])
 
     def test_catches_empty_limitations_on_partial(self, tmp_path: Path):
         closeout = {

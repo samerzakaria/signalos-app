@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .capabilities import build_capability_profile
+from .lessons import build_lesson_context, validate_lesson_accounting
 from .validation import build_validation_plan
 
 
@@ -201,6 +203,18 @@ _RESULT_SCHEMA: dict[str, Any] = {
         "validation_results": {
             "type": "object",
         },
+        "applied_lessons": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "not_applicable_lessons": {
+            "type": "array",
+            "items": {"type": "object"},
+        },
+        "lesson_evidence": {
+            "type": "array",
+            "items": {"type": "object"},
+        },
         "error": {"type": "string"},
     },
 }
@@ -251,7 +265,14 @@ def build_agent_packet(
         "entities": intent.get("entities", []),
         "primary_workflows": intent.get("primary_workflows", []),
         "ux_surfaces": intent.get("ux_surfaces", []),
+        "api_surfaces": intent.get("api_surfaces", []),
+        "data_sources": intent.get("data_sources", []),
+        "stack_preferences": intent.get("stack_preferences", []),
     }
+    capability_profile = build_capability_profile(
+        intent,
+        adapter_profile=profile,
+    )
 
     blueprint_id = blueprint.get("id") if blueprint else None
 
@@ -275,6 +296,12 @@ def build_agent_packet(
         tasks=tasks,
         generation_packet=generation_packet,
     )
+    lesson_context = build_lesson_context(
+        intent=intent,
+        blueprint=blueprint,
+        tasks=tasks,
+        generation_packet=generation_packet,
+    )
 
     packet: dict[str, Any] = {
         "schema_version": "signalos.agent_packet.v1",
@@ -291,6 +318,7 @@ def build_agent_packet(
         "source_policy": dict(_DEFAULT_SOURCE_POLICY),
         "team_contract": dict(_DEFAULT_TEAM_CONTRACT),
         "intent_summary": intent_summary,
+        "capability_profile": capability_profile,
         "blueprint_id": blueprint_id,
         "profile": profile,
         "wave": wave,
@@ -302,6 +330,7 @@ def build_agent_packet(
         "validation_commands": validation_commands,
         "skills_catalog": skills_catalog,
         "applicable_skills": applicable_skills,
+        "lesson_context": lesson_context,
         "result_schema": _RESULT_SCHEMA,
     }
 
@@ -514,6 +543,12 @@ def write_agent_packet(
         encoding="utf-8",
     )
 
+    # lesson-context.json -- selected reusable product lessons for accounting
+    (run_dir / "lesson-context.json").write_text(
+        json.dumps(packet.get("lesson_context", {}), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
     # files-allowed.txt
     (run_dir / "files-allowed.txt").write_text(
         "\n".join(packet.get("allowed_paths", [])) + "\n",
@@ -535,6 +570,7 @@ def write_agent_packet(
         "forbidden_rules": packet.get("forbidden_rules", []),
         "repair_policy": packet.get("repair_policy", {}),
         "escalation_policy": packet.get("escalation_policy", []),
+        "lesson_context": packet.get("lesson_context", {}),
     }
     (run_dir / "validation-plan.json").write_text(
         json.dumps(val_plan, indent=2, ensure_ascii=False) + "\n",
@@ -595,6 +631,33 @@ def _render_packet_md(packet: dict) -> str:
     workflows = intent.get("primary_workflows", [])
     if workflows:
         lines.append(f"- **Workflows:** {', '.join(workflows)}")
+    stacks = intent.get("stack_preferences", [])
+    if stacks:
+        lines.append(f"- **Technology preferences:** {', '.join(stacks)}")
+    data_sources = intent.get("data_sources", [])
+    if data_sources:
+        lines.append(f"- **Data/infrastructure:** {', '.join(data_sources)}")
+
+    capabilities = packet.get("capability_profile", {})
+    if capabilities:
+        lines.append("")
+        lines.append("## Capability Profile")
+        lines.append("")
+        lines.append(f"- **Adapter profile:** {capabilities.get('adapter_profile', '')}")
+        infra = capabilities.get("infrastructure", {})
+        databases = infra.get("databases", [])
+        caches = infra.get("caches", [])
+        if databases:
+            lines.append(f"- **Databases:** {', '.join(databases)}")
+        if caches:
+            lines.append(f"- **Caches:** {', '.join(caches)}")
+        layers = capabilities.get("application_layers", {})
+        frontend = layers.get("frontend", [])
+        backend = layers.get("backend", [])
+        if frontend:
+            lines.append(f"- **Frontend:** {', '.join(frontend)}")
+        if backend:
+            lines.append(f"- **Backend:** {', '.join(backend)}")
 
     tasks = packet.get("tasks", [])
     if tasks:
@@ -689,6 +752,11 @@ def _render_packet_md(packet: dict) -> str:
         lines.append("")
         lines.append(applicable_md.rstrip())
 
+    lesson_md = _render_lesson_context_md(packet)
+    if lesson_md.strip():
+        lines.append("")
+        lines.append(lesson_md.rstrip())
+
     lines.append("")
     return "\n".join(lines)
 
@@ -721,6 +789,28 @@ def _render_applicable_skills_md(packet: dict) -> str:
         lines.append("")
         lines.append("---")
         lines.append("")
+    return "\n".join(lines)
+
+
+def _render_lesson_context_md(packet: dict) -> str:
+    context = packet.get("lesson_context", {})
+    lessons = context.get("selected_lessons", []) if isinstance(context, dict) else []
+    if not lessons:
+        return ""
+
+    lines: list[str] = [
+        "## Product Lessons",
+        "",
+        "Account for each required lesson in RESULT.json using applied_lessons plus lesson_evidence, or not_applicable_lessons with a concrete reason.",
+        "",
+    ]
+    for lesson in lessons:
+        lines.append(
+            f"- `{lesson.get('id', '')}` [{lesson.get('enforcement', '')}, "
+            f"{lesson.get('lesson_kind', '')}]: {lesson.get('summary', '')}"
+        )
+        if lesson.get("required_evidence"):
+            lines.append(f"  Evidence: {lesson['required_evidence']}")
     return "\n".join(lines)
 
 
@@ -829,6 +919,26 @@ def validate_agent_result(
         "passed": True,
         "detail": "RESULT.json contains required fields",
     })
+
+    lesson_violations = validate_lesson_accounting(
+        result,
+        scope.get("lesson_context"),
+        run_dir=run_dir,
+        repo_root=repo_root,
+    )
+    if lesson_violations:
+        checks.append({
+            "name": "lesson_accounting",
+            "passed": False,
+            "detail": "; ".join(lesson_violations),
+        })
+        violations.extend(lesson_violations)
+    else:
+        checks.append({
+            "name": "lesson_accounting",
+            "passed": True,
+            "detail": "Selected product lessons are accounted for",
+        })
 
     # 2. files_written within allowed_paths
     files_written = result.get("files_written", [])
