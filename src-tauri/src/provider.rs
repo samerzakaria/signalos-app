@@ -1766,7 +1766,7 @@ mod cost_ledger_tests {
     #[test]
     fn cost_formula_uses_configured_provider_pricing() {
         let cfg = ProviderConfig {
-            model: "gpt-test".into(),
+            model: "model-test".into(),
             price_in_1m: 1.0,
             price_out_1m: 2.0,
         };
@@ -1775,7 +1775,9 @@ mod cost_ledger_tests {
 
         assert_eq!(format_cost_usd(cost).as_deref(), Some("0.005"));
         assert_eq!(
-            configured_cost_usd("openai", &cfg, cost).and_then(format_cost_usd).as_deref(),
+            configured_cost_usd("configured-cloud", &cfg, cost)
+                .and_then(format_cost_usd)
+                .as_deref(),
             Some("0.005")
         );
     }
