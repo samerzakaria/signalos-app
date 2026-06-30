@@ -41,7 +41,7 @@ def generate_design_preview_html(design: dict, intent: dict) -> str:
 def _generate_with_llm(design: dict, intent: dict) -> str | None:
     """Use LLM to generate a full interactive HTML prototype."""
     try:
-        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+        from signalos_lib.harness import _resolve_provider, resolve_model
     except ImportError:
         return None
 
@@ -83,7 +83,8 @@ Return ONLY the HTML. No explanation, no markdown fences, just the raw HTML star
 
     try:
         provider = _resolve_provider()
-        response_text, _, _ = provider.call(prompt, DEFAULT_MODEL)
+        # No hardcoded default: SIGNALOS_LLM_MODEL → discovery from provider.
+        response_text, _, _ = provider.call(prompt, resolve_model(None))
     except Exception:
         return None
 

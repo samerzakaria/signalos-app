@@ -122,7 +122,7 @@ def record_assumptions_with_llm(
     Returns a list of assumptions or None if LLM unavailable.
     """
     try:
-        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+        from signalos_lib.harness import _resolve_provider, resolve_model
     except Exception:
         return None
 
@@ -145,9 +145,10 @@ def record_assumptions_with_llm(
     ]
 
     user_prompt = "\n".join(parts)
-    use_model = model or DEFAULT_MODEL
 
     try:
+        # No hardcoded default: explicit model → SIGNALOS_LLM_MODEL → discovery.
+        use_model = resolve_model(model, provider_name)
         response_text, _, _ = provider.call(
             f"{_ASSUMPTIONS_SYSTEM_PROMPT}\n\n{user_prompt}",
             use_model,

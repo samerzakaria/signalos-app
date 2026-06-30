@@ -18,22 +18,30 @@ from dataclasses import dataclass
 from typing import Any
 
 
-# All env vars that Tauri injects from the OS keychain.
-# ANY of these being set means an LLM provider is available.
-_PROVIDER_ENV_VARS = [
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
-    "DASHSCOPE_API_KEY",
-    "OPENROUTER_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "MISTRAL_API_KEY",
-    "GROQ_API_KEY",
-    "CEREBRAS_API_KEY",
-    "TOGETHER_API_KEY",
-    "XAI_API_KEY",
-    "SIGNALOS_LLM_PROVIDER",
-]
+# All env vars that Tauri injects from the OS keychain. ANY of these being
+# set means an LLM provider is available.
+#
+# DERIVED from the harness provider table (the single source of truth) so
+# the two lists can never drift again. The provider *key* env vars come
+# straight from `harness.PROVIDER_ENV_VARS`; `SIGNALOS_LLM_PROVIDER` is the
+# provider *selector* (not a credential) and is appended here because it
+# also counts toward "is an LLM available?" for app-level availability.
+def _derive_provider_env_vars() -> list[str]:
+    try:
+        from signalos_lib.harness import PROVIDER_ENV_VARS as _KEYS
+    except Exception:
+        # Stdlib-only / partial install fallback. Kept in lock-step with the
+        # harness table; if the import ever fails we still know the keys.
+        _KEYS = [
+            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+            "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY",
+            "OPENROUTER_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY",
+            "CEREBRAS_API_KEY", "DASHSCOPE_API_KEY",
+        ]
+    return [*_KEYS, "SIGNALOS_LLM_PROVIDER"]
+
+
+_PROVIDER_ENV_VARS = _derive_provider_env_vars()
 
 _DISABLE_VALUES = {"1", "true", "yes", "on"}
 
@@ -77,7 +85,7 @@ def call_llm(
     keys override the app-level keys for the duration of the call.
     """
     try:
-        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+        from signalos_lib.harness import _resolve_provider, resolve_model
     except ImportError as exc:
         return LLMCallResult(
             success=False,
@@ -87,8 +95,8 @@ def call_llm(
 
     from .secrets_resolver import apply_product_secrets
 
-    # Product keys win over app keys; provider *selection* and the call itself
-    # must both see the overlay, so wrap resolution and the call together.
+    # Product keys win over app keys; provider *selection*, model discovery,
+    # and the call itself must all see the overlay, so wrap them together.
     with apply_product_secrets(root):
         try:
             provider = _resolve_provider(provider_name)
@@ -100,9 +108,18 @@ def call_llm(
             )
 
         try:
-            text, tokens_in, tokens_out = provider.call(
-                prompt, model or DEFAULT_MODEL,
+            # No hardcoded default: resolve the model via explicit arg →
+            # SIGNALOS_LLM_MODEL → discovery from the resolved provider's API.
+            resolved_model = resolve_model(model, provider_name)
+        except Exception as exc:
+            return LLMCallResult(
+                success=False,
+                text="",
+                error=f"Model resolution failed: {exc}",
             )
+
+        try:
+            text, tokens_in, tokens_out = provider.call(prompt, resolved_model)
             return LLMCallResult(
                 success=True,
                 text=text,

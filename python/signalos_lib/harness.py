@@ -26,11 +26,16 @@
 #      deterministic canned response. The proof scenarios use this so
 #      CI does not need a live API key. No network call is made in
 #      test mode.
-#   5. AMD-CORE-007: LLM provider abstraction. The `LLMProvider`
-#      Protocol and five concrete implementations (Anthropic, OpenAI,
-#      Gemini, Ollama, Test) decouple the harness from any single SDK.
-#      `SIGNALOS_LLM_PROVIDER` env var selects the provider; default
-#      is "anthropic". `SIGNALOS_HARNESS_TEST=1` overrides to TestProvider.
+#   5. AMD-CORE-007 / 007.1: LLM provider abstraction. The `LLMProvider`
+#      Protocol plus native Anthropic/Gemini wrappers and one
+#      OpenAICompatibleProvider (covering OpenAI + Groq, Mistral, DeepSeek,
+#      OpenRouter, xAI, Together, Cerebras, DashScope + local Ollama)
+#      decouple the harness from any single SDK. A single provider table
+#      (`PROVIDERS`) is the one source of truth. The active provider is
+#      auto-detected from whichever provider key is set, overridable via
+#      `SIGNALOS_LLM_PROVIDER`. The model is DISCOVERED from the provider's
+#      API (no hardcoded id), overridable via SIGNALOS_LLM_MODEL / --model.
+#      `SIGNALOS_HARNESS_TEST=1` overrides to TestProvider (no network).
 #
 # Exit-code contract (propagated by commands/harness.py):
 #   0 — step.completed event emitted; call state = "completed"
@@ -46,6 +51,17 @@ __all__ = [
     "run_step",
     "DEFAULT_MODEL",
     "LLMProvider",
+    # AMD-CORE-007.1 — multi-provider single source of truth + discovery
+    "ProviderSpec",
+    "PROVIDERS",
+    "PROVIDER_NAMES",
+    "PROVIDER_ENV_VARS",
+    "OpenAICompatibleProvider",
+    "discover_model",
+    "list_models",
+    "pick_best_model",
+    "resolve_model",
+    "clear_model_cache",
     # v4 Phase 2.3 — new agent-loop protocol (alongside the frozen LLMProvider)
     "AgentProvider",
     "AgentResponse",
@@ -72,11 +88,13 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 
 REPO_ROOT_MARKER = ".signalos"
 
-# Default Anthropic model for the harness. Pin-by-family — callers can
-# override via --model. The Sonnet 4.5 family is the W1.2 reference;
-# the `<1.0` upper bound on `anthropic` in cli/requirements.txt keeps
-# the SDK surface stable enough for this default to remain valid.
-DEFAULT_MODEL = "claude-sonnet-4-5"
+# DEPRECATED back-compat alias. It is NO LONGER a silent default: the
+# harness discovers the flagship model from the active provider's API
+# (see `discover_model` / `resolve_model`). This constant is retained
+# only so that older importers keep importing something; it must NOT be
+# passed as a silent default into provider.call() anymore. Model
+# resolution order is: explicit --model → SIGNALOS_LLM_MODEL → discovery.
+DEFAULT_MODEL = None  # type: ignore[assignment]
 
 # The `tool` identifier the 8th emitter reports into hook events and
 # metrics. Must match the folder name core/tool-adapters/emitters/harness/.
@@ -85,6 +103,112 @@ HARNESS_TOOL_NAME = "harness"
 # Canned response used in SIGNALOS_HARNESS_TEST=1 mode. Deterministic
 # so proof scenarios can diff against a fixed string.
 _HARNESS_TEST_CANNED = "SIGNALOS_HARNESS_TEST: canned harness response for proof scenarios."
+
+
+# ---------------------------------------------------------------------------
+# Provider table — SINGLE SOURCE OF TRUTH (AMD-CORE-007.1)
+#
+# Every provider the harness can route lives here exactly once. Both the
+# CLI/auto-detect path (this module) AND product/llm_provider.py derive
+# their notion of "which providers exist / which env vars to check" from
+# this table, so the two lists can never drift again.
+#
+#   kind:
+#     "anthropic"          → native AnthropicProvider (anthropic SDK)
+#     "gemini"             → native GeminiProvider (google-generativeai SDK)
+#     "openai-compatible"  → OpenAICompatibleProvider (openai SDK; base_url
+#                             None means the canonical OpenAI endpoint)
+#     "ollama"             → OpenAI-compatible local server (openai SDK,
+#                             base_url http://localhost:11434/v1)
+#     "test"               → deterministic TestProvider (no SDK, no network)
+#
+#   env_var: provider API key env var, or None for ollama/test.
+#   base_url: OpenAI-compatible base URL, or None for native SDKs/OpenAI.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    """Static description of one routable LLM provider."""
+
+    name: str
+    kind: str  # anthropic | gemini | openai-compatible | ollama | test
+    env_var: str | None
+    base_url: str | None = None
+    aliases: tuple[str, ...] = ()
+
+
+# Priority order is intentional: the auto-detect path walks this dict in
+# insertion order and picks the first provider whose env_var is present.
+# Anthropic, OpenAI, Gemini lead; the OpenAI-compatible fleet follows;
+# local Ollama is the last network-free fallback. test is never auto-picked.
+_PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
+    ProviderSpec("anthropic", "anthropic", "ANTHROPIC_API_KEY"),
+    ProviderSpec(
+        "openai", "openai-compatible", "OPENAI_API_KEY", None,
+        aliases=("open_ai",),
+    ),
+    ProviderSpec(
+        "gemini", "gemini", "GEMINI_API_KEY", None,
+        aliases=("google", "google-generativeai"),
+    ),
+    ProviderSpec(
+        "groq", "openai-compatible", "GROQ_API_KEY",
+        "https://api.groq.com/openai/v1",
+    ),
+    ProviderSpec(
+        "mistral", "openai-compatible", "MISTRAL_API_KEY",
+        "https://api.mistral.ai/v1",
+    ),
+    ProviderSpec(
+        "deepseek", "openai-compatible", "DEEPSEEK_API_KEY",
+        "https://api.deepseek.com",
+    ),
+    ProviderSpec(
+        "openrouter", "openai-compatible", "OPENROUTER_API_KEY",
+        "https://openrouter.ai/api/v1",
+    ),
+    ProviderSpec(
+        "xai", "openai-compatible", "XAI_API_KEY",
+        "https://api.x.ai/v1", aliases=("grok",),
+    ),
+    ProviderSpec(
+        "together", "openai-compatible", "TOGETHER_API_KEY",
+        "https://api.together.xyz/v1", aliases=("togetherai",),
+    ),
+    ProviderSpec(
+        "cerebras", "openai-compatible", "CEREBRAS_API_KEY",
+        "https://api.cerebras.ai/v1",
+    ),
+    ProviderSpec(
+        "dashscope", "openai-compatible", "DASHSCOPE_API_KEY",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        aliases=("qwen", "alibaba"),
+    ),
+    ProviderSpec(
+        "ollama", "ollama", None,
+        "http://localhost:11434/v1", aliases=("local",),
+    ),
+    ProviderSpec("test", "test", None, None, aliases=("mock",)),
+)
+
+# Canonical-name → spec, plus alias → spec, for O(1) lookup.
+PROVIDERS: dict[str, ProviderSpec] = {}
+for _spec in _PROVIDER_SPECS:
+    PROVIDERS[_spec.name] = _spec
+    for _alias in _spec.aliases:
+        PROVIDERS[_alias] = _spec
+del _spec
+
+# Public, ordered list of canonical provider names (auto-detect order).
+PROVIDER_NAMES: list[str] = [s.name for s in _PROVIDER_SPECS]
+
+# Public, ordered list of provider *key* env vars (None entries dropped).
+# product/llm_provider.py derives _PROVIDER_ENV_VARS from this so the two
+# modules cannot disagree about which keys signal "an LLM is available".
+PROVIDER_ENV_VARS: list[str] = [
+    s.env_var for s in _PROVIDER_SPECS if s.env_var is not None
+]
 
 
 # ---------------------------------------------------------------------------
@@ -150,28 +274,63 @@ class AnthropicProvider:
         return "\n".join(text_parts), tokens_in, tokens_out
 
 
-class OpenAIProvider:
-    """LLM provider wrapping the `openai` SDK.
+class OpenAICompatibleProvider:
+    """LLM provider for OpenAI and every OpenAI-compatible endpoint.
 
-    The openai package is imported lazily. Raises RuntimeError with an
-    install hint if the package is not available.
+    Powers OpenAI itself plus the eight compatible providers (Groq,
+    Mistral, DeepSeek, OpenRouter, xAI, Together, Cerebras, DashScope) and
+    the local Ollama server — they all speak the OpenAI chat-completions
+    wire format, so one `openai.OpenAI(base_url=..., api_key=...)` client
+    covers them all.
+
+    `base_url=None` targets the canonical OpenAI endpoint. `api_key_env`
+    is the env var holding the credential; it is None only for Ollama,
+    whose local server ignores the key (a placeholder is sent so the SDK
+    does not refuse to construct a client).
+
+    The `openai` package is imported lazily so stdlib-only installs keep
+    working until an autonomous call actually needs it.
     """
 
-    def call(
+    def __init__(
         self,
-        prompt: str,
-        model: str,
-    ) -> tuple[str, int | None, int | None]:
+        base_url: str | None = None,
+        api_key_env: str | None = "OPENAI_API_KEY",
+    ) -> None:
+        self.base_url = base_url
+        self.api_key_env = api_key_env
+
+    def _client(self):
         try:
-            import openai  # noqa: F401  # type: ignore[import-not-found]
+            import openai as _openai  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
                 "signalos harness: the `openai` package is not installed. "
                 "Run `pip install openai>=1.0` and retry."
             ) from exc
 
-        import openai as _openai  # type: ignore[import-not-found]
-        client = _openai.OpenAI()  # picks up OPENAI_API_KEY from env
+        kwargs: dict[str, Any] = {}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        if self.api_key_env:
+            api_key = os.environ.get(self.api_key_env)
+            if not api_key:
+                raise RuntimeError(
+                    f"signalos harness: {self.api_key_env} is not set. "
+                    "Set the provider API key or pick a different provider."
+                )
+            kwargs["api_key"] = api_key
+        elif self.base_url:
+            # Ollama (no key) — the SDK still requires a non-empty key string.
+            kwargs["api_key"] = "ollama"
+        return _openai.OpenAI(**kwargs)
+
+    def call(
+        self,
+        prompt: str,
+        model: str,
+    ) -> tuple[str, int | None, int | None]:
+        client = self._client()
         resp = client.chat.completions.create(
             model=model,
             max_tokens=1024,
@@ -184,6 +343,13 @@ class OpenAIProvider:
         tokens_in = getattr(usage, "prompt_tokens", None) if usage else None
         tokens_out = getattr(usage, "completion_tokens", None) if usage else None
         return text, tokens_in, tokens_out
+
+
+class OpenAIProvider(OpenAICompatibleProvider):
+    """Back-compat alias — canonical OpenAI endpoint via the openai SDK."""
+
+    def __init__(self) -> None:
+        super().__init__(base_url=None, api_key_env="OPENAI_API_KEY")
 
 
 class GeminiProvider:
@@ -454,37 +620,250 @@ class AgentTestProvider:
 # Provider resolution (AMD-CORE-007)
 # ---------------------------------------------------------------------------
 
+def _spec_for(name: str) -> ProviderSpec:
+    """Resolve a (possibly aliased) provider name to its ProviderSpec.
+
+    Raises RuntimeError listing all valid provider names on an unknown name.
+    """
+    key = name.lower().strip()
+    spec = PROVIDERS.get(key)
+    if spec is None:
+        raise RuntimeError(
+            f"signalos harness: unknown provider '{name}'. "
+            f"Valid values: {', '.join(PROVIDER_NAMES)}. "
+            "Set SIGNALOS_LLM_PROVIDER or pass --provider."
+        )
+    return spec
+
+
+def _auto_detect_provider() -> str:
+    """Return the first provider (in table order) whose env_var is set.
+
+    Falls back to 'anthropic' when no provider key is present at all, so
+    behaviour stays deterministic and the resulting error (no key) is
+    clear rather than silent.
+    """
+    for spec in _PROVIDER_SPECS:
+        if spec.kind == "test":
+            continue
+        if spec.env_var and os.environ.get(spec.env_var):
+            return spec.name
+    return "anthropic"
+
+
+def _build_provider(spec: ProviderSpec) -> LLMProvider:
+    """Instantiate the concrete provider for a spec."""
+    if spec.kind == "anthropic":
+        return AnthropicProvider()
+    if spec.kind == "gemini":
+        return GeminiProvider()
+    if spec.kind == "test":
+        return TestProvider()
+    # "openai-compatible" and "ollama" both ride the OpenAI wire format.
+    return OpenAICompatibleProvider(
+        base_url=spec.base_url,
+        api_key_env=spec.env_var,
+    )
+
+
+def _resolve_provider_name(name: str | None = None) -> str:
+    """Return the canonical provider name to use (no instantiation).
+
+    Order: explicit `name` → SIGNALOS_LLM_PROVIDER → auto-detect from the
+    first present provider key → fall back to "anthropic".
+    """
+    chosen = name or os.environ.get("SIGNALOS_LLM_PROVIDER") or _auto_detect_provider()
+    return _spec_for(chosen).name
+
+
 def _resolve_provider(name: str | None = None) -> LLMProvider:
     """Return the appropriate LLMProvider instance.
 
     Resolution order:
-    1. If SIGNALOS_HARNESS_TEST=1 is set → TestProvider (no SDK, no network).
-    2. Explicit `name` argument (passed by --provider CLI flag).
+    1. SIGNALOS_HARNESS_TEST=1 → TestProvider (no SDK, no network).
+    2. Explicit `name` argument (the --provider CLI flag).
     3. SIGNALOS_LLM_PROVIDER env var.
-    4. Default: "anthropic".
+    4. Auto-detect: first provider (priority order: anthropic, openai,
+       gemini, then the OpenAI-compatible fleet, then ollama) whose API
+       key env var is set in the environment.
+    5. Fall back to "anthropic".
+
+    Unknown provider name → RuntimeError listing all valid names.
     """
     if os.environ.get("SIGNALOS_HARNESS_TEST") == "1":
         return TestProvider()
+    return _build_provider(_spec_for(_resolve_provider_name(name)))
 
-    provider_name = name or os.environ.get("SIGNALOS_LLM_PROVIDER", "anthropic")
-    provider_name = provider_name.lower().strip()
 
-    if provider_name == "anthropic":
-        return AnthropicProvider()
-    if provider_name in {"openai", "open_ai"}:
-        return OpenAIProvider()
-    if provider_name in {"gemini", "google", "google-generativeai"}:
-        return GeminiProvider()
-    if provider_name == "ollama":
-        return OllamaProvider()
-    if provider_name in {"test", "mock"}:
-        return TestProvider()
+# ---------------------------------------------------------------------------
+# Model discovery (AMD-CORE-007.1) — NO hardcoded model ids.
+#
+# Each provider exposes a "list models" API; we filter out small / cheap /
+# non-chat variants with a generic heuristic and pick the newest flagship.
+# Discovery is cached per (provider_name, base_url) for the process lifetime
+# so repeat calls don't re-hit the API.
+# ---------------------------------------------------------------------------
 
-    raise RuntimeError(
-        f"signalos harness: unknown provider '{provider_name}'. "
-        "Valid values: anthropic, openai, gemini, ollama, test. "
-        "Set SIGNALOS_LLM_PROVIDER or pass --provider."
-    )
+# Generic substrings that mark a model as small / cheap / non-chat. Provider
+# agnostic on purpose — we never encode exact model ids (they go stale).
+_NON_FLAGSHIP_SUBSTRINGS = (
+    "mini", "nano", "lite", "flash", "small", "instant", "tiny", "haiku",
+    "embed", "embedding", "whisper", "tts", "dall", "image", "rerank",
+    "guard", "moderation",
+)
+
+# Cache: (provider_name, base_url) → discovered model id (or None).
+_MODEL_CACHE: dict[tuple[str, str | None], str | None] = {}
+
+
+def clear_model_cache() -> None:
+    """Drop the per-process model-discovery cache (used by tests)."""
+    _MODEL_CACHE.clear()
+
+
+def _version_key(model_id: str) -> tuple:
+    """Version-aware sort key — newest first when sorted descending.
+
+    Extracts all numeric runs from the id into a tuple (so 4.8 > 4.5 > 3.5),
+    then appends the lowercased id as a lexicographic tiebreaker.
+    """
+    import re as _re
+
+    nums = tuple(int(n) for n in _re.findall(r"\d+", model_id))
+    return (nums, model_id.lower())
+
+
+def _is_non_flagship(model_id: str) -> bool:
+    """True if the id names a small/cheap/non-chat variant.
+
+    Matching is boundary-aware on purpose: a banned term only counts when
+    it is NOT embedded inside a larger alphabetic word. This is what stops
+    "mini" from wrongly matching "geMINI" (Gemini's flagship) while still
+    catching "gpt-4o-mini", "claude-haiku-4-5", "text-embedding-3", etc.
+    A boundary is the string edge or any non-letter (digit, '-', '_', '.',
+    '/').
+    """
+    import re as _re
+
+    low = model_id.lower()
+    for sub in _NON_FLAGSHIP_SUBSTRINGS:
+        # (?<![a-z]) — not preceded by a letter; (?![a-z]) — not followed by one.
+        if _re.search(rf"(?<![a-z]){_re.escape(sub)}(?![a-z])", low):
+            return True
+    return False
+
+
+def pick_best_model(model_ids: list[str]) -> str | None:
+    """Pick the best-fit flagship from a list of model ids — generic.
+
+    Heuristic (no exact-id encoding): drop obvious small/cheap/non-chat
+    variants, then from the remainder pick the NEWEST by a version-aware
+    key (numeric tuples desc, lexicographic fallback). If filtering empties
+    the pool, pick the newest of the full list instead.
+    """
+    if not model_ids:
+        return None
+
+    filtered = [m for m in model_ids if not _is_non_flagship(m)]
+    pool = filtered or list(model_ids)
+    return max(pool, key=_version_key)
+
+
+def list_models(provider_name: str | None = None) -> list[str]:
+    """Return the available model ids for a provider via its API.
+
+    Network call (except for ollama, which is local). Raises on SDK/HTTP
+    errors; callers wrap this. Returns [] when the provider reports none.
+    """
+    spec = _spec_for(_resolve_provider_name(provider_name))
+
+    if spec.kind == "anthropic":
+        import anthropic  # type: ignore[import-not-found]
+
+        client = anthropic.Anthropic()
+        return [m.id for m in client.models.list()]
+
+    if spec.kind == "gemini":
+        import google.generativeai as genai  # type: ignore[import-not-found]
+
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+        out: list[str] = []
+        for m in genai.list_models():
+            methods = getattr(m, "supported_generation_methods", None) or []
+            if "generateContent" in methods:
+                out.append(m.name)
+        return out
+
+    if spec.kind == "ollama":
+        import urllib.request
+
+        url = "http://localhost:11434/api/tags"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [m["name"] for m in data.get("models", []) if m.get("name")]
+
+    # openai-compatible (openai + the eight compatible endpoints)
+    import openai as _openai  # type: ignore[import-not-found]
+
+    kwargs: dict[str, Any] = {}
+    if spec.base_url:
+        kwargs["base_url"] = spec.base_url
+    if spec.env_var:
+        api_key = os.environ.get(spec.env_var)
+        if api_key:
+            kwargs["api_key"] = api_key
+    client = _openai.OpenAI(**kwargs)
+    return [m.id for m in client.models.list()]
+
+
+def discover_model(provider_name: str | None = None) -> str | None:
+    """Discover the best-fit flagship model for a provider.
+
+    Caches the result per (provider, base_url) for the process. Returns
+    None when discovery fails (network/SDK error) or the provider reports
+    no usable models — callers turn None into a clear, fail-closed error.
+    """
+    spec = _spec_for(_resolve_provider_name(provider_name))
+    cache_key = (spec.name, spec.base_url)
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
+
+    try:
+        ids = list_models(spec.name)
+        best = pick_best_model(ids)
+    except Exception:
+        best = None
+
+    _MODEL_CACHE[cache_key] = best
+    return best
+
+
+def resolve_model(
+    model: str | None,
+    provider_name: str | None = None,
+) -> str:
+    """Resolve the model id to use, fail-closed.
+
+    Order: explicit `model` → SIGNALOS_LLM_MODEL env → discover_model().
+    Raises RuntimeError when discovery yields nothing, so the harness never
+    silently substitutes a stale hardcoded id.
+    """
+    if model:
+        return model
+    env_model = os.environ.get("SIGNALOS_LLM_MODEL")
+    if env_model:
+        return env_model
+    canonical = _resolve_provider_name(provider_name)
+    discovered = discover_model(canonical)
+    if not discovered:
+        raise RuntimeError(
+            f"signalos harness: could not discover a model for provider "
+            f"'{canonical}'; set SIGNALOS_LLM_MODEL or pass --model."
+        )
+    return discovered
 
 
 # ---------------------------------------------------------------------------
@@ -741,14 +1120,21 @@ def run_step(
     *,
     prompt: str | None = None,
     prompt_file: Path | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     session_id: str | None = None,
     parent_step_id: str | None = None,
     cwd: Path | None = None,
     intent: str | None = None,
     provider: LLMProvider | None = None,
+    provider_name: str | None = None,
 ) -> dict[str, Any]:
-    """Execute one PLAN step headlessly and emit the four W1.1 events."""
+    """Execute one PLAN step headlessly and emit the four W1.1 events.
+
+    Model resolution (when *model* is None): SIGNALOS_LLM_MODEL env →
+    discovery from the resolved provider's API. There is no hardcoded
+    silent default. Test mode and an explicitly injected TestProvider
+    skip discovery entirely (no network), keeping CI offline.
+    """
     if not step_id or not isinstance(step_id, str):
         raise ValueError("signalos harness: --step is required and must be a string")
     resolved_prompt = _resolve_prompt(prompt, prompt_file)
@@ -757,7 +1143,20 @@ def run_step(
             "signalos harness: prompt is empty — pass --prompt '<text>' or --prompt-file <path>"
         )
 
-    active_provider = provider if provider is not None else _resolve_provider()
+    active_provider = provider if provider is not None else _resolve_provider(provider_name)
+
+    # Resolve the model, fail-closed, NO hardcoded silent default. Test mode
+    # or an injected TestProvider needs no real model and must not hit the
+    # network — feed those a deterministic placeholder.
+    if model is None:
+        test_mode = (
+            os.environ.get("SIGNALOS_HARNESS_TEST") == "1"
+            or isinstance(active_provider, TestProvider)
+        )
+        if test_mode:
+            model = "test"
+        else:
+            model = resolve_model(None, provider_name)
 
     root = _repo_root(cwd)
     sid = _resolve_or_create_session(root, session_id)

@@ -327,9 +327,11 @@ def dispatch_build_agent(
     # Resolve + call with the product's provider keys overlaid (product wins).
     with apply_product_secrets(repo_root):
         try:
-            from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+            from signalos_lib.harness import _resolve_provider, resolve_model
             provider = _resolve_provider(provider_name)
-            use_model = model or DEFAULT_MODEL
+            # No hardcoded default: explicit model → SIGNALOS_LLM_MODEL →
+            # discovery from the resolved provider's API.
+            use_model = resolve_model(model, provider_name)
         except Exception as exc:
             result["errors"].append(f"Provider resolution failed: {exc}")
             return result

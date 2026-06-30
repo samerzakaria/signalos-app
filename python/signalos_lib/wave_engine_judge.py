@@ -122,7 +122,8 @@ def build_llm_judge(
 
     *provider* defaults to the harness's resolved provider
     (`SIGNALOS_HARNESS_TEST=1` → TestProvider for proof runs).
-    *model* defaults to `harness.DEFAULT_MODEL`.
+    *model* defaults to the provider's discovered flagship (no hardcoded id);
+    test mode / a TestProvider skips discovery and uses a placeholder.
 
     The returned Callable wraps the provider's `call()` with a focused
     drift-judging prompt and lenient JSON parsing. It never raises:
@@ -130,14 +131,15 @@ def build_llm_judge(
     "no drift" verdict so the engine falls through to "ambiguous"
     rather than false-positive.
     """
-    # Resolve lazily so importing this module doesn't load the harness
-    # SDK chain unless someone actually builds a judge.
-    if provider is None or model is None:
-        from .harness import DEFAULT_MODEL, _resolve_provider
-        if provider is None:
-            provider = _resolve_provider()
-        if model is None:
-            model = DEFAULT_MODEL
+    # Resolve the provider lazily (cheap, no network) so importing this
+    # module doesn't load the harness SDK chain unless someone builds a
+    # judge. The MODEL is resolved inside the closure, at call time, so
+    # building a judge NEVER fails on a missing key / discovery error —
+    # the verdict path is the only place that needs a real model and it
+    # already degrades gracefully on any failure.
+    if provider is None:
+        from .harness import _resolve_provider
+        provider = _resolve_provider()
 
     def judge(soul_text: str, user_request: str) -> dict[str, Any]:
         # §13.Q2 — cache the verdict to avoid re-paying per turn.
@@ -146,11 +148,34 @@ def build_llm_judge(
         if cached is not None:
             return {**cached, "cached": True}
 
+        # No hardcoded default. Test mode / a TestProvider needs no real
+        # model and must not hit the network during proof runs; otherwise
+        # discover the flagship from the provider's API.
+        import os as _os
+
+        from .harness import resolve_model, TestProvider
+        use_model = model
+        if use_model is None:
+            if (
+                _os.environ.get("SIGNALOS_HARNESS_TEST") == "1"
+                or isinstance(provider, TestProvider)
+            ):
+                use_model = "test"
+            else:
+                try:
+                    use_model = resolve_model(None)
+                except Exception as exc:  # noqa: BLE001 — degrade, never raise
+                    return {
+                        "drifted": False,
+                        "confidence": 0.3,
+                        "reasoning": f"model-resolution-failed: {type(exc).__name__}",
+                    }
+
         prompt = _JUDGE_PROMPT_TEMPLATE.format(
             soul=soul_text.strip(), request=user_request.strip(),
         )
         try:
-            response_text, _tok_in, _tok_out = provider.call(prompt, model)
+            response_text, _tok_in, _tok_out = provider.call(prompt, use_model)
         except Exception as exc:  # noqa: BLE001 — defensive; LLM call can fail
             return {
                 "drifted": False,

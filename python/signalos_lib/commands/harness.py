@@ -33,8 +33,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="signalos harness",
         description=(
             "Headless harness — execute a PLAN step without an editor by "
-            "calling the Anthropic Messages API. Emits the same journal "
-            "and metrics events as the seven editor emitters."
+            "calling the configured LLM provider (auto-detected from the "
+            "provider key present, or pinned via SIGNALOS_LLM_PROVIDER). "
+            "Emits the same journal and metrics events as the editor emitters."
         ),
     )
     sub = parser.add_subparsers(dest="sub", metavar="SUBCOMMAND")
@@ -58,8 +59,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a file whose contents are used as the prompt.",
     )
     p_call.add_argument(
-        "--model", default=harness_lib.DEFAULT_MODEL,
-        help=f"Anthropic model id (default: {harness_lib.DEFAULT_MODEL}).",
+        "--model", default=None,
+        help=(
+            "Model id for the resolved provider. Default: none — the model "
+            "is discovered from the provider's API (override here or via "
+            "SIGNALOS_LLM_MODEL)."
+        ),
     )
     p_call.add_argument(
         "--session-id",
@@ -77,9 +82,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--provider",
         default=None,
         help=(
-            "LLM provider to use (default: anthropic). "
-            "Overrides SIGNALOS_LLM_PROVIDER env var. "
-            "Valid values: anthropic, openai, gemini, ollama, test."
+            "LLM provider to use. Default: auto-detected from whichever "
+            "provider key is set, overridable via SIGNALOS_LLM_PROVIDER. "
+            "Valid values: anthropic, openai, gemini, groq, mistral, "
+            "deepseek, openrouter, xai, together, cerebras, dashscope, "
+            "ollama, test."
         ),
     )
     p_call.add_argument("--cwd", type=Path, default=None, help=argparse.SUPPRESS)
@@ -127,6 +134,9 @@ def _cmd_call(args: argparse.Namespace) -> int:
             cwd=args.cwd,
             intent=args.intent,
             provider=provider,
+            # Pass the name too so model discovery targets the SAME provider
+            # the --provider flag selected (provider= is an instance only).
+            provider_name=provider_name,
         )
     except ValueError as exc:
         sys.stderr.write(f"signalos harness call: {exc}\n")

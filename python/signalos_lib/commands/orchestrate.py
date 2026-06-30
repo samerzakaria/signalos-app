@@ -48,9 +48,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--provider",
         default=None,
         help=(
-            "LLM provider (default: anthropic). "
-            "Overrides SIGNALOS_LLM_PROVIDER. "
-            "Valid: anthropic, openai, gemini, ollama, test."
+            "LLM provider. Default: auto-detected from whichever provider "
+            "key is set; overridable via SIGNALOS_LLM_PROVIDER. Valid: "
+            "anthropic, openai, gemini, groq, mistral, deepseek, openrouter, "
+            "xai, together, cerebras, dashscope, ollama, test."
         ),
     )
     parser.add_argument(
@@ -67,7 +68,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="LLM model id to use for each harness call.",
+        help=(
+            "Model id for each harness call. Default: none — discovered "
+            "from the provider's API (override here or via SIGNALOS_LLM_MODEL)."
+        ),
     )
     parser.add_argument(
         "--cwd",
@@ -99,9 +103,10 @@ def main(argv: list[str]) -> int:
         return 1 if exc.code != 0 else 0
 
     from .. import orchestrator as orch_lib
-    from .. import harness as harness_lib
 
-    model = args.model or harness_lib.DEFAULT_MODEL
+    # No hardcoded default: None lets the harness discover the flagship model
+    # from the resolved provider (override with --model or SIGNALOS_LLM_MODEL).
+    model = args.model
 
     try:
         result = orch_lib.run_wave(

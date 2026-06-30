@@ -825,7 +825,7 @@ def refine_intent_with_llm(
     is configured.  Never crashes -- returns the input unchanged on error.
     """
     try:
-        from signalos_lib.harness import _resolve_provider, DEFAULT_MODEL
+        from signalos_lib.harness import _resolve_provider, resolve_model
     except ImportError:
         return intent
 
@@ -842,8 +842,9 @@ def refine_intent_with_llm(
 
     try:
         provider = _resolve_provider(provider_name)
+        # No hardcoded default: explicit model → SIGNALOS_LLM_MODEL → discovery.
         response_text, _tok_in, _tok_out = provider.call(
-            llm_prompt, model or DEFAULT_MODEL,
+            llm_prompt, resolve_model(model, provider_name),
         )
     except Exception:
         return intent

@@ -726,8 +726,12 @@ def main(argv: list[str]) -> int:
               "github-copilot, vs-code, windsurf, codex, antigravity")
     print(f"\n  Next: cd {target}")
     print("        signalos session start    # or /signal-status in chat")
-    print("\n  No API key needed for chat / IDE usage. ANTHROPIC_API_KEY")
-    print("  is only required for autonomous-mode commands "
-          "(`signalos harness call`,")
-    print("  `signalos orchestrate`) when running headless / CI / cron.\n")
+    print("\n  No API key needed for chat / IDE usage. For autonomous-mode")
+    print("  commands (`signalos harness call`, `signalos orchestrate`) when")
+    print("  running headless / CI / cron, set any one provider key (Anthropic,")
+    print("  OpenAI, Gemini, Groq, Mistral, DeepSeek, OpenRouter, xAI, Together,")
+    print("  Cerebras, DashScope) or run a local Ollama -- the provider is")
+    print("  auto-detected from whichever key is present, or pin it with")
+    print("  SIGNALOS_LLM_PROVIDER; the model is discovered from the provider")
+    print("  (override with SIGNALOS_LLM_MODEL).\n")
     return 0

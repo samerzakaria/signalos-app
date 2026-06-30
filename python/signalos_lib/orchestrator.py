@@ -1712,7 +1712,7 @@ def _dispatch_gate_agent(
     wave_id: str,
     session_id: str | None,
     provider_name: str | None = None,
-    model: str = harness_lib.DEFAULT_MODEL,
+    model: str | None = None,
     project_id: str = "default",
 ) -> dict[str, Any]:
     """Load and invoke the LLM agent for *gate*, returning its output.
@@ -1787,11 +1787,25 @@ def _dispatch_gate_agent(
             "error": f"Provider resolution failed: {exc}",
         }
 
+    # Resolve the model fail-closed (NO hardcoded default): explicit model →
+    # SIGNALOS_LLM_MODEL → discovery from the resolved provider's API.
+    try:
+        use_model = harness_lib.resolve_model(model, provider_name)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "gate": gate,
+            "output": "",
+            "tokens_in": None,
+            "tokens_out": None,
+            "error": f"Model resolution failed: {exc}",
+        }
+
     # Call the LLM.
     try:
         response_text, tokens_in, tokens_out = provider.call(
             f"{system_prompt}\n\n{user_prompt}",
-            model,
+            use_model,
         )
     except Exception as exc:
         _append_audit_entry(root, {
@@ -1842,7 +1856,7 @@ def run_wave(
     max_concurrent: int = 5,
     provider_name: str | None = None,
     cwd: Path | None = None,
-    model: str = harness_lib.DEFAULT_MODEL,
+    model: str | None = None,
     project_id: str = "default",
 ) -> dict[str, Any]:
     """Orchestrate parallel execution of all tasks in a Wave.
