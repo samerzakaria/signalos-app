@@ -488,11 +488,18 @@ function Test-BundledSidecarProductValidation {
     args = @("--json")
     cwd = $target
   } -TimeoutSeconds 180
-  if (-not $readiness.ok) {
-    throw "Bundled sidecar release-readiness command failed: $($readiness | ConvertTo-Json -Compress -Depth 8)"
+  # A freshly bootstrapped (signal-init) project is correctly release-BLOCKED:
+  # no signed gates, no build/test evidence, no source intent. release-readiness
+  # therefore exits nonzero and the sidecar reports ok:false with the readiness
+  # JSON in .error. That is a valid "ran and reported blocked" outcome, not a
+  # command failure. This smoke verifies the command RAN and produced a valid
+  # schema + evidence artifact, not that a bare scaffold is shippable.
+  $readinessJson = if ($readiness.ok) { $readiness.output } else { $readiness.error }
+  if ([string]::IsNullOrWhiteSpace($readinessJson)) {
+    throw "Bundled sidecar release-readiness produced no output: $($readiness | ConvertTo-Json -Compress -Depth 8)"
   }
 
-  $payload = $readiness.output | ConvertFrom-Json
+  $payload = $readinessJson | ConvertFrom-Json
   if ($payload.schema_version -ne "signalos.release_readiness.v1") {
     throw "Unexpected release-readiness schema from bundled sidecar: $($payload.schema_version)"
   }

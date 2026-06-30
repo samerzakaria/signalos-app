@@ -1,22 +1,22 @@
 {
-  "version": "3.1.0-internal.1",
-  "notes": " ### SignalOS.NET concept parity + A+ enforcement-hardening  - Land the app-native command surface for parity with the SignalOS.NET reference (validators, lifecycle/state, ceremonies, release/ship, 18 stack adapters) and harden every new surface to enforce (never advise) with fail-closed behavior and negative-test coverage.  ",
-  "pub_date": "2026-06-30T04:47:23Z",
+  "version": "3.1.0-internal.2",
+  "notes": " ### Autonomous mode works with all providers (not just Claude)  - The headless harness (`signalos harness call` / `orchestrate`, and product `call_llm`) now routes **all 12 configured providers** — Anthropic, OpenAI, Gemini, Groq, Mistral, DeepSeek, OpenRouter, xAI, Together, Cerebras, DashScope (via one OpenAI-compatible adapter) and local Ollama — from a single source-of-truth provider table. The provider is **auto-detected** from whichever API key is present (override with `SIGNALOS_LLM_PROVIDER`). - The model is **discovered from each provider's API** (best-fit pick) instead of a hardcoded default; override with `SIGNALOS_LLM_MODEL` or `--model`. `DEFAULT_MODEL` is no longer a silent default. The `signal-init` autonomous-mode message is now provider-neutral. ",
+  "pub_date": "2026-06-30T19:16:45Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_aarch64.dmg",
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_aarch64.dmg",
       "signature": ""
     },
     "darwin-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_x64.dmg",
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64.dmg",
       "signature": ""
     },
     "windows-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_x64-setup.exe",
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64-setup.exe",
       "signature": ""
     },
     "linux-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_amd64.AppImage",
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_amd64.AppImage",
       "signature": ""
     }
   }

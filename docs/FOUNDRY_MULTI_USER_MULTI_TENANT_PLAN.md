@@ -1,243 +1,260 @@
-# Foundry Multi-User / Multi-Tenant Fleet — Near-Future Plan
+# Foundry Multi-User / Multi-Tenant Fleet — Near-Future Plan (v2, research-validated)
 
-Status: **planned, not yet built.** This is a forward-looking plan, not a record of
-shipped behavior. It extends [`GOVERNED_FLEET_RUNTIME_DESIGN.md`](GOVERNED_FLEET_RUNTIME_DESIGN.md)
-(the single-machine governed-runtime foundation) to the multi-user / multi-tenant case.
-Today Foundry is a single-user local desktop app (`v3.0.0-internal.*` beta); nothing in
-this document is live yet.
+Status: **planned, not yet built.** Forward-looking plan, not shipped behavior. It extends
+[`GOVERNED_FLEET_RUNTIME_DESIGN.md`](GOVERNED_FLEET_RUNTIME_DESIGN.md) (the single-machine
+governed-runtime foundation) to the multi-user / multi-tenant case. Today Foundry is a
+single-user local desktop app (`v3.1.0-internal.*`); nothing here is live yet.
 
-Conventions: SignalOS enforces, never advises. Human-in-the-loop (HILP) gates stay
-human-signed. No "sprint" vocabulary — work is organized as Waves, Phases, and Gates.
+**v2 changes (this revision):** every load-bearing decision was validated against current
+domain best practice (sources at the bottom), not first-principles reasoning. Three things
+changed materially: **Phase 2 (git-as-queue) is dropped**; the live-tracker transport is
+corrected (`LISTEN/NOTIFY` is a *hint*, not the source of truth); and **multi-tenant agent
+execution requires microVM isolation**, not shared-kernel Docker. The rest is hardened with
+idempotency / lease / dead-letter / RLS best practices.
+
+Conventions: SignalOS enforces, never advises (fail-closed). HILP gates stay human-signed.
+No "sprint" vocabulary — Waves, Phases, Gates.
 
 ---
 
+## 0. The reality check that justifies the whole approach
+
+As of early 2026, **only ~11–14% of enterprise AI-agent pilots reach production at scale; ~86–89% fail to realize durable value — and the hard parts are not the agent loops, they're "memory propagation, retry semantics, observability, and human-in-the-loop gating"** ([orchestration patterns 2026](https://jobsbyculture.com/blog/ai-agent-orchestration-patterns-2026)). That is *exactly* the layer Foundry already invests in (gates, audit, proof, HILP). So this plan deliberately spends effort on the boring robustness — idempotency, leases, dead-letter, durable execution, tenant isolation — because that, not the LLM, is where agent products die.
+
 ## 1. Goal
 
-Let multiple users — and multiple machines — share a governed agent fleet, so that:
+Let multiple users and machines share a governed agent fleet so the planner's task list is
+claimed and executed by a **fleet** of heterogeneous agent CLIs in parallel, every claim and
+transition passes a **gate** and is recorded in a signed audit trail, **humans approve the
+task list in and the output out**, and progress is visible **live**. The fleet scales
+*execution*, never *sign-off*; an agent can never approve its own work (same invariant as the
+`ship` agent-self-signature refusal).
 
-- a task list produced by the planner / delivery generation packet can be claimed and
-  executed by a **fleet** of heterogeneous agent CLIs across machines, in parallel;
-- every claim and state transition passes a **governance gate** and is recorded in a
-  signed, append-only audit trail;
-- **humans review the task list in and approve the output out** — the fleet only
-  automates the middle (the HILP boundary the product already enforces for gate signing);
-- progress is visible **live** in the existing UI tracker for every user with access.
+## 2. What already exists (the foundation)
 
-Non-goal: removing the human from gate approval. The fleet scales *execution*, never
-*sign-off*. An agent can never approve its own work — the same rule as the existing
-agent-self-signature refusal in `ship`.
+- **Tasks already exist** — planner tasks array + the delivery generation packet (the
+  `task_ids` derived from the acceptance matrix, as seen in the live `--agent none` smoke).
+  This plan adds coordination, **not** task generation.
+- **A single-agent executor already delivers** (`delivery.py` → `agent_dispatch.py`).
+- **A governed-fleet foundation** (single machine): `fleet detect`, `governed_dispatch`
+  admission, `fleet gc`. See `GOVERNED_FLEET_RUNTIME_DESIGN.md`.
+- **A live progress tracker** for delivery: `_emit_progress` events + `DELIVERY_STATE.json`
+  plus UI (`macroProgress.ts`, `deliveryFlow.ts`, `ProgressDetail.tsx`).
+- **A Docker sandbox** (`src-tauri` `sandbox::tests`) — adequate for single-user; see §7 for
+  the multi-tenant upgrade.
 
-## 2. Where we are today (the foundation this builds on)
+## 3. Core principle — one abstraction, but don't over-abstract it
 
-- **Tasks already exist.** The planner emits a validated tasks array; product delivery's
-  generation packet is the task list (`task_ids` derived from the acceptance matrix). The
-  multi-user work adds coordination, **not** task generation.
-- **A single-agent executor already delivers.** `product/delivery.py` builds the
-  generation + agent packet and `product/agent_dispatch.py` hands it to one agent; this is
-  already gate-governed.
-- **A governed-fleet foundation exists** (single machine): `fleet detect` (runtime
-  detection), `fleet_runtime.governed_dispatch` (fail-closed admission), and `fleet gc`
-  (workspace GC). See `GOVERNED_FLEET_RUNTIME_DESIGN.md`.
-- **A live progress tracker already exists** for delivery: `product/delivery.py`
-  `_emit_progress` streams structured `{kind:"progress", phase, step, status, message}`
-  events, `DELIVERY_STATE.json` persists phase state, and the UI renders it
-  (`src/services/macroProgress.ts`, `src/services/deliveryFlow.ts`,
-  `src/components/ProgressDetail.tsx`). The fleet reuses this event shape.
+Define a single `TaskStore` and keep governance above it, so local/Postgres is a deployment
+choice, not a rewrite. **Best-practice constraint (from the queue/outbox literature):** the
+abstraction must NOT prevent **transactional enqueue** — the queue should live in the *same*
+Postgres as wave/delivery state so a task and its business state commit atomically (both or
+neither). River and the transactional-outbox pattern both make this the headline rule
+([River](https://github.com/riverqueue/river), [outbox](https://tiarebalbi.com/en/blog/the-transactional-outbox-is-not-a-queue)). A store interface so abstract it forces a network hop per enqueue throws this away.
 
-## 3. Core design principle — abstract the substrate (`TaskStore`)
-
-Do **not** hard-wire a backend. Define one interface and keep all governance above it:
-
-```
+```rust
 trait TaskStore {
-    claim(runtime_id, capabilities) -> Option<Task>   // atomic; never double-claims
-    report(task_id, progress_event)                   // live tracker feed
-    heartbeat(runtime_id)                             // liveness
+    // idempotent: same task_id enqueued twice is a no-op (at-least-once world)
+    enqueue(task) -> TaskId
+    // atomic claim; never double-claims; sets a lease/visibility deadline
+    claim(runtime_id, capabilities, lease_ttl) -> Option<LeasedTask>
+    heartbeat(lease_id)          // renews the lease for long agent runs
+    report(task_id, progress)    // live-tracker feed
     complete(task_id, result, evidence_ref)
-    request_approval(task_id, kind)                   // HILP gate (task-list / output)
-    record_audit(signed_event)                        // append-only
+    fail(task_id, error, retryable)   // -> backoff+retry OR dead-letter
+    request_approval(task_id, kind)   // HILP gate (task-list / output)
+    record_audit(signed_event)        // append-only
 }
 ```
 
-`governed_dispatch` and the gate/approval/audit logic sit **above** `TaskStore`. Then the
-local/git/Postgres choice becomes a deployment decision, not a rewrite. Getting this
-abstraction right now is the cheapest thing to do and the most expensive thing to retrofit.
+Three job-semantics best practices are baked into the interface from day one (so every impl
+shares them), because retrofitting them is painful ([Background Jobs 2026](https://www.digitalapplied.com/blog/background-job-queue-patterns-2026-engineering-reference), [idempotency/DLQ](https://baxchain.com/blogs/resilient-event-driven-architecture-idempotency-retries-and-dead-letter-queues/)):
 
-Three implementations, in increasing capability:
+1. **At-least-once + idempotent execution.** Don't chase exactly-once. Every task has a
+   stable id; re-running a task is safe; record processed ids with a unique constraint so a
+   duplicate is a no-op.
+2. **Lease / visibility timeout via heartbeat.** A claimed task carries a lease longer than
+   its expected runtime; if the heartbeat lapses (dead agent), the task becomes reclaimable.
+   This is what stops a crashed runtime from holding work forever.
+3. **Dead-letter on permanent failure.** Transient errors (LLM rate-limit, network) retry
+   with exponential backoff + jitter, capped; permanent failures (e.g. still failing after N)
+   route to a dead-letter state surfaced to a human — never silently dropped or retried
+   forever. A growing dead-letter set is the leading failure indicator.
 
-| Store | Reach | Real-time | Throughput | New infra | Best for |
-|---|---|---|---|---|---|
-| **local-file** (`.signalos/fleet/`) | single machine | n/a (IPC) | low | none | today's single-user beta |
-| **git** (GitHub repo/branches/PRs) | multi-machine | near-real-time (poll/webhook) | low–mid | none (GitHub hosts) | small teams; PR-as-approval |
-| **postgres** (Rust service) | multi-user / multi-tenant | instant (LISTEN/NOTIFY → WS) | high | a real service | team / SaaS scale |
+## 4. Phase 0 — TaskStore abstraction (prerequisite gate)
 
-The two multi-user options follow.
+- Land the trait above + the governance layer (gate / approval / audit) over it.
+- Reimplement today's local path behind it (no behavior change for single-user).
+- Bake in idempotent enqueue, lease/heartbeat, retry+backoff+jitter, dead-letter.
+- **Outbox mental model** ([source](https://tiarebalbi.com/en/blog/the-transactional-outbox-is-not-a-queue)): the active-task table is "a bounded, append-mostly table whose rows live seconds, not minutes." Keep it small; move completed/failed rows to a history table; monitor depth + oldest-row age.
 
-## 4. Option A — Git as the coordination server (low infra)
+Gate: existing single-user delivery still green. **User-visible value: none directly** — this
+is the safety harness that lets Phase 1 land without destabilizing the shipped delivery path.
 
-Fits Foundry's DNA: everything is already signed files in git, plus worktrees + worktree-sync.
+## 5. Phase 1 — Live executor (single machine), supervisor/worker
 
-- **Tasks** = files under a control repo (`.signalos/fleet/queue/<task-id>.json`) **or**
-  GitHub Issues (issue = task, assignee = claiming runtime, labels = state).
-- **Claim** = first-push-wins. `git push` is a compare-and-swap: the loser's push is
-  rejected and it retries / picks another task. Use **one file per task** and
-  **branch-per-claim** so writers never collide.
-- **Isolation** = per-task git worktree (already available).
-- **Output + HILP gate** = the **Pull Request**. PR review/merge is the human approval;
-  **branch protection requiring a human reviewer enforces "an agent cannot self-approve"**
-  — exactly the existing agent-self-signature rule, now enforced by GitHub.
-- **Liveness** = heartbeat commits to a `heartbeat/<runtime>` ref; staleness by timestamp.
-- **Audit** = every transition is an immutable, attributable (signed) commit — stronger
-  than a DB row.
+The executor that claims tasks, runs an agent CLI in an **isolated git worktree**, streams,
+heartbeats, and completes — wrapped in governance. Architecture = the **supervisor/worker**
+pattern, which the orchestration literature identifies as the right fit precisely when you
+have "a homogeneous pool of agents doing similar work (code generation), variable quality
+requiring gating, and dynamic tasks needing load balancing" — the supervisor retries,
+reassigns, or **escalates to a human** on poor output ([patterns 2026](https://jobsbyculture.com/blog/ai-agent-orchestration-patterns-2026)).
 
-**Limitations (decide with eyes open):**
-1. Near-real-time only (poll cadence) unless you add GitHub **webhooks** → which need an
-   HTTP endpoint (a thin server creeps back).
-2. Push contention under high churn / many agents → mitigate with per-task files + branch-per-claim.
-3. Conflict discipline: **one writer per file, append-only per-runtime shards** (the shared
-   audit JSONL must become per-runtime files, not one shared file).
-4. GitHub API rate limits → backoff, conditional/ETag requests, longer intervals.
-5. No transactions / queries; everything modeled as files + commits.
-6. History bloat → dedicated control repo, ephemeral branches deleted on completion, GC.
-7. Secrets live in git history forever → private repo, no secrets in task payloads.
-8. You depend on GitHub uptime/network (air-gapped = no coordination). Self-hosted
-   Gitea/GitLab works identically.
+Best practices to build in:
 
-**Verdict:** the right *first* multi-machine step — minimal infra, audit/HILP story is
-actually stronger (PR review = approval). Ceiling = real-time + scale.
+- **Worktrees for per-task isolation** — a recommended parallel-AI-agent pattern ([Augment](https://www.augmentcode.com/guides/git-worktrees-parallel-ai-agent-execution)); Foundry already has worktree-sync. Keep it.
+- **Durable execution** for crash recovery + HILP pauses — a Temporal-style durable state
+  machine wrapping the agent loop so a server/desktop restart resumes mid-delivery and an
+  approval pause survives crashes ([control-plane/durable](https://jobsbyculture.com/blog/ai-agent-orchestration-patterns-2026)). For single-machine this can be a lightweight local-store-backed state machine, not a Temporal dependency.
+- **Sandbox (single-user threat model):** Docker + worktree is acceptable here because the
+  user runs their own agents on their own machine. **But this changes at multi-tenant — see §7.**
+- Idempotent task execution, lease heartbeats, retry/backoff/jitter, dead-letter (from §3).
 
-## 5. Option B — Rust + Postgres service (team / SaaS scale)
+Gate: a real product delivered by the parallel fleet on one machine, fully governed +
+tracked. **User-visible value: faster deliveries (parallel tasks), per-task robustness, and a
+task-level live tracker** — a genuine upgrade to the current release.
 
-The faithful, better-governed SignalOS analog of Multica's Go+Postgres backend. Rust is the
-natural choice because Foundry's desktop core is already Rust/Tauri (shared types, existing
-competence).
+## 6. Phase 2 — REMOVED (git-as-coordination-queue), replaced by "git for what it's good at"
+
+The v1 plan proposed git/GitHub as a multi-machine claim queue. **Validation says don't.** The
+domain evidence is one-sided:
+
+- Git-as-a-database is a repeatedly-failed pattern — "package managers keep using git as a
+  database, **it never works out**"; "databases have locking, git doesn't"; and the
+  documented immediate failure for *multi-agent concurrent access* is "**simultaneous writes
+  to the same file where one agent's changes silently overwrite another's**" — i.e. exactly
+  the claim race ([Nesbitt](https://nesbitt.io/2025/12/24/package-managers-keep-using-git-as-a-database.html), [DB-as-queue anti-pattern](http://mikehadlow.blogspot.com/2012/04/database-as-queue-anti-pattern.html)).
+- Postgres `SKIP LOCKED` is the proven, standard claim substrate (Oban/River/Graphile/
+  GoodJob/pg-boss), atomic and race-free, comfortably past this domain's throughput
+  ([dbpro](https://www.dbpro.app/blog/postgresql-skip-locked), [10k/sec](https://gist.github.com/chanks/7585810)).
+
+**Keep git for what the evidence says it *is* good at, not as the queue:** worktrees for
+per-task isolation, and **PRs as the human-approval (HILP) surface** (review + signed
+artifacts). So the architecture is **Postgres for coordination, git/worktrees for isolation,
+and PRs for approval** — go straight from Phase 1 to Phase 3.
+
+## 7. Phase 3 — Rust + Postgres multi-tenant service
+
+The faithful, better-governed analog of Multica's Go+Postgres backend. Rust because Foundry's
+desktop core is already Rust/Tauri (shared types, existing competence).
 
 ### Stack
-- **Server:** `axum + tokio` (HTTP + WebSocket); `sqlx` (compile-time-checked queries).
-- **DB:** Postgres. `pgvector` only if semantic task/skill matching is wanted (optional).
-- **Frontend:** the existing Tauri/React app, pointed at the server over WSS.
-- **Daemon:** the local `fleet` runtime (detect → governed_dispatch → executor), talking to
-  the server instead of a local queue.
-- **Deploy:** `docker-compose` (server + Postgres), mirroring Multica's self-host compose.
 
-### Schema (coordination + state + governance)
-- `tenants` — tenant id, name, settings.
-- `tasks` — id, tenant_id, wave_id, packet/payload, `status` (pending|claimed|running|done|failed),
-  runtime_id, gate_state, priority, timestamps.
-- `runtimes` — id, tenant_id, machine, cli, capabilities (JSONB), `last_heartbeat`, status.
-- `events` — append-only; the live-stream + audit source (the `AUDIT_TRAIL.jsonl` equivalent,
-  optionally hash-chained — a real home for an audit chain).
-- `approvals` — HILP gates: task-list approval, output approval, signer, role, signature.
+- **Server:** `axum + tokio`; `sqlx` (compile-time-checked queries). **DB:** Postgres
+  (managed — Neon/Supabase/RDS — if you want the multi-machine step with zero DB ops).
+- **Frontend:** existing Tauri/React app over WSS. **Daemon:** the Phase-1 `fleet` runtime,
+  now talking to the server. **Deploy:** docker-compose (server + Postgres).
 
-### The claim primitive (the reason a DB beats git for scale)
-```sql
-UPDATE tasks SET status='claimed', runtime_id=$1, claimed_at=now()
-WHERE id = (
-  SELECT id FROM tasks
-  WHERE tenant_id=$3 AND status='pending' AND capabilities @> $2
-  ORDER BY priority, created_at
-  FOR UPDATE SKIP LOCKED
-  LIMIT 1
-) RETURNING *;
-```
-`FOR UPDATE SKIP LOCKED` lets many runtimes claim concurrently with **no blocking and no
-double-claim** — eliminating git's push-contention/retry problem.
+### Coordination queue (best practices)
 
-### Real-time live tracker
-Postgres **`LISTEN/NOTIFY`** → the Rust server fans changes to connected **WebSocket**
-clients → the existing `ProgressDetail` / `macroProgress` UI updates **instantly**, no
-polling. This is the live tracker that the git option cannot give without webhooks.
+- `SELECT … FOR UPDATE SKIP LOCKED` for atomic, race-free claims, scoped by `tenant_id` +
+  capability match.
+- **Transactional enqueue** in the same DB as wave state (§3).
+- Keep the active table small; archive completed; **partition only above ~10k writes/sec**
+  (this domain is orders of magnitude below that, so partitioning is a non-issue); monitor
+  depth/oldest-age; watch the `xmin` horizon (long-running queries elsewhere stall the queue)
+  ([outbox ops](https://tiarebalbi.com/en/blog/the-transactional-outbox-is-not-a-queue)).
 
-### Hybrid storage (keep git's strengths)
-Postgres holds **coordination + state + audit**; **code artifacts + evidence stay in
-git/worktrees**, with **PRs as the human review surface**. DB speed for the queue, git for
-signed artifacts and review.
+### Live tracker transport — CORRECTED from v1
+v1 said "`LISTEN/NOTIFY` → WebSocket." **Best practice: `NOTIFY` is a low-latency *wake-up
+hint*, not the source of truth.** It does not scale past ~1,000 notifications/sec, takes a
+**global lock that serializes NOTIFY transactions**, **does not persist** (lose it if no
+listener), caps payload at **8 KB**, and is **unsupported through pgbouncer transaction-mode
+pooling / some managed Postgres** ([does-not-scale](https://lobste.rs/s/pzqxqm/postgres_listen_notify_does_not_scale), [scaling NOTIFY](https://pgdog.dev/blog/scaling-postgres-listen-notify), [real-time guide](https://www.jusdb.com/blog/postgresql-listen-notify-realtime-events)). So:
 
-## 6. Multi-tenant isolation & auth
+- Use `NOTIFY` to carry a **signal + a task id**, not state; the WS bridge re-reads the row.
+- Back it with **durable state + a polling fallback** for guaranteed delivery: "real-time
+  notifications run jobs immediately; occasional polling for abandoned entries ensures all
+  are eventually processed" ([source](https://www.jusdb.com/blog/postgresql-listen-notify-realtime-events)).
+- For horizontal scale-out (multiple server instances), if pooling kills `NOTIFY`, fan out
+  via an in-process broadcast or a small pub/sub — don't assume `NOTIFY` reaches every worker.
 
-- **Identity:** OIDC / JWT at the server edge (reuse the roles the product already models —
-  PO / PE / QA).
-- **Tenant isolation:** Postgres **Row-Level Security** keyed on `tenant_id` (defense in
-  depth on top of server-side scoping), so one tenant can never read/claim another's tasks.
-- **RBAC:** the existing governance roles map to server permissions. Only the right human
-  role can approve a given gate.
-- **Per-agent credentials:** each runtime authenticates with a scoped token; capability
-  declarations are server-verified, not self-asserted.
+### Multi-tenant isolation (RLS) — best practices
 
-## 7. HILP enforcement at the server (not by convention)
+- **`SET LOCAL` per transaction, never `SET`** — with pooling, plain `SET` leaks the previous
+  tenant's context into the next request; this is "the single most common way teams
+  accidentally break tenant isolation" ([RLS mastery](https://ricofritzsche.me/mastering-postgresql-row-level-security-rls-for-rock-solid-multi-tenancy/)).
+- **`FORCE ROW LEVEL SECURITY` + a non-owner app role** (the table owner silently bypasses
+  RLS).
+- **Composite indexes with `tenant_id` as the leading column** — the #1 perf killer;
+  without it RLS is ~2 orders of magnitude slower; with it, no measurable degradation at 500
+  connections ([AWS RLS](https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security/)).
+- **No tenant context → zero rows (fail-closed, secure by default)** — this matches
+  SignalOS's fail-closed ethos exactly; an unset GUC must return nothing, never everything.
+- **Audit every `SECURITY DEFINER` function** against RLS tables — runs as owner, "the most
+  common way to accidentally hand out cross-tenant access."
+- **Simple role model:** one app role + migration/admin roles; **no per-tenant DB users**
+  (pooling explosion).
 
-These are server policies + DB constraints, so they cannot be bypassed by an agent:
+### Agent execution sandbox — SECURITY-CRITICAL upgrade for multi-tenant
+At multi-tenant, tenant A's agent runs code that must never touch tenant B. **Shared-kernel
+Docker is explicitly insufficient for untrusted agent-generated code** — a container escape
+yields full host access ([Northflank](https://northflank.com/blog/how-to-sandbox-ai-agents), [Augment sandbox](https://www.augmentcode.com/guides/agent-execution-sandbox)). Best practice:
 
-- A task cannot reach `done` / `approved` without a **human approver of the correct role**.
-- **An agent can never approve its own work** (DB constraint: approver_id != runtime's
-  actor) — the same invariant as the `ship` agent-self-signature refusal.
-- Every claim / transition / approval writes a **signed, append-only audit event**.
-- The two human gates are explicit and visible in the tracker:
-  **(1) approve the task list in, (2) approve the output out.** The fleet automates only
-  the span between them.
+- **MicroVMs (Firecracker / Kata) are the de-facto standard** for executing untrusted
+  LLM-generated code (hardware boundary; ~125 ms boot, <5 MiB overhead; reportedly ~50% of
+  Fortune 500 for agent workloads).
+- **gVisor** is the acceptable lighter middle ground (user-space kernel, syscall interception).
+- **Standard Docker = minimum, single-tenant-only.** So: single-user local (Phase 1) may keep
+  Docker; **multi-tenant cloud (Phase 3) requires microVM/gVisor per agent run.** This is a
+  hard requirement, not a nice-to-have.
 
-## 8. Live tracker (UI)
+### Auth & HILP at the server
 
-Reuse the existing components. The board renders **tasks × runtimes × status**, fed by:
-- local-file / git store → the current IPC / poll path;
-- Postgres store → WebSocket events from `LISTEN/NOTIFY`.
+- OIDC/JWT at the edge; short-lived, per-agent scoped tokens; capability claims server-verified.
+- HILP as **server policy + DB constraints**: a task can't reach `approved` without a human
+  approver of the correct role; `approver_id != runtime_actor` (agent-self-approval blocked at
+  the DB) — the same invariant as `ship`. Every transition writes a signed, append-only audit
+  event.
 
-Heartbeats surface stalled/dead agents as **stale** rather than silently hanging. The two
-HILP gates appear as explicit review actions in the tracker.
+Gate: N tenants, M machines, real-time tracker, server-enforced HILP, microVM isolation, no
+cross-tenant leakage (proven by an explicit negative test).
 
-## 9. Phased delivery (Waves & Gates — not sprints)
+## 8. Phase 4 — Hardening
 
-- **Phase 0 — Abstraction (prerequisite).** Land the `TaskStore` trait + move
-  governed_dispatch / gate / audit logic above it. Reimplement today's local-file path
-  behind the trait. Gate: existing single-user delivery still green.
-- **Phase 1 — Live executor (single machine).** Build the roadmap executor (claim → spawn
-  agent CLI in an isolated worktree → stream → heartbeat → complete) behind `TaskStore`.
-  Gate: a real product delivered by the fleet on one machine, fully governed + tracked.
-- **Phase 2 — Git store (multi-machine, small team).** Implement the git `TaskStore`
-  (Option A) with PR-as-approval and branch-protection HILP. Gate: two machines safely
-  claim/execute/approve without double-claim; audit intact.
-- **Phase 3 — Rust+Postgres service (multi-tenant).** axum + sqlx + Postgres with
-  `SKIP LOCKED` claims and `LISTEN/NOTIFY` → WS; OIDC/JWT + RLS multi-tenant; docker-compose
-  deploy. Gate: N tenants, M machines, real-time tracker, server-enforced HILP, no
-  cross-tenant leakage.
-- **Phase 4 — Hardening.** Rate-limit/backoff (git), backups/migrations/monitoring
-  (Postgres), audit-chain verification, load testing, security review.
+Backups/migrations/monitoring (Postgres); queue depth + DLQ alerting + replay; audit-chain
+verification; load test at realistic fleet volume; and a **multi-tenant security review of
+auth + RLS + sandbox escape** (human-heavy, the one thing that must not be rushed).
 
-Each phase ends at a human-signed Gate; nothing advances on agent self-approval.
+## 9. Phased delivery (Waves & Gates)
 
-## 10. Risks & limitations
+- **Phase 0 — TaskStore abstraction + job semantics.** Gate: single-user delivery still green.
+- **Phase 1 — Supervisor/worker live executor (single machine), Docker sandbox.** Gate: a
+  real product delivered by the parallel governed fleet on one machine.
+- **Phase 3 — Rust+Postgres multi-tenant service** (SKIP LOCKED + transactional enqueue;
+  NOTIFY-as-hint + durable state + poll; RLS per best practices; microVM sandbox; OIDC/JWT;
+  WS tracker). Gate: multi-tenant e2e with no cross-tenant leak.
+- **Phase 4 — Hardening + security review.**
 
-- **Real-time vs infra trade-off:** git = near-real-time + low infra; Postgres = instant +
-  a service to operate. Pick per audience.
-- **Operational burden (Postgres path):** you now run a service — hosting, backups,
-  migrations, monitoring, security. Not a desktop concern anymore.
-- **Conflict-free design (git path):** requires strict one-writer-per-file / append-only
-  shards; easy to get subtly wrong.
-- **Secrets & privacy:** task payloads must avoid secrets (git history; tenant data).
-- **The executor is the gating dependency:** none of the multi-user value lands until the
-  live executor (Phase 1) exists. Multi-user without an executor is coordination over
-  nothing.
+(Phase 2 intentionally absent — see §6.) Each phase ends at a human-signed Gate; nothing
+advances on agent self-approval.
 
-## 11. Out of scope (for this plan)
+## 10. Honest comparison vs Multica
 
-- The autonomous executor itself is specified in `GOVERNED_FLEET_RUNTIME_DESIGN.md`; this
-  plan covers only the **multi-user / multi-tenant coordination + governance** layer on top.
-- Squad-style routing (grouping runtimes under a leader) is a later refinement once the
-  Postgres store exists.
-
-## 12. Honest comparison vs Multica
-
-| Dimension | Multica | This plan |
+| Dimension | Multica | This plan (validated) |
 |---|---|---|
-| Coordination backend | Go + Postgres server | Rust + Postgres (Option B) or git (Option A) |
-| Claim primitive | Postgres queue | `SELECT … FOR UPDATE SKIP LOCKED` / git CAS |
-| Real-time | WebSocket | LISTEN/NOTIFY → WS (Postgres) / webhook (git) |
-| Governance on each claim | none (ungoverned) | **gate + signed audit, fail-closed** |
-| Human approval | optional | **mandatory HILP gates; agent self-approval blocked** |
-| Multi-tenant isolation | workspace-level | tenant RLS + RBAC roles |
-| Artifacts | workspace dirs | git/worktrees + PR review (hybrid) |
+| Coordination backend | Go + Postgres | Rust + Postgres (`SKIP LOCKED` + transactional enqueue) |
+| Real-time | WebSocket | `NOTIFY` *as a hint* + durable state + poll → WS (not NOTIFY-as-truth) |
+| Job semantics | queue | at-least-once + idempotent + lease/heartbeat + dead-letter |
+| Governance per claim | none | **gate + signed audit, fail-closed** |
+| Human approval | optional | **mandatory HILP; agent self-approval blocked at the DB** |
+| Tenant isolation | workspace-level | RLS (SET LOCAL / FORCE / non-owner / tenant-leading index / zero-rows-default) |
+| Agent code execution | container | **microVM/gVisor for untrusted multi-tenant code** |
+| Artifacts | workspace dirs | git/worktrees + PR review (isolation + HILP surface) |
 
-**Better:** governed, fail-closed, audited, HILP-enforced, and it reuses Foundry's existing
-git/worktree/signature/role machinery. **Missing today:** the live executor (roadmap) and
-the server itself (a real build + ops commitment). The plan sequences both so the
-governance layer never has to be rewritten when the substrate changes.
+**Better:** governed, fail-closed, audited, HILP-enforced, tenant-isolated, sandbox-hardened —
+reusing Foundry's git/worktree/signature/role machinery. **Missing today:** the live executor
+(roadmap) and the server (a real build + ops + security commitment). The plan sequences both
+so the governance layer never gets rewritten when the substrate changes.
+
+---
+
+## Sources (domain best practices this plan is validated against)
+
+Postgres queue / coordination: [SKIP LOCKED job queue](https://www.dbpro.app/blog/postgresql-skip-locked) · [River](https://github.com/riverqueue/river) · [Graphile Worker](https://github.com/graphile/worker) · [Choose Postgres queue tech (HN)](https://news.ycombinator.com/item?id=37636841) · [10k jobs/sec](https://gist.github.com/chanks/7585810) · [You don't need Kafka… considered harmful](https://www.morling.dev/blog/you-dont-need-kafka-just-use-postgres-considered-harmful/)
+Git-as-database anti-pattern: [Package managers keep using git as a database](https://nesbitt.io/2025/12/24/package-managers-keep-using-git-as-a-database.html) · [Database-as-Queue anti-pattern](http://mikehadlow.blogspot.com/2012/04/database-as-queue-anti-pattern.html) · [Git worktrees for parallel AI agents](https://www.augmentcode.com/guides/git-worktrees-parallel-ai-agent-execution)
+LISTEN/NOTIFY: [does not scale](https://lobste.rs/s/pzqxqm/postgres_listen_notify_does_not_scale) · [scaling NOTIFY](https://pgdog.dev/blog/scaling-postgres-listen-notify) · [real-time events guide](https://www.jusdb.com/blog/postgresql-listen-notify-realtime-events)
+Multi-tenant RLS: [Mastering RLS](https://ricofritzsche.me/mastering-postgresql-row-level-security-rls-for-rock-solid-multi-tenancy/) · [AWS: RLS data isolation](https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security/)
+Agent sandboxing: [How to sandbox AI agents (Northflank)](https://northflank.com/blog/how-to-sandbox-ai-agents) · [Agent execution sandbox (Augment)](https://www.augmentcode.com/guides/agent-execution-sandbox) · [AI agent sandbox guide](https://www.firecrawl.dev/blog/ai-agent-sandbox)
+Outbox / job semantics: [The transactional outbox is not a queue](https://tiarebalbi.com/en/blog/the-transactional-outbox-is-not-a-queue) · [Push-based outbox (Postgres logical replication)](https://event-driven.io/en/push_based_outbox_pattern_with_postgres_logical_replication/) · [Background Jobs 2026 reference](https://www.digitalapplied.com/blog/background-job-queue-patterns-2026-engineering-reference) · [Idempotency, retries, DLQ](https://baxchain.com/blogs/resilient-event-driven-architecture-idempotency-retries-and-dead-letter-queues/)
+Orchestration: [AI agent orchestration patterns 2026](https://jobsbyculture.com/blog/ai-agent-orchestration-patterns-2026)

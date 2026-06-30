@@ -2,6 +2,21 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.1.0-internal.2] - 2026-06-30
+
+### Autonomous mode works with all providers (not just Claude)
+
+- The headless harness (`signalos harness call` / `orchestrate`, and product `call_llm`) now routes **all 12 configured providers** — Anthropic, OpenAI, Gemini, Groq, Mistral, DeepSeek, OpenRouter, xAI, Together, Cerebras, DashScope (via one OpenAI-compatible adapter) and local Ollama — from a single source-of-truth provider table. The provider is **auto-detected** from whichever API key is present (override with `SIGNALOS_LLM_PROVIDER`).
+- The model is **discovered from each provider's API** (best-fit pick) instead of a hardcoded default; override with `SIGNALOS_LLM_MODEL` or `--model`. `DEFAULT_MODEL` is no longer a silent default. The `signal-init` autonomous-mode message is now provider-neutral.
+
+### CI / smoke
+
+- `smoke-installed-build.ps1`: release-readiness on a freshly bootstrapped project is correctly **blocked** (no signed gates/evidence); the smoke now treats that as a valid "ran + produced schema/evidence" outcome instead of a command failure.
+
+### Docs
+
+- `FOUNDRY_MULTI_USER_MULTI_TENANT_PLAN.md` v2 — research-validated: drop git-as-queue, correct the live-tracker transport (`NOTIFY` as a hint + durable state + poll), require microVM/gVisor sandboxing for multi-tenant, and harden with idempotency/lease/dead-letter + RLS best practices (cited).
+
 ## [3.1.0-internal.1] - 2026-06-30
 
 ### SignalOS.NET concept parity + A+ enforcement-hardening
