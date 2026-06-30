@@ -86,5 +86,37 @@
     "stack": "any",
     "tags": ["surface", "trust-tier"],
     "active": true
+  },
+  {
+    "id": "think-before-coding",
+    "path": "core/execution/skills/think-before-coding/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["discipline", "intent", "assumptions"],
+    "active": true
+  },
+  {
+    "id": "simplicity-first",
+    "path": "core/execution/skills/simplicity-first/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["discipline", "simplicity", "yagni"],
+    "active": true
+  },
+  {
+    "id": "surgical-changes",
+    "path": "core/execution/skills/surgical-changes/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["discipline", "scope", "minimal-diff"],
+    "active": true
+  },
+  {
+    "id": "goal-driven-execution",
+    "path": "core/execution/skills/goal-driven-execution/SKILL.md",
+    "category": "skill",
+    "stack": "any",
+    "tags": ["discipline", "acceptance", "verification"],
+    "active": true
   }
 ]

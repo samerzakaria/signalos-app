@@ -212,6 +212,78 @@ class KeywordFallback(unittest.TestCase):
             )
 
 
+class DisciplinePackKeywordRouting(unittest.TestCase):
+    """The engineering-discipline skills (think-before-coding, simplicity-first,
+    surgical-changes, goal-driven-execution) must be reachable via the
+    keyword fallback in _relevant_skills, not only via explicit tags -- AND
+    must NOT over-inject on unrelated tasks."""
+
+    _DISCIPLINE = [
+        "core/execution/skills/think-before-coding",
+        "core/execution/skills/simplicity-first",
+        "core/execution/skills/surgical-changes",
+        "core/execution/skills/goal-driven-execution",
+        # verification is always-on; stage it so its presence is not what we
+        # are asserting on.
+        "core/execution/build/verification-before-completion",
+    ]
+
+    def _stage(self, tmpdir: Path) -> Path:
+        for rel in self._DISCIPLINE:
+            src = _BUNDLE / rel
+            if not src.is_dir():
+                continue
+            dst = tmpdir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dst)
+        return tmpdir
+
+    def _labels_for(self, title: str, description: str = "") -> set[str]:
+        with tempfile.TemporaryDirectory() as d:
+            ws = self._stage(Path(d))
+            out = _relevant_skills(
+                {"title": title, "description": description}, ws
+            )
+            return {label for (label, _content) in out}
+
+    def test_simplify_keyword_injects_simplicity_first(self) -> None:
+        labels = self._labels_for("Simplify this overengineered module")
+        self.assertIn("Simplicity First", labels)
+
+    def test_surgical_phrasing_injects_surgical_changes(self) -> None:
+        labels = self._labels_for(
+            "Refactor only the necessary lines",
+            "Keep a minimal diff, no unrelated refactor",
+        )
+        self.assertIn("Surgical Changes", labels)
+
+    def test_assumptions_keyword_injects_think_before_coding(self) -> None:
+        labels = self._labels_for(
+            "State assumptions before implementing",
+            "The requirements are ambiguous; clarify first",
+        )
+        self.assertIn("Think Before Coding", labels)
+
+    def test_acceptance_keyword_injects_goal_driven_execution(self) -> None:
+        labels = self._labels_for(
+            "Define acceptance criteria",
+            "It is done when the success criteria are verified",
+        )
+        self.assertIn("Goal-Driven Execution", labels)
+
+    def test_unrelated_task_does_not_over_inject_discipline_skills(self) -> None:
+        """A plain task that mentions none of the discipline keywords must
+        NOT pull in the discipline skills (no false positives)."""
+        labels = self._labels_for(
+            "Add a footer link to the landing page",
+            "Insert an anchor in the page footer",
+        )
+        self.assertNotIn("Simplicity First", labels)
+        self.assertNotIn("Surgical Changes", labels)
+        self.assertNotIn("Think Before Coding", labels)
+        self.assertNotIn("Goal-Driven Execution", labels)
+
+
 class TasksFromPlanCarriesSkills(unittest.TestCase):
     """PLAN.tasks.yaml -> task dict round-trip must preserve the skills
     field, otherwise the orchestrator never sees the explicit tags."""

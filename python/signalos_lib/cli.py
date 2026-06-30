@@ -527,6 +527,26 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ARGS",
     )
 
+    p_skill_lock = sub.add_parser(
+        "skill-lock",
+        help="Verify pinned external skills against hashes and a license policy",
+    )
+    p_skill_lock.add_argument(
+        "skill_lock_args",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+    )
+
+    p_fleet = sub.add_parser(
+        "fleet",
+        help="Governed agent fleet: detect runtimes, list, and GC task workspaces",
+    )
+    p_fleet.add_argument(
+        "fleet_args",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+    )
+
     # Phase 13 hardening — constitution hash-lock and verify
     from signalos_lib.commands.ceremonies import CEREMONY_COMMANDS
     for ceremony_command in sorted(CEREMONY_COMMANDS):
@@ -1511,6 +1531,14 @@ def main(argv: list[str]) -> int:
 
     if cmd == "integrity-witness":
         from signalos_lib.commands import integrity_witness as m
+        return m.main(command_tail())
+
+    if cmd == "skill-lock":
+        from signalos_lib.commands import skill_lock as m
+        return m.main(command_tail())
+
+    if cmd == "fleet":
+        from signalos_lib.commands import fleet as m
         return m.main(command_tail())
 
     if cmd == "cost":

@@ -58,6 +58,10 @@ INTEGRITY_CANDIDATES = (
     ".signalos/AMENDMENTS.md",
     ".signalos/PRD_TRACEABILITY.md",
     ".signalos/TRACEABILITY_MATRIX.md",
+    # Governed skill supply chain: watch the license-checked skill lockfile so
+    # tampering with pinned hashes/licenses is drift-detected. Optional — only
+    # included when the file is present (see current_entries' is_file guard).
+    ".signalos/skills-lock.json",
     "core/governance/Governance/CONSTITUTION.md",
     "core/governance/Governance/SOUL-DOCUMENT.md",
     "core/governance/Governance/SURFACE_INVENTORY.md",

@@ -228,6 +228,11 @@ export const VALID_SKILL_KEYS = new Set([
   'session-journal',
   'stakeholder-interview',
   'task-schema',
+  // Engineering discipline (Karpathy pack)
+  'think-before-coding',
+  'simplicity-first',
+  'surgical-changes',
+  'goal-driven-execution',
 ]);
 
 // Server-side defense in depth: if the AI forgets to tag a task that

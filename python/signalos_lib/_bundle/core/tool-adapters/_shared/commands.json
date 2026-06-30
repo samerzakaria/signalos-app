@@ -243,6 +243,22 @@
     "amendment": "AMD-CORE-008"
   },
   {
+    "name": "skill-lock",
+    "source": "core/execution/commands/skill-lock.md",
+    "phase": "governance",
+    "description": "Verify pinned external skills against SHA-256 hashes and a permissive-license policy; fail-closed on hash drift or missing/unknown/non-permissive license.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
+    "name": "fleet",
+    "source": "core/execution/commands/fleet.md",
+    "phase": "execution",
+    "description": "Governed agent fleet runtime: detect agent CLI runtimes on PATH, list them, and GC isolated task workspaces on TTLs. Every dispatch passes a fail-closed governance admission check (active wave/gate or valid agent packet) with evidence + audit.",
+    "wave": "W2.1",
+    "amendment": "AMD-CORE-008"
+  },
+  {
     "name": "intent",
     "source": "core/execution/commands/intent.md",
     "phase": "any",

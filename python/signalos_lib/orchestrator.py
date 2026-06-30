@@ -872,6 +872,7 @@ _SKILL_KEY_TO_PATH: dict[str, tuple[str, str]] = {
     "context":                      ("Context Loading",                 "core/execution/skills/context/SKILL.md"),
     "design":                       ("Design",                          "core/execution/skills/design/SKILL.md"),
     "existing-product-kit":         ("Existing Product Kit",            "core/execution/skills/existing-product-kit/SKILL.md"),
+    "goal-driven-execution":        ("Goal-Driven Execution",           "core/execution/skills/goal-driven-execution/SKILL.md"),
     "headless-execution":           ("Headless Execution",              "core/execution/skills/headless-execution/SKILL.md"),
     "intent-router":                ("Intent Router",                   "core/execution/skills/intent-router/SKILL.md"),
     "memory":                       ("Memory",                          "core/execution/skills/memory/SKILL.md"),
@@ -882,8 +883,11 @@ _SKILL_KEY_TO_PATH: dict[str, tuple[str, str]] = {
     "product-surface-mapping":      ("Product Surface Mapping",         "core/execution/skills/product-surface-mapping/SKILL.md"),
     "review":                       ("Review (lightweight)",            "core/execution/skills/review/SKILL.md"),
     "session-journal":              ("Session Journal",                 "core/execution/skills/session-journal/SKILL.md"),
+    "simplicity-first":             ("Simplicity First",                "core/execution/skills/simplicity-first/SKILL.md"),
     "stakeholder-interview":        ("Stakeholder Interview",           "core/execution/skills/stakeholder-interview/SKILL.md"),
+    "surgical-changes":             ("Surgical Changes",                "core/execution/skills/surgical-changes/SKILL.md"),
     "task-schema":                  ("Task Schema",                     "core/execution/skills/task-schema/SKILL.md"),
+    "think-before-coding":          ("Think Before Coding",             "core/execution/skills/think-before-coding/SKILL.md"),
 }
 
 
@@ -1016,6 +1020,19 @@ def _relevant_skills(task: dict[str, Any], root: Path) -> list[tuple[str, str]]:
         ("task schema|plan schema|tasks?\\.yaml",
          "Task Schema",
          "core/execution/skills/task-schema/SKILL.md"),
+        # --- Engineering-discipline pack (conservative routes) ---
+        ("assumption|ambiguity|ambiguous|unclear|clarify|clarif\\w*|underspecified|requirements?",
+         "Think Before Coding",
+         "core/execution/skills/think-before-coding/SKILL.md"),
+        ("simplif\\w*|minimal solution|over.?engineer\\w*|yagni|scope.?creep|gold.?plat\\w*",
+         "Simplicity First",
+         "core/execution/skills/simplicity-first/SKILL.md"),
+        ("surgical|minimal.?diff|touch.?only|only the necessary|unrelated refactor|narrow.?diff|smallest change",
+         "Surgical Changes",
+         "core/execution/skills/surgical-changes/SKILL.md"),
+        ("success.?criteria|acceptance criteria|done when|verify.*goal|goal.?driven|definition of done",
+         "Goal-Driven Execution",
+         "core/execution/skills/goal-driven-execution/SKILL.md"),
     ]
 
     seen_paths: set[str] = set()

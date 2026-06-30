@@ -2,7 +2,7 @@
 
 SignalOS is an agentic software house packaged as a desktop application. You describe what you want built; SignalOS assigns agents, enforces governance at every gate, and delivers a running, tested, governed product. Agents write the code. SignalOS runs the house.
 
-**Version: v3.0.0-internal**
+**Version: v3.1.0-internal**
 
 ## How It Works
 

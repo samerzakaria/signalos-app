@@ -2,6 +2,28 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.1.0-internal.1] - 2026-06-30
+
+### SignalOS.NET concept parity + A+ enforcement-hardening
+
+- Land the app-native command surface for parity with the SignalOS.NET reference (validators, lifecycle/state, ceremonies, release/ship, 18 stack adapters) and harden every new surface to enforce (never advise) with fail-closed behavior and negative-test coverage.
+
+### Governed external-skill supply chain
+
+- Add `skill-lock` — a license-checked skill lockfile (`signalos.skills_lock.v1`): pins skills by SHA-256 + SPDX license, refuses any non-permissive/unlicensed or hash-drifted skill (fail-closed), composes with `integrity-witness` drift detection, and `skill-lock pin` resolves a license (declared → LICENSE text → README) before pinning. Inspired by Multica's lockfile concept; clean-room, no third-party code.
+
+### Engineering-discipline guidance pack
+
+- Add four routable guidance skills (think-before-coding, simplicity-first, surgical-changes, goal-driven-execution) wired into the orchestrator catalog, obligations (`OBL-APP-008`), and keyword routing. Adapted from the MIT-licensed andrej-karpathy-skills with attribution in `THIRD_PARTY_NOTICES.md`.
+
+### Governed multi-agent fleet foundation
+
+- Add `fleet` — clean-room runtime detection, fail-closed `governed_dispatch` admission, and workspace GC; plus design docs for the full governed runtime and the multi-user/multi-tenant roadmap. The live executor remains roadmap (documented, not built).
+
+### Validation
+
+- Full suites green: Python 1646 passed, frontend 280 passed, Rust/Tauri 56 passed.
+
 ## [3.0.0-internal.28] - 2026-05-31
 
 ### Release smoke hardening (real fix, take 2)

@@ -1,23 +1,23 @@
 {
-  "version": "3.0.0-internal.28",
-  "notes":   " ### Release smoke hardening (real fix, take 2)  ",
-  "pub_date": "2026-06-12T21:38:36Z",
+  "version": "3.1.0-internal.1",
+  "notes": " ### SignalOS.NET concept parity + A+ enforcement-hardening  - Land the app-native command surface for parity with the SignalOS.NET reference (validators, lifecycle/state, ceremonies, release/ship, 18 stack adapters) and harden every new surface to enforce (never advise) with fail-closed behavior and negative-test coverage.  ",
+  "pub_date": "2026-06-30T04:47:23Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_aarch64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3VQWGVyZHZXSGNHK1dPdzNidmdBdkdDZDZmRzJ5UHlZcUpYRFdyMEw1U0Q2ZHMvUGxjb2NKK2toaVVrT0dWWnZwY256OTNFS05tamlMVklJYyt3MEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMjk5ODg4CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CklhZ1ZjQVIvendFaG43RnkxYUgyRm9QZ1ZOQ1ZWTnBZVWFtQ1V4T1lZUk55WnFhZEN4b3FVL2xaOWkxRjZJaktqVWxQNzd6UmF5bitmcFl2S3pVT0NnPT0K"
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_aarch64.dmg",
+      "signature": ""
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_x64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2c5N0VjYzd4OVBheE9wQTRvdzkvdEhrcVcwQkE2dUVGb3BUdzV5OXdKZUFGa2hXZ3Fzc2M0V09ZdDEzSHYrZ0xlU2hDMUlFNExiRlFVN0xFTW8vK3dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMzAwMTkyCWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6ClJRcmY1V2JTVHRUT0taSVNleS82Yi9XRXFVRFBDMXM1ZUJKZzRySnJhSkRUZ2o1Wmc1ak9PRkduQS9zQXpxcU1JQ1ljVkR3Tm1WNFUvY1pjZDg4MUFRPT0K"
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_x64.dmg",
+      "signature": ""
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM24rS25tdHl6WGRLN1NLZHV4bDBRNlpHdEt3SkN3SDVibXJpM0hWMzk0QWhPVTkrcCtLUjRReUh3a2J3RUt2ak9xeCtoUHRFcW0wb1FqQTREMmsyOGcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMzAwMjIxCWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF94NjQtc2V0dXAuZXhlCmltdDRiNlhvd0Raa3E0WEZLWXNhQTVLclRjQ3haWWpZOWJZZXE5RTgxd21FemZ0b0lwVVRtaCt2SVBPSFFCWkhuNFY3RitOZVlyaDNvWmxUZFBjZER3PT0K"
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_x64-setup.exe",
+      "signature": ""
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.0.0-internal.28/Foundry_3.0.0-internal.28_amd64.AppImage",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3N0L29vd1g2dkZxYWs0WmM3K1VBbEhuczVaYUdQcS9NRHpVdEducDZuTmcyaTM0bjBqakRNeGpMYkZjTmNqdlYxRkZjSTdYdE4wVDE3V0tUdUZOT3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgxMzAwMTI5CWZpbGU6Rm91bmRyeV8zLjAuMC1pbnRlcm5hbC4yOF9hbWQ2NC5BcHBJbWFnZQpHOVhJTDFTU0l5dUZ6Y1VPaFZ2RDE4YmI4bUJzZkduVjFDOTNvNFQvUmlXazlBRjF6aVkyenIrNjRMMEhWNVdiWE43SFJjT3dGWllZT1h3YWhlN0JEdz09Cg=="
+      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.1/Foundry_3.1.0-internal.1_amd64.AppImage",
+      "signature": ""
     }
   }
 }

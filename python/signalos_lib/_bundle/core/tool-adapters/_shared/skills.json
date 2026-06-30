@@ -195,5 +195,25 @@
     "description": "Operator tooling: health check, runtime diagnostics, validator suite, hook lifecycle, and checkpoint recovery commands.",
     "wave": "W3.5",
     "amendment": "AMD-CORE-018"
+  },
+  {
+    "name": "think-before-coding",
+    "source": "core/execution/skills/think-before-coding/SKILL.md",
+    "description": "State assumptions explicitly, surface ambiguity, and present interpretations before writing code; tie intent to the Belief."
+  },
+  {
+    "name": "simplicity-first",
+    "source": "core/execution/skills/simplicity-first/SKILL.md",
+    "description": "Write the minimum code that solves the stated problem; no speculative features, premature abstractions, or unrequested error handling."
+  },
+  {
+    "name": "surgical-changes",
+    "source": "core/execution/skills/surgical-changes/SKILL.md",
+    "description": "Touch only what the task requires, match existing style, and avoid drive-by refactors so every changed line traces to the request."
+  },
+  {
+    "name": "goal-driven-execution",
+    "source": "core/execution/skills/goal-driven-execution/SKILL.md",
+    "description": "Convert the request into verifiable success criteria with explicit verification checkpoints before claiming done."
   }
 ]

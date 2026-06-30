@@ -1,0 +1,22 @@
+---
+description: Use signalos skill-lock to govern external skills against pinned hashes and a license policy.
+globs: [".signalos/skills-lock.json", ".signalos/skills/**", "python/signalos_lib/skills_lock.py"]
+alwaysApply: false
+---
+
+# skill-lock wiring rule
+
+Use `signalos skill-lock` to enforce a governed, license-checked external-skill
+supply chain. SignalOS enforces, never advises: verification fails-closed.
+
+- Use `signalos skill-lock verify` before trusting any externally sourced skill;
+  it refuses (non-zero exit) on hash drift or a missing/unknown/non-permissive
+  license.
+- Use `signalos skill-lock list` to inspect each locked skill's source and
+  license verdict.
+- Never hand-edit `.signalos/skills-lock.json` to silence a refusal; re-pin the
+  skill's `sha256` and declare a permissive SPDX `license` instead.
+- An absent or empty license is a refusal, not a pass — undeclared licenses are
+  never auto-trusted.
+- The lockfile is watched by `signalos integrity-witness` when present, so
+  tampering is drift-detected.

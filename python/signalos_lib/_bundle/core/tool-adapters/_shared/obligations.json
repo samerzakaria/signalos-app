@@ -159,5 +159,30 @@
       "verification-before-completion"
     ],
     "mode": "autoload_enforce"
+  },
+  {
+    "rule_id": "OBL-APP-008",
+    "title": "Implementation edits must load engineering-discipline guidance (think before coding, simplicity, surgical changes, goal-driven execution)",
+    "when": {
+      "path_globs": [
+        "src/**",
+        "app/**",
+        "apps/**",
+        "server/**",
+        "api/**",
+        "packages/**",
+        "python/**",
+        "lib/**"
+      ],
+      "action_any_of": ["edit", "create", "implement", "generate"],
+      "stack_any_of": ["any", "react-vite", "node-api", "generic", "existing-repo", "agent-selected"]
+    },
+    "require": [
+      "think-before-coding",
+      "simplicity-first",
+      "surgical-changes",
+      "goal-driven-execution"
+    ],
+    "mode": "autoload"
   }
 ]

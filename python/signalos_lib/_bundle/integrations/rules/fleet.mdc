@@ -1,0 +1,25 @@
+---
+description: Use signalos fleet to govern the agent fleet — detect runtimes and GC task workspaces.
+globs: [".signalos/fleet/**", ".signalos/evidence/fleet/**", "python/signalos_lib/fleet_runtime.py"]
+alwaysApply: false
+---
+
+# fleet wiring rule
+
+Use `signalos fleet` to operate the governed agent fleet runtime. SignalOS
+enforces, never advises: every agent hand-off passes a governance admission
+check and fails closed without an active wave/gate or a valid agent packet.
+
+- Use `signalos fleet detect` to discover which agent CLIs (claude-code, codex,
+  cursor, github-copilot, windsurf, gemini, and others) are installed; it
+  writes runtime evidence to `.signalos/evidence/fleet/runtimes.json`.
+- Use `signalos fleet list` to inspect the detected runtime records.
+- Use `signalos fleet gc` to TTL-prune isolated task workspaces under
+  `.signalos/fleet/tasks/`. It removes done/idle and orphaned task dirs, prunes
+  heavy artifact dirs (`node_modules`, `.next`, `.turbo`) while preserving
+  source, `.git`, and `logs`, and writes a `fleet-gc` audit row.
+- Do not dispatch an agent outside the governed admission path; a dispatch
+  without an active wave/gate or a valid agent packet is refused and audited,
+  never silently allowed.
+- The live server-backed executor is roadmap; see
+  `docs/GOVERNED_FLEET_RUNTIME_DESIGN.md` for what is foundation vs roadmap.
