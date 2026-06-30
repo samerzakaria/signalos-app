@@ -1,23 +1,23 @@
 {
   "version": "3.1.0-internal.2",
-  "notes": " ### Autonomous mode works with all providers (not just Claude)  - The headless harness (`signalos harness call` / `orchestrate`, and product `call_llm`) now routes **all 12 configured providers** — Anthropic, OpenAI, Gemini, Groq, Mistral, DeepSeek, OpenRouter, xAI, Together, Cerebras, DashScope (via one OpenAI-compatible adapter) and local Ollama — from a single source-of-truth provider table. The provider is **auto-detected** from whichever API key is present (override with `SIGNALOS_LLM_PROVIDER`). - The model is **discovered from each provider's API** (best-fit pick) instead of a hardcoded default; override with `SIGNALOS_LLM_MODEL` or `--model`. `DEFAULT_MODEL` is no longer a silent default. The `signal-init` autonomous-mode message is now provider-neutral. ",
-  "pub_date": "2026-06-30T19:16:45Z",
+  "notes":   " ### Autonomous mode works with all providers (not just Claude)  ",
+  "pub_date": "2026-06-30T20:20:04Z",
   "platforms": {
     "darwin-aarch64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_aarch64.dmg",
-      "signature": ""
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2dJSGxZR2ZkNXd0SWhqOGRvdW9vRzdKSnY3MUpLK3JrdGE0RU1FZnlVcm1xY1BtL3F2RzN2b3RBZUJRVitPNFNlc0pvLys1amw1SXdaMFFPUTNpcEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODQ4ODc0CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CnhqenVsV045ZC85cXNHM1JqOWVtSzlQd0pZWVhvTWUvSmMvR1pIY0NtREo4cE5KODgrVW9rdXA2ZCsxbVRQVlgxaFZMN0QyL3JuM0JKczUyb3daVEJRPT0K"
     },
     "darwin-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64.dmg",
-      "signature": ""
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3QzM3dLRExQUzZnNHU2K1l5TDEwaU12bnMxcG0wL0M5bE5HWUpUTU85R3grcnE4Qmc4cjh5cjdIbUxGMHJLakNvQ2hXRERmQWc0YmJsRGkvWXJGWWdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODUwNTk4CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CnI2WDhVS09kTk4yYUtKWjZxc1N0aTU4MVlMeCsyRXBmeXRiOENaY1YrWFFYemxEbzZ1SkZJUmZsbkZ0b2UvMUZqdmp5bG5idlJDU2pBa3JyMWVTYkNnPT0K"
     },
     "windows-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64-setup.exe",
-      "signature": ""
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3BYSitPMUJidkdEbnJPSEVHTExTZ29sVFB5UTlEbWZOK1BlRTlld3RVRjRhN1dyY2w2eDZNTDRMUXJDekRsVWI1ZFRESXRxU3h1OS9OV0x6Y0tqU0EwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODUwNDc0CWZpbGU6Rm91bmRyeV8zLjEuMC1pbnRlcm5hbC4yX3g2NC1zZXR1cC5leGUKVFE3enhNQmFCYjFJc3RyOTQ4aUJMN1RYMDBGYldyUk9lOHkwZlNLTU1Uc1NJeVR1Z3E5VmE2b3JjMjQwMXU3b21sMW4xTDZmS3FWdjl3NUEzYlRDQXc9PQo="
     },
     "linux-x86_64": {
-      "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_amd64.AppImage",
-      "signature": ""
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.1.0-internal.2/Foundry_3.1.0-internal.2_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM25PTHl4ZGg5YWJBQXo0aXVqa2t5UktJZ0xhVzZxR3ZmNGEyQmwzTWNKMUdTNW9HYWt1NVdEMlA4NUpWNWtNZ0xkZFBTMlI3WTFDY2s5ZXVMdGkwMHdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODQ5NzkzCWZpbGU6Rm91bmRyeV8zLjEuMC1pbnRlcm5hbC4yX2FtZDY0LkFwcEltYWdlCkEwTjV3QUhFbHhnc0tHcGtlRGljalNVVEkrTkYxcnZuQ0dUaVN6aEVVeU5zVWE2QXV4UHdKN3lGODNONWhkdXE3T3ArRTF6aWZHeGxUQkFrUVNON0R3PT0K"
     }
   }
 }
