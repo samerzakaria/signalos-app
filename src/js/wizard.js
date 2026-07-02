@@ -30,7 +30,7 @@ export const wizardState = {
   initMode: "keep",          // full | keep | minimal | skip
   identity: { name: "", role: "PO" },
   ai: {
-    provider: "anthropic",
+    provider: "",
     apiKey: "",
     model: "",
     models: [],
@@ -290,7 +290,7 @@ function renderAIStep() {
     `<option value="${escapeAttr(p.id)}" ${p.id === selected ? "selected" : ""}>${escapeHtml(p.name)}</option>`
   ).join("");
   const modelOpts = models.length
-    ? models.map((m) => `<option value="${escapeAttr(m.id)}" ${m.id === wizardState.ai.model ? "selected" : ""}>${escapeHtml(m.name || m.id)}</option>`).join("")
+    ? `<option value="">Select model</option>` + models.map((m) => `<option value="${escapeAttr(m.id)}" ${m.id === wizardState.ai.model ? "selected" : ""}>${escapeHtml(m.name || m.id)}</option>`).join("")
     : `<option value="">Fetch models first</option>`;
   return `
     <h2>Connect AI</h2>
@@ -483,8 +483,8 @@ async function onFetchModels() {
     const help = host.querySelector("#wiz-model-help");
     if (Array.isArray(models) && models.length) {
       wizardState.ai.models = models;
-      if (!models.some((model) => model.id === wizardState.ai.model)) {
-        wizardState.ai.model = models[0].id;
+      if (wizardState.ai.model && !models.some((model) => model.id === wizardState.ai.model)) {
+        wizardState.ai.model = "";
       }
       if (help) help.textContent = `${models.length} models found. Select one before testing.`;
       shouldRender = true;
@@ -515,6 +515,9 @@ async function onTestAI() {
   if (result) result.innerHTML = `<div class="fine-print">Sending a real chat ping…</div>`;
   try {
     await ipc.provider.setActive(wizardState.ai.provider);
+    if (!wizardState.ai.model) {
+      throw new Error("Select a model before testing the provider.");
+    }
     if (wizardState.ai.model) {
       await ipc.provider.setModel(wizardState.ai.provider, wizardState.ai.model);
     }

@@ -1,4 +1,4 @@
-import { chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble } from '../state';
+import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble } from '../state';
 import * as ipc from '../js/ipc.js';
 
 // Phase 3 Stream C - frontend subscription for the agent loop.
@@ -98,6 +98,35 @@ function upsertBubble(b: ChatBubble): void {
   } else {
     chatBubbles.value = chatBubbles.value.map((x) => (x.id === b.id ? b : x));
   }
+}
+
+function readableAgentError(raw: string): string {
+  const extracted = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1] || raw;
+  const text = extracted
+    .replace(/(?:Provider call failed:\s*)+/gi, '')
+    .replace(/^(BadRequestError|AuthenticationError|RateLimitError|RuntimeError):\s*/i, '')
+    .trim();
+  const provider = raw.match(/\b(Anthropic|OpenAI|Gemini|Ollama|OpenRouter|DeepSeek|Mistral|Groq|Cerebras|Together AI|Together|xAI|Qwen)\b/i)?.[1] || 'AI provider';
+  if (/credit balance is too low|insufficient.*credit|purchase credits/i.test(text)) {
+    return `${provider} account credit is too low. Add credits with that provider or choose another provider/model in Settings.`;
+  }
+  if (/LLM Provider NOT provided|provider.*not provided|unmapped llm provider/i.test(text)) {
+    return `Foundry could not route the selected model to ${provider}. Re-select the provider and model in Settings, then retry.`;
+  }
+  if (/HTTP 404|model.*not found|does not exist|not supported/i.test(text)) {
+    return `${provider} rejected the selected model for chat. Pick a text/chat model in Settings, test it, then retry.`;
+  }
+  if (/api key|api_key|unauthori[sz]ed|authentication|401|forbidden/i.test(text)) {
+    return `${provider} rejected the API key. Replace the key in Settings, then retry.`;
+  }
+  return text || 'Agent run failed.';
+}
+
+function selectedProviderPayload(): { provider: string; model: string } | null {
+  const provider = (ai.value || '').trim();
+  const model = (aiModel.value || '').trim();
+  if (!provider || !model) return null;
+  return { provider, model };
 }
 
 // Append streamed text to the run's streaming bubble, creating it if absent.
@@ -218,7 +247,7 @@ export function handle(evt: AgentEvent): void {
 
     case 'error': {
       // INV-4: surface the failure as a visible error bubble.
-      const error = typeof evt.error === 'string' ? evt.error : 'Agent run failed.';
+      const error = readableAgentError(typeof evt.error === 'string' ? evt.error : 'Agent run failed.');
       // If a streaming bubble exists for this run, convert it to the error so
       // the partial text isn't orphaned; otherwise push a fresh error bubble.
       const id = streamBubbleId(runId);
@@ -348,9 +377,19 @@ export function cancelAgentRun(): void {
 export function resumeAgentRun(runId?: string): void {
   const rid = runId || resumableRunId.value || lastRunId;
   if (!rid) return;
+  const selected = selectedProviderPayload();
+  if (!selected) {
+    pushBubble({
+      id: nowId(),
+      kind: 'error',
+      text: 'Choose an AI provider and model in Settings before resuming the agent.',
+    });
+    busy.value = false;
+    return;
+  }
   resumableRunId.value = null;
   busy.value = true;
-  sendAgentCommand('agent:resume', { run_id: rid });
+  sendAgentCommand('agent:resume', { run_id: rid, ...selected });
 }
 
 function subscribe(): void {

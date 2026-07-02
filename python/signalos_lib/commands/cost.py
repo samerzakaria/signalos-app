@@ -7,6 +7,8 @@ __all__ = [
     "EXIT_BAD_ARGS",
     "EXIT_BUDGET_EXCEEDED",
     "EXIT_OK",
+    "PAUSE_THRESHOLD",
+    "budget_status",
     "build_cost_report",
     "main",
 ]
@@ -38,6 +40,29 @@ DEFAULT_LEDGER_GLOBS = (
     ".signalos/AI_USAGE.jsonl",
     ".signalos/ai-usage.jsonl",
 )
+
+# Auto-pause fraction of a run budget (FR-7.2): warn at 90%, hard-stop at 100%.
+PAUSE_THRESHOLD = Decimal("0.9")
+
+
+def budget_status(
+    spent: Decimal | None,
+    cap: Decimal | None,
+    pause_threshold: Decimal = PAUSE_THRESHOLD,
+) -> str:
+    """Live, fail-closed budget state. ``"halt"`` at or over the cap (a hard stop,
+    not a warning), ``"warn"`` at or over the pause threshold, else ``"ok"``.
+    ``"unpriced"`` when there is no cap or nothing priced to compare."""
+    if cap is None or spent is None:
+        return "unpriced"
+    if cap <= 0:
+        return "halt"  # a zero/negative cap permits no spend
+    fraction = spent / cap
+    if fraction >= 1:
+        return "halt"
+    if fraction >= pause_threshold:
+        return "warn"
+    return "ok"
 
 
 @dataclass
@@ -100,6 +125,7 @@ def build_cost_report(
         "budget_usd": _decimal_to_json(budget),
         "remaining_budget_usd": _decimal_to_json(remaining),
         "result": "over-budget" if over_budget else "within-budget-or-unpriced",
+        "budget_state": budget_status(known_cost if known_costs else None, budget),
         "invalid_rows": invalid_rows,
         "by_provider": _summarize(rows, key_fn=lambda row: (row.provider, row.model), labels=("provider", "model")),
         "by_stage": _summarize(rows, key_fn=lambda row: (row.stage,), labels=("stage",)),

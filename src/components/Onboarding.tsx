@@ -39,13 +39,15 @@ export function Onboarding() {
   const models = providerModels.value;
   const selectedModel = aiModel.value;
   const modelSelectValue = models.some((model) => model.id === selectedModel) ? selectedModel : '';
-  const providerNeedsKey = provider !== 'ollama';
+  const providerNeedsKey = Boolean(provider) && provider !== 'ollama';
   const modelHelp = providerModelsLoading.value
     ? 'Fetching models from the selected provider...'
     : providerModelsError.value
     ? providerModelsError.value
     : models.length > 0
     ? `${models.length} models available from ${provider}.`
+    : !provider
+    ? 'Choose a provider first.'
     : providerNeedsKey
     ? 'Fetch models with the saved key, or paste a new key here first.'
     : 'Fetch local models from Ollama.';
@@ -201,7 +203,7 @@ export function Onboarding() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '7px' }}>
           <label className="field-label" htmlFor="ob-model" style={{ marginBottom: 0 }}>Model</label>
-          <button className="btn btn-soft btn-compact" type="button" onClick={fetchModels} disabled={providerModelsLoading.value}>
+          <button className="btn btn-soft btn-compact" type="button" onClick={fetchModels} disabled={providerModelsLoading.value || !provider}>
             <i className={`ti ${providerModelsLoading.value ? 'ti-loader-2' : 'ti-refresh'}`} style={providerModelsLoading.value ? { animation: 'spin 1s linear infinite' } : undefined}></i>
             Fetch models
           </button>
@@ -217,7 +219,10 @@ export function Onboarding() {
           {models.length === 0 ? (
             <option value="">{providerModelsLoading.value ? 'Loading models...' : 'No models loaded'}</option>
           ) : (
-            models.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)
+            <>
+              <option value="">Select model</option>
+              {models.map((model) => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
+            </>
           )}
         </select>
         <div className="hint" style={{ marginBottom: '12px' }}><i className="ti ti-info-circle"></i> {modelHelp}</div>

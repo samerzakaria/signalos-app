@@ -68,6 +68,29 @@ class DeliveryState:
     waived: list = field(default_factory=list)
 
 
+# High-confidence unfilled-template markers that block a gate signature (0.6).
+# The noisy single-brace pattern is deliberately excluded so legitimate prose or
+# code containing ``{word}`` is not flagged -- only unambiguous leftovers block.
+_BLOCKING_PLACEHOLDER_KINDS = frozenset({
+    "double-brace", "date-token", "link-token",
+    "feature-token", "fill-token", "todo-token",
+})
+
+
+def _artifact_placeholder_violations(path: Path) -> list[str]:
+    """Return unambiguous unresolved-template markers in a gate artifact."""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    from ..profiles.validation import find_unresolved_placeholders
+    out: list[str] = []
+    for finding in find_unresolved_placeholders(content):
+        if finding.get("kind") in _BLOCKING_PLACEHOLDER_KINDS:
+            out.append(f"line {finding.get('line')}: {finding.get('token')!r}")
+    return out
+
+
 def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
                   verdict: str, conditions: str) -> list:
     """Production signing path - INV-3: sign.py is the ONLY signer.
@@ -77,8 +100,29 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
     from .. import artifacts
     audit_log = repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
     wave = _current_wave_id(repo_root)
-    present = [a for a in artifacts.resolve_gate_artifacts(repo_root, gate)
-               if a.path.is_file()]
+    expected = artifacts.resolve_gate_artifacts(repo_root, gate)
+    present = [a for a in expected if a.path.is_file()]
+    # Fail-closed (0.1): a gate that declares required artifacts cannot be
+    # signed until at least one of them exists on disk. Previously an empty
+    # `present` signed nothing, raised nothing, and the gate advanced anyway
+    # -- a silent fail-open where a founder could approve a gate whose agent
+    # produced no artifact. Gates with no declared artifacts are unaffected.
+    if expected and not present:
+        raise ValueError(
+            f"gate {gate} cannot be signed: none of its {len(expected)} "
+            "required artifact(s) exist yet ("
+            + ", ".join(a.rel_path for a in expected) + ")"
+        )
+    # Content check (0.6): a present artifact that is still unfilled template
+    # boilerplate is not signable -- a valid hash over placeholder text is not a
+    # valid artifact. Reuses the existing placeholder scanner.
+    for a in present:
+        stale = _artifact_placeholder_violations(a.path)
+        if stale:
+            raise ValueError(
+                f"gate {gate} artifact {a.rel_path} has unresolved template "
+                f"placeholders: {'; '.join(stale[:5])}"
+            )
     if present and all(role in a.required_roles for a in present):
         return sign.sign_gate(repo_root, gate, signer, role, verdict,
                               conditions, audit_log=audit_log, wave=wave)
@@ -188,9 +232,37 @@ class GateOrchestrator:
             "question": GATE_QUESTIONS[gate],
             "specialist": GATE_SPECIALISTS[gate],
         })
+        self._emit_completeness(gate)
         self.state.status = "awaiting-verdict"
         self._persist()
         return result
+
+    def _emit_completeness(self, gate: str) -> None:
+        """1.9: advisory inversion pass -- surface concerns a gate artifact may
+        silently not address (identity, permissions, onboarding, data lifecycle,
+        ops/failure). Advisory only; never blocks the gate."""
+        try:
+            from .. import artifacts
+            from .completeness import completeness_findings
+            for a in artifacts.resolve_gate_artifacts(self.repo_root, gate):
+                if not a.path.is_file():
+                    continue
+                findings = completeness_findings(
+                    a.path.read_text(encoding="utf-8", errors="replace"))
+                if findings:
+                    self.emit({"type": "completeness", "gate": gate,
+                               "artifact": a.rel_path, "findings": findings})
+        except Exception:
+            pass
+
+    def _emit_incident(self, scenario: str, detail: str = "") -> None:
+        """1.10: surface a failure as a plain-words incident card with recovery
+        options, never just a bare error/stack trace."""
+        try:
+            from .incidents import build_incident_card
+            self.emit(build_incident_card(scenario, detail=detail).to_dict())
+        except Exception:
+            pass
 
     def _emit_preview(self, gate: str) -> None:
         try:
@@ -199,6 +271,16 @@ class GateOrchestrator:
         except Exception:
             html = "<!DOCTYPE html><html><body><main>Design preview</main></body></html>"
         self.emit({"type": "preview", "srcDoc": html, "caption": f"{gate} design preview"})
+        # 0.7: run the (previously dormant) agentic UX-friction QA on the preview
+        # surface and surface it to the founder at the design gate. Deterministic
+        # heuristic pass only -- no network -- so it never blocks the gate.
+        try:
+            from .ux_friction import heuristic_findings
+            findings = heuristic_findings(html)
+            self.emit({"type": "ux_friction", "gate": gate,
+                       "findings": findings, "count": len(findings)})
+        except Exception:
+            pass
 
     def start(self) -> dict:
         gate = self.state.current_gate
@@ -234,6 +316,8 @@ class GateOrchestrator:
             if cyc > self.max_rework:
                 self.emit({"type": "error",
                            "error": f"Max rework ({self.max_rework}) reached at {gate}."})
+                self._emit_incident("gate-deadlock",
+                                    detail=f"'{gate}' hit the rework limit.")
                 self.state.status = "stopped"
                 self._persist()
                 return {"status": "max-rework", "gate": gate}
@@ -246,6 +330,8 @@ class GateOrchestrator:
             if cnt > self.max_rejections:
                 self.emit({"type": "error",
                            "error": f"Max rejections ({self.max_rejections}) reached at {gate}."})
+                self._emit_incident("gate-deadlock",
+                                    detail=f"'{gate}' was rejected too many times.")
                 self.state.status = "stopped"
                 self._persist()
                 return {"status": "max-rejections", "gate": gate}

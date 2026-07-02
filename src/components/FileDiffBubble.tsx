@@ -6,6 +6,7 @@
 // dependency-free LCS line differ so we never need a runtime diff library.
 
 import { useSignal } from '@preact/signals';
+import { Markdown } from './markdown';
 
 export interface FileDiffBubbleProps {
   /** Path of the file that changed. */
@@ -71,10 +72,17 @@ function summarize(lines: DiffLine[]): { added: number; removed: number } {
   return { added, removed };
 }
 
+function isMarkdownPath(path: string): boolean {
+  return /\.(md|markdown)$/i.test(path);
+}
+
 export function FileDiffBubble({ path, before, after, lines, collapsed }: FileDiffBubbleProps) {
   const open = useSignal(collapsed === false);
+  const previewable = isMarkdownPath(path) && typeof after === 'string' && after.trim().length > 0;
+  const mode = useSignal<'preview' | 'diff'>(previewable ? 'preview' : 'diff');
   const diff = lines ?? computeDiff(before ?? '', after ?? '');
   const { added, removed } = summarize(diff);
+  const showPreview = previewable && mode.value === 'preview';
   // Compact view: only changed lines (+ a little context is omitted for brevity).
   const changed = diff.filter((l) => l.kind !== 'ctx');
   const shown = open.value ? diff : changed.slice(0, 12);
@@ -86,22 +94,39 @@ export function FileDiffBubble({ path, before, after, lines, collapsed }: FileDi
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="file-diff" data-path={path}>
           <div className="file-diff-head">
-            <i className="ti ti-file-diff"></i>
+            <i className={`ti ${showPreview ? 'ti-file-text' : 'ti-file-diff'}`}></i>
             <span className="file-diff-path">{path}</span>
             <span className="file-diff-stat">
               <span className="file-diff-add">+{added}</span>
               <span className="file-diff-del">-{removed}</span>
             </span>
-            <button
-              type="button"
-              className="file-diff-toggle"
-              data-testid="file-diff-toggle"
-              onClick={() => { open.value = !open.value; }}
-              aria-expanded={open.value}
-            >
-              {open.value ? 'Collapse' : 'Full file'}
-            </button>
+            {previewable ? (
+              <button
+                type="button"
+                className="file-diff-mode"
+                data-testid="file-diff-mode-toggle"
+                onClick={() => { mode.value = showPreview ? 'diff' : 'preview'; }}
+              >
+                {showPreview ? 'Diff' : 'Preview'}
+              </button>
+            ) : null}
+            {!showPreview ? (
+              <button
+                type="button"
+                className="file-diff-toggle"
+                data-testid="file-diff-toggle"
+                onClick={() => { open.value = !open.value; }}
+                aria-expanded={open.value}
+              >
+                {open.value ? 'Collapse' : 'Full file'}
+              </button>
+            ) : null}
           </div>
+          {showPreview ? (
+            <div className="file-diff-preview" data-testid="file-diff-preview">
+              <Markdown text={after ?? ''} />
+            </div>
+          ) : (
           <pre className="file-diff-body">
             {shown.map((l, idx) => (
               <div className={`file-diff-line ${l.kind}`} key={idx}>
@@ -113,6 +138,7 @@ export function FileDiffBubble({ path, before, after, lines, collapsed }: FileDi
               <div className="file-diff-more">… {hiddenCount} more changed line{hiddenCount === 1 ? '' : 's'}</div>
             ) : null}
           </pre>
+          )}
         </div>
       </div>
     </div>

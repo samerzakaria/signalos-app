@@ -10,7 +10,7 @@
 #   - agent:cancel / agent:resume return ok
 #
 # Injection seam (documented in signalos_ipc_server.py):
-#   _AGENT_ADAPTER_FACTORY(model) -> ProviderAdapter   (test double here)
+#   _AGENT_ADAPTER_FACTORY(model, provider=None) -> ProviderAdapter   (test double here)
 #   _AGENT_ENFORCEMENT_FACTORY()  -> EnforcementProvider
 # Tests set these on the module, run a command, then restore them in tearDown.
 
@@ -68,8 +68,8 @@ def _end_resp(text: str = "done") -> AgentResponse:
 
 
 def _adapter_factory(script):
-    """Return a factory(model) -> ProviderAdapter backed by AgentTestProvider."""
-    def factory(model: str) -> ProviderAdapter:
+    """Return a factory(model, provider) -> ProviderAdapter backed by AgentTestProvider."""
+    def factory(model: str, provider: str | None = None) -> ProviderAdapter:
         provider = AgentTestProvider(script=list(script))
         caps = ProviderCapabilities(
             model=model,
@@ -79,6 +79,12 @@ def _adapter_factory(script):
         )
         return ProviderAdapter(model=model, provider=provider, capabilities=caps)
     return factory
+
+
+def _agent_args(**payload) -> str:
+    base = {"provider": "openai", "model": "gpt-test"}
+    base.update(payload)
+    return json.dumps(base)
 
 
 def _parse_lines(captured: str) -> list[dict]:
@@ -136,7 +142,7 @@ class TestAgentRun(_AgentIpcBase):
             {
                 "command": "agent:run",
                 "id": "req-1",
-                "args": [json.dumps({"prompt": "find files", "run_id": "run-A"})],
+                "args": [_agent_args(prompt="find files", run_id="run-A")],
             }
         )
         # Final response: ok, with the run summary.
@@ -166,20 +172,72 @@ class TestAgentRun(_AgentIpcBase):
             {
                 "command": "agent:run",
                 "id": "req-2",
-                "args": {"prompt": "hello", "run_id": "run-B"},
+                "args": {"prompt": "hello", "run_id": "run-B", "provider": "openai", "model": "gpt-test"},
             }
         )
         self.assertTrue(resp["ok"], msg=resp)
         self.assertEqual(resp["data"]["run_id"], "run-B")
         self.assertTrue(any(e.get("run_id") == "run-B" for e in events))
 
+    def test_run_passes_selected_provider_and_model_to_factory(self):
+        seen: list[tuple[str, str | None]] = []
+
+        def factory(model: str, provider: str | None = None) -> ProviderAdapter:
+            seen.append((model, provider))
+            test_provider = AgentTestProvider(script=[_end_resp("ok")])
+            caps = ProviderCapabilities(
+                model=model,
+                supports_tool_calls=True,
+                supports_streaming=True,
+                context_length=200_000,
+            )
+            return ProviderAdapter(model=model, provider=test_provider, capabilities=caps)
+
+        srv._AGENT_ADAPTER_FACTORY = factory
+        resp, _ = self._run(
+            {
+                "command": "agent:run",
+                "id": "req-route",
+                "args": [_agent_args(prompt="route this", run_id="run-route", provider="openrouter", model="openai/gpt-4o")],
+            }
+        )
+        self.assertTrue(resp["ok"], msg=resp)
+        self.assertEqual(seen, [("openai/gpt-4o", "openrouter")])
+
     def test_run_missing_prompt_is_error(self):
         srv._AGENT_ADAPTER_FACTORY = _adapter_factory([_end_resp()])
         resp, _ = self._run(
-            {"command": "agent:run", "id": "req-3", "args": [json.dumps({})]}
+            {"command": "agent:run", "id": "req-3", "args": [_agent_args()]}
         )
         self.assertFalse(resp["ok"])
         self.assertIn("prompt", resp["error"])
+
+    def test_run_missing_model_is_error_before_provider_init(self):
+        called = False
+
+        def factory(model: str, provider: str | None = None) -> ProviderAdapter:
+            nonlocal called
+            called = True
+            return ProviderAdapter(
+                model=model,
+                provider=AgentTestProvider(script=[_end_resp("should not call")]),
+                capabilities=ProviderCapabilities(model=model),
+            )
+
+        srv._AGENT_ADAPTER_FACTORY = factory
+        resp, events = self._run(
+            {
+                "command": "agent:run",
+                "id": "req-no-model",
+                "args": [json.dumps({"prompt": "go", "provider": "openai", "run_id": "run-no-model"})],
+            }
+        )
+
+        self.assertFalse(resp["ok"], msg=resp)
+        self.assertFalse(called)
+        self.assertIn("selected AI model", resp["error"])
+        self.assertTrue(any(e.get("type") == "error" for e in events))
+
 
     def test_run_provider_failure_surfaces_error_event_and_non_ok(self):
         # INV-4: a provider that raises during chat surfaces an error agent-event
@@ -201,7 +259,7 @@ class TestAgentRun(_AgentIpcBase):
             {
                 "command": "agent:run",
                 "id": "req-4",
-                "args": [json.dumps({"prompt": "go", "run_id": "run-C"})],
+                "args": [_agent_args(prompt="go", run_id="run-C")],
             }
         )
         self.assertFalse(resp["ok"], msg=resp)
@@ -227,7 +285,7 @@ class TestAgentRun(_AgentIpcBase):
             {
                 "command": "agent:run",
                 "id": "req-write",
-                "args": [json.dumps({"prompt": "change product files", "run_id": "run-W"})],
+                "args": [_agent_args(prompt="change product files", run_id="run-W")],
             }
         )
         self.assertTrue(resp["ok"], msg=resp)
@@ -351,7 +409,7 @@ class TestAgentCancelResume(_AgentIpcBase):
             {
                 "command": "agent:run",
                 "id": "rr-1",
-                "args": [json.dumps({"prompt": "hi", "run_id": "run-R"})],
+                "args": [_agent_args(prompt="hi", run_id="run-R")],
             }
         )
         self.assertTrue(run_resp["ok"], msg=run_resp)
@@ -364,7 +422,7 @@ class TestAgentCancelResume(_AgentIpcBase):
             {
                 "command": "agent:resume",
                 "id": "r-2",
-                "args": [json.dumps({"run_id": "run-R"})],
+                "args": [_agent_args(run_id="run-R")],
             }
         )
         self.assertTrue(resp["ok"], msg=resp)
@@ -403,7 +461,7 @@ class TestAgentCancelResume(_AgentIpcBase):
             {
                 "command": "agent:resume",
                 "id": "r-3",
-                "args": [json.dumps({"run_id": "run-live-resume"})],
+                "args": [_agent_args(run_id="run-live-resume")],
             }
         )
 
@@ -420,7 +478,7 @@ class TestAgentCancelResume(_AgentIpcBase):
             {
                 "command": "agent:cancel",
                 "id": "c-2",
-                "args": [json.dumps({"run_id": "run-cancel-resume"})],
+                "args": [_agent_args(run_id="run-cancel-resume")],
             }
         )
         self.assertTrue(cancel_resp["ok"], msg=cancel_resp)
@@ -430,7 +488,7 @@ class TestAgentCancelResume(_AgentIpcBase):
             {
                 "command": "agent:resume",
                 "id": "r-4",
-                "args": [json.dumps({"run_id": "run-cancel-resume"})],
+                "args": [_agent_args(run_id="run-cancel-resume")],
             }
         )
 

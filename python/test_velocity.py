@@ -29,6 +29,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from signalos_lib import velocity as velocity_lib
+from signalos_lib.cli import main as signalos_cli_main
 from signalos_lib.commands.velocity import cmd_signal_velocity
 
 
@@ -227,6 +228,17 @@ class SignalVelocityCommandTests(unittest.TestCase):
                 "window_days", "generated_at",
             ):
                 self.assertIn(key, payload)
+
+    def test_top_level_signal_velocity_json_dispatch_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = signalos_cli_main(["signalos", "signal-velocity", "--json", "--repo-root", str(root)])
+            self.assertEqual(rc, 0)
+            payload = json.loads(buf.getvalue())
+            self.assertIn("sessions_per_day", payload)
+            self.assertIn("scope_card_burndown", payload)
 
     def test_signal_velocity_human_output_runs(self) -> None:
         with tempfile.TemporaryDirectory() as td:

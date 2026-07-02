@@ -49,11 +49,40 @@ async function fetchVelocityMetrics(): Promise<VelocityMetrics> {
   // The Rust side maps both to the same sidecar transport.
   const raw = await signalIpc.runAndWait('signal-velocity', ['--json'], 8000);
   if (raw == null) {
-    throw new Error('Empty response from signal-velocity');
+    throw new Error('Velocity data is not available yet.');
   }
-  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-  const parsed = JSON.parse(text) as VelocityMetrics;
+  const parsed = parseVelocityPayload(raw);
+  if (!isVelocityMetrics(parsed)) {
+    throw new Error('Velocity returned an unreadable result. Refresh this panel after the next completed session.');
+  }
   return parsed;
+}
+
+function parseVelocityPayload(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw;
+  const text = raw.trim();
+  if (!text) throw new Error('Velocity data is not available yet.');
+  if (!text.startsWith('{')) {
+    throw new Error('Velocity returned a summary instead of dashboard data. Refresh this panel after the next completed session.');
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Velocity returned an unreadable result. Refresh this panel after the next completed session.');
+  }
+}
+
+function isVelocityMetrics(value: unknown): value is VelocityMetrics {
+  const v = value as Partial<VelocityMetrics> | null;
+  return Boolean(
+    v
+    && typeof v === 'object'
+    && typeof v.sessions_per_day === 'number'
+    && Array.isArray(v.scope_card_burndown)
+    && ('eta_days' in v)
+    && ('last_session_at' in v)
+    && typeof v.window_days === 'number',
+  );
 }
 
 function isEmptyMetrics(m: VelocityMetrics): boolean {
@@ -135,7 +164,7 @@ export function VelocityPanel() {
       {state.error ? (
         <div className="velocity-error" data-testid="velocity-error">
           <i className="ti ti-alert-triangle"></i>{' '}
-          Could not load velocity: {state.error}
+          {state.error}
         </div>
       ) : null}
 

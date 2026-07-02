@@ -16,6 +16,7 @@ __all__ = [
     "sign_gate",
     "_compute_hash",
     "_append_audit",
+    "verify_audit_chain",
     "_parse_signers",
 ]
 
@@ -566,8 +567,75 @@ def _append_audit(
     normalized_wave = _normalize_wave(wave)
     if normalized_wave:
         row["wave"] = normalized_wave
+    # Tamper-evidence (Wave 0.2): forward-link this row to the prior row's
+    # hash, then hash this row. Editing/inserting/deleting any chained row
+    # breaks the chain and is caught by verify_audit_chain().
+    row["prev_hash"] = _audit_prev_link(audit_log)
+    row["entry_hash"] = _audit_entry_hash(row)
     with audit_log.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _audit_entry_hash(row: dict) -> str:
+    """Deterministic SHA-256 of an audit row, excluding its own entry_hash."""
+    payload = {k: v for k, v in row.items() if k != "entry_hash"}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _audit_prev_link(audit_log: Path) -> str:
+    """Chain link for the next entry: the last row's entry_hash if it has one,
+    else a hash of the last raw line (so un-chained rows are still committed to),
+    else GENESIS for an empty/absent log."""
+    try:
+        lines = [l for l in audit_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    except OSError:
+        return "GENESIS"
+    if not lines:
+        return "GENESIS"
+    last = lines[-1]
+    try:
+        parsed = json.loads(last)
+        if isinstance(parsed, dict) and parsed.get("entry_hash"):
+            return str(parsed["entry_hash"])
+    except json.JSONDecodeError:
+        pass
+    return hashlib.sha256(last.encode("utf-8")).hexdigest()
+
+
+def verify_audit_chain(audit_log: Path) -> list[str]:
+    """Verify the tamper-evident hash chain of an AUDIT_TRAIL.jsonl file.
+
+    Returns a list of human-readable violation strings; an empty list means the
+    chain is intact. Rows without an ``entry_hash`` (written by appenders that do
+    not yet chain) are treated as un-chained boundaries: they are not hash-checked
+    themselves, but a following chained row commits to their exact bytes, so an
+    insertion or deletion across them is still detected.
+    """
+    try:
+        raw_lines = [l for l in audit_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    except OSError:
+        return []
+    violations: list[str] = []
+    prev_link = "GENESIS"
+    for idx, line in enumerate(raw_lines, start=1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            violations.append(f"line {idx}: not valid JSON")
+            prev_link = hashlib.sha256(line.encode("utf-8")).hexdigest()
+            continue
+        entry_hash = row.get("entry_hash") if isinstance(row, dict) else None
+        if entry_hash:
+            if _audit_entry_hash(row) != entry_hash:
+                violations.append(f"line {idx}: entry_hash mismatch (row edited in place)")
+            if row.get("prev_hash") != prev_link:
+                violations.append(f"line {idx}: prev_hash breaks the chain (insertion/deletion/reorder)")
+            prev_link = str(entry_hash)
+        else:
+            prev_link = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    return violations
 
 
 def _normalize_wave(value: str | int | None) -> str | None:

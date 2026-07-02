@@ -592,6 +592,11 @@ a{color:inherit}
 .vault-note i{font-size:18px;color:var(--success);flex-shrink:0;margin-top:1px}
 .vault-note p{font-size:12.5px;color:var(--success-deep);line-height:1.55}
 .vault-note strong{font-weight:600}
+.vault-empty-state{padding:24px;display:flex;flex-direction:column;align-items:center;
+  gap:7px;text-align:center;color:var(--ink-3);font-size:13px;line-height:1.45}
+.vault-empty-state i{font-size:22px;color:var(--accent)}
+.vault-empty-state strong{max-width:520px;color:var(--ink);font-weight:650}
+.vault-empty-state span{max-width:440px}
 
 /* ── Add secret modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(28,27,24,0.4);display:flex;align-items:center;justify-content:center;z-index:200;opacity:0;visibility:hidden;transition:all 0.22s var(--ease);}
@@ -777,9 +782,10 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 .file-diff-stat{display:flex;gap:8px;font-family:var(--f-mono);font-size:11px;flex-shrink:0}
 .file-diff-add{color:var(--success,#2c8a6a);font-weight:600}
 .file-diff-del{color:var(--danger);font-weight:600}
-.file-diff-toggle{font-size:11px;color:var(--accent);cursor:pointer;padding:3px 8px;
+.file-diff-toggle,.file-diff-mode{font-size:11px;color:var(--accent);cursor:pointer;padding:3px 8px;
   border-radius:5px;flex-shrink:0;transition:background 0.14s var(--ease)}
-.file-diff-toggle:hover{background:var(--accent-soft)}
+.file-diff-toggle:hover,.file-diff-mode:hover{background:var(--accent-soft)}
+.file-diff-mode{margin-left:auto}
 .file-diff-body{margin:0;padding:6px 0;overflow-x:auto;font-family:var(--f-mono);
   font-size:11.5px;line-height:1.5;max-height:340px;overflow-y:auto}
 .file-diff-line{display:flex;padding:0 12px;white-space:pre}
@@ -790,6 +796,28 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
 .file-diff-line.del .file-diff-gutter{color:var(--danger)}
 .file-diff-text{flex:1}
 .file-diff-more{padding:5px 12px;font-size:11px;color:var(--ink-3);font-style:italic}
+.file-diff-preview{padding:16px 18px;max-height:560px;overflow:auto;background:var(--surface)}
+.file-diff-preview .md{font-size:14px;line-height:1.65}
+.file-diff-preview .md-h1{font-size:22px}
+.file-diff-preview .md-h2{font-size:18px}
+
+/* Opened workspace file bubble */
+.file-viewer{border:0.5px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;
+  max-width:680px;background:var(--surface)}
+.file-viewer-head{display:flex;align-items:center;gap:8px;padding:8px 12px;
+  background:var(--surface-warm);border-bottom:0.5px solid var(--line)}
+.file-viewer-path{font-family:var(--f-mono);font-size:12px;font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.file-viewer-kind{font-family:var(--f-mono);font-size:10.5px;color:var(--ink-3);
+  text-transform:uppercase;flex-shrink:0}
+.file-viewer-doc{padding:16px 18px;max-height:520px;overflow:auto}
+.file-viewer-doc .md{font-size:14px;line-height:1.65}
+.file-viewer-doc .md-h1{font-size:22px}
+.file-viewer-doc .md-h2{font-size:18px}
+.file-viewer-code{padding:0;max-height:520px;overflow:auto}
+.file-viewer-code .md-code{margin:0;border:0;border-radius:0}
+.file-viewer-more{padding:8px 12px;border-top:0.5px solid var(--line);
+  font-size:11.5px;color:var(--ink-3);background:var(--surface-warm)}
 
 /* 1.5 — gate review card with 5 verdicts */
 .gate-review{max-width:640px}
@@ -868,7 +896,7 @@ textarea.plain-input{resize:vertical;min-height:80px;line-height:1.5}
   .phase-label{font-size:10.5px}
   .seg{overflow-x:auto;max-width:100%}
   .toolbar{padding-left:10px;padding-right:10px}
-  .tool-call,.file-diff,.chat-preview,.gate-review,.md-code{max-width:100%}
+  .tool-call,.file-diff,.file-viewer,.chat-preview,.gate-review,.md-code{max-width:100%}
   .gate-review-verdicts{flex-direction:column}
   .gate-verdict-btn{width:100%;justify-content:flex-start}
   .msg .bubble{max-width:100%}

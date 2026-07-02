@@ -116,6 +116,46 @@ describe('BuildView chat bubbles', () => {
     expect(container.querySelector('.file-diff-line.del')).not.toBeNull();
   });
 
+  it('renders opened markdown files as readable documents', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'file-md',
+        kind: 'file',
+        file: {
+          path: 'docs/constitution.md',
+          content: '# Product Constitution\n\n**Signed by:** PO',
+          markdown: true,
+        },
+      }),
+    ];
+
+    const { container } = render(<BuildView />);
+
+    expect(screen.getByTestId('file-viewer-bubble')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Product Constitution' })).toBeInTheDocument();
+    expect(screen.getByText('document')).toBeInTheDocument();
+    expect(container.querySelector('.file-viewer-code')).toBeNull();
+  });
+
+  it('renders opened non-markdown files as code', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'file-code',
+        kind: 'file',
+        file: {
+          path: 'src/App.tsx',
+          content: 'const title = "SignalOS";',
+        },
+      }),
+    ];
+
+    const { container } = render(<BuildView />);
+
+    expect(screen.getByTestId('file-viewer-bubble')).toBeInTheDocument();
+    expect(container.querySelector('.file-viewer-code pre code')?.textContent)
+      .toContain('const title = "SignalOS";');
+  });
+
   it('renders markdown code blocks inside AI bubbles', () => {
     chatBubbles.value = [
       makeBubble({

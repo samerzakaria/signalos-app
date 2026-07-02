@@ -87,6 +87,36 @@
           "type": "string",
           "description": "Free-form notes visible in the rendered PLAN.md.",
           "default": ""
+        },
+        "description": { "type": "string", "default": "" },
+        "files": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "skills": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "previous_failure": { "type": "string", "default": "" },
+        "feature": {
+          "type": "string",
+          "description": "Feature this story rolls up to (founder-facing hierarchy).",
+          "default": ""
+        },
+        "epic": {
+          "type": "string",
+          "description": "Epic this story rolls up to.",
+          "default": ""
+        },
+        "release": {
+          "type": "string",
+          "description": "Release grouping for the roadmap view.",
+          "default": ""
+        },
+        "value": {
+          "type": "integer",
+          "description": "Value score paired with effort for prioritisation.",
+          "minimum": 0,
+          "default": 0
+        },
+        "provenance": {
+          "type": "string",
+          "description": "Where the item came from: founder, war-room, idea-ledger, growth-loop.",
+          "default": ""
         }
       }
     }

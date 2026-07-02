@@ -46,6 +46,42 @@ const ALL_RULES: &[&str] = &[
     RULE_MUTATION,
 ];
 
+/// Core invariants that may NEVER be disabled via `set_rule_mode` (Wave 0.3).
+/// These are the mechanically-enforced governance rules; relaxing one requires
+/// the governed override path (`override_rule`, which demands a reason + audit),
+/// never a silent toggle to "off". Tunable policy/threshold rules (wave-freeze,
+/// stack-contract, zero-manual-regression, mutation-threshold) are not listed.
+const CORE_INVARIANTS: &[&str] = &[
+    RULE_GATE_GATE,
+    RULE_PLAN_GATE,
+    RULE_TRUST_TIER,
+    RULE_AUDIT_APPEND,
+    RULE_SECRET_BLOCK,
+    RULE_ROLE_SIGN,
+    RULE_TEST_FIRST,
+    RULE_GATE_COMPLIANCE,
+];
+
+/// Validate a requested (rule, mode) change. Pure and testable: rejects unknown
+/// rules/modes and refuses to disable a core invariant.
+fn validate_rule_mode(rule: &str, mode: &str) -> Result<Mode, String> {
+    if !ALL_RULES.contains(&rule) {
+        return Err(format!("Unknown rule: {rule}"));
+    }
+    let m = match mode {
+        "strict" => Mode::Strict,
+        "warn" => Mode::Warn,
+        "off" => Mode::Off,
+        _ => return Err(format!("Unknown mode: {mode}")),
+    };
+    if mode == "off" && CORE_INVARIANTS.contains(&rule) {
+        return Err(format!(
+            "'{rule}' is a core invariant and cannot be disabled; use a governed override (with a reason) instead."
+        ));
+    }
+    Ok(m)
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
@@ -246,15 +282,7 @@ pub fn set_rule_mode(
     mode: String,
     enforcement: State<EnforcementStore>,
 ) -> Result<(), String> {
-    if !ALL_RULES.contains(&rule.as_str()) {
-        return Err(format!("Unknown rule: {}", rule));
-    }
-    let m = match mode.as_str() {
-        "strict" => Mode::Strict,
-        "warn" => Mode::Warn,
-        "off" => Mode::Off,
-        _ => return Err(format!("Unknown mode: {}", mode)),
-    };
+    let m = validate_rule_mode(&rule, &mode)?;
     let mut modes = enforcement.modes.lock().unwrap();
     for (r, mode_v) in modes.iter_mut() {
         if *r == rule {
@@ -417,4 +445,50 @@ fn read_signed_gates(workspace: &Path) -> Vec<u8> {
         c.signed = out.clone();
     }
     out
+}
+
+#[cfg(test)]
+mod rule_mode_tests {
+    use super::{validate_rule_mode, Mode, RULE_TEST_FIRST, RULE_WAVE_FREEZE};
+
+    #[test]
+    fn strict_on_core_invariant_is_ok() {
+        assert!(matches!(
+            validate_rule_mode(RULE_TEST_FIRST, "strict"),
+            Ok(Mode::Strict)
+        ));
+    }
+
+    #[test]
+    fn warn_on_core_invariant_is_ok() {
+        assert!(matches!(
+            validate_rule_mode(RULE_TEST_FIRST, "warn"),
+            Ok(Mode::Warn)
+        ));
+    }
+
+    #[test]
+    fn off_on_core_invariant_is_rejected() {
+        let result = validate_rule_mode(RULE_TEST_FIRST, "off");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("core invariant"));
+    }
+
+    #[test]
+    fn off_on_tunable_rule_is_ok() {
+        assert!(matches!(
+            validate_rule_mode(RULE_WAVE_FREEZE, "off"),
+            Ok(Mode::Off)
+        ));
+    }
+
+    #[test]
+    fn unknown_rule_is_rejected() {
+        assert!(validate_rule_mode("no-such-rule", "strict").is_err());
+    }
+
+    #[test]
+    fn unknown_mode_is_rejected() {
+        assert!(validate_rule_mode(RULE_TEST_FIRST, "loose").is_err());
+    }
 }

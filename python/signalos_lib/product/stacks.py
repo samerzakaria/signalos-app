@@ -3404,10 +3404,48 @@ def get_adapter(profile_id: str) -> StackAdapter:
     return cls()
 
 
+# Maturity tier declared to the founder BEFORE they commit to a stack (Wave 1.5):
+# proven (production-tested), supported (works, with stated limits), experimental.
+# Unlisted adapters default to experimental -- honest under-promising, not silence.
+_ADAPTER_MATURITY: dict[str, str] = {
+    "react-vite": "proven",
+    "nextjs-app": "proven",
+    "node-api": "proven",
+    "fastapi-api": "proven",
+    "vue-vite": "supported",
+    "angular": "supported",
+    "nestjs-api": "supported",
+    "go-api": "supported",
+    "dotnet-minimal-api": "supported",
+    "django-api": "supported",
+    "flask-api": "supported",
+    "flutter-app": "supported",
+    "expo-react-native": "supported",
+    "generic": "supported",
+    "existing-repo": "supported",
+    "java-api": "experimental",
+    "spring-boot-api": "experimental",
+    "rust-api": "experimental",
+    "agent-selected": "experimental",
+}
+
+_DEFAULT_MATURITY = "experimental"
+MATURITY_TIERS = ("proven", "supported", "experimental")
+
+
+def maturity_of(adapter_id: str) -> str:
+    """Maturity tier for a stack adapter; unknown ids default to experimental."""
+    return _ADAPTER_MATURITY.get(adapter_id, _DEFAULT_MATURITY)
+
+
 def list_adapters() -> list[dict[str, str]]:
-    """Return metadata for every registered adapter."""
+    """Return metadata for every registered adapter, incl. its maturity tier."""
     return [
-        {"id": adapter_id, "display_name": _ADAPTERS[adapter_id]().display_name}
+        {
+            "id": adapter_id,
+            "display_name": _ADAPTERS[adapter_id]().display_name,
+            "maturity": maturity_of(adapter_id),
+        }
         for adapter_id in sorted(_ADAPTERS)
     ]
 

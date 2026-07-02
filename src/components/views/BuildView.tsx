@@ -6,7 +6,7 @@ import { requiredRoleForGate, roleLabel } from '../../services/gateRoles';
 // TestDebtPanel moved to sidebar tab — not rendered inline over chat
 import { ChatBubbleSystem } from '../ChatBubbleSystem';
 import { ProgressDetail } from '../ProgressDetail';
-import { Markdown } from '../markdown';
+import { Markdown, CodeBlock } from '../markdown';
 import { ToolCallBubble } from '../ToolCallBubble';
 import { FileDiffBubble } from '../FileDiffBubble';
 import { GateReviewCard, type GateReviewSubmission } from '../GateReviewCard';
@@ -14,6 +14,63 @@ import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
 import { BUSINESS_STAGES } from '../../services/deliveryFlow';
 import { viewClass } from '../viewShell';
+
+function fileLanguage(path: string, fallback?: string): string {
+  if (fallback) return fallback;
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    ts: 'ts',
+    tsx: 'tsx',
+    js: 'js',
+    jsx: 'jsx',
+    json: 'json',
+    css: 'css',
+    html: 'html',
+    md: 'markdown',
+    markdown: 'markdown',
+    py: 'py',
+    rs: 'rust',
+    toml: 'toml',
+    yaml: 'yaml',
+    yml: 'yaml',
+  };
+  return map[ext] || 'text';
+}
+
+function isMarkdownFile(path: string, markdown?: boolean): boolean {
+  if (typeof markdown === 'boolean') return markdown;
+  return /\.(md|markdown)$/i.test(path);
+}
+
+function FileViewerBubble({ bubble }: { bubble: ChatBubble }) {
+  const file = bubble.file;
+  if (!file) return null;
+  const lang = fileLanguage(file.path, file.language);
+  const renderMarkdown = isMarkdownFile(file.path, file.markdown);
+  return (
+    <div className="msg spark" data-testid="file-viewer-bubble">
+      <div className="msg-av"><i className="ti ti-file-text" style={{ fontSize: '17px' }}></i></div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="file-viewer" data-path={file.path}>
+          <div className="file-viewer-head">
+            <i className="ti ti-file"></i>
+            <span className="file-viewer-path">{file.path}</span>
+            <span className="file-viewer-kind">{renderMarkdown ? 'document' : lang}</span>
+          </div>
+          <div className={renderMarkdown ? 'file-viewer-doc' : 'file-viewer-code'}>
+            {renderMarkdown ? <Markdown text={file.content} /> : <CodeBlock code={file.content} lang={lang} />}
+          </div>
+          {file.truncated ? (
+            <div className="file-viewer-more">
+              Showing first 400 of {file.totalLines || 'many'} lines.
+            </div>
+          ) : null}
+        </div>
+        <div className="msg-meta">File</div>
+      </div>
+    </div>
+  );
+}
 
 export function BuildView() {
   const bubbles = chatBubbles.value;
@@ -122,6 +179,9 @@ export function BuildView() {
                 );
               }
               // 1.4 file diff bubble
+              if (b.kind === 'file' && b.file) {
+                return <FileViewerBubble key={b.id} bubble={b} />;
+              }
               if (b.kind === 'diff' && b.diff) {
                 return (
                   <FileDiffBubble

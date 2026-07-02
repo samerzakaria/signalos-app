@@ -37,4 +37,21 @@ describe('FileDiffBubble', () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveTextContent('Collapse');
   });
+
+  it('previews markdown edits as a rendered document by default', () => {
+    const { container } = render(
+      <FileDiffBubble
+        path="docs/product-constitution.md"
+        before=""
+        after={'# Product Constitution\n\n**Signed by:** PO'}
+      />,
+    );
+
+    expect(screen.getByTestId('file-diff-preview')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Product Constitution' })).toBeInTheDocument();
+    expect(container.querySelector('.file-diff-line.add')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('file-diff-mode-toggle'));
+    expect(container.querySelector('.file-diff-line.add')).not.toBeNull();
+  });
 });

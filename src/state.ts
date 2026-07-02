@@ -32,7 +32,7 @@ export const tab = signal<string>("dashboard");
 export const sbTab = signal<string>("projects");
 export const onboardingVisible = signal<boolean>(true);
 export const appVisible = signal<boolean>(false);
-export const ai = signal<string>("anthropic");
+export const ai = signal<string>("");
 export const aiModel = signal<string>("");
 export const userName = signal<string>("");
 export const userRole = signal<string>("");
@@ -100,6 +100,7 @@ export const updateCheck = signal<UpdateCheck>({
 export const brainFilter = signal<string>('all');
 export const revealedSecrets = signal<Record<string, string>>({});
 export const copiedSecret = signal<string | null>(null);
+export const vaultMessage = signal<string | null>(null);
 
 // Bulk .env import modal state
 export interface BulkDiffResult {
@@ -117,7 +118,7 @@ export const bulkImportAllowRemovals = signal<boolean>(false);
 
 export const obStep = signal<number>(1);
 export const provMoreOpen = signal<boolean>(false);
-export const keyLabel = signal<string>('Anthropic API key');
+export const keyLabel = signal<string>('API key');
 export const apiKeyInput = signal<string>('');
 // Monthly AI spend cap from onboarding. Persisted so the cap context shows on
 // every wave, not just the session it was entered in.
@@ -141,7 +142,7 @@ export interface PlanTask {
 
 export interface ChatBubble {
   id: string;
-  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview';
+  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview' | 'file';
   text: string;
   ts?: string;
   historical?: boolean;
@@ -205,6 +206,15 @@ export interface ChatBubble {
     path: string;
     before?: string;
     after?: string;
+  };
+  /** kind === 'file': opened workspace file rendered as a readable document/code viewer. */
+  file?: {
+    path: string;
+    content: string;
+    language?: string;
+    markdown?: boolean;
+    truncated?: boolean;
+    totalLines?: number;
   };
   /** kind === 'gate': a gate review surface (GateReviewCard). */
   gateReview?: {

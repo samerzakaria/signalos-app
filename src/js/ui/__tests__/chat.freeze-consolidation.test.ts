@@ -20,6 +20,8 @@ import {
   chatInputValue,
   busy,
   cmdPaletteOpen,
+  ai,
+  aiModel,
 } from '../../../state';
 
 // Mock ipc.js BEFORE importing chat.js so the imports resolve to our
@@ -64,6 +66,7 @@ vi.mock('../../conversation.js', () => ({
 }));
 
 vi.mock('../../util.js', () => ({
+  providerConnectionMessage: vi.fn((error: unknown) => error instanceof Error ? error.message : String(error)),
   showError: vi.fn(),
 }));
 
@@ -83,6 +86,8 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     chatInputValue.value = '';
     busy.value = false;
     cmdPaletteOpen.value = false;
+    ai.value = 'openai';
+    aiModel.value = 'gpt-test';
   });
 
   it('typing /signal-freeze calls BOTH the Python CLI and the Rust enforcement IPC', async () => {
@@ -197,7 +202,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledTimes(1);
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:run',
-      [JSON.stringify({ prompt: 'what happened in the last run?' })],
+      [JSON.stringify({ prompt: 'what happened in the last run?', provider: 'openai', model: 'gpt-test' })],
       600000,
     );
     expect(enforcementFreeze).not.toHaveBeenCalled();
@@ -213,7 +218,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledTimes(1);
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
-      [JSON.stringify({ prompt: 'build a task management system' })],
+      [JSON.stringify({ prompt: 'build a task management system', provider: 'openai', model: 'gpt-test' })],
       600000,
     );
   });
@@ -228,7 +233,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledTimes(1);
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
-      [JSON.stringify({ prompt })],
+      [JSON.stringify({ prompt, provider: 'openai', model: 'gpt-test' })],
       600000,
     );
   });
@@ -243,7 +248,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledTimes(1);
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
-      [JSON.stringify({ prompt })],
+      [JSON.stringify({ prompt, provider: 'openai', model: 'gpt-test' })],
       600000,
     );
   });

@@ -113,6 +113,9 @@ pub fn snapshot_env_keys() -> std::collections::HashMap<String, String> {
             continue;
         };
         if let Ok(Some(key)) = get_api_key(p.to_string()) {
+            if p == "together" {
+                env.insert("TOGETHERAI_API_KEY".to_string(), key.clone());
+            }
             env.insert(var.to_string(), key);
         }
     }

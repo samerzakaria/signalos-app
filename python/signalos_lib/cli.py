@@ -1563,7 +1563,7 @@ def main(argv: list[str]) -> int:
     # Phase 13 hardening — wave velocity metrics
     if cmd == "signal-velocity":
         from signalos_lib.commands.velocity import cmd_signal_velocity
-        return cmd_signal_velocity(list(getattr(args, "velocity_args", None) or []))
+        return cmd_signal_velocity(command_tail())
 
     # Product delivery bridge
     if cmd == "product":

@@ -27,7 +27,7 @@ export function SettingsView() {
   const models = providerModels.value;
   const selectedModel = aiModel.value;
   const modelSelectValue = models.some((model) => model.id === selectedModel) ? selectedModel : '';
-  const provider = ai.value || 'anthropic';
+  const provider = ai.value;
   const role = userRole.value || 'PO';
   const cap = monthlyCap.value;
   const spend = currentCost.value;
@@ -133,6 +133,7 @@ export function SettingsView() {
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Provider</strong><span>Current AI brain</span></div>
                 <select className="select-input" id="settingsProvider" value={provider} onInput={(e) => { ai.value = (e.target as HTMLSelectElement).value; }} onChange={() => window.changeProvider()} style={{ 'width': 'auto', 'padding': '8px 28px 8px 12px' }}>
+                  <option value="">Select provider</option>
                   {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               </div>
@@ -142,19 +143,22 @@ export function SettingsView() {
                   {models.length === 0 ? (
                     <option value="">{providerModelsLoading.value ? 'Loading models...' : 'No models loaded'}</option>
                   ) : (
-                    models.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)
+                    <>
+                      <option value="">Select model</option>
+                      {models.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                    </>
                   )}
                 </select>
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>Refresh models</strong><span>{providerModelsError.value || (models.length > 0 ? `${models.length} available` : 'Fetch from the selected provider')}</span></div>
-                <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => { void loadProviderModels(provider, null, { persistSelection: true }); }} disabled={providerModelsLoading.value}>
+                <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => { if (provider) void loadProviderModels(provider, null, { persistSelection: true }); }} disabled={providerModelsLoading.value || !provider}>
                   <i className={`ti ${providerModelsLoading.value ? 'ti-loader-2' : 'ti-refresh'}`} style={providerModelsLoading.value ? { animation: 'spin 1s linear infinite' } : undefined}></i> Fetch models
                 </button>
               </div>
               <div className="settings-row">
                 <div className="settings-row-tx"><strong>API key</strong><span>Stored in OS keychain</span></div>
-                <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => window.replaceApiKey()}><i className="ti ti-key"></i> Replace key</button>
+                <button className="btn btn-soft" style={{ 'fontSize': '12.5px', 'padding': '8px 14px' }} onClick={() => window.replaceApiKey()} disabled={!provider}><i className="ti ti-key"></i> Replace key</button>
               </div>
             </div>
           </div>

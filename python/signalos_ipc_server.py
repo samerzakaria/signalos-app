@@ -408,13 +408,13 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
 # instead of constructing a live LiteLLM-backed adapter. In production both
 # hooks are None and the handler builds the real provider adapter.
 #
-#   _AGENT_ADAPTER_FACTORY(model: str) -> ProviderAdapter
+#   _AGENT_ADAPTER_FACTORY(model: str, provider: str | None = None) -> ProviderAdapter
 #   _AGENT_ENFORCEMENT_FACTORY() -> EnforcementProvider
 #
 # The cancellation registry maps run_id -> bool. agent:cancel sets the flag;
 # the AgentLoop's cancel_check polls it between tool calls.
 
-_AGENT_ADAPTER_FACTORY = None       # set by tests; signature: (model: str) -> ProviderAdapter
+_AGENT_ADAPTER_FACTORY = None       # set by tests; signature: (model: str, provider: str | None = None) -> ProviderAdapter
 _AGENT_ENFORCEMENT_FACTORY = None   # set by tests; signature: () -> EnforcementProvider
 _AGENT_CANCEL_FLAGS: dict[str, bool] = {}
 # Active governed deliveries (gate walk), keyed by run_id. The sidecar
@@ -422,7 +422,6 @@ _AGENT_CANCEL_FLAGS: dict[str, bool] = {}
 # the later agent:verdict calls that advance the walk.
 _ACTIVE_DELIVERIES: dict = {}
 _DELIVERY_SIGN_FN = None  # test seam: (root,gate,signer,role,verdict,conditions)->list
-_AGENT_DEFAULT_MODEL = "claude-sonnet-4-5"
 
 
 def _coerce_agent_args(args: Any) -> dict:
@@ -439,12 +438,31 @@ def _coerce_agent_args(args: Any) -> dict:
     return payload
 
 
-def _build_agent_adapter(model: str):
+def _build_agent_adapter(model: str, provider: str | None = None):
     """Construct the ProviderAdapter. Honors the test injection seam."""
     if _AGENT_ADAPTER_FACTORY is not None:
-        return _AGENT_ADAPTER_FACTORY(model)
+        try:
+            return _AGENT_ADAPTER_FACTORY(model, provider)
+        except TypeError:
+            return _AGENT_ADAPTER_FACTORY(model)
     from signalos_lib.product.provider_adapter import ProviderAdapter
-    return ProviderAdapter(model=model)
+    return ProviderAdapter(model=model, provider_name=provider)
+
+
+def _agent_provider_and_model(payload: dict, command: str) -> tuple[str | None, str]:
+    """Resolve the provider/model for live agent commands.
+
+    The desktop app owns provider selection. The sidecar must not silently
+    choose Anthropic/OpenAI/etc. when the payload is missing a model; doing so
+    calls the wrong account and makes billing/errors misleading.
+    """
+    provider = str(payload.get("provider") or "").strip().lower() or None
+    model = str(payload.get("model") or "").strip()
+    if not model:
+        raise ValueError(
+            f"{command} requires the selected AI model. Pick a provider and model in Settings, then retry."
+        )
+    return provider, model
 
 
 def _build_agent_enforcement():
@@ -527,10 +545,14 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
     if not prompt:
         return err(req_id, "agent:deliver requires a non-empty 'prompt'")
     run_id = str(payload.get("run_id") or "").strip() or ("delivery-" + __import__("uuid").uuid4().hex[:8])
-    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
+    try:
+        provider, model = _agent_provider_and_model(payload, "agent:deliver")
+    except ValueError as exc:
+        _agent_emit(run_id)({"type": "error", "error": str(exc)})
+        return err(req_id, str(exc))
     repo_root = Path(os.getcwd())
     try:
-        adapter = _build_agent_adapter(model)
+        adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface
         _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
         return err(req_id, f"agent:deliver provider init failed: {type(exc).__name__}: {exc}")
@@ -563,13 +585,18 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
         return err(req_id, "agent:run requires a non-empty 'prompt'")
     system_prompt = str(payload.get("system_prompt") or "You are SignalOS, a governed build agent.")
     run_id = str(payload.get("run_id") or "").strip() or None
-    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
+    try:
+        provider, model = _agent_provider_and_model(payload, "agent:run")
+    except ValueError as exc:
+        run_id_for_err = run_id or "agent-unstarted"
+        _agent_emit(run_id_for_err)({"type": "error", "error": str(exc)})
+        return err(req_id, str(exc))
 
     from signalos_lib.product.agent_loop import AgentLoop
 
     repo_root = Path(os.getcwd())
     try:
-        adapter = _build_agent_adapter(model)
+        adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface, do not swallow
         run_id_for_err = run_id or "agent-unstarted"
         _agent_emit(run_id_for_err)({"type": "error", "error": f"provider init failed: {exc}"})
@@ -745,9 +772,13 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
     if not state_path.is_file() and not delivery_path.is_file():
         return err(req_id, f"no persisted state for run {run_id}")
 
-    model = str(payload.get("model") or _AGENT_DEFAULT_MODEL)
     try:
-        adapter = _build_agent_adapter(model)
+        provider, model = _agent_provider_and_model(payload, "agent:resume")
+    except ValueError as exc:
+        _agent_emit(run_id)({"type": "error", "error": str(exc)})
+        return err(req_id, str(exc))
+    try:
+        adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface, do not swallow
         _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
         return err(req_id, f"agent:resume provider init failed: {type(exc).__name__}: {exc}")

@@ -1,4 +1,4 @@
-import { secretsList, revealedSecrets, copiedSecret, bulkImportOpen, bulkImportText, bulkImportDiff, bulkImportError, bulkImportAllowRemovals, BulkDiffResult } from '../../state';
+import { secretsList, revealedSecrets, copiedSecret, vaultMessage, bulkImportOpen, bulkImportText, bulkImportDiff, bulkImportError, bulkImportAllowRemovals, BulkDiffResult } from '../../state';
 import { secrets } from '../../js/ipc.js';
 import { viewClass } from '../viewShell';
 
@@ -126,6 +126,7 @@ export function VaultView() {
   const list = secretsList.value;
   const revealed = revealedSecrets.value;
   const copied = copiedSecret.value;
+  const message = vaultMessage.value;
   const n = list.length;
   const heroTx = n === 0 ? "No secrets stored yet" : n === 1 ? "One secret safely sealed" : n + " secrets safely sealed";
 
@@ -158,7 +159,13 @@ export function VaultView() {
               </div>
             </div>
 
-            {list.length === 0 ? (
+            {message ? (
+              <div className="vault-empty-state">
+                <i className="ti ti-folder-open"></i>
+                <strong>{message}</strong>
+                <span>Use New project or pick a recent product, then return to Vault.</span>
+              </div>
+            ) : list.length === 0 ? (
               <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ink-3)', fontSize: '13px' }}>
                 No secrets yet. Click Add secret to store your first key.
               </div>

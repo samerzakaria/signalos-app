@@ -153,6 +153,21 @@ class TestLiteLLMCallPath:
         prov.chat(messages=[{"role": "user", "content": "hi"}], model="ollama/qwen2.5-coder:14b")
         assert lm._captured["model"] == "ollama/qwen2.5-coder:14b"
 
+    def test_selected_provider_prefixes_model_for_litellm(self):
+        assert (
+            _normalize_litellm_model("openai/gpt-4o", provider_name="openrouter")
+            == "openrouter/openai/gpt-4o"
+        )
+        assert _normalize_litellm_model("qwen-plus", provider_name="qwen") == "dashscope/qwen-plus"
+        assert _normalize_litellm_model("llama3", provider_name="ollama") == "ollama_chat/llama3"
+        assert _normalize_litellm_model("gpt-4o", provider_name="openai") == "openai/gpt-4o"
+
+    def test_chat_uses_selected_provider_for_prefixed_model_ids(self):
+        lm = _fake_litellm(response=_text_response("ready"))
+        prov = LiteLLMAgentProvider(litellm_module=lm, provider_name="openrouter")
+        prov.chat(messages=[{"role": "user", "content": "hi"}], model="openai/gpt-4o")
+        assert lm._captured["model"] == "openrouter/openai/gpt-4o"
+
     def test_adapter_drops_tools_when_unsupported(self):
         # ProviderAdapter must not forward tools if the provider can't use them.
         lm = _fake_litellm(response=_text_response("text only"))

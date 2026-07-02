@@ -71,7 +71,7 @@ describe('loadProviderModels', () => {
     expect(invoke).not.toHaveBeenCalledWith('delete_api_key', { provider: 'anthropic' });
   });
 
-  it('selects a fetched model from the provider list and persists it when requested', async () => {
+  it('clears a stale selected model instead of auto-selecting from the provider list', async () => {
     const invoke = vi.fn(async <T,>(cmd: string): Promise<T> => {
       if (cmd === 'fetch_provider_models') {
         return [
@@ -93,10 +93,10 @@ describe('loadProviderModels', () => {
     const result = await loadProviderModels('anthropic', 'valid-key', { persistSelection: true });
 
     expect(result).toHaveLength(2);
-    expect(state.aiModel.value).toBe('claude-sonnet-4-5-20250929');
+    expect(state.aiModel.value).toBe('');
     expect(invoke).toHaveBeenCalledWith('set_provider_model', {
       provider: 'anthropic',
-      model: 'claude-sonnet-4-5-20250929',
+      model: '',
     });
   });
 });

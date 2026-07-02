@@ -1,6 +1,6 @@
 import * as ipc from '../ipc.js';
 import { state } from '../state.js';
-import { showError } from '../util.js';
+import { providerConnectionMessage, showError } from '../util.js';
 import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from '../conversation.js';
 import { loadEnforcement, updateCostDisplay } from '../app-v2.js';
 import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/signalosPrompt.ts';
@@ -60,6 +60,15 @@ function parseGovernedChatCommand(value) {
 // can include a short trace of what the model was answering. Cleared in
 // finaliseStream / showStreamError so the map doesn't grow unbounded.
 const streamPrompts = new Map();
+
+function activeAgentPayload(extra = {}) {
+  const provider = String(state.ai || '').trim();
+  const model = String(state.aiModel || '').trim();
+  if (!provider || !model) {
+    throw new Error('Choose an AI provider and model in Settings before sending a chat message.');
+  }
+  return { ...extra, provider, model };
+}
 
 export async function loadBuild() {
   try {
@@ -168,14 +177,15 @@ async function sendMsg() {
       // Both stream via the "agent:event" channel; gate pauses, verdicts,
       // and cancel/resume are driven by agentEvents.ts.
       const command = isDeliveryIntent(val) ? 'agent:deliver' : 'agent:run';
-      await ipc.signal.runAndWait(command, [JSON.stringify({ prompt: val })], 600000);
+      await ipc.signal.runAndWait(command, [JSON.stringify(activeAgentPayload({ prompt: val }))], 600000);
     } catch (e) {
+      const message = providerConnectionMessage(e, state.ai || 'AI provider');
       state.chatBubbles = [...state.chatBubbles, {
         id: nowId(),
         kind: 'error',
-        text: 'Agent run failed: ' + (e && e.message ? e.message : String(e)),
+        text: 'Agent run failed: ' + message,
       }];
-      showError(e && e.message ? e.message : 'Agent run failed');
+      showError(message);
     } finally {
       // agentEvents normally clears busy on the terminal event; clear here too
       // so the composer never locks if the run ends without one.
@@ -250,6 +260,11 @@ async function sendMsg() {
     ? { agentSystemContext: waveAgentContent, gate: waveAgentGate }
     : {};
   const wrapped = wrapWithSignalosContext(val, wrapOptions);
+  if (!state.aiModel) {
+    state.busy = false;
+    showError('Select a model before sending a provider chat message.');
+    return;
+  }
 
   try {
     await ipc.provider.chatStream(streamId, state.ai, state.aiModel, wrapped);
@@ -307,7 +322,7 @@ async function sendMsg() {
       // no_block: conversational path — leave bubble as plain AI text
     }
   } catch (e) {
-    showStreamError(streamId, e.message);
+    showStreamError(streamId, providerConnectionMessage(e, state.ai || 'AI provider'));
   } finally {
     state.busy = false;
   }
@@ -546,7 +561,7 @@ export function finaliseStream(streamId) {
 }
 
 export function showStreamError(streamId, msg) {
-  const raw = String(msg || '').trim();
+  const raw = providerConnectionMessage(msg, state.ai || 'AI provider');
   const helpful = raw && raw !== 'undefined'
     ? raw
     : 'Chat provider did not return a usable response. Open Settings, select a provider and model, then retry.';
@@ -584,6 +599,10 @@ window.runCmd = runCmd;
 function sendChip(text) {
   const trimmed = (text || '').trim();
   if (!trimmed) return;
+  if (!state.aiModel) {
+    showError('Select a model before sending a provider chat message.');
+    return;
+  }
   addUserBubble(trimmed);
   const streamId = nowId();
   startStream(streamId);
@@ -592,6 +611,6 @@ function sendChip(text) {
   ipc.provider
     .chatStream(streamId, state.ai, state.aiModel, trimmed)
     .then(() => ipc.provider.getCost().then(updateCostDisplay).catch(() => {}))
-    .catch((e) => showStreamError(streamId, e.message));
+    .catch((e) => showStreamError(streamId, providerConnectionMessage(e, state.ai || 'AI provider')));
 }
 window.sendChip = sendChip;

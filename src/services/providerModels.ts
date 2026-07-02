@@ -95,8 +95,8 @@ export async function loadProviderModels(
     const next = models || [];
     providerModels.value = next;
     let selectedChanged = false;
-    if (next.length > 0 && !next.some((model) => model.id === aiModel.value)) {
-      aiModel.value = next[0].id;
+    if (next.length > 0 && aiModel.value && !next.some((model) => model.id === aiModel.value)) {
+      aiModel.value = '';
       selectedChanged = true;
     }
     if (selectedChanged && options.persistSelection) {

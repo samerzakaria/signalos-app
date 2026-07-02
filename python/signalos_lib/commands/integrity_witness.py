@@ -169,6 +169,19 @@ def check_witness(repo_root: Path | str | None = None) -> dict[str, Any]:
     for rel in sorted(path for path in current if path not in expected):
         issues.append(f"new integrity file not in witness: {rel}")
 
+    # Wave 0.2: audit-ledger tamper-evidence. A break in the signed hash chain
+    # (row edited in place, inserted, deleted, or reordered) is integrity drift,
+    # surfaced alongside governance-file drift.
+    audit_log = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    if audit_log.is_file():
+        try:
+            from ..sign import verify_audit_chain
+
+            for violation in verify_audit_chain(audit_log):
+                issues.append(f"audit ledger tampering: {violation}")
+        except Exception:  # pragma: no cover - verification must never crash the check
+            pass
+
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": not issues,

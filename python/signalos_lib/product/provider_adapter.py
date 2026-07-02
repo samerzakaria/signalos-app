@@ -246,9 +246,15 @@ class LiteLLMAgentProvider:
     never an empty success.
     """
 
-    def __init__(self, litellm_module: Any | None = None, max_tokens: int = 4096) -> None:
+    def __init__(
+        self,
+        litellm_module: Any | None = None,
+        max_tokens: int = 4096,
+        provider_name: str | None = None,
+    ) -> None:
         self._litellm = litellm_module
         self._max_tokens = max_tokens
+        self._provider_name = provider_name
 
     @property
     def litellm(self) -> Any:
@@ -265,7 +271,7 @@ class LiteLLMAgentProvider:
     ) -> AgentResponse:
         litellm = self.litellm
         kwargs: dict[str, Any] = {
-            "model": _normalize_litellm_model(model),
+            "model": _normalize_litellm_model(model, provider_name=self._provider_name),
             "messages": messages,
             "max_tokens": self._max_tokens,
         }
@@ -283,7 +289,7 @@ class LiteLLMAgentProvider:
                     "Provider authentication failed. Connect a provider in "
                     "Settings (set the API key) and retry."
                 ) from exc
-            raise RuntimeError(f"Provider call failed: {type(exc).__name__}: {exc}") from exc
+            raise RuntimeError(_provider_error_message(exc, provider_name=self._provider_name)) from exc
 
         if stream:
             return AgentResponse(
@@ -359,7 +365,7 @@ class LiteLLMAgentProvider:
                 return
 
 
-def _normalize_litellm_model(model: str) -> str:
+def _normalize_litellm_model_legacy_unused(model: str) -> str:
     """Route a bare model name to the correct LiteLLM provider path.
 
     A bare ``gemini-*`` name is ambiguous to LiteLLM and falls through to its
@@ -389,6 +395,73 @@ def _normalize_litellm_model(model: str) -> str:
     ):
         return f"gemini/{m}"
     return m
+
+
+_PROVIDER_PREFIX_BY_NAME: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "gemini": "gemini",
+    "qwen": "dashscope",
+    "dashscope": "dashscope",
+    "ollama": "ollama_chat",
+    "openrouter": "openrouter",
+    "deepseek": "deepseek",
+    "mistral": "mistral",
+    "groq": "groq",
+    "cerebras": "cerebras",
+    "together": "together_ai",
+    "togetherai": "together_ai",
+    "together_ai": "together_ai",
+    "xai": "xai",
+}
+
+
+def _normalize_litellm_model(model: str, provider_name: str | None = None) -> str:
+    """Route the selected provider/model pair to LiteLLM."""
+    import os
+
+    m = (model or "").strip()
+    provider_key = (provider_name or "").strip().lower()
+    prefix = _PROVIDER_PREFIX_BY_NAME.get(provider_key)
+    if prefix:
+        return m if m.startswith(f"{prefix}/") else f"{prefix}/{m}"
+    if "/" in m:
+        return m
+    if m.lower().startswith("gemini") and (
+        os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    ):
+        return f"gemini/{m}"
+    return m
+
+
+def _provider_error_message(exc: Exception, provider_name: str | None = None) -> str:
+    provider = (provider_name or "AI provider").strip() or "AI provider"
+    raw = str(exc)
+    extracted = raw
+    marker = '"message":"'
+    if marker in raw:
+        extracted = raw.split(marker, 1)[1].split('"', 1)[0]
+    lower = extracted.lower()
+    if "credit balance is too low" in lower or "purchase credits" in lower:
+        return (
+            f"{provider} account credit is too low. Add credits with that "
+            "provider or choose another provider/model in Settings."
+        )
+    if "llm provider not provided" in lower or "unmapped llm provider" in lower:
+        return (
+            f"Foundry could not route the selected model to {provider}. "
+            "Re-select the provider and model in Settings, then retry."
+        )
+    if "404" in lower or "not found" in lower or "does not exist" in lower:
+        return (
+            f"{provider} rejected the selected model for chat. Pick a "
+            "text/chat model in Settings, test it, then retry."
+        )
+    if any(token in lower for token in ("api key", "api_key", "unauthorized", "authentication", "401")):
+        return f"{provider} rejected the API key. Replace the key in Settings, then retry."
+    if "rate limit" in lower or "quota" in lower:
+        return f"{provider} is rate-limiting this request. Wait a bit or choose another provider/model."
+    return f"Provider call failed: {extracted}"
 
 
 def _is_auth_error(litellm: Any, exc: Exception) -> bool:
@@ -431,12 +504,16 @@ class ProviderAdapter:
         provider: AgentProvider | None = None,
         capabilities: ProviderCapabilities | None = None,
         litellm_module: Any | None = None,
+        provider_name: str | None = None,
     ) -> None:
         self.model = model
+        self.provider_name = provider_name
         self._provider: AgentProvider = provider or LiteLLMAgentProvider(
-            litellm_module=litellm_module
+            litellm_module=litellm_module,
+            provider_name=provider_name,
         )
-        self._caps = capabilities or detect_capabilities(model, litellm_module=litellm_module)
+        capability_model = _normalize_litellm_model(model, provider_name=provider_name)
+        self._caps = capabilities or detect_capabilities(capability_model, litellm_module=litellm_module)
 
     # --- capability surface --------------------------------------------------
 
@@ -467,7 +544,7 @@ class ProviderAdapter:
     def detect_capabilities(self, model: str | None = None) -> ProviderCapabilities:
         """Re-run capability detection (optionally for a different model)."""
         target = model or self.model
-        self._caps = detect_capabilities(target)
+        self._caps = detect_capabilities(_normalize_litellm_model(target, provider_name=self.provider_name))
         if model:
             self.model = model
         return self._caps

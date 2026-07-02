@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.0-internal.1] - 2026-07-02
+
+### Governed product lifecycle — integrity hardening + engineering foundation (Wave 0 + Wave 1 + C-bridge)
+
+- **Wave 0 (enforcement integrity):** gate signing now fails closed when required artifacts are missing or are unfilled template placeholders; the audit trail is a tamper-evident hash chain wired into `integrity-witness`; `check_second_opinion_wired` verifies real importability/callability instead of stale file paths; `PLAN_SCHEMA.json` is formally mirror-tested against the hand-written plan validator; the enforcement UI now reads the correct backend field (was silently showing "No rules loaded"); core governance invariants (`gate-gating`, `test-first`, `secret-block`, etc.) can no longer be toggled off via `set_rule_mode` — only tunable policy rules can; the previously dormant agentic UX-friction QA now runs on every design-gate preview.
+- **Wave 1 (engineering foundation):** a governed parallel-executor `TaskStore` (idempotent enqueue, atomic claim, lease/heartbeat reclaim, retry→dead-letter), with a real Postgres backend using `SELECT … FOR UPDATE SKIP LOCKED`; a budget hard-stop (90% warn / 100% halt) wired into the cost report; a task-class model router with cross-vendor critique routing (a critique always prefers a different model vendor than the artifact's author — no hardcoded model names, vendor resolved from provider config); maturity-tier labels (proven/supported/experimental) on every stack adapter; founder-facing plan structure (Feature→Epic→Story, release grouping, value score, provenance) layered on the existing typed plan; headless bidirectional tracker sync behind a `TrackerAdapter` protocol, with a real Jira Cloud adapter; a plain-words 4-field gate-brief contract (critic-authored, cross-vendor-independence enforced) with a live authoring pipeline; a completeness-rubric advisory pass (silent-omission detection) on gate artifacts; plain-words failure-state incident cards wired into the live gate-deadlock path; founder policy controls with a floor-gate invariant (no policy mode may ever remove qualification/Go-No-Go/design/deploy/launch).
+- **C-bridge:** belief auto-resolution (Keep/Refute/Iterate) from post-launch telemetry, gated so a hypothesis can only resolve against *signed* success metrics.
+- **Live-verified**, not just unit-tested: the Postgres executor store against a real dedicated database, the Jira tracker adapter against a real Jira Cloud site, and the full cross-vendor critique loop (one vendor authors, a different vendor critiques) against real Anthropic and OpenAI models.
+- See `docs/GOVERNED_PRODUCT_LIFECYCLE_IMPLEMENTATION_PLAN.md` for the full A/B/C plan this wave executes.
+
 ## [3.1.0-internal.2] - 2026-06-30
 
 ### Autonomous mode works with all providers (not just Claude)

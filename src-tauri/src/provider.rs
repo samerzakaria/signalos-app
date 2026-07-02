@@ -7,13 +7,12 @@
 ///
 /// Adding a new model or a new provider = edit providers.json. No recompile.
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-
-const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-4-20250514";
 
 // Wave 4 / G3-1: every HTTP call goes through this client so it gets a
 // real timeout. The previous implementation created `reqwest::Client::new()`
@@ -67,7 +66,11 @@ mod max_tokens_tests {
 
 #[cfg(test)]
 mod provider_tests {
-    use super::Provider;
+    use super::{
+        extract_openai_response_text, extract_openai_response_usage, newest_first,
+        openai_responses_body, read_active_provider, FetchedModel, Provider,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn from_str_round_trip() {
@@ -98,6 +101,110 @@ mod provider_tests {
             }
             assert!(p.needs_api_key(), "{:?} should need a key", p);
         }
+    }
+
+    #[test]
+    fn model_order_uses_provider_timestamps_newest_first() {
+        let models = newest_first(vec![
+            (
+                FetchedModel {
+                    id: "older".into(),
+                    name: "older".into(),
+                },
+                Some("00000000000000000010".into()),
+                0,
+            ),
+            (
+                FetchedModel {
+                    id: "newer".into(),
+                    name: "newer".into(),
+                },
+                Some("00000000000000000020".into()),
+                1,
+            ),
+        ]);
+
+        assert_eq!(
+            models.into_iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec!["newer", "older"]
+        );
+    }
+
+    #[test]
+    fn model_order_preserves_provider_order_without_timestamps() {
+        let models = newest_first(vec![
+            (
+                FetchedModel {
+                    id: "provider-first".into(),
+                    name: "provider-first".into(),
+                },
+                None,
+                0,
+            ),
+            (
+                FetchedModel {
+                    id: "provider-second".into(),
+                    name: "provider-second".into(),
+                },
+                None,
+                1,
+            ),
+        ]);
+
+        assert_eq!(
+            models.into_iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec!["provider-first", "provider-second"]
+        );
+    }
+
+    #[test]
+    fn openai_response_body_uses_responses_api_shape() {
+        let body = openai_responses_body("gpt-5.5", "hello", false);
+
+        assert_eq!(body["model"], "gpt-5.5");
+        assert_eq!(body["input"], "hello");
+        assert_eq!(body["store"], false);
+        assert!(body.get("stream").is_none());
+
+        let streaming = openai_responses_body("gpt-5.5", "hello", true);
+        assert_eq!(streaming["stream"], true);
+    }
+
+    #[test]
+    fn extracts_text_and_usage_from_openai_response_payload() {
+        let payload = serde_json::json!({
+            "output": [{
+                "type": "message",
+                "content": [{
+                    "type": "output_text",
+                    "text": "hello from responses"
+                }]
+            }],
+            "usage": {
+                "input_tokens": 7,
+                "output_tokens": 11
+            }
+        });
+
+        assert_eq!(
+            extract_openai_response_text(&payload),
+            "hello from responses"
+        );
+        assert_eq!(extract_openai_response_usage(&payload), (Some(7), Some(11)));
+    }
+
+    #[test]
+    fn missing_active_provider_file_is_not_an_implicit_anthropic_selection() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("signalos-active-provider-{nonce}"));
+        std::fs::create_dir_all(&root).expect("create temp config dir");
+
+        assert!(read_active_provider(&root).is_none());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 
@@ -232,8 +339,8 @@ impl Provider {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProviderConfig {
     /// The model string sent to the API — user sets this, we never hardcode it.
-    /// Ollama: whatever the user has pulled (e.g. "llama3.2", "mistral", "phi4").
-    /// Cloud providers: whatever the user wants (e.g. "claude-sonnet-4-20250514", "gpt-4o-mini").
+    /// Empty means the UI must fetch the provider's live list and the user
+    /// must choose an explicit model before provider calls run.
     pub model: String,
 
     /// USD per 1M input tokens. User can update when providers change pricing.
@@ -244,17 +351,14 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Wave 1 / G0-4: refreshed defaults to current-generation, cost-efficient
-    /// models per provider. Anthropic uses the stable Sonnet 4 snapshot API ID;
-    /// OpenAI defaults to gpt-4o-mini (10x cheaper than gpt-4o for similar
-    /// Builder reliability); Gemini defaults to 2.5-flash. Users can upgrade
-    /// per provider via the model picker.
+    /// Bootstrap provider metadata. Model selection intentionally starts blank:
+    /// fetched provider models and explicit user choice are the source of truth.
     fn defaults() -> HashMap<String, ProviderConfig> {
         [
             (
                 "anthropic",
                 ProviderConfig {
-                    model: DEFAULT_ANTHROPIC_MODEL.into(),
+                    model: String::new(),
                     price_in_1m: 3.00,
                     price_out_1m: 15.00,
                 },
@@ -262,7 +366,7 @@ impl ProviderConfig {
             (
                 "openai",
                 ProviderConfig {
-                    model: "gpt-4o-mini".into(),
+                    model: String::new(),
                     price_in_1m: 0.15,
                     price_out_1m: 0.60,
                 },
@@ -270,7 +374,7 @@ impl ProviderConfig {
             (
                 "gemini",
                 ProviderConfig {
-                    model: "gemini-2.5-flash".into(),
+                    model: String::new(),
                     price_in_1m: 0.075,
                     price_out_1m: 0.30,
                 },
@@ -278,7 +382,7 @@ impl ProviderConfig {
             (
                 "ollama",
                 ProviderConfig {
-                    model: "".into(), // blank — user fills in their pulled model
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -286,7 +390,7 @@ impl ProviderConfig {
             (
                 "qwen",
                 ProviderConfig {
-                    model: "qwen-plus".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -294,7 +398,7 @@ impl ProviderConfig {
             (
                 "openrouter",
                 ProviderConfig {
-                    model: "qwen/qwen-plus".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -302,7 +406,7 @@ impl ProviderConfig {
             (
                 "deepseek",
                 ProviderConfig {
-                    model: "deepseek-chat".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -310,7 +414,7 @@ impl ProviderConfig {
             (
                 "mistral",
                 ProviderConfig {
-                    model: "mistral-large-latest".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -318,7 +422,7 @@ impl ProviderConfig {
             (
                 "groq",
                 ProviderConfig {
-                    model: "llama-3.3-70b-versatile".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -326,7 +430,7 @@ impl ProviderConfig {
             (
                 "cerebras",
                 ProviderConfig {
-                    model: "llama-4-scout-17b-16e-instruct".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -334,7 +438,7 @@ impl ProviderConfig {
             (
                 "together",
                 ProviderConfig {
-                    model: "meta-llama/Llama-3.3-70B-Instruct-Turbo".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -342,7 +446,7 @@ impl ProviderConfig {
             (
                 "xai",
                 ProviderConfig {
-                    model: "grok-4".into(),
+                    model: String::new(),
                     price_in_1m: 0.00,
                     price_out_1m: 0.00,
                 },
@@ -449,12 +553,15 @@ impl ProviderState {
     }
 }
 
-fn load_active_provider(app_config_dir: &std::path::Path) -> Provider {
+fn read_active_provider(app_config_dir: &std::path::Path) -> Option<Provider> {
     let path = app_config_dir.join(ACTIVE_PROVIDER_FILE);
     std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| Provider::from_str(raw.trim()))
-        .unwrap_or(Provider::Anthropic)
+}
+
+fn load_active_provider(app_config_dir: &std::path::Path) -> Provider {
+    read_active_provider(app_config_dir).unwrap_or(Provider::Anthropic)
 }
 
 fn persist_active_provider(app_config_dir: &std::path::Path, provider: &Provider) {
@@ -522,6 +629,9 @@ pub fn list_providers(state: State<ProviderState>) -> Vec<ProviderInfo> {
 
 #[tauri::command]
 pub fn get_active_provider(state: State<ProviderState>) -> String {
+    if read_active_provider(&state.app_config_dir).is_none() {
+        return String::new();
+    }
     state.active.lock().unwrap().id().into()
 }
 
@@ -685,58 +795,88 @@ pub async fn test_provider_connection(
     let message = "ping";
     let response = match provider_enum {
         Provider::Anthropic => chat_anthropic(&key, &selected_model, message).await?,
-        Provider::OpenAI => {
-            chat_openai(&key, Provider::OpenAI.api_base(), &selected_model, message).await?
-        }
+        Provider::OpenAI => chat_openai_responses(&key, &selected_model, message).await?,
         Provider::Gemini => chat_gemini(&key, &selected_model, message).await?,
         Provider::Ollama => chat_ollama(&selected_model, message).await?,
         Provider::Qwen => {
-            chat_openai(&key, Provider::Qwen.api_base(), &selected_model, message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::Qwen.api_base(),
+                "Qwen",
+                &selected_model,
+                message,
+            )
+            .await?
         }
         Provider::OpenRouter => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::OpenRouter.api_base(),
+                "OpenRouter",
                 &selected_model,
                 message,
             )
             .await?
         }
         Provider::DeepSeek => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::DeepSeek.api_base(),
+                "DeepSeek",
                 &selected_model,
                 message,
             )
             .await?
         }
         Provider::Mistral => {
-            chat_openai(&key, Provider::Mistral.api_base(), &selected_model, message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::Mistral.api_base(),
+                "Mistral",
+                &selected_model,
+                message,
+            )
+            .await?
         }
         Provider::Groq => {
-            chat_openai(&key, Provider::Groq.api_base(), &selected_model, message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::Groq.api_base(),
+                "Groq",
+                &selected_model,
+                message,
+            )
+            .await?
         }
         Provider::Cerebras => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::Cerebras.api_base(),
+                "Cerebras",
                 &selected_model,
                 message,
             )
             .await?
         }
         Provider::Together => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::Together.api_base(),
+                "Together AI",
                 &selected_model,
                 message,
             )
             .await?
         }
         Provider::XAI => {
-            chat_openai(&key, Provider::XAI.api_base(), &selected_model, message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::XAI.api_base(),
+                "xAI",
+                &selected_model,
+                message,
+            )
+            .await?
         }
     };
 
@@ -829,14 +969,7 @@ pub async fn send_provider_message_stream(
     let result: Result<(String, Option<u64>, Option<u64>), String> = match provider_enum {
         Provider::Anthropic => stream_anthropic(&key, &selected_model, &message, &emitter).await,
         Provider::OpenAI => {
-            stream_openai_compatible(
-                &key,
-                Provider::OpenAI.api_base(),
-                &selected_model,
-                &message,
-                &emitter,
-            )
-            .await
+            stream_openai_responses(&key, &selected_model, &message, &emitter).await
         }
         Provider::Gemini => stream_gemini(&key, &selected_model, &message, &emitter).await,
         Provider::Ollama => stream_ollama(&selected_model, &message, &emitter).await,
@@ -844,6 +977,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::Qwen.api_base(),
+                "Qwen",
                 &selected_model,
                 &message,
                 &emitter,
@@ -854,6 +988,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::OpenRouter.api_base(),
+                "OpenRouter",
                 &selected_model,
                 &message,
                 &emitter,
@@ -864,6 +999,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::DeepSeek.api_base(),
+                "DeepSeek",
                 &selected_model,
                 &message,
                 &emitter,
@@ -874,6 +1010,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::Mistral.api_base(),
+                "Mistral",
                 &selected_model,
                 &message,
                 &emitter,
@@ -884,6 +1021,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::Groq.api_base(),
+                "Groq",
                 &selected_model,
                 &message,
                 &emitter,
@@ -894,6 +1032,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::Cerebras.api_base(),
+                "Cerebras",
                 &selected_model,
                 &message,
                 &emitter,
@@ -904,6 +1043,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::Together.api_base(),
+                "Together AI",
                 &selected_model,
                 &message,
                 &emitter,
@@ -914,6 +1054,7 @@ pub async fn send_provider_message_stream(
             stream_openai_compatible(
                 &key,
                 Provider::XAI.api_base(),
+                "xAI",
                 &selected_model,
                 &message,
                 &emitter,
@@ -1046,9 +1187,147 @@ async fn stream_anthropic(
     Ok((text, tokens_in, tokens_out))
 }
 
+fn openai_responses_body(model: &str, message: &str, stream: bool) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "input": message,
+        "store": false,
+    });
+    if stream {
+        body["stream"] = serde_json::Value::Bool(true);
+    }
+    body
+}
+
+fn extract_openai_response_text(resp: &serde_json::Value) -> String {
+    if let Some(text) = resp.get("output_text").and_then(|v| v.as_str()) {
+        if !text.trim().is_empty() {
+            return text.to_string();
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(output) = resp.get("output").and_then(|v| v.as_array()) {
+        for item in output {
+            let Some(content) = item.get("content").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for part in content {
+                let is_output_text = part
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(|kind| kind == "output_text" || kind == "text")
+                    .unwrap_or(false);
+                if is_output_text {
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        if !text.is_empty() {
+                            parts.push(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    parts.join("\n")
+}
+
+fn extract_openai_response_usage(resp: &serde_json::Value) -> (Option<u64>, Option<u64>) {
+    let usage = resp.get("usage").unwrap_or(&serde_json::Value::Null);
+    (
+        usage.get("input_tokens").and_then(|v| v.as_u64()),
+        usage.get("output_tokens").and_then(|v| v.as_u64()),
+    )
+}
+
+fn openai_stream_error(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("error")
+        .or_else(|| value.get("response").and_then(|v| v.get("error")))
+        .and_then(|err| {
+            err.get("message")
+                .and_then(|v| v.as_str())
+                .or_else(|| err.as_str())
+        })
+        .map(|s| s.to_string())
+}
+
+async fn stream_openai_responses(
+    api_key: &Option<String>,
+    model: &str,
+    message: &str,
+    emit: &StreamEmitter,
+) -> Result<(String, Option<u64>, Option<u64>), String> {
+    let key = api_key.as_deref().ok_or("OpenAI requires an API key")?;
+    let body = openai_responses_body(model, message, true);
+    let resp = http()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .header("accept", "text/event-stream")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| provider_request_error("OpenAI", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("OpenAI stream HTTP {}: {}", status.as_u16(), body));
+    }
+
+    let mut text = String::new();
+    let mut tokens_in: Option<u64> = None;
+    let mut tokens_out: Option<u64> = None;
+    let stream = resp.bytes_stream();
+    let reader = StreamReader::new(stream.map(|r| r.map_err(std::io::Error::other)));
+    let mut lines = reader.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if !line.starts_with("data: ") {
+            continue;
+        }
+        let payload = &line[6..];
+        if payload == "[DONE]" {
+            break;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        let kind = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if kind == "response.output_text.delta" {
+            if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
+                text.push_str(delta);
+                emit.delta(delta);
+            }
+        } else if kind == "response.output_text.done" {
+            if text.is_empty() {
+                if let Some(done_text) = value.get("text").and_then(|v| v.as_str()) {
+                    text.push_str(done_text);
+                    emit.delta(done_text);
+                }
+            }
+        } else if kind == "response.completed" {
+            if let Some(response) = value.get("response") {
+                let (input, output) = extract_openai_response_usage(response);
+                tokens_in = input.or(tokens_in);
+                tokens_out = output.or(tokens_out);
+                if text.is_empty() {
+                    let final_text = extract_openai_response_text(response);
+                    if !final_text.is_empty() {
+                        text.push_str(&final_text);
+                        emit.delta(&final_text);
+                    }
+                }
+            }
+        } else if kind == "response.failed" {
+            return Err(openai_stream_error(&value)
+                .unwrap_or_else(|| "OpenAI response failed before completion.".to_string()));
+        }
+    }
+    Ok((text, tokens_in, tokens_out))
+}
+
 async fn stream_openai_compatible(
     api_key: &Option<String>,
     base_url: &str,
+    display_name: &str,
     model: &str,
     message: &str,
     emit: &StreamEmitter,
@@ -1070,12 +1349,12 @@ async fn stream_openai_compatible(
         .json(&body)
         .send()
         .await
-        .map_err(|e| provider_request_error("AI provider", e))?;
+        .map_err(|e| provider_request_error(display_name, e))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         return Err(format!(
-            "Provider stream HTTP {}: {}",
+            "{display_name} stream HTTP {}: {}",
             status.as_u16(),
             body
         ));
@@ -1254,64 +1533,88 @@ pub async fn send_provider_message(
 
     let response = match provider_enum {
         Provider::Anthropic => chat_anthropic(&key, &selected_model, &message).await?,
-        Provider::OpenAI => {
-            chat_openai(&key, Provider::OpenAI.api_base(), &selected_model, &message).await?
-        }
+        Provider::OpenAI => chat_openai_responses(&key, &selected_model, &message).await?,
         Provider::Gemini => chat_gemini(&key, &selected_model, &message).await?,
         Provider::Ollama => chat_ollama(&selected_model, &message).await?,
         Provider::Qwen => {
-            chat_openai(&key, Provider::Qwen.api_base(), &selected_model, &message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::Qwen.api_base(),
+                "Qwen",
+                &selected_model,
+                &message,
+            )
+            .await?
         }
         Provider::OpenRouter => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::OpenRouter.api_base(),
+                "OpenRouter",
                 &selected_model,
                 &message,
             )
             .await?
         }
         Provider::DeepSeek => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::DeepSeek.api_base(),
+                "DeepSeek",
                 &selected_model,
                 &message,
             )
             .await?
         }
         Provider::Mistral => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::Mistral.api_base(),
+                "Mistral",
                 &selected_model,
                 &message,
             )
             .await?
         }
         Provider::Groq => {
-            chat_openai(&key, Provider::Groq.api_base(), &selected_model, &message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::Groq.api_base(),
+                "Groq",
+                &selected_model,
+                &message,
+            )
+            .await?
         }
         Provider::Cerebras => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::Cerebras.api_base(),
+                "Cerebras",
                 &selected_model,
                 &message,
             )
             .await?
         }
         Provider::Together => {
-            chat_openai(
+            chat_openai_compatible(
                 &key,
                 Provider::Together.api_base(),
+                "Together AI",
                 &selected_model,
                 &message,
             )
             .await?
         }
         Provider::XAI => {
-            chat_openai(&key, Provider::XAI.api_base(), &selected_model, &message).await?
+            chat_openai_compatible(
+                &key,
+                Provider::XAI.api_base(),
+                "xAI",
+                &selected_model,
+                &message,
+            )
+            .await?
         }
     };
 
@@ -1337,6 +1640,35 @@ pub struct FetchedModel {
     pub name: String, // human display name returned by the provider
 }
 
+type ModelWithOrder = (FetchedModel, Option<String>, usize);
+
+fn model_timestamp_key(model: &serde_json::Value, fields: &[&str]) -> Option<String> {
+    for field in fields {
+        let value = &model[*field];
+        if let Some(created) = value.as_u64() {
+            return Some(format!("{created:020}"));
+        }
+        if let Some(created) = value.as_i64() {
+            return Some(format!("{created:020}"));
+        }
+        if let Some(created) = value.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+            return Some(created.to_string());
+        }
+    }
+    None
+}
+
+fn newest_first(models: Vec<ModelWithOrder>) -> Vec<FetchedModel> {
+    let mut ordered = models;
+    ordered.sort_by(|a, b| match (&a.1, &b.1) {
+        (Some(left), Some(right)) => right.cmp(left).then_with(|| a.2.cmp(&b.2)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.2.cmp(&b.2),
+    });
+    ordered.into_iter().map(|(model, _, _)| model).collect()
+}
+
 /// Fetch available models from the selected provider's API.
 /// For Ollama: hits localhost:11434 — no key needed.
 /// For cloud providers: uses the supplied API key.
@@ -1357,13 +1689,7 @@ pub async fn fetch_provider_models(
         "openai" => fetch_openai(&resolved_api_key).await,
         "gemini" => fetch_gemini(&resolved_api_key).await,
         "qwen" => {
-            fetch_openai_compatible(
-                &resolved_api_key,
-                Provider::Qwen.api_base(),
-                "Qwen",
-                &["qwen"],
-            )
-            .await
+            fetch_openai_compatible(&resolved_api_key, Provider::Qwen.api_base(), "Qwen").await
         }
         "ollama" => fetch_ollama().await,
         "openrouter" => {
@@ -1371,58 +1697,33 @@ pub async fn fetch_provider_models(
                 &resolved_api_key,
                 Provider::OpenRouter.api_base(),
                 "OpenRouter",
-                &[],
             )
             .await
         }
         "deepseek" => {
-            fetch_openai_compatible(
-                &resolved_api_key,
-                Provider::DeepSeek.api_base(),
-                "DeepSeek",
-                &["deepseek"],
-            )
-            .await
+            fetch_openai_compatible(&resolved_api_key, Provider::DeepSeek.api_base(), "DeepSeek")
+                .await
         }
         "mistral" => {
-            fetch_openai_compatible(
-                &resolved_api_key,
-                Provider::Mistral.api_base(),
-                "Mistral",
-                &["mistral"],
-            )
-            .await
+            fetch_openai_compatible(&resolved_api_key, Provider::Mistral.api_base(), "Mistral")
+                .await
         }
         "groq" => {
-            fetch_openai_compatible(&resolved_api_key, Provider::Groq.api_base(), "Groq", &[]).await
+            fetch_openai_compatible(&resolved_api_key, Provider::Groq.api_base(), "Groq").await
         }
         "cerebras" => {
-            fetch_openai_compatible(
-                &resolved_api_key,
-                Provider::Cerebras.api_base(),
-                "Cerebras",
-                &[],
-            )
-            .await
+            fetch_openai_compatible(&resolved_api_key, Provider::Cerebras.api_base(), "Cerebras")
+                .await
         }
         "together" => {
             fetch_openai_compatible(
                 &resolved_api_key,
                 Provider::Together.api_base(),
                 "Together AI",
-                &[],
             )
             .await
         }
-        "xai" => {
-            fetch_openai_compatible(
-                &resolved_api_key,
-                Provider::XAI.api_base(),
-                "xAI",
-                &["grok"],
-            )
-            .await
-        }
+        "xai" => fetch_openai_compatible(&resolved_api_key, Provider::XAI.api_base(), "xAI").await,
         _ => Err(format!("Unknown provider: {provider}")),
     }
 }
@@ -1438,17 +1739,22 @@ async fn fetch_anthropic(api_key: &Option<String>) -> Result<Vec<FetchedModel>, 
     )
     .await?;
 
-    let models = resp["data"]
+    let models: Vec<ModelWithOrder> = resp["data"]
         .as_array()
         .ok_or("Unexpected Anthropic response")?
         .iter()
-        .filter_map(|m| {
+        .enumerate()
+        .filter_map(|(index, m)| {
             let id = m["id"].as_str()?.to_string();
             let name = m["display_name"].as_str().unwrap_or(&id).to_string();
-            Some(FetchedModel { id, name })
+            Some((
+                FetchedModel { id, name },
+                model_timestamp_key(m, &["created_at", "created"]),
+                index,
+            ))
         })
         .collect();
-    Ok(models)
+    Ok(newest_first(models))
 }
 
 async fn fetch_openai(api_key: &Option<String>) -> Result<Vec<FetchedModel>, String> {
@@ -1461,25 +1767,24 @@ async fn fetch_openai(api_key: &Option<String>) -> Result<Vec<FetchedModel>, Str
     )
     .await?;
 
-    // Filter to chat-capable models only — OpenAI returns dozens of fine-tune / TTS / embedding models
-    let useful = ["gpt-4", "gpt-3.5-turbo", "o1", "o3", "o4", "chatgpt"];
-    let mut models: Vec<FetchedModel> = resp["data"]
+    let models: Vec<ModelWithOrder> = resp["data"]
         .as_array()
         .ok_or("Unexpected OpenAI response")?
         .iter()
-        .filter_map(|m| {
+        .enumerate()
+        .filter_map(|(index, m)| {
             let id = m["id"].as_str()?.to_string();
-            let keep = useful.iter().any(|prefix| id.starts_with(prefix));
-            keep.then(|| FetchedModel {
-                name: id.clone(),
-                id,
-            })
+            Some((
+                FetchedModel {
+                    name: id.clone(),
+                    id,
+                },
+                model_timestamp_key(m, &["created", "created_at"]),
+                index,
+            ))
         })
         .collect();
-
-    // Newest first
-    models.sort_by(|a, b| b.id.cmp(&a.id));
-    Ok(models)
+    Ok(newest_first(models))
 }
 
 async fn fetch_gemini(api_key: &Option<String>) -> Result<Vec<FetchedModel>, String> {
@@ -1487,28 +1792,23 @@ async fn fetch_gemini(api_key: &Option<String>) -> Result<Vec<FetchedModel>, Str
     let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={key}");
     let resp = fetch_json("Gemini", http().get(&url)).await?;
 
-    let models = resp["models"]
+    let models: Vec<ModelWithOrder> = resp["models"]
         .as_array()
         .ok_or("Unexpected Gemini response")?
         .iter()
-        .filter_map(|m| {
-            // Only keep models that support text generation
-            let methods = m["supportedGenerationMethods"].as_array()?;
-            let supports_generate = methods
-                .iter()
-                .any(|v| v.as_str() == Some("generateContent"));
-            if !supports_generate {
-                return None;
-            }
-
-            // Strip "models/" prefix from the name field → that's the model ID
+        .enumerate()
+        .filter_map(|(index, m)| {
             let raw = m["name"].as_str()?;
             let id = raw.strip_prefix("models/").unwrap_or(raw).to_string();
             let name = m["displayName"].as_str().unwrap_or(&id).to_string();
-            Some(FetchedModel { id, name })
+            Some((
+                FetchedModel { id, name },
+                model_timestamp_key(m, &["createTime", "updateTime"]),
+                index,
+            ))
         })
         .collect();
-    Ok(models)
+    Ok(newest_first(models))
 }
 
 async fn fetch_ollama() -> Result<Vec<FetchedModel>, String> {
@@ -1521,26 +1821,30 @@ async fn fetch_ollama() -> Result<Vec<FetchedModel>, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let models = resp["models"]
+    let models: Vec<ModelWithOrder> = resp["models"]
         .as_array()
         .ok_or("No models found — have you pulled any? Run: ollama pull llama3.2")?
         .iter()
-        .filter_map(|m| {
+        .enumerate()
+        .filter_map(|(index, m)| {
             let id = m["name"].as_str()?.to_string();
-            Some(FetchedModel {
-                name: id.clone(),
-                id,
-            })
+            Some((
+                FetchedModel {
+                    name: id.clone(),
+                    id,
+                },
+                model_timestamp_key(m, &["modified_at", "created_at", "created"]),
+                index,
+            ))
         })
         .collect();
-    Ok(models)
+    Ok(newest_first(models))
 }
 
 async fn fetch_openai_compatible(
     api_key: &Option<String>,
     base_url: &str,
     display_name: &str,
-    useful_prefixes: &[&str],
 ) -> Result<Vec<FetchedModel>, String> {
     let key = api_key
         .as_deref()
@@ -1548,23 +1852,24 @@ async fn fetch_openai_compatible(
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let resp = fetch_json(display_name, http().get(url).bearer_auth(key)).await?;
 
-    let mut models: Vec<FetchedModel> = resp["data"]
+    let models: Vec<ModelWithOrder> = resp["data"]
         .as_array()
         .ok_or_else(|| format!("Unexpected {display_name} response"))?
         .iter()
-        .filter_map(|m| {
+        .enumerate()
+        .filter_map(|(index, m)| {
             let id = m["id"].as_str()?.to_string();
-            let keep = useful_prefixes.is_empty()
-                || useful_prefixes.iter().any(|prefix| id.starts_with(prefix));
-            keep.then(|| FetchedModel {
-                name: id.clone(),
-                id,
-            })
+            Some((
+                FetchedModel {
+                    name: id.clone(),
+                    id,
+                },
+                model_timestamp_key(m, &["created", "created_at"]),
+                index,
+            ))
         })
         .collect();
-
-    models.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(models)
+    Ok(newest_first(models))
 }
 
 fn resolve_model(
@@ -1897,9 +2202,35 @@ async fn chat_anthropic(
     })
 }
 
-async fn chat_openai(
+async fn chat_openai_responses(
+    api_key: &Option<String>,
+    model: &str,
+    message: &str,
+) -> Result<ProviderChatResponse, String> {
+    let key = api_key.as_deref().ok_or("OpenAI requires an API key")?;
+    let resp = chat_json(
+        "OpenAI",
+        http()
+            .post("https://api.openai.com/v1/responses")
+            .bearer_auth(key)
+            .json(&openai_responses_body(model, message, false)),
+    )
+    .await?;
+    let (tokens_in, tokens_out) = extract_openai_response_usage(&resp);
+
+    Ok(ProviderChatResponse {
+        text: extract_openai_response_text(&resp),
+        tokens_in,
+        tokens_out,
+        provider: "openai".into(),
+        model: model.into(),
+    })
+}
+
+async fn chat_openai_compatible(
     api_key: &Option<String>,
     base_url: &str,
+    display_name: &str,
     model: &str,
     message: &str,
 ) -> Result<ProviderChatResponse, String> {
@@ -1911,7 +2242,7 @@ async fn chat_openai(
         "model": model,
         "messages": [{ "role": "user", "content": message }],
     });
-    let resp = chat_json("AI provider", http().post(url).bearer_auth(key).json(&body)).await?;
+    let resp = chat_json(display_name, http().post(url).bearer_auth(key).json(&body)).await?;
     let text = resp["choices"]
         .as_array()
         .and_then(|choices| choices.first())

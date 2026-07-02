@@ -28,6 +28,10 @@ function mockRun(payload: unknown) {
   );
 }
 
+function mockRunRaw(payload: unknown) {
+  (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(payload);
+}
+
 function mockRunError(message: string) {
   (ipc.signal.runAndWait as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
     new Error(message),
@@ -103,5 +107,15 @@ describe('VelocityPanel', () => {
     expect(err).toBeInTheDocument();
     expect(err.textContent || '').toMatch(/Sidecar timed out/);
     expect(screen.queryByTestId('velocity-body')).toBeNull();
+  });
+
+  it('renders a readable error when the CLI returns human text instead of JSON', async () => {
+    mockRunRaw('sessions/day (last 14d): 0.0\nlast session: -');
+
+    render(<VelocityPanel />);
+
+    const err = await screen.findByTestId('velocity-error');
+    expect(err.textContent || '').toMatch(/Velocity returned a summary instead of dashboard data/i);
+    expect(err.textContent || '').not.toMatch(/Unexpected token/i);
   });
 });

@@ -90,6 +90,15 @@ class Task:
     # Smart-retry context: set by retryTask to feed the previous failure
     # reason back into the new task prompt.
     previous_failure: str = ""
+    # Founder-facing plan structure (Wave 1.6): Feature -> Epic -> Story
+    # hierarchy, release grouping, value score, and provenance (where the item
+    # came from -- founder, war-room, idea-ledger, growth-loop). All optional and
+    # backward-compatible: unset fields are omitted from the YAML.
+    feature: str = ""
+    epic: str = ""
+    release: str = ""
+    value: int = 0
+    provenance: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict suitable for YAML round-trip."""
@@ -121,6 +130,16 @@ class Task:
             d["skills"] = list(self.skills)
         if self.previous_failure:
             d["previous_failure"] = self.previous_failure
+        if self.feature:
+            d["feature"] = self.feature
+        if self.epic:
+            d["epic"] = self.epic
+        if self.release:
+            d["release"] = self.release
+        if self.value:
+            d["value"] = self.value
+        if self.provenance:
+            d["provenance"] = self.provenance
         return d
 
     @staticmethod
@@ -142,6 +161,11 @@ class Task:
             files=[str(x) for x in raw.get("files", [])],
             skills=[str(x) for x in raw.get("skills", [])],
             previous_failure=str(raw.get("previous_failure", "")),
+            feature=str(raw.get("feature", "")),
+            epic=str(raw.get("epic", "")),
+            release=str(raw.get("release", "")),
+            value=int(raw.get("value", 0) or 0),
+            provenance=str(raw.get("provenance", "")),
         )
 
 
@@ -158,6 +182,28 @@ class PlanDoc:
         if self.generated_at:
             d["generated_at"] = self.generated_at
         return d
+
+
+def roadmap_tree(doc: PlanDoc) -> dict[str, Any]:
+    """Founder-facing roadmap view (Wave 1.6): a Feature -> Epic -> Story
+    hierarchy plus a release grouping, derived from the plan's tasks. Items with
+    no feature/epic/release land under an explicit "(unassigned)" bucket rather
+    than being dropped."""
+    features: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    releases: dict[str, list[str]] = {}
+    for t in doc.tasks:
+        feature = t.feature or "(unassigned feature)"
+        epic = t.epic or "(unassigned epic)"
+        story = {
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "value": t.value,
+            "provenance": t.provenance or "founder",
+        }
+        features.setdefault(feature, {}).setdefault(epic, []).append(story)
+        releases.setdefault(t.release or "(unassigned release)", []).append(t.id)
+    return {"features": features, "releases": releases}
 
 
 # ---------------------------------------------------------------------------

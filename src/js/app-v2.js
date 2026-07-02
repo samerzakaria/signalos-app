@@ -24,6 +24,7 @@ import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamEr
 import { state } from "./state.js";
 
 import { esc, errorMessage, isProviderAuthFailure, providerConnectionMessage, showError, showWarning } from "./util.js";
+import { mapEnforcementRules } from "../enforcementView.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -34,6 +35,27 @@ function workspaceNameFromPath(path) {
 function isStarterWorkspacePath(path) {
   const name = workspaceNameFromPath(path);
   return name === "SignalOS Workspace" || name === "Foundry Workspace";
+}
+
+function activeProviderId(value) {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    return String(value.provider || value.id || "").trim();
+  }
+  return "";
+}
+
+async function loadActiveProviderPreference() {
+  const [active, providers] = await Promise.all([
+    ipc.provider.getActive().catch(() => ""),
+    ipc.provider.list().catch(() => []),
+  ]);
+  const provider = activeProviderId(active);
+  const configured = Array.isArray(providers)
+    ? providers.find((entry) => entry && entry.id === provider)
+    : null;
+  const model = (configured?.model || (typeof active === "object" ? active?.model : "") || "").trim();
+  return { provider, model };
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -69,12 +91,10 @@ async function bootApp() {
 
   try {
     // Provider + cost
-    const prov = await ipc.provider.getActive();
-    if (prov) {
-      state.ai = prov.provider || state.ai;
-      state.aiModel = prov.model || state.aiModel;
-      // Reactive state handles Titlebar updates natively.
-    }
+    const prov = await loadActiveProviderPreference();
+    state.ai = prov.provider || state.ai;
+    state.aiModel = prov.model || "";
+    // Reactive state handles Titlebar updates natively.
   } catch (e) {
     console.warn("Could not load provider:", errorMessage(e));
   }
@@ -261,7 +281,7 @@ window.switchSbTab = switchSbTab;
 export async function loadEnforcement() {
   try {
     const enfState = await ipc.enforcement.state();
-    state.enforcementRules = enfState?.rules || [];
+    state.enforcementRules = mapEnforcementRules(enfState);
     state.waveFrozen = Boolean(enfState?.wave_frozen);
   } catch (e) {
     console.warn("Could not load enforcement state:", errorMessage(e));
@@ -530,11 +550,22 @@ window.filterBrain = filterBrain;
 
 async function loadVault() {
   try {
+    state.vaultMessage = null;
+    const active = await ipc.workspace.get().catch(() => null);
+    const candidate = String(state.workspace || state.workspacePath || "").trim();
+    if (!active && candidate && !isStarterWorkspacePath(candidate)) {
+      await ipc.workspace.set(candidate).catch(() => null);
+    }
     const list = await ipc.secrets.list();
     state.secrets = list || [];
   } catch (e) {
-    console.warn("Vault load error:", errorMessage(e));
-    showError("Could not load Vault: " + errorMessage(e));
+    const message = errorMessage(e);
+    console.warn("Vault load error:", message);
+    state.secrets = [];
+    state.vaultMessage = message;
+    if (!/Open or create a product first/i.test(message)) {
+      showError("Could not load Vault: " + message);
+    }
   }
 }
 
@@ -721,7 +752,7 @@ async function loadSettings() {
   try {
     const [id, prov, cost] = await Promise.all([
       ipc.identity.get(),
-      ipc.provider.getActive(),
+      loadActiveProviderPreference(),
       ipc.provider.getCost(),
     ]);
 
@@ -730,10 +761,8 @@ async function loadSettings() {
       state.userRole = id.role || "PO";
     }
 
-    if (prov) {
-      state.ai = prov.provider || "anthropic";
-      state.aiModel = prov.model || "";
-    }
+    state.ai = prov.provider || "";
+    state.aiModel = prov.model || "";
 
     if (cost) {
       state.cost = cost.session_usd ?? cost.total_usd ?? 0;
@@ -796,11 +825,16 @@ async function changeProvider() {
   state.providerModelsError = null;
   try {
     await ipc.provider.setActive(p);
+    const providers = await ipc.provider.list().catch(() => []);
+    const configured = Array.isArray(providers)
+      ? providers.find((entry) => entry && entry.id === p)
+      : null;
+    state.aiModel = configured?.model || "";
     const models = await ipc.provider.fetchModels(p, null);
     if (Array.isArray(models) && models.length > 0) {
       state.providerModels = models;
-      if (!models.some((model) => model.id === state.aiModel)) {
-        state.aiModel = models[0].id;
+      if (state.aiModel && !models.some((model) => model.id === state.aiModel)) {
+        state.aiModel = "";
         await ipc.provider.setModel(p, state.aiModel);
       }
     } else {
@@ -829,14 +863,18 @@ window.changeModel = changeModel;
 
 async function refreshCurrentProviderModels(apiKey) {
   state.providerModelsError = null;
+  if (!state.ai) {
+    throw new Error("Select an AI provider before fetching models.");
+  }
   try {
     const models = await ipc.provider.fetchModels(state.ai, apiKey || null);
     if (!Array.isArray(models) || models.length === 0) {
       throw new Error(`No models were returned for ${state.ai}.`);
     }
     state.providerModels = models;
-    if (!models.some((model) => model.id === state.aiModel)) {
-      state.aiModel = models[0].id;
+    if (state.aiModel && !models.some((model) => model.id === state.aiModel)) {
+      state.aiModel = "";
+      await ipc.provider.setModel(state.ai, state.aiModel);
     }
     return models;
   } catch (e) {
@@ -847,11 +885,16 @@ async function refreshCurrentProviderModels(apiKey) {
 }
 
 async function replaceApiKey() {
+  if (!state.ai) {
+    showError("Select an AI provider before adding an API key.");
+    return;
+  }
   const key = prompt("Enter new API key:");
   if (!key) return;
   try {
     await ipc.keychain.store(state.ai, key);
     await refreshCurrentProviderModels(key);
+    if (!state.aiModel) throw new Error("Select a model before testing the provider.");
     await ipc.provider.setModel(state.ai, state.aiModel);
     const result = await ipc.provider.test(state.ai, key, state.aiModel);
     if (result?.ok || result === true) {
@@ -987,15 +1030,38 @@ async function openFile(path) {
 window.openFile = openFile;
 
 function showFileViewer(path, content) {
-  // The Build conversation is the single surface (v4), so render an opened
-  // file as a code block in the chat instead of sending users to another view.
+  // The Build conversation is the single surface (v4), but opened files are
+  // not AI messages. Send structured file metadata so Markdown can render as
+  // a readable document and code can render as code.
   switchTab("build");
   try {
     const id = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID() : String(Date.now()) + Math.random();
-    const body = (content || "").split("\n").slice(0, 400).join("\n");
-    const md = "**" + path + "**\n\n```\n" + body + "\n```";
-    state.chatBubbles = [...(state.chatBubbles || []), { id, kind: "ai", text: md, ts: "file" }];
+    const lines = String(content || "").split(/\r?\n/);
+    const body = lines.slice(0, 400).join("\n");
+    const ext = String(path || "").split(".").pop()?.toLowerCase() || "";
+    const langMap = {
+      ts: "ts", tsx: "tsx", js: "js", jsx: "jsx", json: "json", css: "css",
+      html: "html", md: "markdown", markdown: "markdown", py: "py",
+      rs: "rust", toml: "toml", yaml: "yaml", yml: "yaml",
+    };
+    state.chatBubbles = [
+      ...(state.chatBubbles || []),
+      {
+        id,
+        kind: "file",
+        text: "",
+        ts: "file",
+        file: {
+          path,
+          content: body,
+          language: langMap[ext] || "text",
+          markdown: ext === "md" || ext === "markdown",
+          truncated: lines.length > 400,
+          totalLines: lines.length,
+        },
+      },
+    ];
   } catch (e) {
     showError("Could not display file: " + errorMessage(e));
   }
@@ -1199,7 +1265,7 @@ function prevStep() {
 window.prevStep = prevStep;
 
 function selectProv(provider, model, label) {
-  state.ai = provider || "anthropic";
+  state.ai = provider || "";
   state.aiModel = model || "";
   state.keyLabel = label || "API key";
 }
@@ -1249,6 +1315,7 @@ async function finishOnboarding() {
       try {
         await ipc.keychain.store(state.ai, apiKey);
         await refreshCurrentProviderModels(apiKey);
+        if (!state.aiModel) throw new Error("Select a model before testing the provider.");
         await ipc.provider.test(state.ai, apiKey, state.aiModel);
         // Restart sidecar so it picks up the newly-stored key from keychain.
         // Without this, the sidecar (spawned at app launch before onboarding)
@@ -1264,6 +1331,7 @@ async function finishOnboarding() {
     } else if (state.ai === "ollama") {
       try {
         await refreshCurrentProviderModels(null);
+        if (!state.aiModel) throw new Error("Select a model before testing the provider.");
         await ipc.provider.test(state.ai, null, state.aiModel);
         providerReady = true;
       } catch (e) {

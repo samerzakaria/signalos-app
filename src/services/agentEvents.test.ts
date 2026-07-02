@@ -27,6 +27,8 @@ describe('agentEvents', () => {
     state.chatBubbles.value = [];
     state.busy.value = true;
     state.resumableRunId.value = null;
+    state.ai.value = 'openai';
+    state.aiModel.value = 'gpt-test';
     const mod = await import('./agentEvents');
     return { state, mod };
   }
@@ -154,7 +156,23 @@ describe('agentEvents', () => {
     expect(state.resumableRunId.value).toBe(null);
     expect(state.busy.value).toBe(true);
     expect(run).toHaveBeenCalledWith('agent:resume', [
-      JSON.stringify({ run_id: 'run-5' }),
+      JSON.stringify({ run_id: 'run-5', provider: 'openai', model: 'gpt-test' }),
     ]);
+  });
+
+  it('renders provider failures as readable error bubbles', async () => {
+    const { state } = await loadHarness();
+
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-provider',
+      type: 'error',
+      error: 'Provider call failed: BadRequestError: litellm.BadRequestError: AnthropicException - {"error":{"message":"Your credit balance is too low to access the Anthropic API."}}',
+    });
+
+    expect(state.chatBubbles.value[0]).toMatchObject({
+      kind: 'error',
+      text: 'Error: Anthropic account credit is too low. Add credits with that provider or choose another provider/model in Settings.',
+    });
   });
 });

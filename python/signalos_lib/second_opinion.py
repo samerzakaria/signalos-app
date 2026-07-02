@@ -14,6 +14,8 @@ from typing import Optional
 __all__ = [
     "SECOND_OPINION_INDEX_RELATIVE",
     "VALID_VERDICTS",
+    "vendor_of",
+    "choose_cross_vendor_reviewer",
     "SecondOpinionRecord",
     "request_second_opinion",
     "record_verdict",
@@ -27,6 +29,48 @@ __all__ = [
 
 SECOND_OPINION_INDEX_RELATIVE = ".signalos/second-opinion/index.jsonl"
 VALID_VERDICTS = ("agree", "disagree", "risk-identified", "pending")
+
+def vendor_of(model: str, default: str | None = None) -> str:
+    """Derive a model's vendor WITHOUT hardcoding model names (families go stale).
+
+    Only two authoritative sources are used: a LiteLLM-style *structural* prefix
+    (``gemini/``, ``ollama/``, ``openai/`` ... -- the text before ``/``, a routing
+    convention, not a model name), else the caller-supplied *default* (the
+    provider the model was configured/discovered under). Never guessed from the
+    model name string. Returns ``"unknown"`` when neither is available.
+    """
+    m = (model or "").strip().lower()
+    if "/" in m:
+        return m.split("/", 1)[0]
+    return (default or "unknown").strip().lower() or "unknown"
+
+
+def choose_cross_vendor_reviewer(
+    author_model: str,
+    candidates: list[str],
+    *,
+    vendors: dict[str, str] | None = None,
+    default: str | None = None,
+) -> str | None:
+    """Return the first candidate model whose vendor differs from the author's,
+    so a critique is graded by a different vendor than produced the artifact
+    (FR-10.3). Vendor is resolved from the explicit *vendors* map (model ->
+    vendor, sourced from provider config/discovery) when supplied, else from a
+    structural prefix, else *default* -- never from the model name. Returns
+    ``None`` when no second vendor is configured; the caller then keeps the
+    critique same-vendor rather than pretending independence."""
+    lookup = {str(k).strip().lower(): str(v).strip().lower()
+              for k, v in (vendors or {}).items()}
+
+    def _vendor(model: str) -> str:
+        key = (model or "").strip().lower()
+        return lookup.get(key) or vendor_of(model, default)
+
+    author_vendor = _vendor(author_model)
+    for candidate in candidates:
+        if _vendor(candidate) != author_vendor:
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -226,15 +270,28 @@ def second_opinion_list(
     return results
 
 
-def check_second_opinion_wired(repo_root: Path) -> tuple[bool, str]:
-    """C21: check that second-opinion lib and key command specs exist."""
-    required = [
-        repo_root / "cli" / "signalos_lib" / "second_opinion.py",
-        repo_root / "core" / "execution" / "commands" / "signal-second-opinion.md",
-        repo_root / "cli" / "signalos_lib" / "investigate.py",
-        repo_root / "core" / "execution" / "commands" / "signal-investigate.md",
-    ]
-    missing = [str(p) for p in required if not p.exists()]
-    if missing:
-        return False, "missing: " + ", ".join(missing)
-    return True, "second-opinion + investigate wired"
+def check_second_opinion_wired(repo_root: Path | None = None) -> tuple[bool, str]:
+    """C21 (0.4): verify the second-opinion capability is actually *callable* --
+    the library functions import and are callable and the CLI wrapper imports --
+    not merely that files sit at some path. ``repo_root`` is accepted for
+    signature compatibility but capability is layout-independent."""
+    import importlib
+
+    problems: list[str] = []
+    try:
+        mod = importlib.import_module("signalos_lib.second_opinion")
+        for fn in ("request_second_opinion", "record_verdict",
+                   "choose_cross_vendor_reviewer"):
+            if not callable(getattr(mod, fn, None)):
+                problems.append(f"signalos_lib.second_opinion.{fn} not callable")
+    except Exception as exc:  # pragma: no cover - import failure path
+        problems.append(f"cannot import signalos_lib.second_opinion: {exc}")
+    try:
+        cmd = importlib.import_module("signalos_lib.commands.second_opinion")
+        if not callable(getattr(cmd, "cmd_signal_second_opinion", None)):
+            problems.append("cmd_signal_second_opinion not callable")
+    except Exception as exc:  # pragma: no cover - import failure path
+        problems.append(f"cannot import command wrapper: {exc}")
+    if problems:
+        return False, "; ".join(problems)
+    return True, "second-opinion capability importable and callable"
