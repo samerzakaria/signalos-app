@@ -95,8 +95,13 @@ class TestAgentLaunchIpc(unittest.TestCase):
 
         result = resp["data"]
         child_root = Path(result["child_repo_root"])
-        self.assertTrue(str(child_root).startswith(str(Path(self._tmp.name))))
-        self.assertNotEqual(child_root, Path(self._tmp.name))
+        # child_repo_root is derived from os.getcwd(), which resolves symlinks
+        # (on macOS /var -> /private/var), so compare RESOLVED paths -- a raw
+        # string startswith against the unresolved tmp dir is a false negative
+        # there. The behavioral claim is "the child lives under the parent".
+        tmp_resolved = Path(self._tmp.name).resolve()
+        self.assertTrue(child_root.resolve().is_relative_to(tmp_resolved))
+        self.assertNotEqual(child_root.resolve(), tmp_resolved)
 
         agent_events = [e for e in events if e.get("kind") == "agent-event"]
         self.assertTrue(agent_events, events)
