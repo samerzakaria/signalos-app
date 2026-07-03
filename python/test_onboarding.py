@@ -35,6 +35,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).parent
+ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 
 
@@ -198,6 +199,8 @@ class OnboardingTourTests(unittest.TestCase):
         self.assertTrue(resp.get("ok"), msg=resp)
         data = resp.get("data") or {}
         self.assertTrue(data.get("pong"))
+        expected_version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+        self.assertEqual(data.get("version"), expected_version)
 
 
 if __name__ == "__main__":

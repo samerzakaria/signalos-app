@@ -125,6 +125,40 @@ PHASE_CONTRACTS = {
     ],
 }
 
+
+@lru_cache(maxsize=1)
+def _app_version() -> str:
+    """Return the desktop app version without hardcoding release numbers."""
+    for key in ("SIGNALOS_APP_VERSION", "SIGNALOS_VERSION"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+
+    for start in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for base in (start, *start.parents):
+            package_path = base / "package.json"
+            if package_path.is_file():
+                try:
+                    version = json.loads(package_path.read_text(encoding="utf-8")).get("version")
+                except (OSError, ValueError, TypeError):
+                    version = None
+                if isinstance(version, str) and version.strip():
+                    return version.strip()
+
+            cargo_path = base / "src-tauri" / "Cargo.toml"
+            if cargo_path.is_file():
+                try:
+                    for line in cargo_path.read_text(encoding="utf-8").splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("version") and "=" in stripped:
+                            value = stripped.split("=", 1)[1].strip().strip('"')
+                            if value:
+                                return value
+                except OSError:
+                    pass
+
+    return "unknown"
+
 def handle(req: dict) -> dict:
     req_id = req.get("id", "unknown")
     command = req.get("command", "")
@@ -318,7 +352,7 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
         return ok(req_id, data=analyze_payload(payload_json))
 
     if command == "ping":
-        return ok(req_id, data={"pong": True, "version": "0.0.9"})
+        return ok(req_id, data={"pong": True, "version": _app_version()})
 
     # Wave 2 / G1-7: phase contract lookup. The UI calls this to know
     # how many substeps a given command will emit so the progress strip

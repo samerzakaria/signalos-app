@@ -100,6 +100,43 @@ Invoke-Check "Tauri config points at bundled sidecar and update manifests" {
   }
 }
 
+Invoke-Check "Desktop package versions are in sync" {
+  $packagePath = Join-Path $Root "package.json"
+  $lockPath = Join-Path $Root "package-lock.json"
+  $tauriPath = Join-Path $Root "src-tauri\tauri.conf.json"
+  $cargoPath = Join-Path $Root "src-tauri\Cargo.toml"
+  $manifestNames = @("beta.json", "latest.json")
+
+  $package = Get-Content $packagePath -Raw | ConvertFrom-Json
+  $tauri = Get-Content $tauriPath -Raw | ConvertFrom-Json
+  $cargoText = Get-Content $cargoPath -Raw
+  $lockVersionsJson = & node "-e" "const fs=require('fs'); const lock=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(JSON.stringify({root: lock.version || '', package: (lock.packages && lock.packages[''] && lock.packages[''].version) || ''}));" $lockPath
+  if ($LASTEXITCODE -ne 0) { throw "Could not parse package-lock.json with node." }
+  $lockVersions = $lockVersionsJson | ConvertFrom-Json
+
+  $expected = [string]$package.version
+  if (-not $expected) { throw "package.json missing version." }
+  if ([string]$lockVersions.root -ne $expected) { throw "package-lock.json root version '$($lockVersions.root)' must match package.json '$expected'." }
+  if ([string]$lockVersions.package -ne $expected) { throw "package-lock.json package version '$($lockVersions.package)' must match package.json '$expected'." }
+  if ([string]$tauri.version -ne $expected) { throw "src-tauri\tauri.conf.json version '$($tauri.version)' must match package.json '$expected'." }
+  if ($cargoText -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw "src-tauri\Cargo.toml missing package version." }
+  if ($Matches[1] -ne $expected) { throw "src-tauri\Cargo.toml version '$($Matches[1])' must match package.json '$expected'." }
+
+  foreach ($manifestName in $manifestNames) {
+    $manifestPath = Join-Path $Root "distribution\update-manifest\$manifestName"
+    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    if ([string]$manifest.version -ne $expected) {
+      throw "$manifestName update manifest version '$($manifest.version)' must match package.json '$expected'."
+    }
+    foreach ($platform in @("darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64")) {
+      $entry = $manifest.platforms.PSObject.Properties[$platform].Value
+      if ($entry.url -notlike "*v$expected/*") {
+        throw "$manifestName $platform URL must point at release tag v$expected."
+      }
+    }
+  }
+}
+
 Invoke-Check "Update manifests are structurally valid" {
   foreach ($name in @("beta.json", "latest.json")) {
     $path = Join-Path $Root "distribution\update-manifest\$name"

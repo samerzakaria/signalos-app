@@ -147,7 +147,11 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
     // LLM providers without the user exporting env vars manually. Re-snapshot
     // on every restart so a key updated in Settings takes effect after
     // restart_python_sidecar.
-    let env_keys = crate::keychain::snapshot_env_keys();
+    let mut env_keys = crate::keychain::snapshot_env_keys();
+    env_keys.insert(
+        "SIGNALOS_APP_VERSION".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    );
     let (mut rx, mut child) = shell
         .sidecar("signalos-python")
         .context("Failed to find signalos-python sidecar")?

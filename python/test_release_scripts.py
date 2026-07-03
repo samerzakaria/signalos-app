@@ -106,6 +106,34 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn('lstrip("\\ufeff")', server[loop_start:])
         self.assertNotIn("Early diagnostic", server[:main_start])
 
+    def test_current_release_surfaces_use_desktop_version(self) -> None:
+        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+        tauri = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+        product = tauri["productName"]
+        setup_name = f"{product}_{version}_x64-setup.exe"
+
+        current_release_docs = [
+            ROOT / "distribution" / "landing" / "index.html",
+            ROOT / "docs" / "RELEASE_OPERATOR_GUIDE.md",
+            ROOT / "docs" / "RELEASE_GATES_RUNBOOK.md",
+            ROOT / "docs" / "INTERNAL_TESTING_BUILD.md",
+        ]
+        for path in current_release_docs:
+            with self.subTest(path=path.relative_to(ROOT)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(version, text)
+                self.assertIn(setup_name, text)
+                self.assertNotIn("0.0.9", text)
+                self.assertNotIn("0.0.7", text)
+                self.assertNotIn("v1.0", text)
+
+        server = (ROOT / "python" / "signalos_ipc_server.py").read_text(encoding="utf-8")
+        self.assertIn("SIGNALOS_APP_VERSION", server)
+        self.assertNotIn('"version": "0.0.9"', server)
+
+        build_internal_sh = (ROOT / "scripts" / "build-internal.sh").read_text(encoding="utf-8")
+        self.assertIn('"product": "Foundry"', build_internal_sh)
+
 
 if __name__ == "__main__":
     unittest.main()

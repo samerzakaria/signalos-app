@@ -110,7 +110,7 @@ cat >"$ATTEST" <<EOF
 {
   "schema": "signalos.attestation.v1",
   "release_type": "internal-testing-unsigned",
-  "product": "SignalOS",
+  "product": "Foundry",
   "version": "$VERSION",
   "builder": {
     "name": "$BUILDER_NAME",

@@ -5,6 +5,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+$ExpectedVersion = [string]((Get-Content (Join-Path $Root "package.json") -Raw | ConvertFrom-Json).version)
+$ExpectedReleaseTag = "v$ExpectedVersion"
+$ExpectedWindowsAsset = "Foundry_${ExpectedVersion}_x64-setup.exe"
 $Evidence = New-Object System.Collections.Generic.List[object]
 $Failures = New-Object System.Collections.Generic.List[string]
 
@@ -44,6 +47,29 @@ function Test-RemoteUrl {
     $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec 20
     if ($response.StatusCode -lt 200 -or $response.StatusCode -gt 299) {
       Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url" "fail"
+      return
+    }
+    if ($Url -match "/update-manifest/(beta|latest)\.json$") {
+      try {
+        $manifest = $response.Content | ConvertFrom-Json
+        if ([string]$manifest.version -ne $ExpectedVersion) {
+          Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url, but remote version '$($manifest.version)' does not match package.json '$ExpectedVersion'." "fail"
+          return
+        }
+        Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url; remote version $($manifest.version)."
+        return
+      } catch {
+        Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url, but remote manifest JSON could not be parsed: $($_.Exception.Message)" "fail"
+        return
+      }
+    }
+    if ($Url -eq "https://samerzakaria.github.io/signalos-app/") {
+      $content = [string]$response.Content
+      if ($content -notlike "*$ExpectedReleaseTag*" -or $content -notlike "*$ExpectedWindowsAsset*") {
+        Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url, but landing page does not link $ExpectedReleaseTag / $ExpectedWindowsAsset." "fail"
+        return
+      }
+      Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url; landing page links $ExpectedReleaseTag."
       return
     }
     Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url"
