@@ -44,3 +44,13 @@ futures-util = "0.3"
 [features]
 # Enable custom protocol for asset serving
 custom-protocol = ["tauri/custom-protocol"]
+
+# ── Temporary supply-chain fix (RUSTSEC-2026-0194 / 0195) ──────────────────
+# plist 1.9.0 (latest release) pins quick-xml ^0.39.2, which blocks the fixed
+# quick-xml 0.41.0 and leaves both advisories live in `cargo audit`. Rather than
+# suppress them, point plist at the real upstream fix: PR ebarnard/rust-plist#191
+# ("Bump quick-xml to 0.41"), pinned to an immutable commit. This uses the actual
+# fixed code, not an audit ignore. REMOVE once plist publishes a release that
+# depends on quick-xml >=0.41 (tracked; then `cargo update -p plist`).
+[patch.crates-io]
+plist = { git = "https://github.com/cf-rhett/rust-plist", rev = "f2e60cdc3423e1d49a3202a719aa726694068bc4" }
