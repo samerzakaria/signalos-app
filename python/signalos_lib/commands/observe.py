@@ -47,6 +47,11 @@ def main(argv: list[str]) -> int:
     p_create.add_argument("--threshold", required=True, type=float)
     p_create.add_argument("--direction", required=True, choices=["up", "down"])
     p_create.add_argument("--minimum-cohort", type=int, default=0)
+    p_create.add_argument(
+        "--threshold-signed", action="store_true",
+        help="mark this threshold as a founder-signed success criterion "
+             "(3.2: unsigned thresholds block KEEP/KILL verdicts)",
+    )
     p_create.add_argument("--force", action="store_true")
     _add_json(p_create)
 
@@ -174,6 +179,7 @@ def _run_window(args: argparse.Namespace) -> dict[str, Any]:
             direction=args.direction,
             minimum_cohort=args.minimum_cohort,
             force=args.force,
+            threshold_signed=args.threshold_signed,
         )
     if action == "show":
         return load_listening_window(root, args.wave)

@@ -9,8 +9,12 @@ mode may ever remove a FLOOR gate.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+POLICY_REL_PATH = ".signalos/product/POLICY.json"
 
 GATE_MODES = ("strict", "standard", "fast-lane")
 RESEARCH_DEPTHS = ("light", "standard", "deep")
@@ -54,6 +58,35 @@ def validate_policy(policy: FounderPolicy) -> list[str]:
     if policy.budget_cap_usd < 0:
         problems.append("budget cap cannot be negative")
     return problems
+
+
+def save_policy(repo_root: Path, policy: FounderPolicy) -> Path:
+    """Persist *policy* for the founder-facing settings UI (1.11). Fail-closed:
+    an invalid policy is refused, never silently written."""
+    problems = validate_policy(policy)
+    if problems:
+        raise ValueError("invalid policy: " + "; ".join(problems))
+    path = Path(repo_root) / POLICY_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(policy.to_dict(), indent=2), encoding="utf-8")
+    return path
+
+
+def load_policy(repo_root: Path) -> FounderPolicy:
+    """Load the founder's saved policy, or the safe default when missing or
+    corrupt -- never raises, so a bad file can't block the app from starting."""
+    path = Path(repo_root) / POLICY_REL_PATH
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return FounderPolicy()
+    return FounderPolicy(
+        gate_mode=str(data.get("gate_mode", "standard")),
+        research_depth=str(data.get("research_depth", "standard")),
+        budget_cap_usd=float(data.get("budget_cap_usd", 0.0) or 0.0),
+        standards_profile=str(data.get("standards_profile", "default")),
+        allowed_deploy_targets=list(data.get("allowed_deploy_targets", []) or []),
+    )
 
 
 def gates_for_mode(mode: str, gate_set: list[str], floor: tuple[str, ...] = FLOOR_GATES) -> list[str]:

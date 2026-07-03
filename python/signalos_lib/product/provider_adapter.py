@@ -21,6 +21,7 @@ __all__ = [
     "LiteLLMAgentProvider",
     "detect_capabilities",
     "ProviderAuthError",
+    "classify_error_scenario",
 ]
 
 from dataclasses import dataclass, field
@@ -41,6 +42,23 @@ class ProviderAuthError(RuntimeError):
     Surfaced to the user (INV-4) so the chat can show "connect a provider"
     rather than a silent empty response (test T05).
     """
+
+
+def classify_error_scenario(exc: Exception) -> str | None:
+    """1.10: map a provider exception to an `incidents.py` scenario key, so a
+    live provider failure surfaces as a plain-words card instead of a bare
+    error string. Returns None when the exception doesn't match a known
+    scenario (caller falls back to the generic incident card)."""
+    if isinstance(exc, ProviderAuthError):
+        return "credential-revoked"
+    msg = str(exc).lower()
+    if any(t in msg for t in ("api key", "api_key", "unauthorized", "authentication", "401")):
+        return "credential-revoked"
+    if "rate limit" in msg or "quota" in msg or "429" in msg:
+        return "integration-outage"
+    if any(t in msg for t in ("connection", "timeout", "timed out", "unreachable", "503", "502")):
+        return "integration-outage"
+    return None
 
 
 # ---------------------------------------------------------------------------

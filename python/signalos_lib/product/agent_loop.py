@@ -586,6 +586,15 @@ class AgentLoop:
             except Exception as exc:  # INV-4
                 err = f"Provider call failed: {exc}"
                 self._emit({"type": "error", "error": err})
+                # 1.10: also surface a plain-words incident card with recovery
+                # options -- a founder should never see a bare error string.
+                try:
+                    from .provider_adapter import classify_error_scenario
+                    from .incidents import build_incident_card
+                    scenario = classify_error_scenario(exc) or "unclassified-provider-error"
+                    self._emit(build_incident_card(scenario, detail=str(exc)).to_dict())
+                except Exception:
+                    pass
                 self._persist_state(messages, tool_calls_made, status="error")
                 return LoopResult(
                     run_id=self.run_id,

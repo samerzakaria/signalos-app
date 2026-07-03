@@ -39,7 +39,9 @@ from signalos_lib.product.enforcement_state import (
 )
 from signalos_lib.product.provider_adapter import (
     ProviderAdapter,
+    ProviderAuthError,
     ProviderCapabilities,
+    classify_error_scenario,
     detect_capabilities,
 )
 
@@ -77,6 +79,15 @@ def _adapter(provider, supports_tool_calls=True, model="claude-sonnet-4-5"):
     return ProviderAdapter(model=model, provider=provider, capabilities=caps)
 
 
+class _RaisingProvider:
+    """A provider whose chat() always raises -- for 1.10 incident-card tests."""
+    def __init__(self, exc: Exception):
+        self._exc = exc
+
+    def chat(self, messages, model, tools=None, stream=False):
+        raise self._exc
+
+
 def _loop(tmp: Path, provider, enforcement=None, **kw) -> AgentLoop:
     return AgentLoop(
         adapter=_adapter(provider),
@@ -85,6 +96,72 @@ def _loop(tmp: Path, provider, enforcement=None, **kw) -> AgentLoop:
         run_id="test-run",
         **kw,
     )
+
+
+# ---------------------------------------------------------------------------
+# 1.10: provider failures surface as plain-words incident cards, not bare errors
+# ---------------------------------------------------------------------------
+
+
+class TestErrorScenarioClassification(unittest.TestCase):
+    def test_provider_auth_error_is_credential_revoked(self):
+        self.assertEqual(
+            classify_error_scenario(ProviderAuthError("nope")), "credential-revoked")
+
+    def test_401_message_is_credential_revoked(self):
+        self.assertEqual(
+            classify_error_scenario(RuntimeError("401 Unauthorized")), "credential-revoked")
+
+    def test_rate_limit_message_is_integration_outage(self):
+        self.assertEqual(
+            classify_error_scenario(RuntimeError("Rate limit exceeded")), "integration-outage")
+
+    def test_quota_message_is_integration_outage(self):
+        self.assertEqual(
+            classify_error_scenario(RuntimeError("insufficient_quota")), "integration-outage")
+
+    def test_connection_error_is_integration_outage(self):
+        self.assertEqual(
+            classify_error_scenario(ConnectionError("connection refused")), "integration-outage")
+
+    def test_unrelated_error_is_unclassified(self):
+        self.assertIsNone(classify_error_scenario(ValueError("bad input")))
+
+
+class TestProviderErrorIncidentCard(unittest.TestCase):
+    """Live wiring proof: a real provider failure during a gate run emits a
+    plain-words incident card with recovery options, not just a bare error."""
+
+    def test_rate_limit_failure_emits_integration_outage_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events: list[dict] = []
+            provider = _RaisingProvider(RuntimeError("Rate limit exceeded, quota used"))
+            loop = _loop(Path(tmp), provider, emit=events.append)
+            result = loop.run("system", "do the thing")
+            self.assertEqual(result.status, "error")
+            incidents = [e for e in events if e.get("type") == "incident"]
+            self.assertTrue(incidents, "no incident card emitted")
+            self.assertEqual(incidents[0]["scenario"], "integration-outage")
+            self.assertTrue(incidents[0]["recovery_options"])
+
+    def test_auth_failure_emits_credential_revoked_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events: list[dict] = []
+            provider = _RaisingProvider(ProviderAuthError("401 invalid api key"))
+            loop = _loop(Path(tmp), provider, emit=events.append)
+            loop.run("system", "do the thing")
+            incidents = [e for e in events if e.get("type") == "incident"]
+            self.assertEqual(incidents[0]["scenario"], "credential-revoked")
+
+    def test_unclassified_failure_still_emits_a_safe_fallback_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            events: list[dict] = []
+            provider = _RaisingProvider(ValueError("something weird"))
+            loop = _loop(Path(tmp), provider, emit=events.append)
+            loop.run("system", "do the thing")
+            incidents = [e for e in events if e.get("type") == "incident"]
+            self.assertTrue(incidents, "unclassified errors must still get a card, never a bare stall")
+            self.assertTrue(incidents[0]["recovery_options"])
 
 
 # ---------------------------------------------------------------------------

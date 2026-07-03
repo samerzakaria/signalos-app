@@ -120,7 +120,7 @@ def test_listening_window_rejects_invalid_interval(tmp_path: Path):
 
 
 def test_listening_window_open_reading_keep_and_evidence(tmp_path: Path):
-    _create_window(tmp_path, wave="W07", threshold=10, minimum_cohort=20)
+    _create_window(tmp_path, wave="W07", threshold=10, minimum_cohort=20, threshold_signed=True)
 
     opened = open_listening_window(tmp_path, "07", now="2026-01-01T00:00:00Z")
     assert opened["status"] == "active"
@@ -146,6 +146,23 @@ def test_listening_window_open_reading_keep_and_evidence(tmp_path: Path):
     assert Path(result["evidence_path"]).is_file()
     journal_types = [row["event_type"] for row in load_observability_journal(tmp_path)]
     assert "ListeningWindowOpened" in journal_types
+
+
+def test_listening_window_unsigned_threshold_blocks_keep(tmp_path: Path):
+    """3.2 (C-bridge): even a window with GOOD readings that clear the threshold
+    must not resolve KEEP if the threshold was never signed off."""
+    _create_window(tmp_path, wave="W08", threshold=10, minimum_cohort=0)  # threshold_signed defaults False
+    open_listening_window(tmp_path, "08", now="2026-01-01T00:00:00Z")
+    record_window_reading(
+        tmp_path, "08", value=99, cohort=50, source="file-backend",
+        ts="2026-01-01T00:30:00Z",
+    )
+    result = evaluate_listening_window(tmp_path, "08", now="2026-01-01T01:00:00Z")
+
+    assert result["metric"]["threshold_met"] is True  # the raw numbers look great
+    assert result["proposed_verdict"] != "KEEP"        # but it's still blocked
+    blocker_kinds = {blocker["kind"] for blocker in result["blockers"]}
+    assert "threshold-unsigned" in blocker_kinds
 
 
 def test_listening_window_pending_and_missing_readings_block(tmp_path: Path):
@@ -203,7 +220,10 @@ def test_listening_window_cohort_slo_and_stale_reading_block(tmp_path: Path):
 
 
 def test_close_listening_window_is_idempotent_and_can_draft_kill(tmp_path: Path):
-    _create_window(tmp_path, metric_name="error_rate", threshold=2, direction="down")
+    # threshold_signed=True: this test is about idempotent close + KILL drafting,
+    # not the 3.2 sign-off gate (covered separately).
+    _create_window(tmp_path, metric_name="error_rate", threshold=2, direction="down",
+                   threshold_signed=True)
     open_listening_window(tmp_path, "03", now="2026-01-01T00:00:00Z")
     record_window_reading(
         tmp_path,
@@ -308,6 +328,7 @@ def test_observe_cli_window_lifecycle(tmp_path: Path, capsys):
             "12",
             "--direction",
             "up",
+            "--threshold-signed",
             "--json",
         ]
     )
@@ -453,6 +474,7 @@ def _create_window(
     threshold: float = 10,
     direction: str = "up",
     minimum_cohort: int = 0,
+    threshold_signed: bool = False,
 ) -> dict[str, object]:
     return create_listening_window(
         root,
@@ -465,4 +487,5 @@ def _create_window(
         threshold=threshold,
         direction=direction,
         minimum_cohort=minimum_cohort,
+        threshold_signed=threshold_signed,
     )

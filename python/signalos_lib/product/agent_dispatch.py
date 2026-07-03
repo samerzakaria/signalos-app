@@ -371,6 +371,100 @@ def dispatch_build_agent(
     return result
 
 
+def _component_group_key(path: str) -> str | None:
+    """Return the component name a react-vite file_spec path belongs to, or
+    None if it's a foundation/shared file. Components are only ever imported
+    from App.tsx (never from each other -- see _render_app), so grouping by
+    this key produces path-disjoint, dependency-safe task groups: real
+    parallelism, not an inferred/risky guess at independence."""
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 3 and parts[0] == "src" and parts[1] == "components":
+        name = parts[2]
+        for suffix in (".test.tsx", ".tsx"):
+            if name.endswith(suffix):
+                return name[: -len(suffix)]
+    return None
+
+
+def dispatch_local_build_agent_parallel(
+    repo_root: Path,
+    packet: dict,
+    *,
+    max_workers: int = 3,
+) -> dict[str, Any]:
+    """1.1: run the local build agent's independent react-vite component
+    groups through the real parallel executor (executor.py) -- claim,
+    heartbeat, retry, worktree isolation, merge queue -- instead of one
+    synchronous call.
+
+    Falls back verbatim to dispatch_local_build_agent for every other
+    profile and for react-vite products with fewer than 2 components,
+    since there's nothing to parallelize -- same result, same contract,
+    no behavior change for the common case.
+    """
+    gen = packet.get("generation", packet)
+    profile = gen.get("profile") or packet.get("profile")
+    file_specs = gen.get("file_specs", [])
+    run_id = str(packet.get("run_id", "unknown"))
+
+    groups: dict[str, list[dict]] = {}
+    foundation: list[dict] = []
+    if profile == "react-vite":
+        for spec in file_specs:
+            component = _component_group_key(str(spec.get("path", "")))
+            if component:
+                groups.setdefault(component, []).append(spec)
+            else:
+                foundation.append(spec)
+
+    if profile != "react-vite" or len(groups) < 2:
+        return dispatch_local_build_agent(repo_root, packet)
+
+    from .executor import run_isolated_build_tasks
+
+    task_groups: list[tuple[str, list[dict]]] = [("foundation", foundation)]
+    task_groups.extend(sorted(groups.items()))
+
+    packets: list[dict] = []
+    all_component_names = sorted(groups.keys())
+    for task_id, specs in task_groups:
+        sub_gen = dict(gen)
+        sub_gen["file_specs"] = specs
+        sub_gen["_component_names_override"] = all_component_names
+        sub_packet = dict(packet)
+        sub_packet["generation"] = sub_gen
+        sub_packet["run_id"] = f"{run_id}-{task_id}"
+        sub_packet["task_id"] = f"{run_id}-{task_id}"
+        packets.append(sub_packet)
+
+    report = run_isolated_build_tasks(repo_root, packets, max_workers=max_workers)
+
+    aggregate: dict[str, Any] = {
+        "status": "completed" if not report.dead_letters else "failed",
+        "run_id": run_id,
+        "files_written": [],
+        "actions_taken": [f"parallel local build across {len(task_groups)} task(s)"],
+        "validation_results": {},
+        "errors": [],
+        "tokens_in": None,
+        "tokens_out": None,
+        "agent": "signalos-local-build-agent-parallel",
+    }
+    for outcome in report.outcomes:
+        sub_result = outcome.result or {}
+        aggregate["files_written"].extend(sub_result.get("files_written", []))
+        if outcome.status != "done":
+            aggregate["errors"].append(outcome.error or f"task {outcome.task_id} failed")
+        else:
+            aggregate["errors"].extend(sub_result.get("errors", []))
+
+    if aggregate["errors"] and aggregate["status"] == "completed":
+        aggregate["status"] = "failed"
+
+    _write_agent_result(repo_root, aggregate)
+    return aggregate
+
+
 def dispatch_local_build_agent(
     repo_root: Path,
     packet: dict,
@@ -536,7 +630,14 @@ def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
         and str(spec.get("path", "")).endswith(".tsx")
         and not str(spec.get("path", "")).endswith(".test.tsx")
     ]
-    component_names = [Path(path).stem for path in component_paths]
+    # 1.1: when file_specs has been split into a per-task subset (parallel
+    # local build -- see dispatch_local_build_agent_parallel), a task that
+    # doesn't own any component files still needs the FULL component list to
+    # render App.tsx's imports/usage correctly. Explicit override, falls
+    # back to deriving from this call's own file_specs otherwise.
+    component_names = gen.get("_component_names_override") or [
+        Path(path).stem for path in component_paths
+    ]
 
     files: dict[str, str] = {}
     for spec in file_specs:

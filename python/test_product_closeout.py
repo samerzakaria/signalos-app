@@ -263,6 +263,35 @@ def _populate_full_evidence(repo_root: Path) -> None:
 # build_closeout tests
 # ------------------------------------------------------------------
 
+class TestCloseoutListeningWindowLink:
+    """3.1 (C-bridge): closeout links to the belief/listening-window it feeds,
+    instead of being a dead-end document."""
+
+    def test_no_window_yields_none_not_a_crash(self, tmp_path: Path) -> None:
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+        assert closeout["listening_window"] is None
+
+    def test_real_window_is_linked(self, tmp_path: Path) -> None:
+        from signalos_lib.product.observability import create_listening_window
+
+        (tmp_path / ".signalos").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".signalos" / "worktree-state.json").write_text(
+            json.dumps({"wave_id": "W7"}), encoding="utf-8",
+        )
+        create_listening_window(
+            tmp_path, wave="07", belief_id="belief-conversion-up",
+            opens_at="2026-01-01T00:00:00Z", closes_at="2026-01-02T00:00:00Z",
+            expected_outcome="conversion rises", metric_name="conversion_pct",
+            threshold=5, direction="up", threshold_signed=True,
+        )
+
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+        link = closeout["listening_window"]
+        assert link is not None
+        assert link["belief_id"] == "belief-conversion-up"
+        assert link["status"] == "pending"
+
+
 class TestBuildCloseout:
     def test_full_evidence_returns_complete_closeout(self, tmp_path: Path):
         _populate_full_evidence(tmp_path)

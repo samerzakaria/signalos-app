@@ -357,6 +357,7 @@ def test_evaluate_listening_window_keeps_a_clean_threshold_meeting_window(tmp_pa
         threshold=5,
         direction="up",
         minimum_cohort=10,
+        threshold_signed=True,  # 3.2: a genuinely "clean" resolvable window must be signed
     )
     open_listening_window(tmp_path, 2, now="2026-01-01T00:05:00Z")
     record_window_reading(

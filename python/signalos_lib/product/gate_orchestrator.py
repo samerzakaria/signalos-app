@@ -135,6 +135,17 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
     return signed
 
 
+class _CriticChat:
+    """Adapts a ProviderAdapter's chat(messages, model, ...) into the simple
+    chat(messages) interface briefs.author_brief expects."""
+
+    def __init__(self, adapter: Any) -> None:
+        self._adapter = adapter
+
+    def chat(self, messages):
+        return self._adapter.chat(messages=messages, model=getattr(self._adapter, "model", ""))
+
+
 def _current_wave_id(repo_root: Path) -> str | None:
     try:
         from ..status import get_wave_status
@@ -160,9 +171,16 @@ class GateOrchestrator:
         max_rejections: int = 2,
         run_id: Optional[str] = None,
         prompt: str = "",
+        critic_adapter: Any = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.adapter = adapter
+        # 1.3 + 1.8: an optional second adapter used to author the plain-words
+        # gate brief. When configured (and its vendor differs), the brief is
+        # genuinely cross-vendor (1.4's independence guarantee). When absent,
+        # falls back to the primary adapter -- still a real 4-field brief,
+        # honestly recorded as same-vendor in its provenance.
+        self.critic_adapter = critic_adapter
         self.emit = emit
         self.enforcement_provider = enforcement_provider
         self.signer = signer
@@ -232,10 +250,60 @@ class GateOrchestrator:
             "question": GATE_QUESTIONS[gate],
             "specialist": GATE_SPECIALISTS[gate],
         })
+        self._emit_brief(gate)
         self._emit_completeness(gate)
         self.state.status = "awaiting-verdict"
         self._persist()
         return result
+
+    def _emit_brief(self, gate: str) -> None:
+        """1.3 + 1.8: author the real 4-field plain-words brief for this gate's
+        artifact via the model router's critique routing -- a cross-vendor critic
+        when `critic_adapter` is configured (closing 1.3's routing policy and
+        1.4's independence guarantee into the live gate walk), honestly falling
+        back to the primary adapter (same-vendor) otherwise. Never blocks the
+        gate walk; failures are silent, matching the other advisory emits."""
+        try:
+            from .. import artifacts as artifacts_mod
+            from ..model_router import route
+            from .briefs import author_brief, validate_brief
+
+            resolved = [a for a in artifacts_mod.resolve_gate_artifacts(self.repo_root, gate)
+                        if a.path.is_file()]
+            if not resolved:
+                return
+            artifact_content = resolved[0].path.read_text(encoding="utf-8", errors="replace")
+
+            author_model = str(getattr(self.adapter, "model", "") or "")
+            candidates = [author_model]
+            critic_model = ""
+            if self.critic_adapter is not None:
+                critic_model = str(getattr(self.critic_adapter, "model", "") or "")
+                if critic_model:
+                    candidates.append(critic_model)
+
+            chosen_model = route("critique", primary_model=author_model,
+                                 available=candidates, author_model=author_model)
+            use_critic = bool(critic_model) and chosen_model == critic_model
+            reviewer_adapter = self.critic_adapter if use_critic else self.adapter
+            reviewer_agent = "Critic" if use_critic else GATE_SPECIALISTS.get(gate, gate)
+            reviewer_model = critic_model if use_critic else author_model
+
+            brief = author_brief(
+                artifact_content, _CriticChat(reviewer_adapter),
+                author_agent=GATE_SPECIALISTS.get(gate, gate), author_model=author_model,
+                reviewer_agent=reviewer_agent, reviewer_model=reviewer_model,
+                artifact=resolved[0].rel_path,
+            )
+            payload = brief.to_dict()
+            payload["type"] = "brief"
+            payload["gate"] = gate
+            # Honest self-report: when there's no real critic, independence is
+            # not met and validate_brief says so here rather than hiding it.
+            payload["contract_violations"] = validate_brief(brief)
+            self.emit(payload)
+        except Exception:
+            pass
 
     def _emit_completeness(self, gate: str) -> None:
         """1.9: advisory inversion pass -- surface concerns a gate artifact may

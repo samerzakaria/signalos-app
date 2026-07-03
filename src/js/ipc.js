@@ -271,6 +271,17 @@ export const security = {
   secrets: () => invokeSidecar("run_signal_command", { command: "security:secrets", args: [] }),
 };
 
+// FOUNDER POLICY (1.11) -- plain-language workflow controls, never the
+// invariant structure itself.
+export const policy = {
+  get: () => invokeSidecar("run_signal_command", { command: "policy:get", args: [] }),
+  set: (policyObj) =>
+    invokeSidecar("run_signal_command", {
+      command: "policy:set",
+      args: [JSON.stringify(policyObj)],
+    }),
+};
+
 export const attachments = {
   analyze: (files) => invokeSidecar(
     "run_signal_command",

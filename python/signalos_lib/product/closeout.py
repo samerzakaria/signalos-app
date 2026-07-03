@@ -162,6 +162,11 @@ def build_closeout(
     # --- What next ---
     what_next = _build_what_next(closure_level)
 
+    # --- 3.1: link to the belief/listening-window this closeout feeds (C-bridge
+    # downstream consumer). Best-effort -- a product with no tracked hypothesis
+    # yet closes out normally with listening_window=None, never blocked by this.
+    listening_window = _link_listening_window(repo_root)
+
     return {
         "schema_version": SCHEMA_VERSION,
         "product_name": product_name,
@@ -184,7 +189,30 @@ def build_closeout(
         "what_next": what_next,
         "closed_at": _utc_now(),
         "closure_level": closure_level,
+        "listening_window": listening_window,
     }
+
+
+def _link_listening_window(repo_root: Path) -> dict[str, Any] | None:
+    """3.1 (C-bridge): if a listening window exists for the current wave, link
+    the closeout to the belief it's meant to validate -- traceable, not a
+    dead-end document. Returns None (never raises) when there is no window,
+    the wave can't be determined, or the window file is malformed."""
+    try:
+        from ..status import get_wave_status
+        from .observability import load_listening_window
+
+        wave = str(get_wave_status(repo_root).get("wave_id") or "").strip()
+        if not wave or wave == "—":
+            return None
+        window = load_listening_window(repo_root, wave)
+        return {
+            "belief_id": window.get("belief_id"),
+            "wave": window.get("wave"),
+            "status": window.get("status"),
+        }
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------------

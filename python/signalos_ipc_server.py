@@ -143,7 +143,7 @@ def handle(req: dict) -> dict:
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
     # the structured object (prompt, run_id, etc.) survives intact.
-    if command in ("agent:run", "agent:deliver", "agent:verdict", "agent:cancel", "agent:resume"):
+    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume"):
         try:
             return route_agent(req_id, command, raw_args, project_id=project_id)
         except Exception as exc:
@@ -283,6 +283,33 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             ),
         )
 
+    if command == "policy:get":
+        from signalos_lib.product.policy import load_policy
+
+        return ok(req_id, data=load_policy(Path.cwd()).to_dict())
+
+    if command == "policy:set":
+        from signalos_lib.product.policy import FounderPolicy, save_policy
+
+        try:
+            payload = json.loads(args[0]) if args else {}
+        except (TypeError, ValueError, IndexError) as exc:
+            return err(req_id, f"policy:set payload was not valid JSON: {exc}")
+        if not isinstance(payload, dict):
+            return err(req_id, "policy:set payload must be a JSON object")
+        policy = FounderPolicy(
+            gate_mode=str(payload.get("gate_mode", "standard")),
+            research_depth=str(payload.get("research_depth", "standard")),
+            budget_cap_usd=float(payload.get("budget_cap_usd", 0.0) or 0.0),
+            standards_profile=str(payload.get("standards_profile", "default")),
+            allowed_deploy_targets=list(payload.get("allowed_deploy_targets", []) or []),
+        )
+        try:
+            save_policy(Path.cwd(), policy)
+        except ValueError as exc:
+            return err(req_id, str(exc))
+        return ok(req_id, data=policy.to_dict())
+
     if command == "security:secrets":
         return ok(req_id, data=scan_secret_files(os.getcwd()))
 
@@ -389,6 +416,8 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
         return agent_run(req_id, raw_args, project_id=project_id)
     if command == "agent:deliver":
         return agent_deliver(req_id, raw_args, project_id=project_id)
+    if command == "agent:launch":
+        return agent_launch(req_id, raw_args, project_id=project_id)
     if command == "agent:verdict":
         return agent_verdict(req_id, raw_args, project_id=project_id)
     if command == "agent:cancel":
@@ -558,10 +587,12 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         return err(req_id, f"agent:deliver provider init failed: {type(exc).__name__}: {exc}")
     enforcement = _build_agent_enforcement()
     from signalos_lib.product.gate_orchestrator import GateOrchestrator
+    from signalos_lib.product.identity import format_signer, load_identity
     orch = GateOrchestrator(
         repo_root, adapter, _agent_emit(run_id),
         enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
         prompt=prompt, run_id=run_id,
+        signer=format_signer(load_identity(repo_root)),
     )
     _ACTIVE_DELIVERIES[run_id] = orch
     try:
@@ -570,6 +601,50 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         _agent_emit(run_id)({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
         return err(req_id, f"agent:deliver failed: {type(exc).__name__}: {exc}")
     return ok(req_id, output=json.dumps(res), data=res)
+
+
+def agent_launch(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:launch -> 3.4 (C-bridge): start a launch-surface mini-build
+    (landing page) that re-enters the SAME G0->G5 gate loop as agent:deliver,
+    isolated in its own repo_root under the current product's .signalos/,
+    linked back to the parent's closeout. Requires the current workspace to
+    already have a real closeout -- nothing to launch otherwise."""
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:launch args invalid: {exc}")
+    try:
+        provider, model = _agent_provider_and_model(payload, "agent:launch")
+    except ValueError as exc:
+        return err(req_id, str(exc))
+    prompt = str(payload.get("prompt") or "").strip() or None
+    repo_root = Path(os.getcwd())
+
+    def orchestrator_factory(child_repo_root: Path, child_prompt: str, run_id: str):
+        adapter = _build_agent_adapter(model, provider)
+        enforcement = _build_agent_enforcement()
+        from signalos_lib.product.gate_orchestrator import GateOrchestrator
+        from signalos_lib.product.identity import format_signer, load_identity
+        # identity was already carried into child_repo_root by
+        # start_launch_build (copy_identity_to) before this factory runs,
+        # so this reads the SAME founder identity as the parent product.
+        orch = GateOrchestrator(
+            child_repo_root, adapter, _agent_emit(run_id),
+            enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
+            prompt=child_prompt, run_id=run_id,
+            signer=format_signer(load_identity(child_repo_root)),
+        )
+        _ACTIVE_DELIVERIES[run_id] = orch
+        return orch
+
+    from signalos_lib.product.launch import start_launch_build
+    try:
+        result = start_launch_build(repo_root, orchestrator_factory, prompt=prompt)
+    except ValueError as exc:
+        return err(req_id, str(exc))
+    except Exception as exc:  # INV-4: surface
+        return err(req_id, f"agent:launch failed: {type(exc).__name__}: {exc}")
+    return ok(req_id, output=json.dumps(result["gate_result"]), data=result)
 
 
 def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:

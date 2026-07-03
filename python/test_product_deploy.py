@@ -95,6 +95,23 @@ class TestModeLive:
         # Blocker should mention the validation level
         assert "incomplete" in result["blockers"][0]
 
+    def test_blocked_live_deploy_emits_incident_card(self, repo: Path) -> None:
+        """1.10: a real blocked live-deploy attempt surfaces as a plain-words
+        incident card, not just a status buried in the decision dict."""
+        result = make_deploy_decision("live", None, repo)
+        assert "incident" in result
+        assert result["incident"]["scenario"] == "deploy-failure"
+        assert result["incident"]["recovery_options"]
+
+    def test_successful_live_deploy_has_no_incident(self, repo: Path) -> None:
+        result = make_deploy_decision("live", _passing_validation(), repo)
+        assert "incident" not in result
+
+    def test_prepare_mode_never_gets_a_deploy_incident(self, repo: Path) -> None:
+        # "prepare" is an expected non-attempt, not a failure -- never a card.
+        result = make_deploy_decision("prepare", None, repo)
+        assert "incident" not in result
+
 
 # ---------------------------------------------------------------------------
 # Evidence from validation

@@ -7,6 +7,7 @@ import {
 } from '../../state';
 import { loadProviderModels } from '../../services/providerModels';
 import { viewClass } from '../viewShell';
+import { PolicyPanel } from '../PolicyPanel';
 
 const PROVIDERS = [
   { id: 'anthropic', label: 'Claude (Anthropic)' },
@@ -216,6 +217,9 @@ export function SettingsView() {
                 </div>
               </div>
             </div>
+          </div>
+          <div className="card">
+            <PolicyPanel />
           </div>
         </div>
       </div>

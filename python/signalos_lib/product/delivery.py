@@ -568,7 +568,10 @@ def run_delivery(
     if generation_packet and agent_mode not in ("none", "packet-only"):
         _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
-            from .agent_dispatch import dispatch_build_agent, dispatch_local_build_agent
+            from .agent_dispatch import dispatch_build_agent, dispatch_local_build_agent_parallel
+            from .executor import run_worker_pool
+            from signalos_lib.task_store import InMemoryTaskStore
+
             governance = collect_governance_instructions(
                 agent_role="build",
                 extra_contexts=(
@@ -576,19 +579,48 @@ def run_delivery(
                 ),
             )
             packet_for_agent = agent_packet or generation_packet
-            if agent_mode == "local" or (
+            use_local = agent_mode == "local" or (
                 agent_mode == "auto" and actual_profile in {"react-vite", "generic", "fastapi-api"}
-            ):
-                agent_result = dispatch_local_build_agent(
-                    repo_root=repo_root,
-                    packet=packet_for_agent,
-                )
+            )
+
+            def _dispatch_once(_task: Any) -> dict:
+                if use_local:
+                    # 1.1: transparently parallelizes across independent
+                    # react-vite components via the real worktree/merge-queue
+                    # executor; falls back verbatim to the single synchronous
+                    # call for every other profile and for <2 components.
+                    dispatched = dispatch_local_build_agent_parallel(
+                        repo_root=repo_root,
+                        packet=packet_for_agent,
+                    )
+                else:
+                    dispatched = dispatch_build_agent(
+                        repo_root=repo_root,
+                        packet=packet_for_agent,
+                        governance=governance,
+                    )
+                # "no_api_key" is a config problem retrying can't fix -- terminal,
+                # not a transient failure. Anything else non-"completed" is worth
+                # one bounded retry through the same claim/lease/retry contract
+                # the parallel executor uses (executor.py, Wave 1.1).
+                if dispatched.get("status") not in ("completed", "no_api_key"):
+                    raise RuntimeError(
+                        "; ".join(dispatched.get("errors", [])) or "agent dispatch failed"
+                    )
+                return dispatched
+
+            dispatch_store = InMemoryTaskStore(max_attempts=2)
+            dispatch_store.enqueue(str(packet_for_agent.get("run_id") or "build-agent"))
+            dispatch_report = run_worker_pool(dispatch_store, _dispatch_once, max_workers=1)
+            if dispatch_report.succeeded:
+                agent_result = dispatch_report.succeeded[0].result
             else:
-                agent_result = dispatch_build_agent(
-                    repo_root=repo_root,
-                    packet=packet_for_agent,
-                    governance=governance,
-                )
+                dead = dispatch_store.get(dispatch_report.dead_letters[0]) if dispatch_report.dead_letters else None
+                agent_result = {
+                    "status": "failed",
+                    "errors": [dead.error] if dead and dead.error else ["agent dispatch failed"],
+                }
+
             if agent_result.get("status") == "completed":
                 if manifest:
                     _refresh_manifest_hashes(repo_root, manifest)

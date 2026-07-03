@@ -33,6 +33,32 @@ class _EndAdapter:
                              stop_reason="end_turn", usage=TokenUsage())
 
 
+class _BriefCapableAdapter:
+    """1.3 + 1.8: serves both the main gate-agent loop (tools passed -> ends
+    the turn) and, via _CriticChat, the brief-authoring call (no tools ->
+    returns a valid 4-field brief as JSON)."""
+    supports_tool_calls = True
+
+    def __init__(self, model: str, brief_json: str):
+        self.model = model
+        self._brief_json = brief_json
+
+    def chat(self, messages, model=None, tools=None, stream=False):
+        if tools:
+            return AgentResponse(content="(gate work done)", tool_calls=None,
+                                 stop_reason="end_turn", usage=TokenUsage())
+        return AgentResponse(content=self._brief_json, tool_calls=None,
+                             stop_reason="end_turn", usage=TokenUsage())
+
+
+_GOOD_BRIEF_JSON = (
+    '{"what_you_are_signing": "the core purpose", '
+    '"what_changes_after": "the plan commits", '
+    '"the_one_risk": "scope too broad", '
+    '"question_worth_asking": "is this the key outcome?"}'
+)
+
+
 def _orch(root, events, signed):
     def fake_sign(repo_root, gate, signer, role, verdict, conditions):
         signed.append((gate, role, verdict))
@@ -42,6 +68,57 @@ def _orch(root, events, signed):
         enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
         sign_fn=fake_sign, prompt="build task management",
     )
+
+
+class TestRealBriefWiring(unittest.TestCase):
+    """1.3 + 1.8: the real 4-field critic brief is emitted at every gate,
+    routed through model_router.route(), not the flat single-field brief."""
+
+    def _seed_soul_doc(self, root: Path) -> None:
+        soul = root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md"
+        soul.parent.mkdir(parents=True, exist_ok=True)
+        soul.write_text("The product purpose statement. " * 40, encoding="utf-8")
+        (root / ".signalos").mkdir(parents=True, exist_ok=True)
+
+    def test_no_critic_configured_falls_back_honestly(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._seed_soul_doc(root)
+            events: list[dict] = []
+            adapter = _BriefCapableAdapter("anthropic/claude-sonnet-4-5", _GOOD_BRIEF_JSON)
+            orch = GateOrchestrator(
+                root, adapter, events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                sign_fn=lambda *a, **k: ["x"], prompt="build",
+            )
+            orch.start()
+            briefs = [e for e in events if e.get("type") == "brief"]
+            self.assertTrue(briefs, "no brief event emitted")
+            b = briefs[0]
+            self.assertEqual(b["the_one_risk"], "scope too broad")  # real 4-field content
+            # honest self-report: same adapter authored + reviewed -> not independent
+            self.assertTrue(b["contract_violations"])
+
+    def test_cross_vendor_critic_produces_an_independent_brief(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._seed_soul_doc(root)
+            events: list[dict] = []
+            author = _BriefCapableAdapter("anthropic/claude-sonnet-4-5", "unused")
+            critic = _BriefCapableAdapter("openai/gpt-4o", _GOOD_BRIEF_JSON)
+            orch = GateOrchestrator(
+                root, author, events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                sign_fn=lambda *a, **k: ["x"], prompt="build",
+                critic_adapter=critic,
+            )
+            orch.start()
+            briefs = [e for e in events if e.get("type") == "brief"]
+            self.assertTrue(briefs, "no brief event emitted")
+            b = briefs[0]
+            self.assertEqual(b["provenance"]["reviewer_agent"], "Critic")
+            self.assertEqual(b["provenance"]["reviewer_model"], "openai/gpt-4o")
+            self.assertEqual(b["contract_violations"], [])  # real cross-vendor independence
 
 
 class TestGateWalk(unittest.TestCase):

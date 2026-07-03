@@ -169,7 +169,7 @@ def _build(
     closeable: bool | None,
     level: str | None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "mode": mode,
         "decided_at": _utc_now(),
@@ -182,6 +182,16 @@ def _build(
             "validation_level": level,
         },
     }
+    # 1.10: a genuine blocked LIVE deploy attempt (the founder tried to ship and
+    # it was refused) surfaces as a plain-words incident card, not just a status
+    # string buried in a decision object. "none"/"prepare" are expected
+    # non-attempts, not failures, so they never get a card.
+    if mode == "live" and not deploy_allowed:
+        from .incidents import build_incident_card
+        payload["incident"] = build_incident_card(
+            "deploy-failure", detail=reason,
+        ).to_dict()
+    return payload
 
 
 def _extract_validation_status(result: dict[str, Any] | None) -> str:

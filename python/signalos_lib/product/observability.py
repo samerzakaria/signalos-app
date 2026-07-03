@@ -65,8 +65,16 @@ def create_listening_window(
     direction: str,
     minimum_cohort: int = 0,
     force: bool = False,
+    threshold_signed: bool = False,
 ) -> dict[str, Any]:
-    """Create a Pending listening window and persist it as JSON."""
+    """Create a Pending listening window and persist it as JSON.
+
+    3.2 (C-bridge): ``threshold_signed`` records whether this metric/threshold was
+    a founder-signed success criterion (e.g. the Expectation Map / Belief gate),
+    not just typed into a CLI flag. Defaults to False (fail-closed) -- a window
+    resolves KEEP only when its threshold was actually signed; see
+    ``evaluate_listening_window``'s ``threshold-unsigned`` blocker.
+    """
     root = Path(repo_root)
     normalized_wave = _normalize_wave(wave)
     opened = _parse_time(opens_at, "opens_at")
@@ -99,6 +107,7 @@ def create_listening_window(
             "threshold": threshold_value,
             "direction": normalized_direction,
             "minimum_cohort": cohort_minimum,
+            "threshold_signed": bool(threshold_signed),
         },
         "status": "pending",
         "readings": [],
@@ -297,6 +306,20 @@ def evaluate_listening_window(
                 "slo-breach",
                 "one or more primary metric readings reported an SLO breach",
                 "record SLO evidence and review operational health before final verdict",
+            )
+        )
+    # 3.2 (C-bridge, dev-review): telemetry may only resolve a hypothesis whose
+    # success metrics were SIGNED earlier. An unsigned threshold blocks KEEP/KILL
+    # even if the raw numbers look good -- never auto-resolve against a target
+    # nobody actually committed to.
+    if not bool(metric.get("threshold_signed", False)):
+        blockers.append(
+            _blocker(
+                "threshold-unsigned",
+                f"metric {metric_name}'s threshold was never signed as a founder "
+                "success criterion; a verdict cannot be drawn from an unsigned target",
+                "sign the success threshold at the Expectation Map / Belief gate, "
+                "then recreate the window with threshold_signed=true",
             )
         )
 

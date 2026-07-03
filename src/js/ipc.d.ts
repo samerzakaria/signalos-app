@@ -76,6 +76,11 @@ export const audit: { list(limit?: number): Promise<unknown> };
 
 export const security: { secrets(): Promise<unknown> };
 
+export const policy: {
+  get(): Promise<unknown>;
+  set(policyObj: unknown): Promise<unknown>;
+};
+
 export const attachments: { analyze(files: unknown): Promise<unknown> };
 
 export const identity: {
