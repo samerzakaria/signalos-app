@@ -2,6 +2,19 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.3-internal.1] - 2026-07-03
+
+### Close Wave-1 executor + the C-bridge loop; supply-chain fix
+
+- **1.1 — live parallel executor:** the supervisor/worker loop on top of the `TaskStore` foundation — a `run_worker_pool` (claim/lease/heartbeat, retry→dead-letter, N concurrent workers) plus `run_isolated_build_tasks` (real git-worktree-per-task isolation + a single-threaded merge queue), verified against a real git repo (independent tasks build in parallel and merge cleanly; conflicting tasks dead-letter the loser, not both). Wired into the live `delivery.py` dispatch through the same claim/retry contract, and `dispatch_local_build_agent_parallel` splits a react-vite product's components (import-disjoint by construction) across the worktree/merge-queue path — with verbatim fallback for every other profile. Two real bugs surfaced by exercising the actual delivery path and fixed: a fresh-scaffold repo has no commit yet (so `git worktree add` had nothing to fork from), and per-task `.signalos/` bookkeeping was leaking into merges.
+- **1.10 — incident cards:** all four present-day cards now fire from real trigger points (gate-deadlock, integration-outage, credential-revoked, deploy-failure).
+- **1.11 — founder policy controls:** full stack — `policy.py` persistence, `policy:get`/`policy:set` IPC, and a plain-language `PolicyPanel` settings surface.
+- **3.1 / 3.2 (C-bridge):** closeout now links the product's real listening window, and the unsigned-threshold safety gate is enforced inside the live `evaluate_listening_window` verdict path (never a duplicate module).
+- **3.4 (C-bridge):** a launch surface re-enters the same enforced G0–G5 gate loop as an isolated child build (`launch.py` + `agent:launch`), linked back to the parent product.
+- **3.6 (C-bridge):** the founder's real identity now reaches signed gate records (previously always the generic `foundry-agent`) and carries into launch children.
+- **Supply chain:** removed `quick-xml 0.37.5` (RUSTSEC-2026-0194 / 0195, both high) by updating `notify-rust` → 4.18.0 and `tauri-winrt-notification` → 0.7.3, which drop the crate entirely from the Windows-notification path — a genuine removal, not an audit suppression. The remaining `quick-xml 0.39.4` (via `plist`, pinned `^0.39.2`) is upstream-blocked pending `plist#191`; deliberately left un-ignored and tracked.
+- **Intentionally still open:** 3.3 (advisory write-back) and 3.5 (growth re-entry) remain blocked on B-layer modules that do not exist yet; not stubbed.
+
 ## [3.2.0-internal.1] - 2026-07-02
 
 ### Governed product lifecycle — integrity hardening + engineering foundation (Wave 0 + Wave 1 + C-bridge)
