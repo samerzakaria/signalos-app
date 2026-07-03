@@ -152,9 +152,23 @@ def run_worker_pool(
 # Git worktree isolation + merge queue, for build-agent tasks specifically
 # ---------------------------------------------------------------------------
 
+# Explicit identity + no-sign so the executor's commits/merges are
+# self-sufficient: a freshly `git init`ed product repo has no user.name/
+# user.email, and CI runners have no global git identity either, so a bare
+# `git commit` fails there ("Please tell me who you are"). Passing these as
+# per-invocation `-c` flags avoids depending on ambient config or mutating
+# the repo's own config. commit.gpgsign=false prevents a signing hang/failure
+# on machines with a global signing config.
+_GIT_IDENTITY = (
+    "-c", "user.email=executor@signalos.local",
+    "-c", "user.name=SignalOS Executor",
+    "-c", "commit.gpgsign=false",
+)
+
+
 def _git(cwd: Path, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args],
+        ["git", *_GIT_IDENTITY, *args],
         cwd=str(cwd),
         capture_output=True,
         text=True,
