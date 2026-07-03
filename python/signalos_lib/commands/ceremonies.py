@@ -11,9 +11,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from signalos_lib.artifacts import gate_artifact_rel_path
+
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_BAD_ARGS = 2
+
+
+def _gate_artifact_path(root: Path, gate: str, label: str) -> Path:
+    """Resolve a scaffold target from the canonical gate manifest so ceremony
+    output always lands where the gate validator looks."""
+    return root.joinpath(*gate_artifact_rel_path(gate, label).split("/"))
 
 CEREMONY_COMMANDS = {
     "signal-discovery",
@@ -113,9 +121,9 @@ def _signal_onboard(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     product = args.name or root.name
     summary = _summary(args, f"{product} is onboarded into SignalOS governance.")
     files = [
-        root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md",
-        root / "core" / "execution" / "SURFACE_INVENTORY.md",
-        root / "core" / "execution" / "PERMANENTLY_T3.md",
+        _gate_artifact_path(root, "G0", "Soul Document"),
+        _gate_artifact_path(root, "G0", "Surface Inventory"),
+        _gate_artifact_path(root, "G0", "Permanently T3"),
         root / "core" / "execution" / "onboarding-report.md",
     ]
     _write_text(files[0], "\n".join([
@@ -173,9 +181,9 @@ def _signal_pre_wave(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         )
     files = [
         root / ".signalos" / "wave.json",
-        root / "core" / "strategy" / "BELIEF.md",
-        root / "core" / "execution" / "EXPECTATION_MAP.md",
-        root / "core" / "execution" / "ROLE_ACTIVATION_CARD.md",
+        _gate_artifact_path(root, "G1", "Belief"),
+        _gate_artifact_path(root, "G2", "Expectation Map"),
+        _gate_artifact_path(root, "G1", "Role Activation Card"),
     ]
     _write_json(files[0], {"wave": wave, "status": "ACTIVE", "updated_at": _utc_now()})
     _write_text(files[1], f"# Belief\n\n## Problem\n\n{summary}\n\n## Signal\n\nDefine measurable threshold before build.\n", force=args.force)
@@ -189,7 +197,7 @@ def _signal_review(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     verdict = args.verdict.upper()
     summary = _summary(args, "Review ceremony executed; quality evidence requires human confirmation.")
     files = [
-        root / "core" / "governance" / "QUALITY_CHECK.md",
+        _gate_artifact_path(root, "G5", "Quality Check"),
         root / ".signalos" / "evidence" / wave / "signal-review.json",
     ]
     _write_text(files[0], f"# Quality Check\n\nWave: {wave}\nVerdict: {verdict}\n\n{summary}\n", force=args.force)

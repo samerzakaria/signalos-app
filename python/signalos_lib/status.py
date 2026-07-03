@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from signalos_lib.artifacts import gate_detection_paths
 from signalos_lib.ide import detect_ide
 
 # ---------------------------------------------------------------------------
@@ -100,17 +101,19 @@ def _is_non_template(path: Path) -> bool:
 
 
 def _detect_gates(root: Path) -> dict[str, bool]:
-    """Return dict with G0..G5 as bool (True = gate passed)."""
+    """Return dict with G0..G5 as bool (True = gate passed).
+
+    Paths come from the canonical gate manifest (gate_artifacts.json) so this
+    board can never drift from what the gate validator enforces. G0 keeps its
+    content check: a template-only Soul Document does not count as onboarded.
+    """
     g = {}
-    g["G0"] = _is_non_template(root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md")
-    g["G1"] = (
-        (root / "core" / "strategy" / "BELIEF.md").is_file()
-        or (root / "core" / "strategy" / "BELIEF_LITE.md").is_file()
-    )
-    g["G2"] = (root / "core" / "strategy" / "EXPECTATION_MAP.md").is_file()
-    g["G3"] = (root / "core" / "strategy" / "DESIGN_NOTE.md").is_file()
-    g["G4"] = (root / "core" / "execution" / "TRUST_TIER.md").is_file()
-    g["G5"] = (root / "core" / "governance" / "QUALITY_CHECK.md").is_file()
+    for gate, rel_paths in gate_detection_paths().items():
+        candidates = [root.joinpath(*rel.split("/")) for rel in rel_paths]
+        if gate == "G0":
+            g[gate] = any(_is_non_template(path) for path in candidates)
+        else:
+            g[gate] = any(path.is_file() for path in candidates)
     return g
 
 

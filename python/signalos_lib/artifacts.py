@@ -94,6 +94,41 @@ def gate_artifact_map() -> dict[str, list[tuple[str, list[str], str]]]:
     }
 
 
+# Lite-track alternatives that satisfy presence *detection* for a gate even
+# though they are not part of the signing manifest.
+_GATE_DETECTION_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    "G1": ("core/strategy/BELIEF_LITE.md",),
+}
+
+
+def gate_detection_paths() -> dict[str, tuple[str, ...]]:
+    """Per-gate presence-detection paths derived from the manifest.
+
+    The first manifest artifact of each gate is its primary artifact; detection
+    surfaces (status board, wave engine) treat a gate as materialised when the
+    primary artifact — or a registered lite alternative — exists. Signing-level
+    enforcement always uses the full manifest, never this list.
+    """
+    detection: dict[str, tuple[str, ...]] = {}
+    for gate, artifacts in GATE_ARTIFACTS.items():
+        paths: list[str] = [artifacts[0].rel_path] if artifacts else []
+        paths.extend(_GATE_DETECTION_ALTERNATIVES.get(gate, ()))
+        detection[gate] = tuple(paths)
+    return detection
+
+
+def gate_artifact_rel_path(gate: str, label: str) -> str:
+    """Return the manifest rel_path of a gate artifact identified by label.
+
+    Raises ``KeyError`` so writers cannot silently scaffold an artifact at a
+    path the gate validator will never read.
+    """
+    for artifact in GATE_ARTIFACTS.get(gate, ()):
+        if artifact.label == label:
+            return artifact.rel_path
+    raise KeyError(f"gate {gate} has no artifact labelled {label!r}")
+
+
 GATE_MAP: dict[str, list[tuple[str, list[str], str]]] = gate_artifact_map()
 
 

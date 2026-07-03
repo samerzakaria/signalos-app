@@ -86,8 +86,11 @@ def _run_hook_dry(repo_root: Path, hook: dict) -> dict:
     script = repo_root / source if source else None
 
     if not script or not script.exists():
+        # Fail closed: a registered hook whose script is missing is broken
+        # wiring, not a skippable hook — reporting it green would leave the
+        # guard silently inert.
         return {
-            "name": name, "passed": True, "skipped": True,
+            "name": name, "passed": False, "skipped": True,
             "reason": f"script not found: {source}",
             "duration_ms": 0, "stdout": "", "stderr": "",
         }

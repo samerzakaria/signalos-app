@@ -43,7 +43,13 @@ def _seed_valid_belief(root: Path) -> None:
         "```\n\n"
         "## Problem\nUsers need traceable delivery claims.\n\n"
         "## Disproof condition\nA claim cannot resolve to evidence.\n\n"
-        "## Bet Score\n7\n\n"
+        "## Bet Score\n"
+        "| Component | Value |\n"
+        "| --- | --- |\n"
+        "| Risk (1-5) | 4 |\n"
+        "| Impact (1-5) | 5 |\n"
+        "| Test Cost (1-5) | 3 |\n"
+        "| Bet Score | 6.7 |\n\n"
         "## Smallest Testable Build\nA validator command.\n\n"
         "## Signal threshold\n"
         "| Metric | Direction | Threshold | Window | Signal lag |\n"
@@ -112,6 +118,38 @@ def test_validate_product_traceability_fails_on_missing_required_belief_evidence
     assert "belief-front-matter-missing" in codes
     assert "belief-section-missing" in codes
     assert "belief-traceability-source-mismatch" in codes
+
+
+def test_validate_product_traceability_fails_on_bet_score_arithmetic_mismatch(tmp_path: Path) -> None:
+    (tmp_path / ".signalos").mkdir()
+    _seed_valid_belief(tmp_path)
+    belief = tmp_path / ".signalos" / "Beliefs" / "B-N1.md"
+    belief.write_text(
+        belief.read_text(encoding="utf-8").replace("| Bet Score | 6.7 |", "| Bet Score | 9 |"),
+        encoding="utf-8",
+    )
+
+    payload = validate_product_traceability(tmp_path, write_evidence=False)
+
+    assert payload["ok"] is False
+    codes = {issue["code"] for issue in payload["issues"]}
+    assert "belief-bet-score-mismatch" in codes
+
+
+def test_validate_product_traceability_fails_on_bet_score_without_components(tmp_path: Path) -> None:
+    (tmp_path / ".signalos").mkdir()
+    _seed_valid_belief(tmp_path)
+    belief = tmp_path / ".signalos" / "Beliefs" / "B-N1.md"
+    text = belief.read_text(encoding="utf-8")
+    start = text.index("## Bet Score")
+    end = text.index("## Smallest Testable Build")
+    belief.write_text(text[:start] + "## Bet Score\n7\n\n" + text[end:], encoding="utf-8")
+
+    payload = validate_product_traceability(tmp_path, write_evidence=False)
+
+    assert payload["ok"] is False
+    codes = {issue["code"] for issue in payload["issues"]}
+    assert "belief-bet-score-components-missing" in codes
 
 
 def test_validate_prd_traceability_passes_for_live_destinations(tmp_path: Path) -> None:

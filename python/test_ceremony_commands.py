@@ -47,13 +47,13 @@ def test_ceremony_commands_write_artifacts_evidence_and_audit(tmp_path: Path) ->
     expected_files = [
         "core/strategy/discovery-briefs/wave-0-session-001.md",
         "core/governance/Governance/SOUL-DOCUMENT.md",
-        "core/execution/SURFACE_INVENTORY.md",
-        "core/execution/PERMANENTLY_T3.md",
+        "core/governance/Governance/SURFACE_INVENTORY.md",
+        "core/governance/Governance/PERMANENTLY_T3.md",
         "core/execution/onboarding-report.md",
         "core/governance/Governance/DECISION-DNA.md",
         ".signalos/wave.json",
         "core/strategy/BELIEF.md",
-        "core/execution/EXPECTATION_MAP.md",
+        "core/strategy/EXPECTATION_MAP.md",
         "core/execution/ROLE_ACTIVATION_CARD.md",
         "core/governance/QUALITY_CHECK.md",
         ".signalos/evidence/W03/signal-review.json",
@@ -117,6 +117,49 @@ def test_signal_pre_wave_force_replaces_active_wave(tmp_path: Path) -> None:
 
     wave = json.loads((tmp_path / ".signalos" / "wave.json").read_text(encoding="utf-8"))
     assert wave["wave"] == "W02"
+
+
+def test_ceremony_scaffolds_land_on_gate_manifest_paths(tmp_path: Path) -> None:
+    """Round-trip guard: every gate artifact a ceremony scaffolds must exist at
+    the exact path the canonical gate manifest enforces, and the gate validator
+    must see it. Kills the scaffold-path-drift class, not just one instance."""
+    from signalos_lib.artifacts import GATE_ARTIFACTS
+    from signalos_lib.commands.validate_gate import validate_gate
+
+    _run("signal-onboard", tmp_path, "--name", "Acme App", "--actor", "PO")
+    _run("signal-pre-wave", tmp_path, "--wave", "1", "--summary", "Smallest slice.")
+    _run("signal-review", tmp_path, "--wave", "W01", "--verdict", "approved")
+
+    scaffolded_labels = {
+        "Soul Document",
+        "Surface Inventory",
+        "Permanently T3",
+        "Belief",
+        "Role Activation Card",
+        "Expectation Map",
+        "Quality Check",
+    }
+    seen: set[str] = set()
+    for artifacts in GATE_ARTIFACTS.values():
+        for artifact in artifacts:
+            if artifact.label in scaffolded_labels:
+                seen.add(artifact.label)
+                target = tmp_path.joinpath(*artifact.rel_path.split("/"))
+                assert target.is_file(), (
+                    f"{artifact.label} was not scaffolded at its manifest path "
+                    f"{artifact.rel_path}"
+                )
+    assert seen == scaffolded_labels
+
+    # The validator must see the scaffolds: G0 may only report the
+    # human-authored Constitution as missing, never a ceremony-scaffolded file.
+    payload = validate_gate(tmp_path, "G0", write_evidence=False)
+    present = next(
+        check for check in payload["checks"] if check["id"] == "gate-artifacts-present"
+    )
+    assert present["details"]["missing"] == [
+        "core/governance/Governance/CONSTITUTION.md"
+    ]
 
 
 def test_signal_review_fail_verdict_exits_nonzero(tmp_path: Path, capsys) -> None:

@@ -70,6 +70,58 @@ _REQUIRED_BELIEF_SECTIONS = (
     "Zone history",
 )
 _SOURCE_REFERENCE_RE = re.compile(r"^(PRD\s+.+|Wave\s+\d+.*|CSL-\d{3,}.*|WD-\d{3,}.*)$", re.I)
+_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+_BET_SCORE_LABELS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("risk", frozenset({"risk"})),
+    ("impact", frozenset({"impact"})),
+    ("test_cost", frozenset({"test cost", "test-cost", "testcost", "cost"})),
+    ("stated", frozenset({"bet score", "bet-score", "score", "bet"})),
+)
+
+
+def _bet_score_components(body: str) -> dict[str, float]:
+    """Parse Risk / Impact / Test Cost / stated Bet Score numbers.
+
+    Supports the belief-template table rows (``| **Risk (1-5)** | 4 |``) and
+    plain ``Risk: 4`` / ``Bet Score = 6.7`` lines. Labels must match exactly
+    after stripping emphasis and parenthesised hints, so a formula line such
+    as ``Bet Score = (Risk x Impact) / Test Cost`` is never misread as data.
+    """
+    values: dict[str, float] = {}
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or set(line) <= {"|", "-", " ", ":"}:
+            continue
+        if line.startswith("|"):
+            cells = [cell.strip().strip("*").strip() for cell in line.strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            label_text, value_text = cells[0], cells[1]
+        else:
+            head, sep, tail = line.partition(":")
+            if not sep:
+                head, sep, tail = line.partition("=")
+            if not sep:
+                continue
+            label_text, value_text = head, tail
+        numbers = _NUMBER_RE.findall(value_text)
+        if not numbers:
+            continue
+        label = re.sub(r"\(.*?\)", "", label_text).strip("*# ").strip().lower()
+        for key, aliases in _BET_SCORE_LABELS:
+            if key not in values and label in aliases:
+                # A filled formula line ends in the result, so take the last number.
+                values[key] = float(numbers[-1])
+                break
+    return values
+
+
+def _bet_score_matches(stated: float, computed: float) -> bool:
+    return (
+        abs(stated - computed) <= 0.05
+        or stated == round(computed, 1)
+        or stated == round(computed)
+    )
 
 
 @dataclass(frozen=True)
@@ -465,6 +517,54 @@ def _validate_belief_file(
                     details={"section": section},
                 )
             )
+    bet_body = _section_body(text, "Bet Score")
+    if bet_body.strip():
+        components = _bet_score_components(bet_body)
+        missing_components = [
+            key for key in ("risk", "impact", "test_cost", "stated") if key not in components
+        ]
+        if missing_components:
+            issues.append(
+                TraceabilityIssue(
+                    "belief-bet-score-components-missing",
+                    (
+                        f"{belief_id} Bet Score must state Risk, Impact, Test Cost and the "
+                        f"resulting score so the arithmetic can be verified."
+                    ),
+                    evidence=[rel],
+                    details={"missing": missing_components},
+                )
+            )
+        elif components["test_cost"] <= 0:
+            issues.append(
+                TraceabilityIssue(
+                    "belief-bet-score-mismatch",
+                    f"{belief_id} Bet Score Test Cost must be greater than zero.",
+                    evidence=[rel],
+                    details={"test_cost": components["test_cost"]},
+                )
+            )
+        else:
+            computed = (components["risk"] * components["impact"]) / components["test_cost"]
+            stated = components["stated"]
+            if not _bet_score_matches(stated, computed):
+                issues.append(
+                    TraceabilityIssue(
+                        "belief-bet-score-mismatch",
+                        (
+                            f"{belief_id} states Bet Score {stated:g} but "
+                            f"(Risk x Impact) / Test Cost = {computed:.2f}."
+                        ),
+                        evidence=[rel],
+                        details={
+                            "risk": components["risk"],
+                            "impact": components["impact"],
+                            "test_cost": components["test_cost"],
+                            "stated": stated,
+                            "computed": round(computed, 2),
+                        },
+                    )
+                )
     signal_body = _section_body(text, "Signal threshold")
     if signal_body and "signal lag" not in signal_body.lower():
         issues.append(

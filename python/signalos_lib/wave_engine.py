@@ -34,6 +34,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from signalos_lib.artifacts import gate_detection_paths
+
 
 __all__ = [
     "WaveState",
@@ -56,18 +58,12 @@ __all__ = [
 GATE_ORDER: list[str] = ["G0", "G1", "G2", "G3", "G4", "G5"]
 
 
-# Per-gate artifact paths (mirrors status._detect_gates). Centralised
-# here so the engine doesn't have to duplicate the layout knowledge.
+# Per-gate artifact paths derived from the canonical gate manifest
+# (gate_artifacts.json) so the engine can never drift from the layout the
+# gate validator enforces.
 _GATE_ARTIFACT_PATHS: dict[str, list[tuple[str, ...]]] = {
-    "G0": [("core", "governance", "Governance", "SOUL-DOCUMENT.md")],
-    "G1": [
-        ("core", "strategy", "BELIEF.md"),
-        ("core", "strategy", "BELIEF_LITE.md"),
-    ],
-    "G2": [("core", "strategy", "EXPECTATION_MAP.md")],
-    "G3": [("core", "strategy", "DESIGN_NOTE.md")],
-    "G4": [("core", "execution", "TRUST_TIER.md")],
-    "G5": [("core", "governance", "QUALITY_CHECK.md")],
+    gate: [tuple(rel_path.split("/")) for rel_path in rel_paths]
+    for gate, rel_paths in gate_detection_paths().items()
 }
 
 
