@@ -558,6 +558,20 @@ def _validate_component_files(bp_dir: Path) -> list[str]:
     return errors
 
 
+# #35: UX-surface tokens that are too generic to identify a domain -- present
+# in almost every app -- so they must not corroborate a blueprint. Normalised
+# (no separators). Domain-specific surfaces (kanban/gantt/calendar/timeline/map)
+# are intentionally NOT here, so they still contribute domain signal.
+_GENERIC_UX_SURFACES = frozenset({
+    "dashboard", "dashboards", "chart", "charts", "graph", "graphs", "gauge",
+    "form", "forms", "list", "lists", "table", "tables", "grid", "grids",
+    "detail", "details", "card", "cards", "page", "pages", "view", "views",
+    "panel", "panels", "modal", "modals", "tab", "tabs", "layout", "nav",
+    "navbar", "menu", "header", "footer", "sidebar", "summary", "settings",
+    "search", "filter", "filters", "button", "buttons", "input", "widget",
+})
+
+
 def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
     """Build a set of lowercase keyword tokens from intent fields.
 
@@ -568,12 +582,13 @@ def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
     """
     tokens: set[str] = set()
     # #35: do NOT draw keywords from `product_type` -- an LLM's label
-    # corroborating itself is circular -- nor from `ux_surfaces`. UX surfaces
-    # (`dashboard`, `chart`, `form`, `list`) are generic UI words present in
-    # almost every app and are LLM-injected in the same refinement that sets the
-    # label; they let a personal expense tracker (ux_surfaces=[form,dashboard,
-    # chart]) snap onto the financial-dashboard blueprint on the lone shared
-    # word "dashboard" even though NO entity or workflow is finance-related.
+    # corroborating itself is circular. And filter GENERIC UX surfaces
+    # (`dashboard`, `chart`, `form`, `list`...) that appear in almost every app,
+    # which let a personal expense tracker (ux_surfaces=[form,dashboard,chart])
+    # snap onto the financial-dashboard blueprint on the lone shared word
+    # "dashboard". But KEEP domain-specific surfaces (`kanban`, `gantt`,
+    # `calendar`...) -- e.g. "task board" legitimately matches task-management
+    # via its `kanban` surface, so a blanket drop over-tightened it to no match.
     val = intent.get("product_name", "")
     if isinstance(val, str):
         tokens.update(_normalise_match_token(part) for part in val.split())
@@ -584,9 +599,14 @@ def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
         if isinstance(det_entities, list) and det_entities
         else intent.get("entities", [])
     )
+    ux_surfaces = [
+        s for s in (intent.get("ux_surfaces", []) or [])
+        if isinstance(s, str) and _normalise_match_token(s) not in _GENERIC_UX_SURFACES
+    ]
     list_sources: list[tuple[str, Any]] = [
         ("primary_workflows", intent.get("primary_workflows", [])),
         ("entities", entities_source),
+        ("ux_surfaces", ux_surfaces),
         ("target_users", intent.get("target_users", [])),
         ("integrations", intent.get("integrations", [])),
     ]

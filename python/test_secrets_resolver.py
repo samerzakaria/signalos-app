@@ -14,6 +14,12 @@ def _clear_provider_env(monkeypatch):
     for var in sr._PROVIDER_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.delenv("SIGNALOS_DISABLE_LLM", raising=False)
+    # #23 made is_llm_available() also require an importable provider SDK, which
+    # isn't installed on the CI runner. These tests exercise KEY RESOLUTION
+    # (product wins, app fallback), not SDK availability -- force the SDK check
+    # True to isolate that concern. (A dev machine has the wheel installed,
+    # which is why this only failed in CI.)
+    monkeypatch.setattr(sr, "_provider_sdk_importable", lambda root=None: True)
 
 
 def test_parse_env_file_tolerates_comments_quotes_and_export(tmp_path):

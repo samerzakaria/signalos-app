@@ -1375,19 +1375,25 @@ def dispatch_local_build_agent_parallel(
         sub_packet["task_id"] = f"{run_id}-{task_id}"
         packets.append(sub_packet)
 
-    if isolate:
-        report = run_isolated_build_tasks(repo_root, packets, max_workers=max_workers)
-    else:
-        # Git-free fast path. Sub-tasks write in place against the SAME
-        # repo_root, so suppress each sub-task's RESULT.json -- a single
-        # aggregate RESULT.json is written below (exactly one agent-run
-        # entry, matching the worktree path which excluded .signalos from
-        # every merge).
-        def _dispatch_inplace(sub_repo: Path, sub_packet: dict) -> dict[str, Any]:
-            return dispatch_local_build_agent(sub_repo, sub_packet, write_result=False)
+    # Both parallel paths split a product into FILE-DISJOINT sub-tasks (App.tsx
+    # in the foundation task, each component in its own task). A per-sub-task
+    # cross-file check is therefore architecturally wrong -- App.tsx's import of
+    # a component that lives in ANOTHER task's worktree is "unresolved" in this
+    # one -- and in the isolated path it also RACED on merge timing (flaky
+    # `'failed' != 'completed'`). Suppress the per-task cross-file check +
+    # RESULT.json via write_result=False for BOTH paths; a single aggregate
+    # RESULT.json is written below, and cohesion is guaranteed by the #12 shared
+    # contract (App.tsx is rendered from the full component_names list).
+    def _dispatch_disjoint(sub_repo: Path, sub_packet: dict) -> dict[str, Any]:
+        return dispatch_local_build_agent(sub_repo, sub_packet, write_result=False)
 
+    if isolate:
+        report = run_isolated_build_tasks(
+            repo_root, packets, dispatch=_dispatch_disjoint, max_workers=max_workers,
+        )
+    else:
         report = run_inprocess_build_tasks(
-            repo_root, packets, dispatch=_dispatch_inplace, max_workers=max_workers,
+            repo_root, packets, dispatch=_dispatch_disjoint, max_workers=max_workers,
         )
 
     aggregate: dict[str, Any] = {
