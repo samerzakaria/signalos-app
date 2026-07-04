@@ -132,6 +132,15 @@ class TestFoundationSpecsAlwaysPresent(unittest.TestCase):
         self.assertIn("setupFiles", stacks._VITE_CONFIG)
         self.assertIn("src/test/setup.ts", stacks._VITE_CONFIG)
 
+    def test_scaffold_ships_user_event(self):
+        # #40: the interaction-test prompt permits `userEvent`, so the scaffold
+        # MUST declare @testing-library/user-event -- else a generated test that
+        # imports it fails to resolve (TS2307) and vitest collects ZERO tests.
+        # (Surfaced by the funded e2e: 2 test files failed to collect on a
+        # missing user-event import.)
+        dev = stacks._PACKAGE_JSON_TEMPLATE["devDependencies"]
+        self.assertIn("@testing-library/user-event", dev)
+
     def test_types_spec_names_exact_interfaces(self):
         # Fix A: the exact interface names must be injectable into every
         # component/test prompt -> the types spec must name them.

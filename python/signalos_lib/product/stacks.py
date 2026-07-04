@@ -206,6 +206,13 @@ _PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
         "@testing-library/react": "^16.0.0",
         "@testing-library/dom": "^10.4.0",
         "@testing-library/jest-dom": "^6.4.0",
+        # #40: the interaction-test prompt explicitly permits `userEvent`, so
+        # user-event MUST ship in the scaffold -- otherwise every test that
+        # reaches for it fails to resolve (TS2307) and vitest collects ZERO
+        # tests. Surfaced by the funded e2e (a generated test imported it and
+        # the whole file failed to collect). The repair loop already knew to
+        # add it on TS2307, but shipping it upfront is the correct default.
+        "@testing-library/user-event": "^14.5.2",
         "jsdom": "^24.0.0",
     },
 }

@@ -449,6 +449,10 @@ _REACT_VITE_BARE_ALLOWLIST = (
     "react/jsx-runtime",
     "@testing-library/react",
     "@testing-library/jest-dom",
+    # #40: the interaction-test prompt permits `userEvent`, and the scaffold now
+    # ships @testing-library/user-event -- so it is an allowed bare import (a
+    # test that reaches for it must not be flagged as importing a phantom).
+    "@testing-library/user-event",
     "vitest",
 )
 
