@@ -392,9 +392,9 @@
     <p class="note"><b>Decision recorded:</b> local runtime auto-install = <b>$0-per-build</b> (compute on the user's machine); the <b>fleet</b> (remote managed compute) is the <b>optional paid tier</b> for &ldquo;no local runtime + won't install.&rdquo; Bundling a runtime+VM was rejected (heavy app + a VM image to maintain) unless offline-first-launch is required.</p>
   </div>
 
-  <!-- SECTION: GENERATION QUALITY STILL OPEN -->
-  <h2>Generation quality &mdash; <span class="n">STILL OPEN (honest, from the real <code>claude-sonnet-4-5</code> e2e)</span></h2>
-  <p class="note">The real e2e crossed the hard line &mdash; <b>domain-correct + builds green</b> &mdash; but is NOT &ldquo;hands-off ships a working app.&rdquo; These are open and being worked (A-layer; independent of B).</p>
+  <!-- SECTION: GENERATION QUALITY -- MECHANISMS LANDED, E2E PENDING -->
+  <h2>Generation quality &mdash; <span class="n">mechanisms landed, e2e re-verification pending (honest, from the real <code>claude-sonnet-4-5</code> e2e)</span></h2>
+  <p class="note">The real e2e crossed the hard line &mdash; <b>domain-correct + builds green</b> &mdash; but was NOT yet &ldquo;hands-off ships a working app.&rdquo; All four gaps now have a <b>deterministic mechanism landed + unit-tested</b> (A-layer; independent of B). What is NOT yet done is the <b>credit-funded e2e re-verification</b> that the mechanisms move the real numbers (37/37 tests, the syntax nit gone, the multi-product matrix) &mdash; that needs a paid Claude run, called out per-row. #36 is fully closed (structural, not LLM-dependent); #37/#38/#39 are mechanism-&#10003; / e2e-pending. <b>Not claiming green we haven't measured.</b></p>
   <div class="card">
     <table>
       <thead><tr><th>Gap</th><th>Evidence</th><th>Plan</th><th>Status</th></tr></thead>
@@ -418,10 +418,10 @@
           <td><span class="pill prog">&#8635; mechanism &#10003;, e2e unproven</span></td>
         </tr>
         <tr>
-          <td class="issue"><b>Breadth</b></td>
+          <td class="issue"><b>Breadth</b> (#39)</td>
           <td>proven on ONE product type / ONE prompt (expense tracker, react-vite)</td>
-          <td>run a matrix of product types + confirm build/test per type</td>
-          <td><span class="pill plan">&#8987; planned</span></td>
+          <td><b>Deterministic breadth harness</b> &mdash; 6 diverse products (expense / task-board / CRM / habit / inventory / bookmarks) driven through the REAL <code>build_generation_packet</code> + deterministic <code>_render_react_vite_files</code>; asserts the invariants hold <b>per product</b>: types.ts names every entity, App renders each component <b>propless</b> (the #36 invariant, structurally guaranteed here), foundation files present, every component+test renders, and the #37 operations contract derives (create+delete always, toggle per boolean, never edit). <b>4 tests, 24 subtests</b>. The LLM-path matrix (correct component BODIES per domain) still needs a credit-funded run</td>
+          <td><span class="pill prog">&#8635; deterministic &#10003;, LLM-path pending</span></td>
         </tr>
       </tbody>
     </table>
