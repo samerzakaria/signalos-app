@@ -406,10 +406,10 @@
           <td><span class="pill done">&#10003; Fixed</span></td>
         </tr>
         <tr>
-          <td class="issue"><b>Tests don't converge (vitest)</b></td>
+          <td class="issue"><b>Tests don't converge (vitest)</b> (#37)</td>
           <td>real e2e <b>17/37</b>; <code>User.test.tsx</code> asserts edit/update/cancel the component doesn't implement (#26 not converged at product scale)</td>
-          <td>tighten the two-pass so a test can't assert behavior absent from the FINAL on-disk source</td>
-          <td><span class="pill prog">&#8635;</span></td>
+          <td><b>Shared deterministic OPERATIONS contract</b> (the #24b pattern one layer over): <code>_operations_contract(entity, fields)</code> derives ONE authoritative op list &mdash; CREATE, DELETE, TOGGLE per boolean field &mdash; injected verbatim into BOTH the component prompt (&ldquo;implement EXACTLY these&rdquo;) and the test prompt (&ldquo;assert EXACTLY these, and NOTHING beyond them; do NOT test edit/update/cancel&rdquo;). Inline edit/update <b>excluded on purpose</b> &mdash; it was the exact source of the drift and the flakiest flow to generate; create+delete+toggle is a coherent, honest CRUD-lite. Mechanism landed + <b>6 unit tests</b>; <b>e2e re-verification (37/37) still pending a credit-funded Claude run</b> &mdash; not yet proven at product scale</td>
+          <td><span class="pill prog">&#8635; mechanism &#10003;, e2e unproven</span></td>
         </tr>
         <tr>
           <td class="issue"><b>Repair loop misses syntax nits</b></td>

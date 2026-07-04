@@ -786,6 +786,16 @@ def _build_single_file_prompt(
     is_react = shared_context.get("profile") == "react-vite"
     state_lib = dc.get("state_management") or "React state (useState/useReducer)"
     form_lib = dc.get("form_handling") or "controlled inputs"
+    # #37: the authoritative OPERATIONS contract, derived deterministically from
+    # this entity + its fields. Injected verbatim into BOTH the component and
+    # its test so both work from ONE list of operations and cannot drift on
+    # WHICH operations exist (the create/delete/toggle convergence fix).
+    _entity_fields = (
+        (resolved or {}).get("fields") or field_map.get(str(entity), [])
+    ) if entity else []
+    ops_contract = _operations_contract(
+        str(entity) if entity else None, _entity_fields
+    )
     if kind == "source" and is_react and path.endswith(".tsx"):
         lines.append("## Functional Requirements (MANDATORY)")
         lines.append(
@@ -794,19 +804,19 @@ def _build_single_file_prompt(
         )
         lines.append(
             f"- Hold real state using the design-selected state management "
-            f"({state_lib}) -- e.g. a list of items plus form/edit state."
+            f"({state_lib}) -- e.g. a list of items plus the create-form state."
         )
         lines.append(
             f"- Render a working list of the entity AND a form (using {form_lib}) "
             "to create new items."
         )
         lines.append(
-            "- Wire event handlers for every implied operation: ADD (submit the "
-            "form appends an item), EDIT (update an existing item), DELETE "
-            "(remove an item), and STATUS change where the entity has a status "
-            "field. No dead buttons -- every control has a handler that mutates "
-            "state."
+            "- Implement EXACTLY these operations -- each a real control wired to "
+            "a handler that mutates state (no dead buttons), no more and no "
+            "fewer, so the test (which asserts this SAME list) passes:"
         )
+        for op in ops_contract:
+            lines.append(f"  - {op['component']}")
         lines.append(
             "- Be SELF-CONTAINED: own ALL of your state internally. Declare NO "
             "REQUIRED props -- the App renders you as `<Component />` with no "
@@ -828,14 +838,15 @@ def _build_single_file_prompt(
             "test. It MUST:"
         )
         lines.append(
-            "- render() the component, then drive a real user INTERACTION with "
-            "fireEvent or userEvent (React Testing Library): type into the form, "
-            "submit it, and assert the list GREW by the new item."
+            "- render() the component, then drive each operation below with a "
+            "real user INTERACTION (fireEvent or userEvent, React Testing "
+            "Library) and assert its observable effect. Cover EXACTLY these "
+            "operations -- the SAME contract the component implements -- and "
+            "assert NOTHING beyond them (do NOT test edit/update/cancel or any "
+            "operation not listed; those are not part of this component):"
         )
-        lines.append(
-            "- Exercise at least one more interaction (e.g. click delete and "
-            "assert the row is gone, or toggle status and assert it changed)."
-        )
+        for op in ops_contract:
+            lines.append(f"  - {op['test']}")
         lines.append(
             "- Assert on observable behavior/state, not merely that the "
             "component rendered without throwing."
@@ -2423,6 +2434,70 @@ def _infer_ts_type(field: str) -> str:
     if any(token in lower for token in _NUMBER_FIELD_WORDS):
         return "number"
     return "string"
+
+
+def _operations_contract(
+    entity: str | None, fields: list[str] | None
+) -> list[dict[str, str]]:
+    """The deterministic per-entity OPERATIONS contract shared, verbatim, by a
+    component's prompt AND its test's prompt (the #37 test-convergence fix,
+    same principle as the #24b frozen type contract one layer over: both files
+    work from one authoritative list, so they cannot disagree on WHICH
+    operations exist).
+
+    Scope is deliberate. It lists only operations that are BOTH reliably
+    generatable and reliably assertable via React Testing Library:
+
+      - CREATE  -- a form; submitting grows the list.
+      - DELETE  -- a per-row control; clicking removes the row.
+      - TOGGLE <field> -- for each boolean field; clicking flips the value.
+
+    Inline EDIT / update-in-place is intentionally EXCLUDED. It is the
+    least-reliably-generated flow (pre-fill a form, save, cancel, reconcile the
+    row) and was the exact source of the real e2e's `edit/update/cancel`
+    test<->source drift (17/37). create + delete + toggle is a coherent,
+    fully-functional CRUD-lite: honest, not a lowered bar. Each entry carries a
+    `component` phrasing (what to build) and a `test` phrasing (what to assert)
+    of the SAME operation."""
+    label = (entity or "item").strip() or "item"
+    ops: list[dict[str, str]] = [
+        {
+            "key": "create",
+            "component": (
+                f"CREATE: a form to add a new {label}; submitting it appends a "
+                f"new {label} to the list."
+            ),
+            "test": (
+                f"CREATE: fill the form and submit it, then assert the list GREW "
+                f"by the new {label}."
+            ),
+        },
+        {
+            "key": "delete",
+            "component": (
+                f"DELETE: a control on each {label} row that removes that "
+                f"{label} from the list."
+            ),
+            "test": (
+                f"DELETE: click a {label}'s delete control, then assert that row "
+                f"is GONE from the list."
+            ),
+        },
+    ]
+    for f in fields or []:
+        if _infer_ts_type(str(f)) == "boolean":
+            ops.append({
+                "key": f"toggle_{f}",
+                "component": (
+                    f"TOGGLE `{f}`: a control that flips `{f}` on a {label} and "
+                    f"reflects the new value in the UI."
+                ),
+                "test": (
+                    f"TOGGLE `{f}`: toggle `{f}` on a {label} and assert its "
+                    f"displayed value FLIPPED."
+                ),
+            })
+    return ops
 
 
 def _to_pascal(value: str) -> str:

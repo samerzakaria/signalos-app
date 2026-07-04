@@ -101,8 +101,10 @@ def test_component_prompt_demands_interactivity():
     prompt = _build_single_file_prompt(
         _component_spec(packet), gen, _gov(), shared,
     ).lower()
-    # CRUD + state + handler instruction tokens
-    for token in ("add", "edit", "delete", "state", "handler"):
+    # #37 operations contract: create + delete are always demanded; state +
+    # handler wiring is mandatory. (Inline EDIT is deliberately NOT in the
+    # contract -- see test_operations_contract_excludes_edit.)
+    for token in ("create", "delete", "state", "handler"):
         assert token in prompt, token
 
 
@@ -518,3 +520,58 @@ def test_app_prompt_is_not_given_crud_component_requirements():
         _find_spec(gen, "src/App.tsx"), gen, _gov(), shared,
     )
     assert "Render a working list of the entity AND a form" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# #37: deterministic OPERATIONS contract shared, verbatim, by a component and
+# its test -- both work from ONE list of operations so they cannot drift on
+# WHICH operations exist (the vitest 17/37 convergence fix). Inline edit/update
+# is deliberately excluded (it was the exact source of edit/update/cancel
+# test<->source drift).
+# ---------------------------------------------------------------------------
+
+def test_operations_contract_create_delete_and_boolean_toggle():
+    from signalos_lib.product.agent_dispatch import _operations_contract
+
+    ops = _operations_contract("Expense", ["id", "amount", "category", "reimbursed", "date"])
+    keys = [o["key"] for o in ops]
+    assert keys[:2] == ["create", "delete"]
+    # `reimbursed` is boolean -> a toggle op; `amount`/`category`/`date` are not.
+    assert "toggle_reimbursed" in keys
+    assert not any(k.startswith("toggle_") and k != "toggle_reimbursed" for k in keys)
+
+
+def test_operations_contract_excludes_edit():
+    from signalos_lib.product.agent_dispatch import _operations_contract
+
+    ops = _operations_contract("User", ["id", "name", "email"])
+    keys = [o["key"] for o in ops]
+    assert "create" in keys and "delete" in keys
+    # No inline edit/update operation -- that flow is out of the contract.
+    assert not any("edit" in k or "update" in k for k in keys)
+    # No boolean field -> exactly create + delete, nothing else.
+    assert keys == ["create", "delete"]
+
+
+def test_component_and_test_prompts_share_the_same_operations():
+    # The component's demanded operations and the test's asserted operations are
+    # rendered from the SAME contract -> the create/delete/toggle phrasings both
+    # appear, and the test explicitly refuses edit/update/cancel.
+    packet = _cohesion_packet()  # Expense has boolean `reimbursed`
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    comp = _build_single_file_prompt(
+        _find_spec(gen, "src/components/ExpenseManager.tsx"), gen, _gov(), shared,
+    )
+    test = _build_single_file_prompt(
+        _find_spec(gen, "src/components/ExpenseManager.test.tsx"), gen, _gov(), shared,
+    )
+    # Both name the SAME three operations for the Expense entity.
+    for prompt in (comp, test):
+        assert "CREATE:" in prompt
+        assert "DELETE:" in prompt
+        assert "TOGGLE `reimbursed`:" in prompt
+    # The test explicitly forbids asserting operations outside the contract.
+    low = test.lower()
+    assert "assert nothing beyond them" in low
+    assert "edit/update/cancel" in low
