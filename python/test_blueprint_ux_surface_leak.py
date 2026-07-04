@@ -62,5 +62,6 @@ def test_keywords_exclude_ux_surfaces_and_product_type():
     assert "chart" not in kw
     # the circular product_type label must not corroborate itself
     assert "financialdashboard" not in kw
-    # real domain evidence is still present
-    assert "expense" in kw
+    # real domain evidence is still present (product_name + workflow tokens)
+    assert "expensetracker" in kw  # product_name "expense-tracker" (one token)
+    assert "addexpense" in kw      # workflow "add_expense" (one token)
