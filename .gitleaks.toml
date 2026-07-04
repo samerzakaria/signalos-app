@@ -25,6 +25,12 @@ useDefault = true
 [allowlist]
 description = "Intentional secret-shaped test fixtures and the redaction-corpus module"
 paths = [
+    # Every python/test_*.py may carry intentional fake-shaped secrets to
+    # exercise the redaction / secret-scan layers. This is a faithful mirror of
+    # the blanket `python/test_*.py) continue` exclusion in scripts/test-gates.sh
+    # secret_scan() -- listing fixture files one-by-one drifted and broke CI when
+    # a new fixture file (test_secret_write_scan.py) was added.
+    '''python/test_.*\.py''',
     '''python/test_skill_validators\.py''',
     '''python/test_signalos_attachments\.py''',
     '''python/test_signalos_secret_guard\.py''',

@@ -2,6 +2,19 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.3-internal.2] - 2026-07-04
+
+### Generation quality — domain-correct, building apps; governance wiring; hermetic tests
+
+- **Domain correctness (#9 / #35):** a "personal expense tracker" no longer snaps onto the `financial-dashboard` blueprint. The blueprint matcher stopped corroborating a domain from generic UX-surface words (`dashboard`/`chart`) or the LLM's own `product_type` label — only real domain evidence (entities/workflows/name) can match. **Verified end-to-end on real `claude-sonnet-4-5`:** the prompt generates an actual expense tracker (`Expense`/`Category`/`User` components with real CRUD), `blueprint: null`, and the app **builds green** (`tsc && vite build` exit 0).
+- **Cross-file type contract (#24b):** `src/types.ts` is now a frozen, deterministic contract — rendered from the approved entities, never LLM-owned, and injected verbatim into every component/test prompt so components can't invent drifting fields. Field-type inference hardened (booleans for status toggles, more numbers).
+- **Deterministic scaffold (#31):** the `src/ui/*` layer, vitest setup, and `product.css` are rendered deterministically in the LLM path too — the model no longer hallucinates imports (`react-jss`, `@fontsource/inter`, `@mantine/core` in a shadcn app, `./List`/`./Chart` barrels).
+- **Provider compatibility (#28 / #30 / #32 / #34):** model discovery skips non-chat modalities (OpenAI `gpt-realtime-*`/`gpt-audio-*`); per-file `max_tokens` is clamped to the model's completion ceiling; the generated tsconfig loads vitest globals and the test prompt mandates vitest idioms (no jest, no unused React); the import allowlist is design-system-aware and never hardcodes `@mantine` (a shadcn product being told it may import Mantine was a build-breaker and a token sink).
+- **Quality gate (#21):** Build → Test → **Review** — a deterministic review gate (spec-coverage / test-evidence / build-correctness) governed by the `gate-compliance` core invariant now gates closeout; `strict` fails closed.
+- **Enforcement spine (#15–#17, #33):** persisted UI rule modes reach the sidecar with a core-invariant floor; six previously no-op rules enforce real denials; role-gated signing routes through the identity role; `sign_gate` correctly signs mixed-role gates (skips artifacts a role isn't authorised for, without weakening SoD).
+- **Wiring closes (#18 / #19 / #20a):** wave-freeze blocks the live build entrypoints; the pre-deploy/post-retro hooks run fail-closed from the product path; an agent writing an embedded secret into generated content is blocked at the product runtime (value-aware, no false positives).
+- **Test health:** the offline suite is now hermetic (a new `conftest.py` clears ambient provider keys, so `without-LLM` tests are deterministic regardless of a developer's `.env`), and the flaky macOS heartbeat test was made robust to CPU contention — turning the `test-automation` CI back green.
+
 ## [3.2.3-internal.1] - 2026-07-03
 
 ### Close Wave-1 executor + the C-bridge loop; supply-chain fix

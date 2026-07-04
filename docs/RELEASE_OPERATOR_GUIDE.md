@@ -32,8 +32,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -
 Expected Windows outputs:
 
 ```text
-src-tauri/target/release/bundle/nsis/Foundry_3.2.3-internal.1_x64-setup.exe
-src-tauri/target/release/bundle/msi/Foundry_3.2.3-internal.1_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/Foundry_3.2.3-internal.2_x64-setup.exe
+src-tauri/target/release/bundle/msi/Foundry_3.2.3-internal.2_x64_en-US.msi
 ```
 
 ## Clean-Machine Validation
