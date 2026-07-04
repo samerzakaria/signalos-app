@@ -255,6 +255,57 @@
           <td class="verify">test (<code>test_intent_entity_identifiers.py</code>: garbled prompts &rarr; valid identifiers, <code>;</code>-split not merged, frozen interfaces valid); 74 intent tests pass</td>
           <td><span class="pill done">&#10003; Fixed</span></td>
         </tr>
+        <tr>
+          <td class="id">30</td>
+          <td class="issue">Per-file <code>max_tokens</code> not clamped to the model ceiling &mdash; OpenAI hard-400s (<code>max_tokens is too large: 24000; supports at most 16384</code>)</td>
+          <td><code>_file_max_tokens</code> scaled a CRUD <code>.tsx</code> to 24000 and its docstring <i>claimed</i> it respected the model ceiling but never consulted the model; Claude tolerates it, gpt-4o rejects it</td>
+          <td>Clamp to a per-model completion ceiling (<code>_model_max_output_tokens</code>, prefix-matched, default 16384) at the call site &mdash; the model cap wins outright</td>
+          <td class="verify">test (<code>test_model_max_tokens.py</code>); surfaced by a real OpenAI/gpt-4o delivery</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">31</td>
+          <td class="issue"><code>src/ui/*</code> scaffold LLM-generated &rarr; hallucinated imports: <code>@mantine/core</code> in a shadcn app, <code>react-jss</code>, <code>@fontsource/inter</code>, <code>./List</code>/<code>./Chart</code> barrels for files that never existed</td>
+          <td>The chunked path only short-circuited <code>types.ts</code> (#24b); the other deterministic boilerplate (<code>ui/theme.ts</code>, <code>ui/index.ts</code>, <code>AppLayout</code>, <code>PageLayout</code>, <code>product.css</code>, <code>setup.ts</code>) went to the model &mdash; same disease as #24b, one file-class over</td>
+          <td>Shared <code>_render_foundation_file</code> renders ALL boilerplate <b>deterministically</b> in the local path AND the chunked-LLM <code>run_task</code>; only real product files reach the model</td>
+          <td class="verify">test (144 gen; theme has no <code>@mantine</code>, AppLayout no <code>react-jss</code>); e2e closure went <b>blocked&rarr;partial</b> (foundation builds clean)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">32</td>
+          <td class="issue">LLM writes jest-style tests on a vitest stack &mdash; <code>Cannot use namespace 'jest'</code>, <code>Cannot find name 'describe'/'test'/'expect'</code>, unused <code>import React</code></td>
+          <td>(a) tsconfig had no <code>types</code>, so <code>tsc</code> didn't know the vitest globals even with <code>globals:true</code>; (b) gpt-class models default to jest idioms</td>
+          <td>tsconfig loads <code>["vitest/globals","@testing-library/jest-dom"]</code>; the test prompt mandates vitest (<code>vi</code> not <code>jest</code>, globals not imported, no <code>import React</code>)</td>
+          <td class="verify">test (121 gen); a manual patch of the e2e app proved the tsconfig fix clears every describe/test/expect error</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SECTION: regressions caught by the full 2049-test backstop -->
+  <h2>Full-suite backstop <span class="n">&mdash; 15 failures the targeted runs missed (all fixed)</span></h2>
+  <p class="note">Running the <b>entire</b> Python suite (2049 tests) after the first commit surfaced 15 failures a targeted run didn't cover: <b>3 real</b> (a sign-gate regression) and <b>12 env-fragile</b> (pass in CI, fail on a machine with an ambient LLM key). Both fixed; hermeticity now guaranteed by a conftest.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Issue</th><th>Root cause</th><th>Fix</th><th>Verify</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">33</td>
+          <td class="issue"><code>sign_gate</code> raised on MIXED-role gates &mdash; signing G3 with PO died on the PE-only <code>PLAN.md</code></td>
+          <td>#17 routed signing through role-enforcing <code>sign_gate</code>, which <b>raised per-artifact</b> on the first artifact a role couldn't sign &mdash; but a gate legitimately holds artifacts for different roles (PO signs its part, PE theirs). The docstring says raise only if the role can't sign <i>any</i> artifact (the union check)</td>
+          <td><code>sign_gate</code> now <b>skips</b> artifacts the role isn't authorised for (union check still blocks a fully-wrong role like PO on QA-only G5); the wrong-signer test forges its bad sig via low-level <code>sign_artifact</code> so it still proves <code>validate_wave_status</code> is independent</td>
+          <td class="verify">test (<code>test_validate_wave_status</code> 6, <code>test_sign_cli_role_enforcement</code>, <code>test_sidecar_sign_role</code> &mdash; SoD intact)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">&mdash;</td>
+          <td class="issue">Env-fragile "without-LLM" tests (12) &mdash; fail on a machine exporting a real key; one captures <code>_LIVE = os.getenv(...)</code> at <b>import</b> time and an out-of-credit key errors the live path</td>
+          <td>The offline suite assumed a key-free shell; ambient keys flipped <code>is_llm_available()</code> and broke deterministic assertions (pass in CI, fail locally)</td>
+          <td>New <code>python/conftest.py</code> clears provider keys <b>at conftest import AND via an autouse fixture</b> &rarr; hermetic regardless of the shell; live integration opts in with explicit keys</td>
+          <td class="verify">verified <b>green WITH fake keys exported</b> (all 15 backstop failures pass), 380 targeted green</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
       </tbody>
     </table>
   </div>
