@@ -220,8 +220,8 @@
           <td class="issue">Tests don't converge &mdash; test&harr;component <b>behavioral</b> contract mismatch (the same disease as #24, one level deeper)</td>
           <td>Generated tests assume the component renders the form on mount (<code>getByLabelText(/description/i)</code>), but the component defaults to a dashboard view. The component is correct; the loop regenerates the <b>test alone</b> (13&rarr;14&rarr;15&rarr;15, never 0)</td>
           <td><b>Change test strategy</b> (chosen): two-pass generation &mdash; generate + build-verify the component SOURCE first, THEN generate each test against the FINAL on-disk component source as ground truth. Kills the drift by construction</td>
-          <td class="verify"><b>mechanism verified</b> (<code>test_generated_against_source: TRUE</code>) &mdash; tests reflect real component behavior; App.test mocks the real components</td>
-          <td><span class="pill done">&#10003; Fixed</span></td>
+          <td class="verify"><b>mechanism verified</b> (<code>test_generated_against_source: TRUE</code>), BUT the real <code>claude-sonnet-4-5</code> e2e shows it does NOT converge tests on a real product: <b>vitest 17/37</b>. Drift reduced, not killed</td>
+          <td><span class="pill prog">&#8635; OPEN (tests fail e2e)</span></td>
         </tr>
         <tr style="background:rgba(245,166,35,.08)">
           <td class="id">27</td>
@@ -390,6 +390,41 @@
       </tbody>
     </table>
     <p class="note"><b>Decision recorded:</b> local runtime auto-install = <b>$0-per-build</b> (compute on the user's machine); the <b>fleet</b> (remote managed compute) is the <b>optional paid tier</b> for &ldquo;no local runtime + won't install.&rdquo; Bundling a runtime+VM was rejected (heavy app + a VM image to maintain) unless offline-first-launch is required.</p>
+  </div>
+
+  <!-- SECTION: GENERATION QUALITY STILL OPEN -->
+  <h2>Generation quality &mdash; <span class="n">STILL OPEN (honest, from the real <code>claude-sonnet-4-5</code> e2e)</span></h2>
+  <p class="note">The real e2e crossed the hard line &mdash; <b>domain-correct + builds green</b> &mdash; but is NOT &ldquo;hands-off ships a working app.&rdquo; These are open and being worked (A-layer; independent of B).</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>Gap</th><th>Evidence</th><th>Plan</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="issue"><b>Component <code>Props</code> drift</b></td>
+          <td><code>App.tsx</code> passes props a component's <code>Props</code> interface doesn't declare (<code>Type '{ metrics… }' not assignable to DashboardSummaryProps</code>). The frozen contract (#24b) covers ENTITY types, not component prop shapes</td>
+          <td>Extend the frozen contract to each component's <code>Props</code> &mdash; generate the prop signature deterministically, inject into BOTH <code>App.tsx</code>'s and the component's prompt (the #24b pattern, one layer over)</td>
+          <td><span class="pill prog">&#8635; fixing</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Tests don't converge (vitest)</b></td>
+          <td>real e2e <b>17/37</b>; <code>User.test.tsx</code> asserts edit/update/cancel the component doesn't implement (#26 not converged at product scale)</td>
+          <td>tighten the two-pass so a test can't assert behavior absent from the FINAL on-disk source</td>
+          <td><span class="pill prog">&#8635;</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Repair loop misses syntax nits</b></td>
+          <td>a 1-char malformed <code>describe(...)</code> close (<code>}</code> vs <code>});</code>, TS1005) needed a HAND-fix; the repair loop didn't converge on it</td>
+          <td>deterministic brace/paren-balance pass on generated TS/TSX before tsc; a TS1005 must enter repair scope</td>
+          <td><span class="pill prog">&#8635;</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Breadth</b></td>
+          <td>proven on ONE product type / ONE prompt (expense tracker, react-vite)</td>
+          <td>run a matrix of product types + confirm build/test per type</td>
+          <td><span class="pill plan">&#8987; planned</span></td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="through">
