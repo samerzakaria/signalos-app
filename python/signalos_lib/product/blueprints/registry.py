@@ -567,10 +567,16 @@ def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
     keyword pass either.
     """
     tokens: set[str] = set()
-    for key in ("product_name", "product_type"):
-        val = intent.get(key, "")
-        if isinstance(val, str):
-            tokens.update(_normalise_match_token(part) for part in val.split())
+    # #35: do NOT draw keywords from `product_type` -- an LLM's label
+    # corroborating itself is circular -- nor from `ux_surfaces`. UX surfaces
+    # (`dashboard`, `chart`, `form`, `list`) are generic UI words present in
+    # almost every app and are LLM-injected in the same refinement that sets the
+    # label; they let a personal expense tracker (ux_surfaces=[form,dashboard,
+    # chart]) snap onto the financial-dashboard blueprint on the lone shared
+    # word "dashboard" even though NO entity or workflow is finance-related.
+    val = intent.get("product_name", "")
+    if isinstance(val, str):
+        tokens.update(_normalise_match_token(part) for part in val.split())
 
     det_entities = intent.get("_deterministic_entities")
     entities_source = (
@@ -581,7 +587,6 @@ def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
     list_sources: list[tuple[str, Any]] = [
         ("primary_workflows", intent.get("primary_workflows", [])),
         ("entities", entities_source),
-        ("ux_surfaces", intent.get("ux_surfaces", [])),
         ("target_users", intent.get("target_users", [])),
         ("integrations", intent.get("integrations", [])),
     ]
