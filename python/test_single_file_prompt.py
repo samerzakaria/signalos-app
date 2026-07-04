@@ -125,6 +125,22 @@ def test_prompts_demand_test_isolation():
     assert "setstate" in test
 
 
+def test_test_prompt_demands_clear_and_findby_for_multi_item():
+    # #49: the last funded-run failures were multi-item cases -- a form reset()
+    # doesn't clear the DOM input under jsdom (user.type APPENDS), and a sync
+    # getAllByRole reads the DOM before React flushes. The test prompt must
+    # demand user.clear before re-typing and findBy*/findAllBy* for
+    # post-interaction assertions (including counts).
+    packet = _packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(_test_spec(packet), gen, _gov(), shared).lower()
+    assert "user.clear" in prompt
+    assert "append" in prompt                       # explains WHY clear is needed
+    assert "findallby" in prompt or "findby" in prompt
+    assert "tohavelength" in prompt                 # counts must use async find
+
+
 def test_app_test_gets_no_store_reset_guidance():
     # #46: the App shell test does NOT own a store -- it must NOT be told to
     # reset one (which made it invent a phantom `./store/taskStore`). It should

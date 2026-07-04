@@ -892,6 +892,26 @@ def _build_single_file_prompt(
             "`within(row).getByRole('button', { name: /delete/i })` -- never a "
             "top-level query that matches one control PER row."
         )
+        # #49 -- two test<->framework interaction gotchas that fail ONLY the
+        # multi-item cases (single-item tests pass, "add 2" asserts but 1
+        # exists). Both were the last remaining funded-run failures.
+        lines.append(
+            "- When a test ADDS MULTIPLE items through the form, `await "
+            "user.clear(input)` before typing each new value. A form library's "
+            "`reset()` does NOT reliably clear the DOM input under jsdom, so "
+            "`user.type` APPENDS to the previous value ('First' + 'Second' -> "
+            "'FirstSecond') and the second item is wrong/absent. Clear title + "
+            "any text/number field before re-typing (a `<select>` via "
+            "`selectOptions` and a `type=date` via `fireEvent.change` already "
+            "replace, so they need no clear)."
+        )
+        lines.append(
+            "- For ANY assertion AFTER a state-changing interaction -- including "
+            "list COUNT/length (`toHaveLength`) -- use the async `findBy*` / "
+            "`findAllBy*` (they retry until React flushes the re-render). A "
+            "synchronous `getAllByRole('listitem')` right after a click can read "
+            "the DOM before the new row mounts and see one fewer item."
+        )
         # #43: robust, UNAMBIGUOUS queries. A bare substring regex like
         # `getByLabelText(/priority/i)` also matches the SAME word rendered in
         # the list (e.g. a task showing "Priority: High") -> Testing Library
