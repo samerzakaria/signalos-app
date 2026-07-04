@@ -217,3 +217,38 @@ def _q(path) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InstallCommandTimeout(unittest.TestCase):
+    """#41-env: dependency install gets a larger, separate timeout so a slow
+    install is not misread as a build/test failure (the funded e2e cascade)."""
+
+    def test_install_commands_detected(self):
+        for cmd in ("npm install --legacy-peer-deps", "npm ci", "pnpm install",
+                    "yarn install", "pip install -r requirements.txt",
+                    "dotnet restore", "go mod download"):
+            self.assertTrue(V._is_install_command(cmd), cmd)
+
+    def test_non_install_commands_not_detected(self):
+        for cmd in ("npm run build", "tsc --noEmit", "vitest run",
+                    "npm run test", "go build ./..."):
+            self.assertFalse(V._is_install_command(cmd), cmd)
+
+    def test_install_timeout_is_at_least_base(self):
+        self.assertGreaterEqual(
+            V._validation_install_timeout_s(), V._validation_command_timeout_s()
+        )
+
+    def test_install_timeout_default_exceeds_300(self):
+        # With no env override the install budget must exceed the 300s that
+        # timed out Mantine's install in the funded run.
+        import os as _os
+        saved = _os.environ.pop("SIGNALOS_VALIDATION_INSTALL_TIMEOUT_S", None)
+        saved_base = _os.environ.pop("SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S", None)
+        try:
+            self.assertGreater(V._validation_install_timeout_s(), 300)
+        finally:
+            if saved is not None:
+                _os.environ["SIGNALOS_VALIDATION_INSTALL_TIMEOUT_S"] = saved
+            if saved_base is not None:
+                _os.environ["SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S"] = saved_base

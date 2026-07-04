@@ -386,6 +386,42 @@ def _validation_command_timeout_s() -> int:
     return parsed if parsed > 0 else 300
 
 
+# Dependency install is network-bound and can dwarf the compile/test steps: the
+# funded e2e's `npm install` of Mantine's tree exceeded the 300s per-command cap,
+# which cascaded into a FALSE "build/test failed" (tsc/vitest not yet on PATH)
+# and a repair loop that got "tsc not recognized" instead of the real nit. Give
+# install commands their own, larger budget so a slow-but-fine install is not
+# misread as a code failure.
+_INSTALL_COMMAND_MARKERS = (
+    "npm install", "npm ci", "npm i ", "pnpm install", "pnpm i ",
+    "yarn install", "yarn --", "pip install", "pip3 install", "uv pip install",
+    "uv sync", "poetry install", "bundle install", "go mod download",
+    "cargo fetch", "dotnet restore",
+)
+
+
+def _is_install_command(cmd: str) -> bool:
+    low = " " + cmd.lower().strip() + " "
+    return any(marker in low for marker in _INSTALL_COMMAND_MARKERS)
+
+
+def _validation_install_timeout_s() -> int:
+    """Per-command timeout for dependency-install commands (larger than the
+    compile/test default). Override with SIGNALOS_VALIDATION_INSTALL_TIMEOUT_S;
+    never shorter than the base command timeout."""
+    base = _validation_command_timeout_s()
+    raw = os.environ.get("SIGNALOS_VALIDATION_INSTALL_TIMEOUT_S", "").strip()
+    default = 900
+    if raw:
+        try:
+            parsed = int(raw)
+            if parsed > 0:
+                return max(parsed, base)
+        except ValueError:
+            pass
+    return max(default, base)
+
+
 # ------------------------------------------------------------------
 # Plan construction
 # ------------------------------------------------------------------
@@ -524,6 +560,7 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
     outputs: list[str] = []
     start = time.perf_counter()
     timeout_s = _validation_command_timeout_s()
+    install_timeout_s = _validation_install_timeout_s()
     for cmd in cmds:
         argv = _split_command(cmd)
         if not argv:
@@ -536,12 +573,15 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
                 "output": f"command not found: {argv[0]}",
                 "duration_s": round(elapsed, 3),
             }
+        # #41-env: dependency install gets its own (larger) budget so a slow
+        # install is not misread as a build/test failure.
+        cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
         try:
             proc = _run_shell_command(
                 cmd,
                 [exe, *argv[1:]],
                 repo_root,
-                timeout_s,
+                cmd_timeout,
             )
             out = proc.stdout or ""
             if proc.stderr:
@@ -558,7 +598,7 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
             elapsed = time.perf_counter() - start
             return {
                 "status": "blocked",
-                "output": f"command timed out after {timeout_s}s: {cmd}",
+                "output": f"command timed out after {cmd_timeout}s: {cmd}",
                 "duration_s": round(elapsed, 3),
             }
         except OSError as exc:
