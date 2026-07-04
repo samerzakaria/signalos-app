@@ -495,7 +495,7 @@ def build_repair_packet(
     forbidden_violated = _has_forbidden_failure(failures)
 
     original_gen = dict(original_packet.get("generation", {}) or {})
-    filtered_gen = _build_filtered_generation(original_gen, failures)
+    filtered_gen = _build_filtered_generation(original_gen, failures, repo_root)
 
     packet = {
         "schema_version": "signalos.repair_packet.v1",
@@ -537,8 +537,50 @@ def _failure_file(failure: Any) -> str | None:
     return None
 
 
+def _balance_enrichment(
+    fpath: str, errors: list[dict], repo_root: Path | None,
+) -> dict | None:
+    """#38: when a file's failures include a tsc syntax-class code (where the
+    reported column often misleads), run the deterministic delimiter-balance
+    pass on the on-disk file and, if it is unbalanced, return a crisp
+    synthesized diagnostic that localizes the real problem for the repair
+    prompt. Corroboration-gated: only ever fires alongside an existing tsc
+    syntax error, so a heuristic miscount can never invent a failure -- it only
+    sharpens one tsc already raised. Returns None when nothing to add."""
+    if repo_root is None:
+        return None
+    from .validation import _SYNTAX_ERROR_CODES, analyze_delimiter_balance
+
+    codes = {str(e.get("code") or "").upper() for e in errors}
+    if not (codes & _SYNTAX_ERROR_CODES):
+        return None
+    if not fpath.endswith((".ts", ".tsx", ".js", ".jsx", ".mts", ".cts")):
+        return None
+    try:
+        text = (repo_root / fpath).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    report = analyze_delimiter_balance(text)
+    if report.get("balanced") or not report.get("hint"):
+        return None
+    return {
+        "file": fpath,
+        "line": None,
+        "col": None,
+        "code": "BALANCE",
+        "message": (
+            "Delimiter-balance check (deterministic): "
+            + report["hint"]
+            + ". tsc's reported column is often downstream of the real "
+            "imbalance -- re-emit the ENTIRE file with every (), {}, and [] "
+            "correctly matched; do not just edit near the tsc line."
+        ),
+        "source": "signalos-balance",
+    }
+
+
 def _build_filtered_generation(
-    original_gen: dict, failures: list,
+    original_gen: dict, failures: list, repo_root: Path | None = None,
 ) -> dict:
     """Return a copy of the original generation packet whose ``file_specs``
     are filtered to ONLY the failing files, each carrying an ``error_context``
@@ -579,7 +621,14 @@ def _build_filtered_generation(
     filtered: list[dict] = []
     for fpath in order:
         spec = deepcopy(by_path[fpath])
-        spec["error_context"] = errors_by_file[fpath]
+        errors = errors_by_file[fpath]
+        # #38: sharpen a misleading tsc syntax error with a deterministic
+        # delimiter-balance diagnostic so the repair loop can converge on the
+        # "closed a call with `}` instead of `});`" class it otherwise loops on.
+        enrichment = _balance_enrichment(fpath, errors, repo_root)
+        if enrichment is not None:
+            errors = errors + [enrichment]
+        spec["error_context"] = errors
         filtered.append(spec)
 
     # Fix #24: when any failure this cycle is a property/type-contract error

@@ -412,10 +412,10 @@
           <td><span class="pill prog">&#8635; mechanism &#10003;, e2e unproven</span></td>
         </tr>
         <tr>
-          <td class="issue"><b>Repair loop misses syntax nits</b></td>
-          <td>a 1-char malformed <code>describe(...)</code> close (<code>}</code> vs <code>});</code>, TS1005) needed a HAND-fix; the repair loop didn't converge on it</td>
-          <td>deterministic brace/paren-balance pass on generated TS/TSX before tsc; a TS1005 must enter repair scope</td>
-          <td><span class="pill prog">&#8635;</span></td>
+          <td class="issue"><b>Repair loop misses syntax nits</b> (#38)</td>
+          <td>a 1-char malformed <code>describe(...)</code> close (<code>}</code> vs <code>});</code>, TS1005) needed a HAND-fix; the repair loop didn't converge (TS1005 <i>was</i> parsed, but tsc's column points DOWNSTREAM of the real imbalance, so the model re-made the same nit)</td>
+          <td><b>Deterministic delimiter-balance pass</b> <code>analyze_delimiter_balance()</code> (string / template-literal / comment aware) enriches any tsc syntax-class failure (TS1005/TS1128/TS1109/TS17002/&hellip;) with a crisp, correctly-localized <code>BALANCE</code> diagnostic &mdash; <i>&ldquo;N unclosed <code>(</code> &mdash; a <code>describe</code>/<code>it</code>/<code>expect</code> closed with <code>}</code> instead of <code>});</code>; re-emit the WHOLE file&rdquo;</i>. <b>Corroboration-gated</b>: only fires alongside a real tsc syntax error, so a heuristic miscount can never invent a failure, only sharpen one. 10 unit tests; e2e (nit disappears) high-confidence but pending a credit-funded run</td>
+          <td><span class="pill prog">&#8635; mechanism &#10003;, e2e unproven</span></td>
         </tr>
         <tr>
           <td class="issue"><b>Breadth</b></td>

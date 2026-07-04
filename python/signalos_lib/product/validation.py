@@ -195,6 +195,148 @@ def _normalize_diag_path(path: str) -> str:
         cleaned = cleaned[2:]
     return cleaned
 
+
+# tsc syntax-class codes: a raw parse error where a delimiter is very often the
+# real cause, and tsc's point-of-detection column is frequently downstream of
+# the actual imbalance ("',' expected" many lines after a missing ')'). When a
+# failing file carries one of these, a deterministic delimiter-balance pass on
+# the file gives the repair loop a crisp, correctly-localized hint tsc can't.
+_SYNTAX_ERROR_CODES = frozenset({
+    "TS1005",  # 'x' expected
+    "TS1003",  # identifier expected
+    "TS1109",  # expression expected
+    "TS1128",  # declaration or statement expected
+    "TS1136",  # property assignment expected
+    "TS1381",  # unexpected token
+    "TS1382",  # unexpected token (JSX)
+    "TS17002",  # expected corresponding JSX closing tag
+})
+
+
+def analyze_delimiter_balance(text: str) -> dict[str, Any]:
+    """Heuristically scan TS/TSX/JS source for unbalanced ``()``/``{}``/``[]``.
+
+    Ignores string literals (``'`` / ``"``), template literals (with nested
+    ``${ }`` interpolation), and ``//`` / ``/* */`` comments. Returns::
+
+        {balanced: bool, paren: int, brace: int, bracket: int, hint: str}
+
+    Each count is (opens - closes): positive == unclosed openers, negative ==
+    extra closers. This is a heuristic -- it does not fully parse JSX or regex
+    literals -- so it is only ever used to ENRICH a diagnostic tsc already
+    raised (see the repair loop's corroboration gate), never as a standalone
+    gate. For the common "closed a ``describe``/``it`` call with ``}`` instead
+    of ``});``" class it localizes precisely where tsc's column misleads."""
+    paren = brace = bracket = 0
+    i = 0
+    n = len(text or "")
+    in_line_comment = False
+    in_block_comment = False
+    string_ch = ""            # "'"/'"' normal string, "`" template literal
+    templ_stack: list[int] = []  # brace baseline at each open ${
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if c == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+        if in_block_comment:
+            if c == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if string_ch in ("'", '"'):
+            if c == "\\":
+                i += 2
+                continue
+            if c == string_ch:
+                string_ch = ""
+            i += 1
+            continue
+        if string_ch == "`":
+            if c == "\\":
+                i += 2
+                continue
+            if c == "`":
+                string_ch = ""
+                i += 1
+                continue
+            if c == "$" and nxt == "{":
+                templ_stack.append(brace)  # baseline before the ${ brace
+                brace += 1
+                string_ch = ""             # now scanning the interpolation code
+                i += 2
+                continue
+            i += 1
+            continue
+        # normal code context
+        if c == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if c == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if c in ("'", '"', "`"):
+            string_ch = c
+            i += 1
+            continue
+        if c == "(":
+            paren += 1
+        elif c == ")":
+            paren -= 1
+        elif c == "[":
+            bracket += 1
+        elif c == "]":
+            bracket -= 1
+        elif c == "{":
+            brace += 1
+        elif c == "}":
+            brace -= 1
+            if templ_stack and brace == templ_stack[-1]:
+                templ_stack.pop()
+                string_ch = "`"           # the ${...} closed -> back to template
+        i += 1
+
+    balanced = (
+        paren == 0 and brace == 0 and bracket == 0
+        and not templ_stack and not in_block_comment and string_ch == ""
+    )
+    problems: list[str] = []
+    if paren > 0:
+        problems.append(
+            f"{paren} unclosed '(' -- a call is likely closed with the wrong "
+            f"delimiter (e.g. a `describe(...)`/`it(...)`/`expect(...)` closed "
+            f"with `}}` instead of `}});`)"
+        )
+    elif paren < 0:
+        problems.append(f"{-paren} extra ')' with no matching '('")
+    if brace > 0:
+        problems.append(f"{brace} unclosed '{{'")
+    elif brace < 0:
+        problems.append(f"{-brace} extra '}}' with no matching '{{'")
+    if bracket > 0:
+        problems.append(f"{bracket} unclosed '['")
+    elif bracket < 0:
+        problems.append(f"{-bracket} extra ']' with no matching '['")
+    if string_ch:
+        problems.append("an unterminated string/template literal")
+    if in_block_comment:
+        problems.append("an unterminated /* block comment")
+    hint = "; ".join(problems)
+    return {
+        "balanced": balanced,
+        "paren": paren,
+        "brace": brace,
+        "bracket": bracket,
+        "hint": hint,
+    }
+
 _SKIP_OWNERS = {
     "install": (
         "stack-adapter",
