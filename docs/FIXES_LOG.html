@@ -426,8 +426,26 @@
         <tr>
           <td class="issue"><b>Entity/field extraction too lossy</b> (#41)</td>
           <td>funded run: &ldquo;each task has a <b>title, a priority, a due date</b> &hellip; mark a task as <b>done</b>&rdquo; &rarr; <code>Task { id, name }</code> (dropped priority/due-date/done). Thin entity &rArr; thin component (create+delete on <code>{id,name}</code>), but the prompt-informed test-writer asserts done/priority &rArr; most of the 7 vitest failures</td>
-          <td>Harden intent field-extraction: capture per-entity fields from &ldquo;each X has A, B, C&rdquo; phrasing and status verbs (&ldquo;mark as done&rdquo; &rarr; a <code>done</code> boolean); this is UPSTREAM of #37's contract, so it lifts the whole chain. Needs a follow-up funded run to re-measure</td>
-          <td><span class="pill prog">&#8635; open &mdash; dominant blocker</span></td>
+          <td>Harden field-extraction: <code>_extract_entity_fields</code> DISCOVERS the subject of &ldquo;<code>&lt;det&gt; &lt;subject&gt; has &lt;list&gt;</code>&rdquo; as the entity + the list as its fields; &ldquo;mark <code>&lt;subject&gt;</code> as <code>&lt;status&gt;</code>&rdquo; &rarr; a boolean field. Reconciles the entity list (drops field tokens mis-listed as entities); unambiguous has-verbs only. 5 tests. <b>Funded RE-RUN CONFIRMED</b>: same prompt now yields <code>Task {id, title, priority, due_date, done: boolean}</code>, and the design agent's reasoning cited the richer fields</td>
+          <td><span class="pill done">&#10003; Fixed (confirmed in re-run)</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Scaffold missing <code>matchMedia</code>/<code>ResizeObserver</code></b> (#42)</td>
+          <td>funded re-run: with #41's richer entity the model correctly used <b>Mantine</b> components, but jsdom implements neither <code>window.matchMedia</code> nor <code>ResizeObserver</code> (Mantine's hooks call them on render) &rarr; every render threw &rarr; <b>all 9 tests failed at render</b></td>
+          <td>Stub both in the generated vitest setup (<code>_render_vitest_setup</code> + scaffold <code>_VITEST_SETUP</code>) &mdash; standard Mantine+jsdom boilerplate, guarded/harmless for libs that don't use them. Proof: after the fix renders stopped crashing (vitest 0 &rarr; 2 passed). 1 regression test</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Ambiguous test queries</b> (#43)</td>
+          <td>funded re-run: after #42 the remaining 7/9 failures were all one cause &mdash; <code>getByLabelText(/priority/i)</code> matches BOTH the form label AND &ldquo;Priority&rdquo; shown in the task list &rarr; &ldquo;found multiple elements&rdquo;</td>
+          <td>Test prompt now demands UNAMBIGUOUS queries: form controls by role + an ANCHORED exact name (<code>getByRole('textbox', { name: /^title$/i })</code>), scope row-vs-form with <code>within(...)</code>, prefer <code>findBy*</code> after an interaction. 1 unit test. Pass-rate lift measured by the 3rd funded run</td>
+          <td><span class="pill prog">&#8635; mechanism &#10003;, verifying</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>UI-library hardcoded to a pair</b> (#44)</td>
+          <td>the design system was 2 hardcoded options repeated in 5 places (LLM prompt, validator, heuristic, deps, import allowlist) &mdash; unextendable, and the founder had no say (agent proposed AND committed silently, violating the signed-stack &ldquo;A proposes, B signs&rdquo; rule)</td>
+          <td><b>Extensible <code>UILibraryAdapter</code> registry</b> in <code>design.py</code> = single source of truth; one entry carries name/version/prompt-desc/deps/import-packages/<code>fit</code>. Registering an adapter wires it EVERYWHERE. Adding MUI/Chakra = one entry, not 5 edits (proven by a Chakra test flowing end-to-end). Existing two byte-preserved. 6 tests. (Founder-DECLARED selection is next.)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
         </tr>
         <tr>
           <td class="issue"><b>Breadth</b> (#39)</td>
