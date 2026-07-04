@@ -86,7 +86,16 @@ class TestDeliveryResume(unittest.TestCase):
             self.assertEqual(res["gate"], "G3")
 
 
-_LIVE = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
+# Live provider path is OPT-IN (SIGNALOS_LIVE_E2E=1) so the offline suite is
+# deterministic and immune to an ambient/polluted provider key: a real key
+# leaking into the shell used to flip this to the live ProviderAdapter and then
+# error the run (e.g. an out-of-credit key). Real live e2e runs use the
+# standalone delivery scripts, not this smoke test.
+_LIVE = bool(os.getenv("SIGNALOS_LIVE_E2E")) and bool(
+    os.getenv("ANTHROPIC_API_KEY")
+    or os.getenv("OPENAI_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+)
 
 
 class TestDeliverySmoke(unittest.TestCase):
