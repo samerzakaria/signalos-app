@@ -136,11 +136,17 @@ def test_one_call_per_file(monkeypatch):
             repo, packet, {}, provider=provider,
         )
         specs = packet["generation"]["file_specs"]
-        # #24b: src/types.ts is the FROZEN authoritative contract -- rendered
-        # deterministically, never an LLM call -- so it can't drift from what
-        # every component prompt was told to conform to. Every OTHER spec is
-        # exactly one call.
-        llm_specs = [s for s in specs if not str(s["path"]).endswith("types.ts")]
+        # A spec is exactly one LLM call IFF it is not rendered
+        # deterministically. Deterministic specs: #24b src/types.ts (frozen
+        # contract), #31 the src/ui/* + setup + css layer, and #48
+        # src/App.test.tsx (composition smoke). Compute the LLM set the SAME way
+        # the dispatcher does so this test tracks the foundation set exactly.
+        gen = packet["generation"]
+        ents = gen.get("entities", []) or []
+        llm_specs = [
+            s for s in specs
+            if ad._render_foundation_file(str(s["path"]), gen, ents) is None
+        ]
         assert len(provider.calls) == len(llm_specs), provider.calls
         # types.ts is still produced on disk, just deterministically.
         assert (repo / "src/types.ts").exists()
@@ -276,13 +282,22 @@ def test_tokens_aggregated(monkeypatch):
         repo = Path(d)
         provider = FakeProvider()
         _patch_llm(monkeypatch, provider)
+        packet = _packet()
         result = ad.dispatch_build_agent_chunked(
-            repo, _packet(), {}, provider=provider,
+            repo, packet, {}, provider=provider,
         )
-        # 4 LLM files x (10 in, 20 out). #24b: src/types.ts is deterministic
-        # (frozen contract) so it consumes no tokens -- 5 specs, 4 LLM calls.
-        assert result["tokens_in"] == 40
-        assert result["tokens_out"] == 80
+        # Each LLM file -> (10 in, 20 out). Deterministic specs consume no
+        # tokens: #24b src/types.ts + #48 src/App.test.tsx here. Count the LLM
+        # set the same way the dispatcher does so this stays correct as the
+        # foundation set grows.
+        gen = packet["generation"]
+        ents = gen.get("entities", []) or []
+        n_llm = sum(
+            1 for s in gen["file_specs"]
+            if ad._render_foundation_file(str(s["path"]), gen, ents) is None
+        )
+        assert result["tokens_in"] == n_llm * 10
+        assert result["tokens_out"] == n_llm * 20
 
 
 def test_dispatch_build_agent_delegates_to_chunked(monkeypatch):
