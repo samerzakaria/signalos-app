@@ -444,8 +444,20 @@
         <tr>
           <td class="issue"><b>Tests don't isolate (store leak)</b> (#45)</td>
           <td>3rd funded run: tsc CLEAN + renders work, but vitest <b>3/10</b> &mdash; ~all 7 failures were &ldquo;found multiple elements with role button name /delete task/i&rdquo; (also /mark as done/, text 'high'). Cause: the test had NO <code>beforeEach</code> and the component's zustand store was a NON-exported module singleton &rarr; state accumulated across tests &rarr; every later query matched one control PER row</td>
-          <td>Prompt both sides (leveraging the #26 two-pass so the test sees the source): component EXPORTS its module store + names per-row controls per-item (<code>Delete {title}</code>); test ISOLATES each case &mdash; reset the exported store to empty in <code>beforeEach</code> (<code>useXStore.setState({ items: [] })</code>), query per-row with <code>within(row)</code>. 1 unit test. Pass-rate lift pending the next funded run</td>
-          <td><span class="pill prog">&#8635; mechanism &#10003;, verifying</span></td>
+          <td>Component EXPORTS its module store; test resets it in <code>beforeEach</code>. <b>4th run exposed my mistake</b>: shipping the store's <i>location</i> as prompt guidance (not a contract) made the App test invent a phantom <code>./store/taskStore</code> &rarr; superseded by <b>#46/#47/#48</b></td>
+          <td><span class="pill prog">&#8635; superseded by #46&ndash;#48</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>#45 done right + repair hardened</b> (#46/#47)</td>
+          <td>4th funded run: #45 as prompt-guidance REGRESSED the build &mdash; the App shell test invented <code>./store/taskStore</code> (TS2307) the repair loop couldn't converge; a cross-file dependency shipped as prose, not a contract</td>
+          <td><b>#46</b> differentiate isolation by file: the component test resets its OWN store (imported from the same module, seen in the #26 ground truth); the App test owns no store &rarr; isolate via unmount, forbidden from <code>./store/*</code>; scope rows via <code>getAllByRole('listitem')[i]</code> (HTMLElement, kills the <code>.closest('li')</code> TS2345). <b>#47</b> <code>_import_drift_enrichment</code>: any TS2307 feeds the repair loop the real manifest paths so it removes the phantom instead of re-inventing it. 5 tests. <b>5th run CONFIRMED</b>: component test <b>6/6 green</b></td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>App shell test drifts (deterministic fix)</b> (#48)</td>
+          <td>across every funded run the App-shell TEST was the perennial drift point &mdash; prop drift, phantom store import, then (run 5) <b>29 malformed-JSX tsc errors</b> that failed the build while the component test passed 6/6. App is a composer; its test needs zero LLM creativity</td>
+          <td>Render <code>src/App.test.tsx</code> deterministically (joins the #31 foundation set) as a minimal composition SMOKE &mdash; <code>render(&lt;App/&gt;)</code>; <code>expect(container.firstChild).toBeTruthy()</code> &mdash; no content assumptions, cannot drift. App.tsx + real components + their tests stay LLM. <b>PROVEN against run 5's real repo</b>: took it from &ldquo;29 tsc errors, build failed&rdquo; to <b>tsc clean (1 repair-fixable nit)</b> + <b>vitest 7/7</b>. 1 test</td>
+          <td><span class="pill done">&#10003; Fixed (proven 7/7)</span></td>
         </tr>
         <tr>
           <td class="issue"><b>UI-library hardcoded to a pair</b> (#44)</td>
