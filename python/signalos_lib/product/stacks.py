@@ -239,6 +239,30 @@ _VITEST_SETUP = """\
 // (toBeInTheDocument, toBeChecked, ...) for every test. Referenced by
 // vite.config.ts setupFiles.
 import '@testing-library/jest-dom';
+
+// #42: jsdom implements neither window.matchMedia nor ResizeObserver, which
+// component libraries (Mantine's useMediaQuery / color-scheme hooks, and
+// others) call on render -- without these stubs every such component throws
+// 'window.matchMedia is not a function' and EVERY test fails at render.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  window.matchMedia = (query) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  });
+}
+if (typeof globalThis !== 'undefined' && !globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
 """
 
 _INDEX_HTML = """\

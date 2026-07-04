@@ -141,6 +141,18 @@ class TestFoundationSpecsAlwaysPresent(unittest.TestCase):
         dev = stacks._PACKAGE_JSON_TEMPLATE["devDependencies"]
         self.assertIn("@testing-library/user-event", dev)
 
+    def test_vitest_setup_stubs_matchmedia_and_resizeobserver(self):
+        # #42: jsdom implements neither window.matchMedia nor ResizeObserver,
+        # which Mantine's hooks call on render -- without the stubs EVERY test
+        # of a Mantine component throws at render (funded e2e: 0/9 rendered).
+        from signalos_lib.product.agent_dispatch import _render_vitest_setup
+        setup = _render_vitest_setup()
+        self.assertIn("matchMedia", setup)
+        self.assertIn("ResizeObserver", setup)
+        # the scaffold-time setup template matches the generated one
+        self.assertIn("matchMedia", stacks._VITEST_SETUP)
+        self.assertIn("ResizeObserver", stacks._VITEST_SETUP)
+
     def test_types_spec_names_exact_interfaces(self):
         # Fix A: the exact interface names must be injectable into every
         # component/test prompt -> the types spec must name them.
