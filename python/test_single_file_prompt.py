@@ -108,6 +108,23 @@ def test_component_prompt_demands_interactivity():
         assert token in prompt, token
 
 
+def test_prompts_demand_test_isolation():
+    # #45: component must export a module store so tests can reset it, and the
+    # test must reset shared state in beforeEach -- otherwise state leaks across
+    # tests and role/text queries match multiple accumulated rows.
+    packet = _packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    comp = _build_single_file_prompt(_component_spec(packet), gen, _gov(), shared).lower()
+    test = _build_single_file_prompt(_test_spec(packet), gen, _gov(), shared).lower()
+    # component: export the module store
+    assert "export" in comp and "module-level store" in comp
+    # test: reset shared state in beforeEach for isolation
+    assert "beforeeach" in test
+    assert "leak" in test
+    assert "setstate" in test
+
+
 def test_test_prompt_demands_unambiguous_queries():
     # #43: the test prompt must steer toward anchored role-based queries so a
     # bare substring like getByLabelText(/priority/i) can't match both the form

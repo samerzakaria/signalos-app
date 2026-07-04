@@ -820,6 +820,16 @@ def _build_single_file_prompt(
             "it a default value so the component still works with zero props."
         )
         lines.append(
+            "- #45 test isolation: if you keep state in a MODULE-LEVEL store "
+            "(e.g. a zustand `create(...)`), you MUST `export` that store (a "
+            "named export) so the test can reset it between tests. A "
+            "non-exported module store keeps its data across tests and makes "
+            "the list grow, so later assertions hit 'found multiple elements'. "
+            "Also give each row control a name that includes the item (e.g. an "
+            "aria-label `Delete {title}`) so per-row queries stay unambiguous "
+            "when several items exist."
+        )
+        lines.append(
             "- Be fully typed against the shared `src/types.ts` entity types."
         )
         lines.append(
@@ -845,6 +855,18 @@ def _build_single_file_prompt(
         lines.append(
             "- Assert on observable behavior/state, not merely that the "
             "component rendered without throwing."
+        )
+        lines.append(
+            "- #45 ISOLATE every test. State must NOT leak between tests: in a "
+            "`beforeEach`, reset any shared/module state the component uses to "
+            "EMPTY -- if the component exports a store, call e.g. "
+            "`useXStore.setState({ <items>: [] })` (the exact store + field are "
+            "in the component source above); otherwise unmount between tests. A "
+            "test that assumes an empty list MUST actually start empty, or "
+            "accumulated rows make role/text queries match multiple elements "
+            "and the test fails. When several items exist, query per-row with "
+            "`within(row)` -- never a top-level `getByRole('button', { name: "
+            "/delete/i })` that matches one button PER row."
         )
         # #43: robust, UNAMBIGUOUS queries. A bare substring regex like
         # `getByLabelText(/priority/i)` also matches the SAME word rendered in
