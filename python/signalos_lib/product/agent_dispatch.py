@@ -481,9 +481,10 @@ def _error_context_lines(spec: dict[str, Any]) -> list[str]:
         lines.append(f"- tsc reported{loc} -- {code_part}{msg}".rstrip())
     lines.append(
         "Common cause: importing a module that does not exist. You may ONLY "
-        "import react / @mantine/core / @mantine/hooks / ./types / the listed "
-        "manifest components. Never invent ../ui/* or @/* modules or a '@' "
-        "path alias."
+        "import react, the packages in this product's 'Allowed imports' list "
+        "(the SELECTED design system -- do NOT import a different UI library), "
+        "./types, and the listed manifest components. Never invent ../ui/* or "
+        "@/* modules or a '@' path alias."
     )
     lines.append("")
     return lines
@@ -503,14 +504,27 @@ def _import_allowlist_lines(
         return []
     bare = list(_REACT_VITE_BARE_ALLOWLIST)
     ui_lib = (shared_context.get("design_constraints", {}) or {}).get("ui_library")
-    if ui_lib:
-        for pkg in (ui_lib, f"{ui_lib.split('/')[0]}/hooks") if "/" in str(ui_lib) else (ui_lib,):
-            if pkg not in bare:
-                bare.append(pkg)
-    if "@mantine/core" not in bare:
-        bare.append("@mantine/core")
-    if "@mantine/hooks" not in bare:
-        bare.append("@mantine/hooks")
+    # Fold in ONLY the SELECTED design system's packages. Never hardcode
+    # @mantine -- doing so told a shadcn product it may import @mantine/core
+    # (not a dependency -> build fails, then the repair loop burns cycles/tokens
+    # chasing it, cf. #31). Each branch lists the real npm deps that design's
+    # get_design_dependencies() installs.
+    if ui_lib == "@mantine/core":
+        bare += [
+            p for p in (
+                "@mantine/core", "@mantine/hooks", "@mantine/form",
+                "@mantine/dates", "@mantine/charts", "@tabler/icons-react", "dayjs",
+            ) if p not in bare
+        ]
+    elif ui_lib == "shadcn/ui":
+        bare += [
+            p for p in (
+                "lucide-react", "class-variance-authority", "clsx",
+                "tailwind-merge",
+            ) if p not in bare
+        ]
+    elif ui_lib and ui_lib not in bare:
+        bare.append(ui_lib)
 
     lines: list[str] = ["## Allowed imports (obey EXACTLY -- anything else fails tsc)"]
     lines.append("Bare packages you may import: " + ", ".join(f"`{b}`" for b in bare) + ".")
