@@ -438,7 +438,13 @@
         <tr>
           <td class="issue"><b>Ambiguous test queries</b> (#43)</td>
           <td>funded re-run: after #42 the remaining 7/9 failures were all one cause &mdash; <code>getByLabelText(/priority/i)</code> matches BOTH the form label AND &ldquo;Priority&rdquo; shown in the task list &rarr; &ldquo;found multiple elements&rdquo;</td>
-          <td>Test prompt now demands UNAMBIGUOUS queries: form controls by role + an ANCHORED exact name (<code>getByRole('textbox', { name: /^title$/i })</code>), scope row-vs-form with <code>within(...)</code>, prefer <code>findBy*</code> after an interaction. 1 unit test. Pass-rate lift measured by the 3rd funded run</td>
+          <td>Test prompt now demands UNAMBIGUOUS queries: form controls by role + an ANCHORED exact name (<code>getByRole('textbox', { name: /^title$/i })</code>), scope row-vs-form with <code>within(...)</code>, prefer <code>findBy*</code> after an interaction. 1 unit test. <b>3rd funded run CONFIRMED</b>: the generated test uses exactly those anchored/<code>within</code>/<code>findBy</code> patterns (no bare <code>/priority/i</code>)</td>
+          <td><span class="pill done">&#10003; Fixed (confirmed in 3rd run)</span></td>
+        </tr>
+        <tr>
+          <td class="issue"><b>Tests don't isolate (store leak)</b> (#45)</td>
+          <td>3rd funded run: tsc CLEAN + renders work, but vitest <b>3/10</b> &mdash; ~all 7 failures were &ldquo;found multiple elements with role button name /delete task/i&rdquo; (also /mark as done/, text 'high'). Cause: the test had NO <code>beforeEach</code> and the component's zustand store was a NON-exported module singleton &rarr; state accumulated across tests &rarr; every later query matched one control PER row</td>
+          <td>Prompt both sides (leveraging the #26 two-pass so the test sees the source): component EXPORTS its module store + names per-row controls per-item (<code>Delete {title}</code>); test ISOLATES each case &mdash; reset the exported store to empty in <code>beforeEach</code> (<code>useXStore.setState({ items: [] })</code>), query per-row with <code>within(row)</code>. 1 unit test. Pass-rate lift pending the next funded run</td>
           <td><span class="pill prog">&#8635; mechanism &#10003;, verifying</span></td>
         </tr>
         <tr>
