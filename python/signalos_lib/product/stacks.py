@@ -297,6 +297,12 @@ _TSCONFIG: dict[str, Any] = {
         "noUnusedLocals": True,
         "noUnusedParameters": True,
         "noFallthroughCasesInSwitch": True,
+        # #32: vitest runs with globals:true, but tsc only knows about
+        # describe/test/it/expect/vi if the vitest ambient types are loaded --
+        # otherwise every generated test fails tsc with "Cannot find name
+        # 'describe'/'test'/'expect'". jest-dom adds the .toBeInTheDocument()
+        # matcher types used by the setup file.
+        "types": ["vitest/globals", "@testing-library/jest-dom"],
     },
     "include": ["src"],
 }

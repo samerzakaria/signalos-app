@@ -102,11 +102,21 @@ def test_validate_wave_status_fails_on_missing_artifacts_and_audit(tmp_path: Pat
 
 
 def test_validate_wave_status_blocks_wrong_signer_role(tmp_path: Path) -> None:
+    from signalos_lib.artifacts import resolve_gate_artifacts
+
     _write(
         tmp_path / "core" / "governance" / "QUALITY_CHECK.md",
         "# Quality Check\n\nStage 1 review: PASS\nStage 2 review: PASS\n",
     )
-    _sign(tmp_path, "G5", "PE")
+    # #17 now blocks signing G5 with the wrong role (PE) at sign time via
+    # sign_gate. To prove validate_wave_status is an INDEPENDENT check (it must
+    # still flag a hand-forged wrong-role signature that bypassed sign_gate),
+    # write the wrong-role signature via the low-level sign_artifact.
+    from signalos_lib.sign import sign_artifact
+
+    for artifact in resolve_gate_artifacts(tmp_path, "G5"):
+        if artifact.path.exists():
+            sign_artifact(artifact.path, "PE Signer", "PE", "G5", "APPROVED")
 
     payload = validate_wave_status(tmp_path, wave="W01", write_evidence=False)
 

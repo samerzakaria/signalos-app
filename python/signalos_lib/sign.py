@@ -270,11 +270,15 @@ def sign_gate(
         p = artifact.path
         if not p.exists():
             continue
+        # SoD for MIXED-role gates: a gate (e.g. G3) can hold artifacts that
+        # require different roles (PLAN.md->PE, others->PO). This role signs the
+        # artifacts it is authorised for and SKIPS the rest (which the other
+        # role signs in its own call) -- matching the docstring ("raises if the
+        # role is not authorised for ANY artifact", already enforced by the
+        # union check above). Raising here instead broke legitimate multi-role
+        # gate signing (a PO signing G3 died on the PE-only PLAN.md).
         if role not in artifact.required_roles:
-            raise ValueError(
-                f"role {role!r} is not authorised to sign {artifact.rel_path!r} "
-                f"(required: {list(artifact.required_roles)})"
-            )
+            continue
         sign_artifact(
             p,
             signer,

@@ -806,6 +806,18 @@ def _build_single_file_prompt(
             "- Assert on observable behavior/state, not merely that the "
             "component rendered without throwing."
         )
+        # #32: the stack is VITEST, not jest -- gpt-class models default to
+        # jest idioms that fail tsc ("Cannot use namespace 'jest' as a value").
+        lines.append(
+            "- Use VITEST, not jest: `describe`/`it`/`test`/`expect` are GLOBAL "
+            "(no import needed). For mocks/spies use `vi` imported from "
+            "'vitest' (e.g. `import { vi } from 'vitest'`) -- NEVER `jest`, "
+            "`jest.fn`, or `jest.mock`."
+        )
+        lines.append(
+            "- Do NOT `import React` (the react-jsx transform is automatic; an "
+            "unused React import fails the build under noUnusedLocals)."
+        )
         lines.append("")
         # #26: when the pass-2 dispatcher has stamped the FINAL on-disk source
         # of the component under test onto this spec, embed it verbatim as
@@ -846,6 +858,32 @@ def _build_single_file_prompt(
 # stays within claude-opus-4-8's 128K max-output ceiling.
 _MIN_FILE_MAX_TOKENS = 8000
 _MAX_FILE_MAX_TOKENS = 128000
+
+# #30: per-model completion-token ceilings. `_file_max_tokens` scales the budget
+# up to 24K for a CRUD component, which Claude tolerates but gpt-4o hard-400s
+# ("max_tokens is too large: 24000; model supports at most 16384"). A SINGLE
+# file never needs more than ~16K output, so the budget is clamped to the
+# model's real cap before the call. Prefix-matched; unknown models take the
+# conservative default that no mainstream chat model 400s on.
+_MODEL_MAX_OUTPUT_TOKENS: tuple[tuple[str, int], ...] = (
+    ("gpt-4o", 16384),
+    ("gpt-4-turbo", 4096),
+    ("gpt-4.1", 32768),
+    ("gpt-3.5", 4096),
+    ("o1", 32768),
+    ("o3", 32768),
+    ("claude", 64000),
+    ("gemini", 32768),
+)
+_DEFAULT_MODEL_MAX_OUTPUT = 16384
+
+
+def _model_max_output_tokens(model: str | None) -> int:
+    low = (model or "").lower()
+    for prefix, cap in _MODEL_MAX_OUTPUT_TOKENS:
+        if prefix in low:
+            return cap
+    return _DEFAULT_MODEL_MAX_OUTPUT
 
 
 def _file_max_tokens(spec: dict[str, Any]) -> int:
@@ -1022,22 +1060,30 @@ def dispatch_build_agent_chunked(
         def run_task(stored_task: Any) -> dict:
             spec = stored_task.payload["spec"]
             spec_path = str(spec.get("path", "")).replace("\\", "/")
-            # #24b: the shared type contract is deterministic and authoritative.
-            # Render it directly (identical to what every component prompt was
-            # told to conform to) instead of spending an LLM call that could
-            # produce a types.ts drifting from that injected contract.
-            if spec_path.endswith("src/types.ts") or spec_path == "types.ts":
+            # #24b + #31: scaffold/boilerplate files (types.ts contract, the
+            # src/ui/* layer, vitest setup, product.css) are DETERMINISTIC --
+            # render them directly instead of spending an LLM call that would
+            # invent non-existent imports (react-jss, @mantine/core in a shadcn
+            # app, ./List/./Chart barrels) and break the build. Only real product
+            # files (components, their tests, App.tsx) reach the model.
+            foundation = _render_foundation_file(
+                spec_path, gen, gen.get("entities", []) or [],
+            )
+            if foundation is not None:
                 return {
                     "path": spec_path,
-                    "content": shared_context.get("types_module_source")
-                    or _render_types(gen.get("entities", []) or []),
+                    "content": foundation,
                     "tokens_in": None,
                     "tokens_out": None,
                 }
             prompt = _build_single_file_prompt(
                 spec, gen, governance, shared_context,
             )
-            budget = _file_max_tokens(spec)
+            # #30: clamp the per-file budget to the MODEL's completion ceiling
+            # so a 24K .tsx budget never 400s on a model that caps lower (e.g.
+            # gpt-4o at 16384). The model cap wins outright -- even below the
+            # normal floor -- since a request over the cap is a hard 400.
+            budget = min(_file_max_tokens(spec), _model_max_output_tokens(use_model))
             # TruncatedResponseError propagates -> retryable failure.
             response_text, t_in, t_out = use_provider.call(
                 f"{_SINGLE_FILE_SYSTEM_PROMPT}\n\n{prompt}",
@@ -1528,6 +1574,37 @@ def write_agent_files(repo_root: Path, files: dict[str, str]) -> list[str]:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _render_foundation_file(
+    path: str, gen: dict[str, Any], entities: list[Any],
+) -> str | None:
+    """Deterministic content for a scaffold/boilerplate file, or None if `path`
+    is a product file the LLM must generate.
+
+    #31: these `src/ui/*` + setup + css files are pure boilerplate. An LLM asked
+    to write them invents imports that don't exist (`react-jss`,
+    `@fontsource/inter`, `@mantine/core` in a shadcn app, `./List`/`./Chart`
+    barrels for components that were never generated), so they are rendered
+    deterministically in BOTH the local path and the chunked-LLM `run_task` --
+    exactly like the #24b `types.ts` contract. Product files (components, their
+    tests, App.tsx, App.test.tsx) return None and stay LLM-generated.
+    """
+    if path == "src/types.ts":
+        return _render_types(entities)
+    if path == "src/test/setup.ts":
+        return _render_vitest_setup()
+    if path == "src/ui/theme.ts":
+        return _render_theme(gen.get("design_constraints", {}) or {})
+    if path == "src/ui/index.ts":
+        return "export * from './theme';\n"
+    if path == "src/ui/layouts/AppLayout.tsx":
+        return _render_app_layout()
+    if path == "src/ui/layouts/PageLayout.tsx":
+        return _render_page_layout()
+    if path == "src/product.css":
+        return _render_product_css()
+    return None
+
+
 def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
     file_specs = gen.get("file_specs", [])
     product_name = gen.get("product") or "SignalOS Product"
@@ -1556,20 +1633,9 @@ def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
         path = str(spec.get("path", "")).replace("\\", "/")
         if not path:
             continue
-        if path == "src/types.ts":
-            files[path] = _render_types(entities)
-        elif path == "src/test/setup.ts":
-            files[path] = _render_vitest_setup()
-        elif path == "src/ui/theme.ts":
-            files[path] = _render_theme(gen.get("design_constraints", {}))
-        elif path == "src/ui/index.ts":
-            files[path] = "export * from './theme';\n"
-        elif path == "src/ui/layouts/AppLayout.tsx":
-            files[path] = _render_app_layout()
-        elif path == "src/ui/layouts/PageLayout.tsx":
-            files[path] = _render_page_layout()
-        elif path == "src/product.css":
-            files[path] = _render_product_css()
+        foundation = _render_foundation_file(path, gen, entities)
+        if foundation is not None:
+            files[path] = foundation
         elif path == "src/App.tsx":
             files[path] = _render_app(product_name, component_names, workflows, criteria)
         elif path == "src/App.test.tsx":
