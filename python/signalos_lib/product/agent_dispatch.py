@@ -667,6 +667,19 @@ def _build_single_file_prompt(
                 "name and import path, and render every one of them in the JSX "
                 "tree."
             )
+            # #36 prop-drift fix: App is a COMPOSER. Every component owns its own
+            # state, so App renders each one PROPLESS. Passing data/state props
+            # to a component whose Props interface doesn't declare them is the
+            # exact drift that breaks the type-check -- forbid it here so App and
+            # the components agree by contract (App gives nothing; components
+            # require nothing).
+            lines.append(
+                "Render each component PROPLESS -- `<Xyz />`, NEVER "
+                "`<Xyz items={...} onChange={...} />`. Each component is "
+                "self-contained and owns all of its own state, so App passes it "
+                "NOTHING. Hold no entity/business state in App and define no "
+                "`Props` for these children; App only arranges them in a layout."
+            )
         elif kind == "test":
             lines.append("")
             lines.append(
@@ -793,6 +806,13 @@ def _build_single_file_prompt(
             "(remove an item), and STATUS change where the entity has a status "
             "field. No dead buttons -- every control has a handler that mutates "
             "state."
+        )
+        lines.append(
+            "- Be SELF-CONTAINED: own ALL of your state internally. Declare NO "
+            "REQUIRED props -- the App renders you as `<Component />` with no "
+            "props, so any required prop would be `undefined` at runtime and "
+            "break the type-check. If you genuinely need a callback prop, give "
+            "it a default value so the component still works with zero props."
         )
         lines.append(
             "- Be fully typed against the shared `src/types.ts` entity types."

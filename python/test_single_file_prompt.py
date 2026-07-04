@@ -462,3 +462,59 @@ def test_boolean_status_field_typed_in_contract():
     assert "amount: number;" in src
     assert "reimbursed: boolean;" in src
     assert "category: string;" in src
+
+
+# ---------------------------------------------------------------------------
+# #36: component prop-drift eliminated by a symmetric PROPLESS contract.
+# App is a composer that renders `<Component />` with no props; every component
+# is self-contained and declares no required props. With nothing passed and
+# nothing required, there is no prop shape that can drift between the two files.
+# ---------------------------------------------------------------------------
+
+def test_app_prompt_forbids_passing_props_to_components():
+    # The App.tsx prompt must instruct rendering each component PROPLESS and
+    # explicitly forbid passing data/state props (the drift the type-check would
+    # otherwise reject as `Property 'x' does not exist on IntrinsicAttributes`).
+    packet = _cohesion_packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(
+        _find_spec(gen, "src/App.tsx"), gen, _gov(), shared,
+    )
+    assert "PROPLESS" in prompt
+    low = prompt.lower()
+    # forbids passing props + demands self-contained children
+    assert "never" in low and "<xyz items=" in low
+    assert "self-contained" in low
+    assert "passes it" in low  # "App passes it NOTHING"
+
+
+def test_component_prompt_forbids_required_props():
+    # Each entity component must be told to be self-contained and declare NO
+    # required props -- so App's propless `<Component />` type-checks and there
+    # is no prop contract to drift.
+    packet = _cohesion_packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(
+        _find_spec(gen, "src/components/ExpenseManager.tsx"),
+        gen, _gov(), shared,
+    )
+    low = prompt.lower()
+    assert "self-contained" in low
+    assert "no required props" in low or "declare no" in low
+    # The rationale (undefined-at-runtime) is spelled out so the model complies.
+    assert "undefined" in low
+
+
+def test_app_prompt_is_not_given_crud_component_requirements():
+    # App.tsx (kind="registration") must NOT receive the entity-component CRUD
+    # "render a working list AND a form" demand -- that is only for the feature
+    # components. App is a composer.
+    packet = _cohesion_packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(
+        _find_spec(gen, "src/App.tsx"), gen, _gov(), shared,
+    )
+    assert "Render a working list of the entity AND a form" not in prompt

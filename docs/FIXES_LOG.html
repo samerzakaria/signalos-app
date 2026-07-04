@@ -400,10 +400,10 @@
       <thead><tr><th>Gap</th><th>Evidence</th><th>Plan</th><th>Status</th></tr></thead>
       <tbody>
         <tr>
-          <td class="issue"><b>Component <code>Props</code> drift</b></td>
+          <td class="issue"><b>Component <code>Props</code> drift</b> (#36)</td>
           <td><code>App.tsx</code> passes props a component's <code>Props</code> interface doesn't declare (<code>Type '{ metrics… }' not assignable to DashboardSummaryProps</code>). The frozen contract (#24b) covers ENTITY types, not component prop shapes</td>
-          <td>Extend the frozen contract to each component's <code>Props</code> &mdash; generate the prop signature deterministically, inject into BOTH <code>App.tsx</code>'s and the component's prompt (the #24b pattern, one layer over)</td>
-          <td><span class="pill prog">&#8635; fixing</span></td>
+          <td><b>Eliminated the prop contract entirely</b> rather than freezing it: a <i>symmetric PROPLESS</i> rule &mdash; App's prompt renders every component <code>&lt;Xyz /&gt;</code> (never <code>&lt;Xyz items={…}/&gt;</code>, no <code>Props</code> for children); each component's prompt must be self-contained and declare <b>no required props</b> (a required prop would be <code>undefined</code> at App's propless call site &rarr; tsc rejects it). Nothing passed + nothing required &rArr; no prop shape to drift. Enforced by tsc (drift &rarr; <code>Property 'x' does not exist on IntrinsicAttributes</code> / <code>is missing</code> &rarr; repair regenerates with the same rule &rarr; converges); the deterministic path (<code>_render_app</code>) was already propless. 3 unit tests; 59 green</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
         </tr>
         <tr>
           <td class="issue"><b>Tests don't converge (vitest)</b></td>
