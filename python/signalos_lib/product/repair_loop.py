@@ -14,6 +14,7 @@ __all__ = [
 ]
 
 import json
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -579,6 +580,51 @@ def _balance_enrichment(
     }
 
 
+_TS2307_RE = re.compile(r"[Cc]annot find module ['\"]([^'\"]+)['\"]")
+
+
+def _import_drift_enrichment(
+    fpath: str, errors: list[dict], gen: dict,
+) -> dict | None:
+    """#47: when a file fails with TS2307 'Cannot find module X', tell the
+    regeneration -- crisply and with MANIFEST context -- that X does not exist
+    and list the ONLY local modules that do (the #12 component manifest + the
+    shared types). Without this the repair loop re-invents the same phantom
+    path (the funded run's `./store/taskStore`). Returns None when no such
+    error is present."""
+    phantom: list[str] = []
+    for e in errors:
+        code = str(e.get("code") or "").upper()
+        msg = str(e.get("message") or "")
+        if code == "TS2307" or "cannot find module" in msg.lower():
+            m = _TS2307_RE.search(msg)
+            if m and m.group(1) not in phantom:
+                phantom.append(m.group(1))
+    if not phantom:
+        return None
+    manifest = gen.get("component_manifest", []) or []
+    allowed = [str(m.get("importPath")) for m in manifest if m.get("importPath")]
+    allowed_line = ", ".join(f"`{p}`" for p in allowed) if allowed else "(none)"
+    return {
+        "file": fpath,
+        "line": None,
+        "col": None,
+        "code": "IMPORT-DRIFT",
+        "message": (
+            "These imported modules DO NOT EXIST: "
+            + ", ".join(f"`{p}`" for p in phantom)
+            + ". Remove or correct each one. The ONLY local modules you may "
+            "import are the generated components (" + allowed_line
+            + ") and the shared types via `./types`. NEVER invent a "
+            "`./store/*`, `./hooks/*`, `@/*`, or `../ui/*` path -- if you need "
+            "a component's store, import it from THAT component's module listed "
+            "above (e.g. `import Component, { useStore } from './Component'`), "
+            "not a separate file."
+        ),
+        "source": "signalos-import-drift",
+    }
+
+
 def _build_filtered_generation(
     original_gen: dict, failures: list, repo_root: Path | None = None,
 ) -> dict:
@@ -628,6 +674,11 @@ def _build_filtered_generation(
         enrichment = _balance_enrichment(fpath, errors, repo_root)
         if enrichment is not None:
             errors = errors + [enrichment]
+        # #47: sharpen TS2307 'Cannot find module' with the real manifest paths
+        # so the repair removes the phantom import instead of re-inventing it.
+        drift = _import_drift_enrichment(fpath, errors, gen)
+        if drift is not None:
+            errors = errors + [drift]
         spec["error_context"] = errors
         filtered.append(spec)
 

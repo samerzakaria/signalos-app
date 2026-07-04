@@ -125,6 +125,37 @@ def test_prompts_demand_test_isolation():
     assert "setstate" in test
 
 
+def test_app_test_gets_no_store_reset_guidance():
+    # #46: the App shell test does NOT own a store -- it must NOT be told to
+    # reset one (which made it invent a phantom `./store/taskStore`). It should
+    # be warned off `./store/*` and told to isolate via unmount only.
+    packet = _packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    app_test_spec = {
+        "path": "src/App.test.tsx", "kind": "test",
+        "description": "App shell test",
+    }
+    prompt = _build_single_file_prompt(app_test_spec, gen, _gov(), shared).lower()
+    assert "setstate" not in prompt                 # not told to reset a store
+    assert "./store/" in prompt                      # warned off the phantom path
+    assert "do not own" in prompt or "does not own" in prompt
+
+
+def test_component_test_resets_its_own_store():
+    # #46: a component test DOES reset -- importing the store from its OWN
+    # module (never a separate ./store/* path).
+    packet = _packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(_test_spec(packet), gen, _gov(), shared).lower()
+    assert "setstate" in prompt
+    assert "same module as the component under test" in prompt
+    assert "./store/" in prompt                      # explicitly forbids inventing it
+    # typed-row guidance to avoid the .closest('li') TS2345
+    assert "getallbyrole('listitem')" in prompt
+
+
 def test_test_prompt_demands_unambiguous_queries():
     # #43: the test prompt must steer toward anchored role-based queries so a
     # bare substring like getByLabelText(/priority/i) can't match both the form

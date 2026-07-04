@@ -856,17 +856,41 @@ def _build_single_file_prompt(
             "- Assert on observable behavior/state, not merely that the "
             "component rendered without throwing."
         )
+        # #45/#46 ISOLATE every test -- but the store-reset only belongs in a
+        # COMPONENT test (which OWNS its store and sees its exact export in the
+        # ground-truth source). The App shell test does NOT own any store, so
+        # telling it to "reset the store" made it INVENT a phantom import path
+        # (`./store/taskStore`, TS2307). Split the guidance by file.
+        _test_name = path.replace("\\", "/").split("/")[-1] if path else ""
+        if _test_name == "App.test.tsx":
+            lines.append(
+                "- ISOLATE tests via unmount only: React Testing Library "
+                "auto-cleanup unmounts between tests. This is the ROOT App "
+                "shell test -- it does NOT own any component's state, so do NOT "
+                "import or reset a child component's store, and NEVER import a "
+                "`./store/*` module (it does not exist -> TS2307). Assert "
+                "composition-level behavior (the app renders, the product's "
+                "sections/components appear)."
+            )
+        else:
+            lines.append(
+                "- ISOLATE every test so state does NOT leak. In a `beforeEach`, "
+                "reset THIS component's store to empty. Import the store from the "
+                "SAME module as the component under test (the ground-truth source "
+                "above shows the exact `export const useXStore = create(...)` and "
+                "its state field) -- e.g. "
+                "`import Component, { useXStore } from './Component'` then "
+                "`useXStore.setState({ <items>: [] })`. Do NOT invent a separate "
+                "`./store/*` path (there is none -> TS2307). A test that assumes "
+                "an empty list MUST actually start empty."
+            )
         lines.append(
-            "- #45 ISOLATE every test. State must NOT leak between tests: in a "
-            "`beforeEach`, reset any shared/module state the component uses to "
-            "EMPTY -- if the component exports a store, call e.g. "
-            "`useXStore.setState({ <items>: [] })` (the exact store + field are "
-            "in the component source above); otherwise unmount between tests. A "
-            "test that assumes an empty list MUST actually start empty, or "
-            "accumulated rows make role/text queries match multiple elements "
-            "and the test fails. When several items exist, query per-row with "
-            "`within(row)` -- never a top-level `getByRole('button', { name: "
-            "/delete/i })` that matches one button PER row."
+            "- When several rows exist, scope per-row queries: get the row as an "
+            "HTMLElement via `screen.getAllByRole('listitem')[i]` (NOT "
+            "`.closest('li')`, which is typed `Element` and fails "
+            "`within(...)` under tsc as TS2345), then query inside it with "
+            "`within(row).getByRole('button', { name: /delete/i })` -- never a "
+            "top-level query that matches one control PER row."
         )
         # #43: robust, UNAMBIGUOUS queries. A bare substring regex like
         # `getByLabelText(/priority/i)` also matches the SAME word rendered in

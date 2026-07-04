@@ -160,7 +160,13 @@ def test_repair_packet_multiple_errors_same_file_grouped():
     )
     specs = packet["generation"]["file_specs"]
     assert len(specs) == 1
-    assert len(specs[0]["error_context"]) == 2
+    ec = specs[0]["error_context"]
+    codes = [e.get("code") for e in ec]
+    # both original errors are grouped under the one file...
+    assert "TS2304" in codes
+    assert "TS2307" in codes
+    # ...plus the #47 import-drift enrichment the TS2307 triggers.
+    assert "IMPORT-DRIFT" in codes
 
 
 def test_repair_packet_preserves_manifest_and_context():

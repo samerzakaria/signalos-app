@@ -171,5 +171,58 @@ class BalanceEnrichment(unittest.TestCase):
             self.assertNotIn("BALANCE", [e.get("code") for e in ec])
 
 
+class ImportDriftEnrichment(unittest.TestCase):
+    """#47: a TS2307 'Cannot find module' failure is enriched with the REAL
+    manifest paths so the repair loop removes the phantom import instead of
+    re-inventing it (the funded run's `./store/taskStore`)."""
+
+    def _packet(self, rel: str) -> dict:
+        return {
+            "run_id": "drift-run",
+            "generation": {
+                "profile": "react-vite",
+                "component_manifest": [
+                    {"componentName": "Task", "importPath": "./components/Task",
+                     "filePath": "src/components/Task.tsx"},
+                ],
+                "file_specs": [
+                    {"path": rel, "kind": "test", "description": "app test"},
+                ],
+            },
+        }
+
+    def test_ts2307_adds_import_drift_diagnostic(self):
+        rel = "src/App.test.tsx"
+        failures = [{
+            "file": rel, "line": 5, "col": 30, "code": "TS2307",
+            "message": "Cannot find module './store/taskStore' or its "
+                       "corresponding type declarations.",
+            "source": "tsc",
+        }]
+        packet = build_repair_packet(
+            Path("."), 1, failures, "tsc failed", self._packet(rel),
+        )
+        ec = packet["generation"]["file_specs"][0]["error_context"]
+        codes = [e.get("code") for e in ec]
+        self.assertIn("TS2307", codes)
+        self.assertIn("IMPORT-DRIFT", codes)
+        drift = next(e for e in ec if e.get("code") == "IMPORT-DRIFT")
+        self.assertIn("./store/taskStore", drift["message"])   # names the phantom
+        self.assertIn("./components/Task", drift["message"])    # lists the real path
+
+    def test_no_import_drift_without_ts2307(self):
+        rel = "src/App.test.tsx"
+        failures = [{
+            "file": rel, "line": 5, "col": 3, "code": "TS2345",
+            "message": "Argument of type 'Element' is not assignable.",
+            "source": "tsc",
+        }]
+        packet = build_repair_packet(
+            Path("."), 1, failures, "tsc failed", self._packet(rel),
+        )
+        ec = packet["generation"]["file_specs"][0]["error_context"]
+        self.assertNotIn("IMPORT-DRIFT", [e.get("code") for e in ec])
+
+
 if __name__ == "__main__":
     unittest.main()
