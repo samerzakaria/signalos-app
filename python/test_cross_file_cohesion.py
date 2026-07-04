@@ -141,6 +141,21 @@ class TestFoundationSpecsAlwaysPresent(unittest.TestCase):
         dev = stacks._PACKAGE_JSON_TEMPLATE["devDependencies"]
         self.assertIn("@testing-library/user-event", dev)
 
+    def test_app_test_is_deterministic_composition_smoke(self):
+        # #48: App.test.tsx is rendered deterministically (like the foundation
+        # files) -- a minimal "App mounts" smoke that can't drift the way an
+        # LLM-written App.test.tsx did (phantom store imports, malformed JSX).
+        from signalos_lib.product.agent_dispatch import _render_foundation_file
+        out = _render_foundation_file(
+            "src/App.test.tsx", {"product": "Task Tracker"}, [],
+        )
+        self.assertIsNotNone(out)                     # deterministic, not LLM
+        self.assertIn("import App from './App'", out)
+        self.assertIn("render(<App />)", out)
+        self.assertIn("toBeTruthy", out)
+        # no coupling to the deterministic shell's jargon -> holds for any App
+        self.assertNotIn("Governed delivery scope", out)
+
     def test_vitest_setup_stubs_matchmedia_and_resizeobserver(self):
         # #42: jsdom implements neither window.matchMedia nor ResizeObserver,
         # which Mantine's hooks call on render -- without the stubs EVERY test

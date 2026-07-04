@@ -1694,13 +1694,21 @@ def _render_foundation_file(
     `@fontsource/inter`, `@mantine/core` in a shadcn app, `./List`/`./Chart`
     barrels for components that were never generated), so they are rendered
     deterministically in BOTH the local path and the chunked-LLM `run_task` --
-    exactly like the #24b `types.ts` contract. Product files (components, their
-    tests, App.tsx, App.test.tsx) return None and stay LLM-generated.
+    exactly like the #24b `types.ts` contract.
+
+    #48: `src/App.test.tsx` joins them. App is a COMPOSER whose behavioral
+    coverage lives in the component tests; its own test is a composition smoke
+    ("App mounts"). Left to the LLM it was the perennial drift point (prop
+    drift, phantom `./store/*` imports, malformed JSX) -- so it is now rendered
+    deterministically too. Only App.tsx and the real components + their tests
+    stay LLM-generated.
     """
     if path == "src/types.ts":
         return _render_types(entities)
     if path == "src/test/setup.ts":
         return _render_vitest_setup()
+    if path == "src/App.test.tsx":
+        return _render_app_test(gen.get("product") or "SignalOS Product")
     if path == "src/ui/theme.ts":
         return _render_theme(gen.get("design_constraints", {}) or {})
     if path == "src/ui/index.ts":
@@ -1747,8 +1755,7 @@ def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
             files[path] = foundation
         elif path == "src/App.tsx":
             files[path] = _render_app(product_name, component_names, workflows, criteria)
-        elif path == "src/App.test.tsx":
-            files[path] = _render_app_test(product_name)
+        # src/App.test.tsx is handled by _render_foundation_file above (#48).
         elif path.startswith("src/components/") and path.endswith(".test.tsx"):
             component = Path(path).name.replace(".test.tsx", "")
             files[path] = _render_component_test(component)
@@ -2379,16 +2386,21 @@ export default App;
 
 
 def _render_app_test(product_name: str) -> str:
-    return f"""\
-import {{ render, screen }} from '@testing-library/react';
-import {{ expect, test }} from 'vitest';
+    # #48: App is a COMPOSER; its behavioral coverage lives in the component
+    # tests. This is a deterministic composition SMOKE test -- the app shell
+    # mounts without crashing (catches wiring/import/render errors at the App
+    # level). It makes NO content assumptions, so it holds whether App.tsx is
+    # the deterministic shell or the LLM-tailored one -- and it can't drift the
+    # way an LLM-written App.test.tsx did (phantom store imports, malformed JSX).
+    return """\
+import { render } from '@testing-library/react';
+import { expect, test } from 'vitest';
 import App from './App';
 
-test('renders generated product shell', () => {{
-  render(<App />);
-  expect(screen.getByText({json.dumps(product_name)})).toBeDefined();
-  expect(screen.getByText(/Governed delivery scope/i)).toBeDefined();
-}});
+test('App mounts without crashing', () => {
+  const { container } = render(<App />);
+  expect(container.firstChild).toBeTruthy();
+});
 """
 
 
