@@ -102,15 +102,48 @@ def is_llm_available(root=None) -> bool:
     """Product-aware availability check.
 
     True when a provider key is configured at EITHER the product level (the
-    workspace .env files) OR the app level (process env / keychain). Both
-    satisfy availability, so callers only see "no key" when both miss.
-    ``SIGNALOS_DISABLE_LLM`` still forces False.
+    workspace .env files) OR the app level (process env / keychain) AND the
+    resolved provider's SDK is actually importable. A key WITHOUT the provider
+    SDK is NOT available (#23 fake-green defect): env-key-only would report
+    True, dispatch would be attempted and fail for every file with 'anthropic
+    package not installed', yet delivery masked it as green off the scaffold
+    stub. Verifying the SDK is importable fails that closed at the source.
+
+    ``SIGNALOS_DISABLE_LLM`` still forces False. The SDK-free ``test`` provider
+    (SIGNALOS_LLM_PROVIDER=test / SIGNALOS_HARNESS_TEST=1) stays available.
     """
     if os.environ.get("SIGNALOS_DISABLE_LLM", "").strip().lower() in _DISABLE_VALUES:
         return False
+
+    has_key = False
     if root is not None and product_provider_keys(root):
-        return True
-    return any(os.environ.get(var) for var in _PROVIDER_ENV_VARS)
+        has_key = True
+    elif any(os.environ.get(var) for var in _PROVIDER_ENV_VARS):
+        has_key = True
+    if not has_key:
+        return False
+
+    # A key is present -- but the provider is only usable if its SDK imports.
+    return _provider_sdk_importable(root)
+
+
+def _provider_sdk_importable(root=None) -> bool:
+    """Whether the provider that would be used has an importable SDK.
+
+    Resolves against the product overlay (product keys win) so the SDK checked
+    matches the provider that would actually be dispatched. Fail-safe: if the
+    harness cannot be imported to answer, assume unavailable rather than
+    reporting a false green.
+    """
+    try:
+        from signalos_lib.harness import provider_sdk_importable
+    except Exception:
+        return False
+    with apply_product_secrets(root):
+        try:
+            return provider_sdk_importable()
+        except Exception:
+            return False
 
 
 @contextmanager

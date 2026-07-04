@@ -173,9 +173,13 @@ class TestHeartbeat(unittest.TestCase):
         spy.enqueue("slow-1")
 
         def run_task(task):
-            time.sleep(0.25)
+            time.sleep(0.6)
             return "ok"
 
+        # 0.6s task at a 0.05s interval => ~12 heartbeat windows. Asserting >=3
+        # keeps a ~4x margin so the test proves PERIODIC firing without flaking
+        # under CPU contention (thread starvation on a loaded runner previously
+        # squeezed a 0.25s task down to 2 heartbeats).
         report = run_worker_pool(spy, run_task, max_workers=1, lease_ttl=30, heartbeat_interval=0.05)
         self.assertEqual(len(report.succeeded), 1)
         self.assertGreaterEqual(len(spy.heartbeat_calls), 3, spy.heartbeat_calls)

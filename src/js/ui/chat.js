@@ -32,6 +32,16 @@ function isDeliveryIntent(text) {
   return (_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t);
 }
 
+async function buildEntrypointAllowed() {
+  const result = await ipc.enforcement.precheck('auto', { rules: ['wave-freeze'] });
+  if (result && result.allowed === false) {
+    const rule = result.blocking_rule || 'build precheck';
+    const reason = result.reason || `Build is blocked by ${rule}.`;
+    return { allowed: false, message: reason };
+  }
+  return { allowed: true, message: '' };
+}
+
 function parseGovernedChatCommand(value) {
   const normalized = String(value || '').trim().replace(/\s+/g, ' ');
   const lower = normalized.toLowerCase();
@@ -170,16 +180,35 @@ async function sendMsg() {
   // No flag: natural-language always drives the agent loop. (The legacy
   // wave-engine + LLM-stream code remains below but is unreachable for NL.)
   {
+    let buildPrecheckComplete = false;
     try {
       // A build/delivery request ("build a task manager", "create an app
       // that...") starts the governed G0->G5 delivery via `agent:deliver`
       // (GateOrchestrator). Any other message is a normal `agent:run` turn.
       // Both stream via the "agent:event" channel; gate pauses, verdicts,
       // and cancel/resume are driven by agentEvents.ts.
-      const command = isDeliveryIntent(val) ? 'agent:deliver' : 'agent:run';
+      const isDelivery = isDeliveryIntent(val);
+      if (isDelivery) {
+        const precheck = await buildEntrypointAllowed();
+        if (!precheck.allowed) {
+          state.chatBubbles = [...state.chatBubbles, {
+            id: nowId(),
+            kind: 'error',
+            text: precheck.message,
+          }];
+          showError(precheck.message);
+          state.busy = false;
+          return;
+        }
+        buildPrecheckComplete = true;
+      }
+      const command = isDelivery ? 'agent:deliver' : 'agent:run';
       await ipc.signal.runAndWait(command, [JSON.stringify(activeAgentPayload({ prompt: val }))], 600000);
     } catch (e) {
-      const message = providerConnectionMessage(e, state.ai || 'AI provider');
+      const raw = e && e.message ? e.message : String(e);
+      const message = isDeliveryIntent(val) && !buildPrecheckComplete
+        ? `Build precheck failed: ${raw}`
+        : providerConnectionMessage(e, state.ai || 'AI provider');
       state.chatBubbles = [...state.chatBubbles, {
         id: nowId(),
         kind: 'error',

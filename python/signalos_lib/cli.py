@@ -432,6 +432,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_retro_global.add_argument("retro_query", nargs="?", metavar="QUERY")
     p_retro_global.add_argument("retro_args", nargs=argparse.REMAINDER, metavar="ARGS")
 
+    p_post_retro = sub.add_parser("signal-post-retro", help="Run the post-retro Phase-8 closure gate")
+    p_post_retro.add_argument("post_retro_args", nargs=argparse.REMAINDER, metavar="ARGS")
+
     # W14 — Safety Gates (AMD-CORE-035)
     p_careful = sub.add_parser("signal-careful", help="Enable/disable/check careful mode (W14)")
     p_careful.add_argument("careful_action", nargs="?", metavar="ACTION")
@@ -1427,6 +1430,11 @@ def main(argv: list[str]) -> int:
         if getattr(args, "retro_args", None):
             sub_argv += list(args.retro_args)
         return cmd_signal_retro_global(sub_argv)
+
+    if cmd == "signal-post-retro":
+        from signalos_lib.commands.post_retro import cmd_signal_post_retro
+        sub_argv = list(rest) + list(getattr(args, "post_retro_args", None) or [])
+        return cmd_signal_post_retro(sub_argv)
 
     # W14 — Safety Gates (AMD-CORE-035)
     if cmd == "signal-careful":

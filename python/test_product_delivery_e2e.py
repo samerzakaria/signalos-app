@@ -440,6 +440,49 @@ class TestDeliveryE2E(unittest.TestCase):
             )
             self.assertGreater(len(packet["file_specs"]), 0)
 
+    def test_delivery_generation_packet_carries_signed_contracts(self):
+        """Delivery must route signed arch/design/scope artifacts into generation."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "contract-packet-test"
+            run_delivery(
+                prompt="Build a task management app with projects and tasks",
+                name="contract-packet-test",
+                repo_root=repo_root,
+                mode="greenfield",
+                profile="generic",
+                blueprint="auto",
+                deploy="none",
+                dry_run=True,
+            )
+            packet = json.loads(
+                (
+                    repo_root
+                    / ".signalos"
+                    / "product"
+                    / "GENERATION_PACKET.json"
+                ).read_text(encoding="utf-8")
+            )
+
+            contracts = packet.get("generation_contracts", {})
+            self.assertEqual(
+                contracts.get("source_artifacts"),
+                {
+                    "architecture": "ARCH_REVIEW.yaml",
+                    "design": "DESIGN_DECISIONS.yaml",
+                    "scope": "SCOPE_DECISIONS.yaml",
+                },
+            )
+            self.assertIn("architecture", contracts)
+            self.assertIn("design_decisions", contracts)
+            self.assertIn("scope_decisions", contracts)
+            joined_constraints = "\n".join(
+                "\n".join(spec.get("constraints", []))
+                for spec in packet.get("file_specs", [])
+            )
+            self.assertIn("ARCH_REVIEW.yaml", joined_constraints)
+            self.assertIn("DESIGN_DECISIONS.yaml", joined_constraints)
+            self.assertIn("SCOPE_DECISIONS.yaml", joined_constraints)
+
     def test_delivery_writes_agent_packet_with_skills(self):
         """Generated agent packet exposes full and applicable skill contracts."""
         with tempfile.TemporaryDirectory() as td:

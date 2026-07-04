@@ -122,6 +122,42 @@ def _emit_progress(
     stream.flush()
 
 
+# Profiles the deterministic local renderer can build with no API key.
+_LOCAL_RENDERABLE_PROFILES = {"react-vite", "generic", "fastapi-api"}
+
+
+def _choose_dispatch_route(
+    agent_mode: str,
+    actual_profile: str,
+    *,
+    llm_available: bool,
+) -> str:
+    """Decide which build-agent path a delivery takes.
+
+    Returns "chunked-llm" (real per-file LLM generation -> a working product)
+    or "local-parallel" (deterministic, git-free, no-key fallback that stays
+    complete + buildable).
+
+    - agent_mode == "local": always local (explicit operator choice).
+    - agent_mode in ("auto", "remote"): use the chunked LLM path when a key is
+      available, so a founder WITH a key gets a real app instead of the
+      deterministic shell. With no key, fall back to local for renderable
+      profiles; for a profile the local renderer cannot build there is no
+      deterministic fallback, so still take the LLM path (it will honestly
+      report no_api_key when it truly cannot run).
+    """
+    if agent_mode == "local":
+        return "local-parallel"
+    if agent_mode in ("auto", "remote"):
+        if llm_available:
+            return "chunked-llm"
+        if actual_profile in _LOCAL_RENDERABLE_PROFILES:
+            return "local-parallel"
+        return "chunked-llm"
+    # Any other/unknown mode: prefer local for a renderable profile.
+    return "local-parallel" if actual_profile in _LOCAL_RENDERABLE_PROFILES else "chunked-llm"
+
+
 def run_delivery(
     prompt: str,
     name: str | None = None,
@@ -505,6 +541,13 @@ def run_delivery(
             task_ids=task_ids,
             acceptance_matrix=acceptance,
             design=design,
+            arch_review=arch_review if "arch_review" in locals() else None,
+            design_decisions=(
+                design_decisions if "design_decisions" in locals() else None
+            ),
+            scope_decisions=(
+                scope_decisions if "scope_decisions" in locals() else None
+            ),
         )
 
         # Load the manifest that prepare_generation wrote
@@ -565,11 +608,21 @@ def run_delivery(
     # 4b. AGENT DISPATCH (invoke LLM to write product code)
     # ------------------------------------------------------------------
     agent_result = None
+    # #23 fake-green hard block: a generation that produced no real files is a
+    # FAILURE, full stop. This flag/blocker force delivery to fail-closed --
+    # build_status can never be reported "passed" off the trivially-building
+    # scaffold stub when the agent wrote nothing.
+    generation_blocked = False
+    generation_blocker: str = ""
     if generation_packet and agent_mode not in ("none", "packet-only"):
         _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
-            from .agent_dispatch import dispatch_build_agent, dispatch_local_build_agent_parallel
+            from .agent_dispatch import (
+                dispatch_build_agent_chunked,
+                dispatch_local_build_agent_parallel,
+            )
             from .executor import run_worker_pool
+            from .secrets_resolver import is_llm_available
             from signalos_lib.task_store import InMemoryTaskStore
 
             governance = collect_governance_instructions(
@@ -579,22 +632,27 @@ def run_delivery(
                 ),
             )
             packet_for_agent = agent_packet or generation_packet
-            use_local = agent_mode == "local" or (
-                agent_mode == "auto" and actual_profile in {"react-vite", "generic", "fastapi-api"}
+            # A founder WITH a key gets the real per-file LLM app; without a
+            # key we stay on the deterministic, git-free local parallel path
+            # (complete + buildable). The chunked LLM path itself runs its own
+            # concurrency internally, so real parallelism lives inside it.
+            route = _choose_dispatch_route(
+                agent_mode,
+                actual_profile,
+                llm_available=is_llm_available(repo_root),
             )
 
             def _dispatch_once(_task: Any) -> dict:
-                if use_local:
+                if route == "local-parallel":
                     # 1.1: transparently parallelizes across independent
-                    # react-vite components via the real worktree/merge-queue
-                    # executor; falls back verbatim to the single synchronous
-                    # call for every other profile and for <2 components.
+                    # react-vite components; falls back verbatim to the single
+                    # synchronous call for every other profile and <2 components.
                     dispatched = dispatch_local_build_agent_parallel(
                         repo_root=repo_root,
                         packet=packet_for_agent,
                     )
                 else:
-                    dispatched = dispatch_build_agent(
+                    dispatched = dispatch_build_agent_chunked(
                         repo_root=repo_root,
                         packet=packet_for_agent,
                         governance=governance,
@@ -634,14 +692,37 @@ def run_delivery(
                         f"missing generated file: {path}"
                         for path in generation_validation.get("files_missing", [])
                     )
+                # Even a "completed" status is fake-green if the expected files
+                # never landed on disk (empty files_written / everything missing).
+                if not _generation_produced_real_files(
+                    repo_root, generation_packet, agent_result,
+                ):
+                    generation_blocked = True
+                    generation_blocker = (
+                        "generation produced no real files: the build agent "
+                        "reported completion but the expected source files are "
+                        "absent on disk"
+                    )
+                    errors.append(generation_blocker)
                 update_delivery_phase(repo_root, "generated", "complete")
             elif agent_result.get("status") == "no_api_key":
                 warnings.append("No API key; agent not dispatched. Packet written for external execution.")
             else:
-                errors.extend(agent_result.get("errors", []))
+                # Dispatch FAILED. This is a hard blocker -- a generation that
+                # produced no real files is a failure, not a green build off the
+                # scaffold stub (#23). Fail delivery closed.
+                agent_errors = agent_result.get("errors", []) or ["agent dispatch failed"]
+                errors.extend(agent_errors)
+                generation_blocked = True
+                generation_blocker = (
+                    "generation dispatch failed; no product code was written: "
+                    + "; ".join(str(e) for e in agent_errors)
+                )
             _emit_progress("generation", "packet", "done", agent_result.get("status", "agent finished"))
         except Exception as exc:
             errors.append(f"agent dispatch failed: {exc}")
+            generation_blocked = True
+            generation_blocker = f"generation dispatch failed: {exc}"
             _emit_progress("generation", "packet", "error", str(exc))
 
     # ------------------------------------------------------------------
@@ -651,6 +732,9 @@ def run_delivery(
     closure = {"level": "not_started", "closeable": False, "blockers": []}
     _emit_progress("validation", "run_checks", "running", "Running product validation")
     try:
+        # #27: re-pin any @mantine/* skew a generation agent's self-written
+        # package.json introduced BEFORE install/build sees it.
+        _enforce_design_deps(repo_root, design_deps)
         val_plan = build_validation_plan(repo_root, actual_profile)
         val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
         write_validation_result(val_result, signalos_dir)
@@ -661,19 +745,56 @@ def run_delivery(
             and not val_result.get("can_close_delivery", False)
             and agent_mode != "none"
         ):
+            # Collect governance so repair-cycle regeneration honors the same
+            # standards as first-pass generation.
+            try:
+                from .generation import collect_governance_instructions
+                repair_governance = collect_governance_instructions("build")
+            except Exception:
+                repair_governance = {}
+            # #27: each repair cycle regenerates files and can re-skew the
+            # agent's package.json, so re-pin design deps before every internal
+            # re-validation, not just the first pass.
+            def _repair_validate(rr: Path) -> dict:
+                from .validation import build_validation_plan, run_validation
+                _enforce_design_deps(rr, design_deps)
+                plan = build_validation_plan(rr, actual_profile)
+                return run_validation(rr, plan, dry_run=False)
+
             repair_result = run_repair_loop(
                 repo_root=repo_root,
                 validation_result=val_result,
                 profile=actual_profile,
                 max_cycles=max_repair_cycles,
                 agent_mode=agent_mode,
+                governance=repair_governance,
+                validate_fn=_repair_validate,
             )
-            # If repaired, re-run validation
-            if repair_result.get("status") == "repaired":
-                val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
+            # Active modes re-validate INTERNALLY each cycle and return the
+            # final validation, so adopt it directly (the build-error feedback
+            # loop closed here, not by a blind re-run). packet-only/none pause
+            # and leave val_result unchanged.
+            final_val = repair_result.get("final_validation")
+            if repair_result.get("status") in ("repaired", "max_cycles_reached", "dispatch_failed") \
+                    and isinstance(final_val, dict) and final_val is not val_result:
+                val_result = final_val
                 write_validation_result(val_result, signalos_dir)
 
+        # #23 fake-green hard block: if generation produced no real files, the
+        # trivially-building scaffold stub must NOT be allowed to report a green
+        # build. Override the persisted validation result so build_status is
+        # failed and the closeout carries the blocker -- fail-closed at the
+        # source of the closeout's evidence, not just as an appended limitation.
+        if generation_blocked and isinstance(val_result, dict):
+            val_result = _mark_generation_failed(val_result, generation_blocker)
+            write_validation_result(val_result, signalos_dir)
+
         closure = check_product_closure(val_result)
+        if generation_blocked and generation_blocker not in closure.get("blockers", []):
+            closure.setdefault("blockers", []).append(generation_blocker)
+            closure["closeable"] = False
+            if closure.get("level") in (None, "ready", "closeable"):
+                closure["level"] = "partial"
         update_delivery_phase(
             repo_root, "validated", closure.get("level", "partial"),
         )
@@ -808,6 +929,36 @@ def run_delivery(
             _emit_progress("acceptance", "reconcile", "error", str(exc))
 
     # ------------------------------------------------------------------
+    # 6c. REVIEW gate — Build -> Test -> REVIEW (#21)
+    # Build ran (generation), Test ran (validation/repair); REVIEW is the
+    # spec-drift / test-evidence / correctness verdict that GATES closeout.
+    # Governed by the `gate-compliance` rule (core invariant): strict blocks,
+    # warn records. review_blocking is consumed by the closeout, below.
+    # ------------------------------------------------------------------
+    review_result: dict | None = None
+    review_blocking = False
+    _emit_progress("review", "gate", "running", "Running product review gate")
+    try:
+        from .review_gate import run_review_gate, write_review_result
+
+        review_result = run_review_gate(
+            repo_root, intent, manifest if isinstance(manifest, dict) else {}, val_result,
+        )
+        write_review_result(review_result, signalos_dir)
+        review_blocking = bool(review_result.get("blocking"))
+        # Findings surface in REVIEW_RESULT.json (always) and, when the verdict
+        # is not clean, in the closeout's known_limitations (below) -- not in
+        # `errors`, which is reserved for pipeline faults.
+        _emit_progress(
+            "review", "gate", "done",
+            f"Review: {review_result.get('status', 'complete')} "
+            f"({review_result.get('mode', 'strict')})",
+        )
+    except Exception as exc:
+        errors.append(f"review gate failed: {exc}")
+        _emit_progress("review", "gate", "error", str(exc))
+
+    # ------------------------------------------------------------------
     # 7. DEPLOY phase
     # ------------------------------------------------------------------
     _emit_progress("deploy", "decision", "running", "Recording deploy decision")
@@ -871,6 +1022,21 @@ def run_delivery(
                 + readiness_result.get("blockers", [])
             )
             if closeout.get("closure_level") == "ready":
+                closeout["closure_level"] = "partial"
+        # #21: the Review verdict. A blocking verdict (spec-drift / no test
+        # evidence / build failed, under strict gate-compliance) fails the
+        # closeout CLOSED -- the product cannot close "ready" past an
+        # un-reviewed or spec-drifted build. A warn verdict records the same
+        # findings as limitations without failing closed.
+        if review_result and review_result.get("status") in ("blocked", "warn"):
+            status_label = review_result["status"]
+            closeout.setdefault("known_limitations", []).extend(
+                f"review gate ({status_label}): {f}"
+                for f in review_result.get("findings", [])
+            )
+            if review_blocking and closeout.get("closure_level") in (
+                "ready", "closeable", None,
+            ):
                 closeout["closure_level"] = "partial"
         if errors:
             closeout.setdefault("known_limitations", []).extend(errors)
@@ -939,6 +1105,65 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _generation_produced_real_files(
+    repo_root: Path,
+    generation_packet: dict | None,
+    agent_result: dict | None,
+) -> bool:
+    """Whether the generation actually wrote the expected product files.
+
+    A "completed" agent status is still fake-green if nothing landed: an empty
+    ``files_written`` with none of the packet's expected source specs present on
+    disk means no real product exists (#23). Returns True only when at least one
+    expected non-config source file (or any reported written file) is on disk.
+    Config-only scaffolding (types/theme stubs) does not count as a product.
+    """
+    if not generation_packet:
+        return True  # nothing was expected; not this check's concern
+    written = (agent_result or {}).get("files_written") or []
+    if written:
+        # Trust a non-empty written list only if at least one file truly exists.
+        for rel in written:
+            if (repo_root / str(rel)).is_file():
+                return True
+    specs = generation_packet.get("file_specs", []) or []
+    expected_sources = [
+        s.get("path")
+        for s in specs
+        if s.get("path") and s.get("kind") in ("source", "registration", "test")
+    ]
+    if not expected_sources:
+        # No source specs to check -- fall back to "any expected file present".
+        expected_sources = [s.get("path") for s in specs if s.get("path")]
+    for rel in expected_sources:
+        if rel and (repo_root / str(rel)).is_file():
+            return True
+    return False
+
+
+def _mark_generation_failed(val_result: dict, blocker: str) -> dict:
+    """Force a validation result to reflect a failed generation (#23).
+
+    Sets the build category to ``failed``, appends the blocker, and clears
+    ``can_close_delivery`` so the trivially-building scaffold stub can never be
+    reported as a green build when the agent wrote no real product files.
+    """
+    marked = dict(val_result)
+    results = dict(marked.get("results", {}) or {})
+    build = dict(results.get("build", {}) or {})
+    build["status"] = "failed"
+    existing_out = str(build.get("output") or "").strip()
+    build["output"] = (existing_out + "\n" if existing_out else "") + blocker
+    results["build"] = build
+    marked["results"] = results
+    marked["can_close_delivery"] = False
+    blockers = list(marked.get("blockers", []) or [])
+    if blocker not in blockers:
+        blockers.append(blocker)
+    marked["blockers"] = blockers
+    return marked
+
 
 def _run_delivery_feature_gate(repo_root: Path, request: str) -> dict[str, Any]:
     from signalos_lib.commands.feature_gate import (
@@ -1258,3 +1483,30 @@ def _merge_design_deps(repo_root: Path, deps: dict[str, str]) -> None:
     pkg_path.write_text(
         json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def _enforce_design_deps(repo_root: Path, deps: dict[str, str]) -> None:
+    """Force package.json runtime deps onto the canonical design versions.
+
+    #27: unlike ``_merge_design_deps`` (which only fills *missing* keys), this
+    OVERWRITES skewed versions a generation/repair agent's self-written
+    package.json introduced. Runs after generation and before every validation
+    so a mismatched @mantine/* major (Mantine 9 needs React 19; the template
+    ships React 18) can never reach ``npm install``/build.
+    """
+    pkg_path = repo_root / "package.json"
+    if not pkg_path.is_file() or not deps:
+        return
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    dependencies = pkg.setdefault("dependencies", {})
+    if not isinstance(dependencies, dict):
+        return
+    from .design import enforce_dependency_versions
+
+    if enforce_dependency_versions(dependencies, deps):
+        pkg_path.write_text(
+            json.dumps(pkg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )

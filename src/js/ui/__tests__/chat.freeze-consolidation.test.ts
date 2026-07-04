@@ -28,6 +28,7 @@ import {
 // spies. Path is relative to this test file: src/js/ui/__tests__/ ->
 // src/js/ipc.js is two levels up.
 const runAndWait = vi.fn();
+const enforcementPrecheck = vi.fn();
 const enforcementFreeze = vi.fn();
 const enforcementUnfreeze = vi.fn();
 const providerChatStream = vi.fn();
@@ -41,7 +42,7 @@ vi.mock('../../ipc.js', () => ({
   },
   enforcement: {
     state: vi.fn(),
-    precheck: vi.fn(),
+    precheck: enforcementPrecheck,
     override: vi.fn(),
     setMode: vi.fn(),
     freeze: enforcementFreeze,
@@ -77,6 +78,7 @@ const chatModule = await import('../chat.js');
 describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
   beforeEach(() => {
     runAndWait.mockReset();
+    enforcementPrecheck.mockReset();
     enforcementFreeze.mockReset();
     enforcementUnfreeze.mockReset();
     providerChatStream.mockReset();
@@ -205,17 +207,20 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
       [JSON.stringify({ prompt: 'what happened in the last run?', provider: 'openai', model: 'gpt-test' })],
       600000,
     );
+    expect(enforcementPrecheck).not.toHaveBeenCalled();
     expect(enforcementFreeze).not.toHaveBeenCalled();
     expect(enforcementUnfreeze).not.toHaveBeenCalled();
   });
 
   it('routes explicit product build requests through governed delivery', async () => {
+    enforcementPrecheck.mockResolvedValueOnce({ allowed: true });
     runAndWait.mockResolvedValueOnce({ run_id: 'delivery-1', status: 'awaiting-verdict' });
 
     chatInputValue.value = 'build a task management system';
     await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
 
     expect(runAndWait).toHaveBeenCalledTimes(1);
+    expect(enforcementPrecheck).toHaveBeenCalledWith('auto', { rules: ['wave-freeze'] });
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
       [JSON.stringify({ prompt: 'build a task management system', provider: 'openai', model: 'gpt-test' })],
@@ -223,7 +228,23 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     );
   });
 
+  it('blocks delivery when wave-freeze precheck denies the build entrypoint', async () => {
+    enforcementPrecheck.mockResolvedValueOnce({
+      allowed: false,
+      blocking_rule: 'wave-freeze',
+      reason: 'Wave is frozen. Sign G5 Quality Check and start a new wave to continue.',
+    });
+
+    chatInputValue.value = 'build a task management system';
+    await (window as unknown as { sendMsg: () => Promise<void> }).sendMsg();
+
+    expect(enforcementPrecheck).toHaveBeenCalledWith('auto', { rules: ['wave-freeze'] });
+    expect(runAndWait).not.toHaveBeenCalled();
+    expect(chatBubbles.value.some((b) => b.kind === 'error' && b.text.includes('Wave is frozen'))).toBe(true);
+  });
+
   it('routes outcome-style product creation requests through governed delivery', async () => {
+    enforcementPrecheck.mockResolvedValueOnce({ allowed: true });
     runAndWait.mockResolvedValueOnce({ run_id: 'delivery-2', status: 'awaiting-verdict' });
 
     const prompt = 'please produce an interactive product UI';
@@ -239,6 +260,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
   });
 
   it('routes product modification requests through governed delivery', async () => {
+    enforcementPrecheck.mockResolvedValueOnce({ allowed: true });
     runAndWait.mockResolvedValueOnce({ run_id: 'delivery-3', status: 'awaiting-verdict' });
 
     const prompt = 'polish the dashboard UI';

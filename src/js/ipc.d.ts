@@ -100,7 +100,7 @@ export const testAutomation: {
 
 export const enforcement: {
   state(): Promise<unknown>;
-  precheck(stack: unknown): Promise<unknown>;
+  precheck(stack: unknown, options?: Record<string, unknown>): Promise<unknown>;
   override(rule: string, reason: string, context?: unknown): Promise<unknown>;
   setMode(rule: string, mode: string): Promise<unknown>;
   freeze(): Promise<unknown>;

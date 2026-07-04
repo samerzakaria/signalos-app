@@ -429,6 +429,45 @@ class TestGovernance(unittest.TestCase):
             self.assertIn("OK", content)
             self.assertTrue((root / "src" / "App.tsx").exists())
 
+    def test_write_content_secret_scan_blocks_embedded_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            secret = "sk-ant-" + ("A" * 40)
+            _, content = self._run_single_tool(
+                root,
+                "write_file",
+                {
+                    "path": "src/config.ts",
+                    "content": f"export const apiKey = '{secret}';\n",
+                },
+            )
+            self.assertIn("DENIED", content)
+            self.assertIn("secret-block", content)
+            self.assertFalse((root / "src" / "config.ts").exists())
+
+    def test_edit_content_secret_scan_blocks_embedded_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "src").mkdir()
+            target = root / "src" / "config.ts"
+            target.write_text("export const value = 'safe';\n", encoding="utf-8")
+            secret = "sk-ant-" + ("B" * 40)
+            _, content = self._run_single_tool(
+                root,
+                "edit_file",
+                {
+                    "path": "src/config.ts",
+                    "old_string": "safe",
+                    "new_string": secret,
+                },
+            )
+            self.assertIn("DENIED", content)
+            self.assertIn("secret-block", content)
+            self.assertEqual(
+                target.read_text(encoding="utf-8"),
+                "export const value = 'safe';\n",
+            )
+
     def test_conversation_context_denies_writes(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -461,6 +500,63 @@ class TestGovernance(unittest.TestCase):
             tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
             self.assertIn("DENIED", tool_msgs[0]["content"])
             self.assertIn("governed delivery", tool_msgs[0]["content"])
+
+    def _ledger_rules(self, root: Path) -> list:
+        ledger = root / ".signalos" / "agent-runs" / "test-run" / "tool-calls.jsonl"
+        return [
+            json.loads(line).get("rule")
+            for line in ledger.read_text().splitlines()
+        ]
+
+    def test_plan_gating_blocks_impl_write_without_g2(self):
+        # #16 Edit 2.1: inside a governed delivery (G4), an implementation write
+        # is blocked until the plan gate (G2) is signed. A missing G2 is cited
+        # under plan-gating specifically (checked before the broader gate set).
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/App.tsx", "content": "x"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1])
+            result = loop.run("sys", "write source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("plan-gating", self._ledger_rules(root))
+            self.assertFalse((root / "src" / "App.tsx").exists())
+
+    def test_plan_gating_allows_after_g2_signed(self):
+        # G2 (and the rest of the G4 required set) signed + test written first
+        # → the implementation write is allowed; plan-gating does not block.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp(
+                        "write_file",
+                        {"path": "src/App.test.tsx", "content": "test('x',()=>{})"},
+                        "c1",
+                    ),
+                    _tool_resp(
+                        "write_file",
+                        {"path": "src/App.tsx", "content": "export default 1"},
+                        "c2",
+                    ),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(
+                root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3]
+            )
+            result = loop.run("sys", "write test then source")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("OK", tool_msgs[1]["content"])
+            self.assertNotIn("plan-gating", self._ledger_rules(root))
+            self.assertTrue((root / "src" / "App.tsx").is_file())
 
     def test_pre_build_gate_denies_implementation_writes(self):
         with tempfile.TemporaryDirectory() as d:
@@ -577,6 +673,61 @@ class TestAuditLedger(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# audit-append (#16 Edit 2.6) — a failed completed-audit aborts the tool
+# ---------------------------------------------------------------------------
+
+
+class TestAuditAppendEnforcement(unittest.TestCase):
+    def test_audit_append_failure_aborts_tool(self):
+        # When the *completed* audit append raises and audit-append is enabled,
+        # the write must NOT be reported as OK — it becomes a hard ERROR so no
+        # un-audited write is ever surfaced as success.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "f.txt", "content": "data"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider)
+
+            real_audit = loop._audit
+
+            def flaky_audit(tc, status, *a, **kw):
+                if status == "completed":
+                    raise OSError("simulated audit ledger write failure")
+                return real_audit(tc, status, *a, **kw)
+
+            loop._audit = flaky_audit
+            result = loop.run("sys", "write f")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("ERROR", tool_msgs[0]["content"])
+            self.assertIn("audit-append", tool_msgs[0]["content"])
+
+    def test_audit_append_success_path_unchanged(self):
+        # Regression: a normal write still returns OK and appends a completed row.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "f.txt", "content": "data"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider)
+            result = loop.run("sys", "write f")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("OK", tool_msgs[0]["content"])
+            ledger = (
+                root / ".signalos" / "agent-runs" / "test-run" / "tool-calls.jsonl"
+            )
+            entries = [json.loads(line) for line in ledger.read_text().splitlines()]
+            self.assertEqual(entries[-1]["status"], "completed")
+            self.assertTrue((root / "f.txt").is_file())
+
+
+# ---------------------------------------------------------------------------
 # Idempotency (Q5a / INV-5)
 # ---------------------------------------------------------------------------
 
@@ -640,6 +791,135 @@ class TestRedaction(unittest.TestCase):
     def test_redact_assignment(self):
         text = "API_KEY=supersecretvalue123"
         self.assertIn("[REDACTED]", redact_secrets(text))
+
+
+# ---------------------------------------------------------------------------
+# Content secret-block (#20a): a write whose CONTENT embeds a secret is DENIED
+# in the product runtime, audited under the secret-block rule. This is the
+# product-side analogue of pre-tool-use-guard.sh Check 2 (redact --scan-diff).
+# ---------------------------------------------------------------------------
+
+
+class TestContentSecretBlock(unittest.TestCase):
+    def _ledger_rules(self, root: Path) -> list:
+        ledger = root / ".signalos" / "agent-runs" / "test-run" / "tool-calls.jsonl"
+        return [
+            json.loads(line).get("rule")
+            for line in ledger.read_text().splitlines()
+        ]
+
+    def _ledger_statuses(self, root: Path) -> list:
+        ledger = root / ".signalos" / "agent-runs" / "test-run" / "tool-calls.jsonl"
+        return [
+            json.loads(line).get("status")
+            for line in ledger.read_text().splitlines()
+        ]
+
+    def _run_write(self, root: Path, path: str, content: str, **kw):
+        provider = AgentTestProvider(
+            script=[
+                _tool_resp("write_file", {"path": path, "content": content}),
+                _end_resp(),
+            ]
+        )
+        loop = _loop(root, provider, **kw)
+        result = loop.run("sys", "write a file")
+        tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+        return tool_msgs, result
+
+    def test_embedded_anthropic_key_is_denied(self):
+        # A test-path write clears every path/gate/tier check (G4 all signed),
+        # so the ONLY thing that can block it is the content secret scan.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            secret = "sk-ant-" + "a1b2c3d4e5f6g7h8i9j0k1l2"
+            tool_msgs, _ = self._run_write(
+                root,
+                "src/App.test.tsx",
+                f"const KEY = '{secret}'\ntest('x',()=>{{}})",
+                active_gate="G4",
+                signed_gates=[0, 1, 2, 3],
+            )
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("secret-block", self._ledger_rules(root))
+            self.assertIn("denied", self._ledger_statuses(root))
+            # The file must NOT have been written.
+            self.assertFalse((root / "src" / "App.test.tsx").is_file())
+
+    def test_embedded_github_pat_is_denied(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            secret = "ghp_" + "0123456789abcdefghijklmnopqrstuvwxyz"
+            tool_msgs, _ = self._run_write(
+                root, "src/util.test.ts", f"const t = '{secret}'",
+                active_gate="G4", signed_gates=[0, 1, 2, 3],
+            )
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("secret-block", self._ledger_rules(root))
+
+    def test_embedded_key_assignment_is_denied(self):
+        # *_KEY / *_TOKEN / *_SECRET / *_PASSWORD assignment shape — the
+        # pattern that _redact_string alone (value-only) would miss.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            tool_msgs, _ = self._run_write(
+                root, "src/config.test.ts",
+                'const STRIPE_SECRET_KEY = "hunter2plaintextvalue"',
+                active_gate="G4", signed_gates=[0, 1, 2, 3],
+            )
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("secret-block", self._ledger_rules(root))
+
+    def test_edit_with_embedded_secret_is_denied(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            (root / "src").mkdir(parents=True, exist_ok=True)
+            (root / "src" / "App.test.tsx").write_text(
+                "const OLD = 1", encoding="utf-8"
+            )
+            secret = "sk-ant-" + "z9y8x7w6v5u4t3s2r1q0p9o8"
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp(
+                        "edit_file",
+                        {
+                            "path": "src/App.test.tsx",
+                            "old_string": "const OLD = 1",
+                            "new_string": f"const OLD = '{secret}'",
+                        },
+                    ),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(
+                root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3]
+            )
+            result = loop.run("sys", "edit a file")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("secret-block", self._ledger_rules(root))
+            # The file must be unchanged (secret not persisted).
+            self.assertEqual(
+                (root / "src" / "App.test.tsx").read_text(encoding="utf-8"),
+                "const OLD = 1",
+            )
+
+    def test_clean_content_write_passes(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            tool_msgs, _ = self._run_write(
+                root, "src/App.test.tsx",
+                "test('renders', () => { expect(1).toBe(1) })",
+                active_gate="G4", signed_gates=[0, 1, 2, 3],
+            )
+            self.assertIn("OK", tool_msgs[0]["content"])
+            self.assertNotIn("secret-block", self._ledger_rules(root))
+            self.assertTrue((root / "src" / "App.test.tsx").is_file())
 
 
 # ---------------------------------------------------------------------------

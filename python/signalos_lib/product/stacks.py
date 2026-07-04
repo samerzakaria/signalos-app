@@ -211,6 +211,7 @@ _PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
 }
 
 _VITE_CONFIG = """\
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -219,8 +220,18 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Fix #12: register @testing-library/jest-dom matchers for every test so
+    // toBeInTheDocument/toBeChecked resolve under tsc and at runtime.
+    setupFiles: ['./src/test/setup.ts'],
   },
 });
+"""
+
+_VITEST_SETUP = """\
+// Vitest setup: register @testing-library/jest-dom custom matchers
+// (toBeInTheDocument, toBeChecked, ...) for every test. Referenced by
+// vite.config.ts setupFiles.
+import '@testing-library/jest-dom';
 """
 
 _INDEX_HTML = """\
@@ -353,6 +364,9 @@ class ReactViteAdapter:
         _write("package.json", json.dumps(pkg, indent=2) + "\n")
         _write("vite.config.ts", _VITE_CONFIG)
         _write("index.html", _INDEX_HTML)
+        # Fix #12: ship the vitest setup file the config references so the
+        # shell is valid before generation and jest-dom matchers resolve.
+        _write("src/test/setup.ts", _VITEST_SETUP)
         _write("src/main.tsx", _MAIN_TSX)
         _write("src/App.tsx", _APP_TSX)
         _write("src/App.test.tsx", _APP_TEST_TSX)

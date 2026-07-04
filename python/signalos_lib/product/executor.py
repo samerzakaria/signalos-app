@@ -26,6 +26,7 @@ __all__ = [
     "ExecutionReport",
     "NonRetryableTaskError",
     "run_worker_pool",
+    "run_inprocess_build_tasks",
     "run_isolated_build_tasks",
 ]
 
@@ -145,6 +146,68 @@ def run_worker_pool(
         t.start()
     for t in workers:
         t.join()
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Git-free, in-process build-agent tasks (the DEFAULT fast path)
+# ---------------------------------------------------------------------------
+
+def run_inprocess_build_tasks(
+    repo_root: Path,
+    packets: list[dict],
+    *,
+    dispatch: Optional[Callable[[Path, dict], dict]] = None,
+    task_store: Any = None,
+    max_workers: int = 3,
+) -> ExecutionReport:
+    """Run file-disjoint build-agent packets in parallel *in place* -- same
+    claim/lease/heartbeat/retry/dead-letter contract as
+    ``run_isolated_build_tasks``, but with NO git worktrees, NO per-task
+    commits, and NO merge queue.
+
+    This is the DEFAULT for work the caller has already partitioned into
+    path-disjoint groups (e.g. react-vite component groups, chunked per-file
+    dispatch). Because the packets never write the same path, they can write
+    straight into *repo_root* concurrently and need no isolation. The
+    worktree path (``run_isolated_build_tasks``) does a git init/commit,
+    one `git worktree add` + checkout + commit + `merge --no-ff` per task,
+    and a serialized merge queue -- on Windows that is ~dozens of AV-scanned
+    subprocesses that timed out a 7-component app. This runner skips all of
+    it and is what makes multi-component local generation fast.
+
+    Each entry in *packets* is a full generation packet plus a ``task_id``
+    key. Callers are responsible for ensuring packets are file-disjoint --
+    this runner does not merge, so two packets writing the same path would
+    race on that file (the same independence obligation the isolated runner
+    documents, minus the merge-conflict safety net). A packet whose dispatch
+    does not report ``status == "completed"`` raises, so the worker pool
+    retries it (bounded by the store's max_attempts) and dead-letters it on
+    exhaustion -- never a silent drop.
+
+    *dispatch* defaults to the deterministic local build agent
+    (``dispatch_local_build_agent``) -- no external LLM key required.
+    """
+    from ..task_store import InMemoryTaskStore
+    from .agent_dispatch import dispatch_local_build_agent
+
+    dispatch = dispatch or dispatch_local_build_agent
+    store = task_store or InMemoryTaskStore()
+    for packet in packets:
+        store.enqueue(packet["task_id"], {"packet": packet})
+
+    def run_one(stored_task: Any) -> dict:
+        packet = stored_task.payload["packet"]
+        result = dispatch(repo_root, packet)
+        if result.get("status") != "completed":
+            raise RuntimeError(
+                "; ".join(result.get("errors", []))
+                or f"task {stored_task.id} did not complete"
+            )
+        return result
+
+    report = run_worker_pool(store, run_one, max_workers=max_workers)
+    report.merged_task_ids = [o.task_id for o in report.outcomes if o.status == "done"]
     return report
 
 

@@ -295,6 +295,34 @@ mod tests {
     }
 }
 
+/// Path-based reader used by enforcement::build_precheck (which has a `&Path`,
+/// not a Tauri `State`). Counts OPEN `manual-defect` entries in
+/// `.signalos/test-debt.jsonl` for the zero-manual-regression rule.
+pub fn open_manual_defect_count(ws: &Path) -> u32 {
+    let path = ws.join(".signalos").join("test-debt.jsonl");
+    let mut open = 0u32;
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        for line in content.lines() {
+            if let Ok(e) = serde_json::from_str::<TestDebtEntry>(line) {
+                if e.kind == "manual-defect" && !e.resolved {
+                    open += 1;
+                }
+            }
+        }
+    }
+    open
+}
+
+/// Path-based reader for the persisted mutation score (0.0..1.0), or None when
+/// the file is absent/unparseable. `build_precheck` treats None as "cannot
+/// prove rule 12" → block. Mirrors `read_mutation_score` (the Tauri command).
+pub fn read_mutation_score_value(ws: &Path) -> Option<f64> {
+    let path = ws.join(".signalos").join("mutation-score.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("score").and_then(|v| v.as_f64())
+}
+
 /// Initialize the .signalos/test-debt.jsonl file (touch only) so the gate
 /// runners on disk can append even before the UI has been opened.
 pub fn ensure_test_debt(workspace: &Path) -> std::io::Result<()> {

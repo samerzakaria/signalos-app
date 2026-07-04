@@ -12,6 +12,7 @@ from __future__ import annotations
 
 __all__ = [
     "dispatch_build_agent",
+    "dispatch_build_agent_chunked",
     "dispatch_local_build_agent",
     "parse_agent_response",
     "write_agent_files",
@@ -215,6 +216,8 @@ def _build_agent_prompt(
             lines.append(f"- Font: {tokens.get('font_family', '')}")
         lines.append("")
 
+    lines.extend(_generation_contract_prompt_lines(gen.get("generation_contracts", {})))
+
     # Entities
     entities = gen.get("entities", [])
     if entities:
@@ -269,8 +272,600 @@ def _build_agent_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Per-file focused prompt (STEP 2) -- the chunked dispatch path
+# ---------------------------------------------------------------------------
+
+# System prompt for the single-file variant. Same governance framing as the
+# monolithic _SYSTEM_PROMPT, but instructs the agent to output EXACTLY ONE
+# file (one closed fenced block) so the paired-fence parser is unambiguous and
+# a single file can never be truncated mid-multi-file-response.
+_SINGLE_FILE_SYSTEM_PROMPT = """\
+You are the highest-level software engineer ever for the selected stack and
+product domain, acting as the SignalOS Build agent in a SignalOS-governed
+software house.
+
+SignalOS owns product scope, governance, evidence, and validation. You own
+implementation quality inside the ONE allowed file for this task. Apply
+highest-level domain judgment for the selected stack: architecture fit,
+maintainability, accessibility, security, testability, production readiness,
+and real user workflows.
+
+You MUST follow the governance instructions provided. Violations will be
+caught by validators and your output will be rejected.
+
+Rules:
+- Write ONLY the single file named in "File To Create"
+- Follow ALL constraints and design system choices (UI library, state, tokens)
+- Type everything against the generated shared types (src/types.ts)
+- Every file must be non-empty, complete, and syntactically valid
+- Never violate forbidden rules, forbidden paths, or forbidden actions
+- Never fabricate validation results or weaken tests/evidence to pass
+
+Output format:
+Output exactly this one file in a single fenced block, with the file path as
+the header line:
+
+```path/to/file.tsx
+// complete file content here
+```
+
+Output exactly ONE file. Do not output any other file, prose, or explanation.
+"""
+
+
+def _generation_contract_prompt_lines(contracts: dict[str, Any]) -> list[str]:
+    if not contracts:
+        return []
+
+    lines = [
+        "## Binding Product Contracts",
+        "These signed artifacts are binding. Do not treat them as advisory.",
+    ]
+    for rule in contracts.get("binding_rules", []) or []:
+        lines.append(f"- {rule}")
+
+    architecture = contracts.get("architecture", {}) or {}
+    if architecture:
+        boundaries = architecture.get("system_boundaries", []) or []
+        trust = architecture.get("trust_boundaries", []) or []
+        tests = architecture.get("test_strategy", []) or []
+        if boundaries:
+            lines.append("- Architecture boundaries: " + "; ".join(map(str, boundaries[:4])))
+        if trust:
+            lines.append("- Trust boundaries: " + "; ".join(map(str, trust[:4])))
+        if tests:
+            lines.append("- Test strategy: " + "; ".join(map(str, tests[:4])))
+
+    design = contracts.get("design_decisions", {}) or {}
+    if design:
+        selected = design.get("selected_variant")
+        reason = design.get("selection_reason")
+        if selected:
+            lines.append(f"- Selected design variant: {selected}")
+        if reason:
+            lines.append(f"- Design selection reason: {reason}")
+
+    scope = contracts.get("scope_decisions", {}) or {}
+    accepted: list[str] = []
+    blocked: list[str] = []
+    for decision in scope.get("decisions", []) or []:
+        if not isinstance(decision, dict):
+            continue
+        title = decision.get("proposal") or decision.get("title") or decision.get("id")
+        disposition = str(decision.get("disposition", "")).lower()
+        if disposition == "accepted" and title:
+            accepted.append(str(title))
+        elif disposition in {"rejected", "deferred"} and title:
+            blocked.append(str(title))
+    if accepted:
+        lines.append("- Accepted scope: " + "; ".join(accepted[:6]))
+    if blocked:
+        lines.append("- Out-of-scope unless later signed: " + "; ".join(blocked[:6]))
+
+    lines.append("")
+    return lines
+
+
+def _build_shared_context(gen: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the run-wide context a single-file prompt draws from, ONCE
+    per run (so every per-file task shares the same resolved entities /
+    workflows / design constraints instead of recomputing them). Returned as
+    a plain dict; passed into every _build_single_file_prompt call."""
+    entities = gen.get("entities", []) or []
+    entity_by_name: dict[str, dict] = {}
+    for e in entities:
+        if isinstance(e, dict) and e.get("name"):
+            entity_by_name[str(e["name"])] = e
+    all_file_paths = [
+        str(spec.get("path", "")).replace("\\", "/")
+        for spec in gen.get("file_specs", [])
+        if spec.get("path")
+    ]
+    # Fix #12: the authoritative cross-file contract, resolved once and shared
+    # into every per-file prompt. component_manifest is the canonical
+    # {filePath, componentName, importPath}; entity_field_map/types_module_names
+    # are the exact field/interface names source AND test must agree on.
+    component_manifest = list(gen.get("component_manifest", []) or [])
+    entity_field_map = dict(gen.get("entity_field_map", {}) or {})
+    if not entity_field_map:
+        for e in entities:
+            if isinstance(e, dict) and e.get("name"):
+                entity_field_map[str(e["name"])] = [
+                    str(f) for f in (e.get("fields") or [])
+                ]
+    types_module_names = list(gen.get("types_module_names", []) or [])
+    # #24b: the AUTHORITATIVE, frozen shared type contract. Rendered once,
+    # deterministically, from the approved entities and injected verbatim into
+    # every source/test prompt so a component cannot invent field names/types
+    # that drift from types.ts (e.g. `category` vs `categoryId`, `Date` vs
+    # `string`). The LLM never owns this file -- run_task writes this same source
+    # to disk -- so prompt contract and on-disk contract are byte-identical.
+    types_module_source = _render_types(entities)
+    return {
+        "product": gen.get("product", ""),
+        "profile": gen.get("profile", ""),
+        "design_constraints": gen.get("design_constraints", {}) or {},
+        "entities": entities,
+        "entity_by_name": entity_by_name,
+        "workflows": gen.get("workflows", []) or [],
+        "acceptance_criteria": gen.get("acceptance_criteria", []) or [],
+        "component_names_override": gen.get("_component_names_override", []) or [],
+        "component_manifest": component_manifest,
+        "entity_field_map": entity_field_map,
+        "types_module_names": types_module_names,
+        "types_module_source": types_module_source,
+        "generation_contracts": gen.get("generation_contracts", {}) or {},
+        "applicable_skills": gen.get("applicable_skills", [])
+        or gen.get("_applicable_skills", []),
+        "has_types_module": any(
+            p.endswith("src/types.ts") or p == "types.ts" for p in all_file_paths
+        ),
+    }
+
+
+def _relevant_workflows_for_entity(
+    entity: str | None, workflows: list[dict],
+) -> list[dict]:
+    """Workflows whose name/description references the entity (best-effort);
+    fall back to all workflows when nothing matches so the agent still sees
+    the product's behavior surface."""
+    if not entity:
+        return list(workflows)
+    key = entity.lower()
+    matched = [
+        w for w in workflows
+        if key in str(w.get("name", "")).lower()
+        or key in str(w.get("description", "")).lower()
+    ]
+    return matched or list(workflows)
+
+
+# PART 2: the bare npm packages a react-vite component/test may import from
+# directly. Kept small and stack-canonical; the design's ui_library is folded
+# in so a Mantine product also allows @mantine/core + @mantine/hooks.
+_REACT_VITE_BARE_ALLOWLIST = (
+    "react",
+    "react-dom",
+    "react/jsx-runtime",
+    "@testing-library/react",
+    "@testing-library/jest-dom",
+    "vitest",
+)
+
+
+def _error_context_lines(spec: dict[str, Any]) -> list[str]:
+    """Render the per-file compile/test diagnostics (if any) as a verbatim
+    "Fix these errors" section. Empty when the spec carries no error_context
+    (i.e. first-pass generation, not a repair cycle)."""
+    ec = spec.get("error_context") or []
+    if not ec:
+        return []
+    lines: list[str] = ["## Fix these errors (MANDATORY)"]
+    lines.append(
+        "The previous version of THIS file did not compile. tsc reported the "
+        "following diagnostics for this exact file. Fix THIS file so every one "
+        "is resolved; do not change any other file."
+    )
+    for e in ec:
+        if not isinstance(e, dict):
+            lines.append(f"- {e}")
+            continue
+        loc = ""
+        if e.get("line") is not None:
+            loc = f":{e['line']}"
+            if e.get("col") is not None:
+                loc += f":{e['col']}"
+        code = e.get("code", "")
+        msg = e.get("message", "")
+        code_part = f"{code}: " if code else ""
+        lines.append(f"- tsc reported{loc} -- {code_part}{msg}".rstrip())
+    lines.append(
+        "Common cause: importing a module that does not exist. You may ONLY "
+        "import react / @mantine/core / @mantine/hooks / ./types / the listed "
+        "manifest components. Never invent ../ui/* or @/* modules or a '@' "
+        "path alias."
+    )
+    lines.append("")
+    return lines
+
+
+def _import_allowlist_lines(
+    path: str,
+    kind: str,
+    shared_context: dict[str, Any],
+    manifest: list[dict],
+) -> list[str]:
+    """Pin the ALLOWED imports for a react-vite App/component/test file and
+    forbid the '@/' alias + phantom ../ui/* modules. Derived from the #12
+    manifest (exact component import paths) + the shared types module + the
+    design-selected bare packages. Only emitted for react-vite JS/TSX files."""
+    if shared_context.get("profile") != "react-vite":
+        return []
+    bare = list(_REACT_VITE_BARE_ALLOWLIST)
+    ui_lib = (shared_context.get("design_constraints", {}) or {}).get("ui_library")
+    if ui_lib:
+        for pkg in (ui_lib, f"{ui_lib.split('/')[0]}/hooks") if "/" in str(ui_lib) else (ui_lib,):
+            if pkg not in bare:
+                bare.append(pkg)
+    if "@mantine/core" not in bare:
+        bare.append("@mantine/core")
+    if "@mantine/hooks" not in bare:
+        bare.append("@mantine/hooks")
+
+    lines: list[str] = ["## Allowed imports (obey EXACTLY -- anything else fails tsc)"]
+    lines.append("Bare packages you may import: " + ", ".join(f"`{b}`" for b in bare) + ".")
+    if shared_context.get("has_types_module") or shared_context.get("types_module_names"):
+        lines.append("Shared types: import from `./types` (or the correct relative path to `src/types.ts`).")
+    if manifest:
+        paths = ", ".join(f"`{m.get('importPath','')}`" for m in manifest if m.get("importPath"))
+        if paths:
+            lines.append(f"Local components: import ONLY from these exact paths: {paths}.")
+    lines.append(
+        "FORBIDDEN: do NOT import from `@/` (there is no `@` path alias "
+        "configured -- it will not resolve), and never invent `../ui/*`, "
+        "`@/components/*`, `@/lib/*`, or store modules that are not listed "
+        "above. Use relative paths only."
+    )
+    lines.append("")
+    return lines
+
+
+def _build_single_file_prompt(
+    spec: dict[str, Any],
+    gen: dict[str, Any],
+    governance: dict[str, str],
+    shared_context: dict[str, Any],
+) -> str:
+    """Construct a prompt scoped to ONE file_spec, carrying only the shared
+    context that file needs. Source-component specs demand a FUNCTIONAL
+    component (real state via the design-selected library, event handlers,
+    working add/edit/delete/status where the entity's fields/workflows imply
+    it, typed via src/types.ts). Test specs demand an INTERACTION test
+    (render -> type -> submit -> assert the list grew; click delete -> assert
+    row gone), not a render-only assertion."""
+    path = str(spec.get("path", "")).replace("\\", "/")
+    kind = str(spec.get("kind", "source"))
+    entity = spec.get("entity")
+    lines: list[str] = []
+
+    lines.append(f"# Product: {shared_context.get('product', '')}")
+    lines.append(f"# Profile: {shared_context.get('profile', '')}")
+    lines.append("")
+
+    # Design constraints (state management / forms / tokens the file must honor)
+    dc = shared_context.get("design_constraints", {}) or {}
+    if dc:
+        lines.append("## Design Constraints")
+        if dc.get("ui_library"):
+            lines.append(f"- UI Library: {dc['ui_library']}")
+        if dc.get("state_management"):
+            lines.append(f"- State management: {dc['state_management']}")
+        if dc.get("data_layer"):
+            lines.append(f"- Data: {dc['data_layer']}")
+        if dc.get("form_handling"):
+            lines.append(f"- Form handling: {dc['form_handling']}")
+        tokens = dc.get("design_tokens", {}) or {}
+        if tokens:
+            lines.append(f"- Primary color: {tokens.get('primary_color', '')}")
+            lines.append(f"- Font: {tokens.get('font_family', '')}")
+        if dc.get("conventions"):
+            lines.append("- Conventions:")
+            for conv in dc["conventions"]:
+                lines.append(f"  - {conv}")
+        lines.append("")
+
+    # The resolved entity for this file, with its full fields array. Fix #12/C:
+    # the EXACT field names flow from the single entity definition into BOTH the
+    # component and its test, so source and test never disagree (reimbursed, not
+    # isReimbursed). Falls back to the shared entity_field_map when the entity
+    # object carried no inline fields.
+    entity_by_name = shared_context.get("entity_by_name", {}) or {}
+    field_map = shared_context.get("entity_field_map", {}) or {}
+    resolved = entity_by_name.get(str(entity)) if entity else None
+    if entity:
+        fields = (resolved or {}).get("fields") or field_map.get(str(entity), [])
+        lines.append(f"## Entity: {(resolved or {}).get('name', entity)}")
+        if fields:
+            lines.append(
+                "Fields -- use these EXACT names (do NOT rename, e.g. keep "
+                "`reimbursed`, never `isReimbursed`), type via src/types.ts:"
+            )
+            for f in fields:
+                lines.append(f"- {f}")
+        lines.append("")
+
+    # Relevant workflows + acceptance criteria for the entity.
+    workflows = _relevant_workflows_for_entity(
+        str(entity) if entity else None, shared_context.get("workflows", []),
+    )
+    if workflows:
+        lines.append("## Workflows this file supports")
+        for w in workflows:
+            name = w.get("name", "") if isinstance(w, dict) else str(w)
+            desc = w.get("description", "") if isinstance(w, dict) else ""
+            lines.append(f"- {name}" + (f": {desc}" if desc else ""))
+        lines.append("")
+
+    acs = [
+        ac for ac in shared_context.get("acceptance_criteria", [])
+        if not entity or ac.get("entity") in (entity, None)
+    ]
+    if acs:
+        lines.append("## Acceptance criteria this file must satisfy")
+        for ac in acs:
+            lines.append(f"- {ac.get('id', '')}: {ac.get('description', '')}")
+        lines.append("")
+
+    lines.extend(
+        _generation_contract_prompt_lines(
+            shared_context.get("generation_contracts", {}) or {}
+        )
+    )
+
+    # Fix #12/B: the canonical component manifest -- the EXACT { componentName,
+    # importPath, filePath } for every generated component. Injected into the
+    # App.tsx prompt (so App imports/renders the real components, never an
+    # invented ExpenseManager/ExpenseForm) AND into every component test prompt
+    # (so the test imports the real component under test, not a phantom
+    # sub-component or store path).
+    manifest = shared_context.get("component_manifest", []) or []
+    is_app = path.endswith("src/App.tsx") or path.endswith("/App.tsx") or path == "App.tsx"
+    is_component = (
+        "/components/" in path and path.endswith(".tsx")
+    )
+    if manifest and (is_app or is_component):
+        lines.append("## Canonical component manifest (authoritative -- obey exactly)")
+        lines.append(
+            "These are the ONLY generated components and their exact import "
+            "paths. Import by these exact names/paths; never invent component "
+            "names, sub-components, or store modules that are not listed here."
+        )
+        for m in manifest:
+            lines.append(
+                f"- `{m.get('componentName','')}` (default export) -- "
+                f"import from `{m.get('importPath','')}` "
+                f"(file `{m.get('filePath','')}`)"
+            )
+        if is_app:
+            lines.append("")
+            lines.append(
+                "This is App.tsx: import EACH component above using its exact "
+                "name and import path, and render every one of them in the JSX "
+                "tree."
+            )
+        elif kind == "test":
+            lines.append("")
+            lines.append(
+                "This is a component test: import the component under test by "
+                "its exact default-export name and relative path from the "
+                "manifest. Do not import ExpenseForm/ExpenseList/store-style "
+                "modules that are not in the manifest or file_specs."
+            )
+        lines.append("")
+        # PART 2: pin the import allowlist so first-pass generation drifts
+        # LESS before repair even runs. The react-vite scaffold ships NO `@`
+        # path alias in tsconfig/vite, so `@/*` imports never resolve (TS2307);
+        # the simple robust choice is to FORBID them in the prompt rather than
+        # wire an alias into every config. The allowlist is derived from the
+        # #12 manifest (exact component import paths) + the shared types module
+        # + the design-selected bare packages.
+        lines.extend(
+            _import_allowlist_lines(path, kind, shared_context, manifest)
+        )
+    elif shared_context.get("component_names_override"):
+        # Back-compat: components-only list when no full manifest is present.
+        comp_names = shared_context["component_names_override"]
+        lines.append("## Component names in this product (for import resolution)")
+        lines.append(", ".join(comp_names))
+        lines.append("")
+
+    # Fix #12/A + #24b: inject the FROZEN shared type contract verbatim so a
+    # component/test cannot invent field names or types that drift from
+    # src/types.ts. The contract is rendered deterministically (types_module_
+    # source) and is byte-identical to what run_task writes to disk, so the
+    # prompt and the on-disk types.ts can never disagree.
+    types_source = shared_context.get("types_module_source") or ""
+    types_names = shared_context.get("types_module_names", []) or []
+    is_types_file = path.endswith("src/types.ts") or path == "types.ts"
+    if is_types_file and (types_source or types_names):
+        lines.append("## Shared types module (AUTHORITATIVE)")
+        if types_names:
+            lines.append(
+                "Export these exact interface names: "
+                + ", ".join(str(name) for name in types_names)
+                + "."
+            )
+        if types_source:
+            lines.append(
+                "The entity field contract below is binding; keep field names "
+                "and types aligned with it."
+            )
+            lines.append("```typescript")
+            lines.append(types_source.rstrip())
+            lines.append("```")
+        lines.append("")
+    elif types_source:
+        lines.append("## Shared types contract (AUTHORITATIVE — `src/types.ts`)")
+        lines.append(
+            "These interfaces ALREADY EXIST in `src/types.ts`. Import what you "
+            "need from `./types` (or the correct relative path) and use these "
+            "EXACT field names and types. Do NOT redefine, rename, add, remove, "
+            "or re-type any field — your code MUST compile against this contract "
+            "verbatim:"
+        )
+        lines.append("```typescript")
+        lines.append(types_source.rstrip())
+        lines.append("```")
+        lines.append("")
+    elif (shared_context.get("has_types_module") or types_names) and not is_types_file:
+        # Fallback: names-only when no rendered contract is available.
+        line = (
+            "## Shared types: `src/types.ts` holds every entity's TypeScript "
+            "type. Import and use those types -- do NOT redefine them here."
+        )
+        if types_names:
+            line += (
+                " Exact exported interface names: " + ", ".join(types_names) + "."
+            )
+        lines.append(line)
+        lines.append("")
+
+    # The single file to produce.
+    lines.append("## File To Create")
+    lines.append(
+        "Output exactly this one file in a single fenced block. Do not output "
+        "any other file."
+    )
+    lines.append("")
+    lines.append(f"### `{path}`")
+    lines.append(f"Kind: {kind}")
+    if spec.get("description"):
+        lines.append(f"Description: {spec['description']}")
+    if entity:
+        lines.append(f"Entity: {entity}")
+    if spec.get("constraints"):
+        lines.append("Constraints:")
+        for c in spec["constraints"]:
+            lines.append(f"  - {c}")
+    lines.append("")
+
+    # PART 2: error-driven repair. When this file_spec carries an
+    # ``error_context`` (the EXACT tsc/vitest diagnostics the build reported
+    # for THIS file, injected by build_repair_packet), quote them verbatim so
+    # regeneration is a targeted FIX, not a blind rebuild.
+    lines.extend(_error_context_lines(spec))
+
+    # FUNCTIONAL DEMAND -- the heart of the fix.
+    is_react = shared_context.get("profile") == "react-vite"
+    state_lib = dc.get("state_management") or "React state (useState/useReducer)"
+    form_lib = dc.get("form_handling") or "controlled inputs"
+    if kind == "source" and is_react and path.endswith(".tsx"):
+        lines.append("## Functional Requirements (MANDATORY)")
+        lines.append(
+            "This is a REAL, interactive component -- not a static placeholder. "
+            "It MUST:"
+        )
+        lines.append(
+            f"- Hold real state using the design-selected state management "
+            f"({state_lib}) -- e.g. a list of items plus form/edit state."
+        )
+        lines.append(
+            f"- Render a working list of the entity AND a form (using {form_lib}) "
+            "to create new items."
+        )
+        lines.append(
+            "- Wire event handlers for every implied operation: ADD (submit the "
+            "form appends an item), EDIT (update an existing item), DELETE "
+            "(remove an item), and STATUS change where the entity has a status "
+            "field. No dead buttons -- every control has a handler that mutates "
+            "state."
+        )
+        lines.append(
+            "- Be fully typed against the shared `src/types.ts` entity types."
+        )
+        lines.append(
+            "- Be accessible (labels, roles) and follow the design system."
+        )
+        lines.append("")
+    elif kind == "test" and is_react and path.endswith(".test.tsx"):
+        lines.append("## Functional Requirements (MANDATORY)")
+        lines.append(
+            "This is a MEANINGFUL interaction test -- NOT a render-only smoke "
+            "test. It MUST:"
+        )
+        lines.append(
+            "- render() the component, then drive a real user INTERACTION with "
+            "fireEvent or userEvent (React Testing Library): type into the form, "
+            "submit it, and assert the list GREW by the new item."
+        )
+        lines.append(
+            "- Exercise at least one more interaction (e.g. click delete and "
+            "assert the row is gone, or toggle status and assert it changed)."
+        )
+        lines.append(
+            "- Assert on observable behavior/state, not merely that the "
+            "component rendered without throwing."
+        )
+        lines.append("")
+        # #26: when the pass-2 dispatcher has stamped the FINAL on-disk source
+        # of the component under test onto this spec, embed it verbatim as
+        # ground truth so the test asserts on what the component ACTUALLY
+        # renders -- not on elements/labels/initial-state the spec merely
+        # implied. Absent -> spec-based prompt (graceful fallback), no crash.
+        lines.extend(_source_under_test_lines(spec))
+
+    # Governance (priority subset -- same selection logic as the monolith).
+    if governance:
+        lines.append("## Governance Instructions")
+        lines.append("")
+        priority_keys = [
+            k for k in governance
+            if "CONSTITUTION" in k or "build.md" in k
+            or "typescript-standards" in k or "ENFORCEMENT" in k
+        ]
+        other_keys = [k for k in governance if k not in priority_keys]
+        for key in priority_keys:
+            lines.append(f"### {key}")
+            lines.append(governance[key][:3000])
+            lines.append("")
+        if other_keys:
+            lines.append(
+                f"(+{len(other_keys)} additional governance files enforced at validation)"
+            )
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
+
+# Per-file output budget bounds. A single file never truncates now: even a
+# small config file gets MIN, a full CRUD component can use up to MAX. MAX
+# stays within claude-opus-4-8's 128K max-output ceiling.
+_MIN_FILE_MAX_TOKENS = 8000
+_MAX_FILE_MAX_TOKENS = 128000
+
+
+def _file_max_tokens(spec: dict[str, Any]) -> int:
+    """Per-file output budget scaled by what the spec is. A CRUD `.tsx`
+    component or a page needs room; a small types/config file needs less.
+    Clamped to [_MIN_FILE_MAX_TOKENS, _MAX_FILE_MAX_TOKENS] so nothing ever
+    truncates and nothing exceeds the model's output ceiling."""
+    path = str(spec.get("path", "")).replace("\\", "/")
+    kind = str(spec.get("kind", "source"))
+    estimate = _MIN_FILE_MAX_TOKENS
+    if kind == "source" and path.endswith((".tsx", ".jsx")):
+        estimate = 24000  # interactive CRUD component
+    elif kind == "test":
+        estimate = 16000  # interaction test with multiple assertions
+    elif kind == "source":
+        estimate = 16000  # source module
+    elif kind in ("config", "registration"):
+        estimate = 8000
+    return max(_MIN_FILE_MAX_TOKENS, min(_MAX_FILE_MAX_TOKENS, estimate))
+
 
 def dispatch_build_agent(
     repo_root: Path,
@@ -278,15 +873,17 @@ def dispatch_build_agent(
     governance: dict[str, str],
     provider_name: str | None = None,
     model: str | None = None,
+    *,
+    provider: Any = None,
 ) -> dict[str, Any]:
     """Dispatch the build agent to execute the generation packet.
 
-    Calls the LLM with the packet-derived prompt, parses the response
-    into file contents, writes them to disk, and returns a result dict.
+    Thin back-compat wrapper: delegates to dispatch_build_agent_chunked, which
+    now performs concurrent PER-FILE LLM calls (adequate max_tokens each,
+    parse+validate+retry per file, git-free worker pool) instead of one
+    monolithic call that truncated at 1024 tokens and discarded most files.
 
-    Falls back gracefully if no API key is configured.
-
-    Returns:
+    Same result contract as before:
     {
         "status": "completed" | "failed" | "no_api_key",
         "run_id": str,
@@ -296,8 +893,41 @@ def dispatch_build_agent(
         "tokens_out": int | None,
     }
     """
-    import os
+    return dispatch_build_agent_chunked(
+        repo_root,
+        packet,
+        governance,
+        provider_name=provider_name,
+        model=model,
+        provider=provider,
+    )
 
+
+def dispatch_build_agent_chunked(
+    repo_root: Path,
+    packet: dict,
+    governance: dict[str, str],
+    provider_name: str | None = None,
+    model: str | None = None,
+    max_workers: int | None = None,
+    *,
+    provider: Any = None,
+) -> dict[str, Any]:
+    """Execute a generation packet with concurrent PER-FILE LLM calls.
+
+    One task per file_spec is enqueued into an in-memory TaskStore and drained
+    by executor.run_worker_pool (git-free: claim/heartbeat/retry/dead-letter).
+    Each task builds a single-file focused prompt (functional component +
+    interaction test), calls the LLM with an adequate per-file max_tokens,
+    parses exactly one fenced block, validates the path (non-empty, allowed,
+    not forbidden, matches the expected spec path), and returns the file.
+    Empty/no-block/forbidden/TruncatedResponseError raise so the worker pool
+    RETRIES; after max_attempts the task dead-letters.
+
+    Concurrent writes are safe: file_specs are path-disjoint. Status is
+    TRUTHFUL -- "completed" only if all files written with no dead-letters and
+    no errors; any dead-letter or error -> "failed" (never a false completed).
+    """
     run_id = packet.get("run_id", "unknown")
     result: dict[str, Any] = {
         "status": "failed",
@@ -308,9 +938,13 @@ def dispatch_build_agent(
         "errors": [],
         "tokens_in": None,
         "tokens_out": None,
+        "agent": "signalos-build-agent-chunked",
     }
 
     # Check API key availability (product secret wins, else app-level keychain).
+    # Honored even when a provider is injected: availability is the product's
+    # gate for "should we call an LLM at all", independent of how the provider
+    # is obtained. The delivery path never injects a provider.
     from .llm_provider import is_llm_available
     from .secrets_resolver import apply_product_secrets
     if not is_llm_available(repo_root):
@@ -321,54 +955,279 @@ def dispatch_build_agent(
         )
         return result
 
-    # Build prompt
-    prompt = _build_agent_prompt(packet, governance)
-
-    # Resolve + call with the product's provider keys overlaid (product wins).
-    with apply_product_secrets(repo_root):
-        try:
-            from signalos_lib.harness import _resolve_provider, resolve_model
-            provider = _resolve_provider(provider_name)
-            # No hardcoded default: explicit model → SIGNALOS_LLM_MODEL →
-            # discovery from the resolved provider's API.
-            use_model = resolve_model(model, provider_name)
-        except Exception as exc:
-            result["errors"].append(f"Provider resolution failed: {exc}")
-            return result
-
-        try:
-            response_text, tokens_in, tokens_out = provider.call(
-                f"{_SYSTEM_PROMPT}\n\n{prompt}",
-                use_model,
-            )
-            result["tokens_in"] = tokens_in
-            result["tokens_out"] = tokens_out
-        except Exception as exc:
-            result["errors"].append(f"LLM call failed: {exc}")
-            return result
-
-    # Parse response into files
-    files = parse_agent_response(response_text)
-    if not files:
-        result["errors"].append("Agent response contained no parseable file blocks")
+    gen = packet.get("generation", packet)
+    file_specs = list(gen.get("file_specs", []) or [])
+    if not file_specs:
+        result["errors"].append("packet has no file_specs to build")
+        _write_agent_result(repo_root, result)
         return result
 
-    # Validate paths before writing
-    gen = packet.get("generation", packet)
-    forbidden = gen.get("forbidden_paths", [])
-    for path in list(files.keys()):
-        if _is_forbidden(path, forbidden):
-            result["errors"].append(f"Agent attempted forbidden path: {path}")
-            del files[path]
+    forbidden = gen.get("forbidden_paths", []) or []
+    allowed = gen.get("allowed_paths", []) or []
+    shared_context = _build_shared_context(gen)
 
-    # Write files to disk
-    written = write_agent_files(repo_root, files)
+    from .executor import run_worker_pool
+    from signalos_lib.task_store import InMemoryTaskStore
+    from signalos_lib.harness import TruncatedResponseError
+
+    # Resolve provider/model ONCE and reuse for every file. When a provider is
+    # injected (tests / callers), skip resolution but still overlay product
+    # secrets for parity.
+    with apply_product_secrets(repo_root):
+        use_provider = provider
+        use_model = model
+        if use_provider is None:
+            try:
+                from signalos_lib.harness import _resolve_provider, resolve_model
+                use_provider = _resolve_provider(provider_name)
+                use_model = resolve_model(model, provider_name)
+            except Exception as exc:
+                result["errors"].append(f"Provider resolution failed: {exc}")
+                _write_agent_result(repo_root, result)
+                return result
+        elif use_model is None:
+            # Injected provider but no model: resolve best-effort, else a
+            # harmless placeholder (the injected fake ignores the model).
+            try:
+                from signalos_lib.harness import resolve_model
+                use_model = resolve_model(model, provider_name)
+            except Exception:
+                use_model = "auto"
+
+        # #26: TWO-PASS generation to kill test<->component behavioral drift by
+        # construction. PASS 1 generates every SOURCE spec (kind != "test":
+        # types, components, App/registration, config) and writes them to disk.
+        # PASS 2 then generates each TEST spec with the FINAL on-disk source of
+        # its component under test injected as ground truth, so a test cannot
+        # assume an element/label/initial-state the component never renders.
+        # Source<->test pairing is preserved: every source still gets its test,
+        # just generated in the second pass.
+        non_test_specs = [
+            s for s in file_specs if str(s.get("kind", "source")) != "test"
+        ]
+        test_specs = [
+            s for s in file_specs if str(s.get("kind", "source")) == "test"
+        ]
+
+        def _enqueue(store: Any, specs: list[dict]) -> int:
+            n = 0
+            for spec in specs:
+                spec_path = str(spec.get("path", "")).replace("\\", "/")
+                if not spec_path:
+                    continue
+                store.enqueue(spec_path, {"spec": spec})
+                n += 1
+            return n
+
+        def run_task(stored_task: Any) -> dict:
+            spec = stored_task.payload["spec"]
+            spec_path = str(spec.get("path", "")).replace("\\", "/")
+            # #24b: the shared type contract is deterministic and authoritative.
+            # Render it directly (identical to what every component prompt was
+            # told to conform to) instead of spending an LLM call that could
+            # produce a types.ts drifting from that injected contract.
+            if spec_path.endswith("src/types.ts") or spec_path == "types.ts":
+                return {
+                    "path": spec_path,
+                    "content": shared_context.get("types_module_source")
+                    or _render_types(gen.get("entities", []) or []),
+                    "tokens_in": None,
+                    "tokens_out": None,
+                }
+            prompt = _build_single_file_prompt(
+                spec, gen, governance, shared_context,
+            )
+            budget = _file_max_tokens(spec)
+            # TruncatedResponseError propagates -> retryable failure.
+            response_text, t_in, t_out = use_provider.call(
+                f"{_SINGLE_FILE_SYSTEM_PROMPT}\n\n{prompt}",
+                use_model,
+                max_tokens=budget,
+            )
+            files = parse_agent_response(response_text)
+            if not files:
+                raise RuntimeError(
+                    f"no parseable file block returned for {spec_path}"
+                )
+            # Belt-and-suspenders: drop anything forbidden/disallowed/off-target
+            # so a single retryable failure names the real problem.
+            accepted: dict[str, str] = {}
+            for path, content in files.items():
+                if _is_forbidden(path, forbidden):
+                    raise RuntimeError(f"agent attempted forbidden path: {path}")
+                if allowed and not _is_allowed(path, allowed):
+                    raise RuntimeError(f"agent attempted disallowed path: {path}")
+                if not content.strip():
+                    raise RuntimeError(f"agent produced empty file: {path}")
+                accepted[path] = content
+            # The single-file task must yield its target path. Extra files are
+            # dropped (single-file contract); the target must be present.
+            if spec_path not in accepted:
+                raise RuntimeError(
+                    f"agent did not return the target file {spec_path} "
+                    f"(returned: {sorted(accepted)})"
+                )
+            return {
+                "path": spec_path,
+                "content": accepted[spec_path],
+                "tokens_in": t_in,
+                "tokens_out": t_out,
+            }
+
+        files_to_write: dict[str, str] = {}
+        total_in = 0
+        total_out = 0
+        saw_tokens = False
+        reports: list[Any] = []
+        stores: list[Any] = []
+
+        def _drain(specs: list[dict]) -> None:
+            nonlocal total_in, total_out, saw_tokens
+            if not specs:
+                return
+            store = InMemoryTaskStore(max_attempts=3)
+            enqueued = _enqueue(store, specs)
+            if not enqueued:
+                return
+            workers = max_workers or min(8, max(1, enqueued))
+            rep = run_worker_pool(store, run_task, max_workers=workers)
+            reports.append(rep)
+            stores.append(store)
+            pass_files: dict[str, str] = {}
+            for outcome in rep.outcomes:
+                if outcome.status == "done" and isinstance(outcome.result, dict):
+                    r = outcome.result
+                    pass_files[r["path"]] = r["content"]
+                    files_to_write[r["path"]] = r["content"]
+                    if r.get("tokens_in") is not None:
+                        total_in += r["tokens_in"]
+                        saw_tokens = True
+                    if r.get("tokens_out") is not None:
+                        total_out += r["tokens_out"]
+                        saw_tokens = True
+            # Write this pass's files to disk NOW so the next pass can read them.
+            # PASS 1 sources become the FINAL on-disk ground truth handed to the
+            # PASS 2 test prompts.
+            if pass_files:
+                write_agent_files(repo_root, pass_files)
+
+        # PASS 1: all non-test (source/config/registration) specs first.
+        _drain(non_test_specs)
+
+        # PASS 2: test specs, each stamped with its component's FINAL on-disk
+        # source (read from what PASS 1 just wrote). Missing sibling -> the spec
+        # is left unstamped and the prompt falls back to spec-based generation.
+        for spec in test_specs:
+            loaded = _load_source_under_test(repo_root, spec)
+            if loaded is not None:
+                src_path, src_text = loaded
+                spec["source_under_test"] = {"path": src_path, "text": src_text}
+        _drain(test_specs)
+
+    # Each pass already wrote its files to disk (so PASS 2 could read PASS 1
+    # sources). files_to_write is the union across passes; keys are unique.
+    written = list(files_to_write)
     result["files_written"] = written
-    result["actions_taken"].append(f"wrote {len(written)} file(s)")
-    result["status"] = "completed" if written else "failed"
-    _write_agent_result(repo_root, result)
+    result["actions_taken"].append(
+        f"chunked build: {len(written)} file(s) across {len(file_specs)} task(s)"
+    )
+    if saw_tokens:
+        result["tokens_in"] = total_in
+        result["tokens_out"] = total_out
 
+    # Truthful status: any dead-letter (from EITHER pass) names the missing
+    # file(s) -> failed.
+    for rep, store in zip(reports, stores):
+        for dead_id in rep.dead_letters:
+            dead = store.get(dead_id)
+            detail = dead.error if dead and dead.error else "unknown failure"
+            result["errors"].append(f"failed to generate {dead_id}: {detail}")
+
+    expected = {
+        str(spec.get("path", "")).replace("\\", "/")
+        for spec in file_specs
+        if spec.get("path")
+    }
+    missing = sorted(expected - set(written))
+    for path in missing:
+        if not any(path in e for e in result["errors"]):
+            result["errors"].append(f"missing generated file: {path}")
+
+    result["status"] = (
+        "completed" if written and not result["errors"] and not missing
+        else "failed"
+    )
+    _write_agent_result(repo_root, result)
     return result
+
+
+def _sibling_source_path(path: str) -> str | None:
+    """Map a react-vite TEST spec path to the SOURCE file it exercises, or
+    None if the path is not a test file.
+
+    Pairing is path-deterministic: ``Foo.test.tsx`` -> ``Foo.tsx``. This holds
+    for both component tests (``src/components/Foo.test.tsx`` ->
+    ``src/components/Foo.tsx``) and the App test (``src/App.test.tsx`` ->
+    ``src/App.tsx``, whose source spec kind is ``registration``). Non-test
+    paths return None -- only tests have a "component under test"."""
+    p = str(path).replace("\\", "/")
+    if p.endswith(".test.tsx"):
+        return p[: -len(".test.tsx")] + ".tsx"
+    return None
+
+
+def _load_source_under_test(
+    repo_root: Path, spec: dict[str, Any]
+) -> tuple[str, str] | None:
+    """Read the FINAL on-disk source of the component a test spec exercises.
+
+    Returns ``(relative_source_path, source_text)`` when the sibling source
+    file exists on disk (i.e. PASS 1 wrote it), else None. Never raises: a
+    missing/unreadable sibling degrades to the spec-based test prompt (#26
+    graceful fallback), it does not crash generation."""
+    source_path = _sibling_source_path(str(spec.get("path", "")))
+    if not source_path:
+        return None
+    try:
+        text = (repo_root / source_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.strip():
+        return None
+    return source_path, text
+
+
+def _source_under_test_lines(spec: dict[str, Any]) -> list[str]:
+    """Render the FINAL component source (stamped onto a test spec by the
+    pass-2 dispatcher as ``spec["source_under_test"]``) as a GROUND-TRUTH
+    section of the test prompt. Empty when the spec carries no such source
+    (first-pass source specs, or a test whose sibling was not found -> the
+    original spec-based test prompt is used unchanged)."""
+    sut = spec.get("source_under_test") or {}
+    text = sut.get("text") if isinstance(sut, dict) else None
+    if not text or not str(text).strip():
+        return []
+    sut_path = sut.get("path", "the component under test")
+    lines: list[str] = [
+        "## Component under test -- EXACT FINAL source (GROUND TRUTH)",
+        (
+            f"Here is the EXACT, FINAL source of the component under test "
+            f"(`{sut_path}`). Write a test that exercises what this component "
+            f"ACTUALLY renders and does on mount and interaction. Do NOT assume "
+            f"any element, label, initial state, or behavior that is not present "
+            f"in this source. If the component defaults to a non-form view, "
+            f"drive the UI to the state under test first (e.g. click the control "
+            f"that reveals the form) before asserting on its fields. This real "
+            f"code -- not the spec description -- is the source of truth for what "
+            f"to assert."
+        ),
+        "",
+        "```tsx",
+        str(text).rstrip("\n"),
+        "```",
+        "",
+    ]
+    return lines
 
 
 def _component_group_key(path: str) -> str | None:
@@ -391,11 +1250,30 @@ def dispatch_local_build_agent_parallel(
     packet: dict,
     *,
     max_workers: int = 3,
+    isolate: bool = False,
 ) -> dict[str, Any]:
-    """1.1: run the local build agent's independent react-vite component
-    groups through the real parallel executor (executor.py) -- claim,
-    heartbeat, retry, worktree isolation, merge queue -- instead of one
-    synchronous call.
+    """Run the local build agent's independent react-vite component groups
+    through the real parallel executor (executor.py) -- claim, heartbeat,
+    retry, dead-letter -- instead of one synchronous call.
+
+    ``isolate`` selects the isolation strategy for the (already file-disjoint)
+    task groups:
+
+    - ``isolate=False`` (DEFAULT, the fast path): each group writes its
+      disjoint files straight into *repo_root* in parallel via
+      ``run_inprocess_build_tasks`` -- NO git worktrees, NO per-task commits,
+      NO merge queue. The component groups are path-disjoint by construction
+      (see ``_component_group_key``: components are only ever imported from
+      App.tsx, never from each other), so isolation buys nothing here and the
+      worktree machinery (git init + ~dozens of AV-scanned subprocesses on
+      Windows + a serialized merge queue) is pure overhead that timed out a
+      7-component app. This is the correct default for governed, file-disjoint
+      generation.
+
+    - ``isolate=True`` (opt-in): route through ``run_isolated_build_tasks``
+      (one git worktree per task, merges serialized through a queue) for
+      callers that genuinely need filesystem isolation (e.g. tasks that are
+      NOT provably path-disjoint, or that must be revertable as a unit).
 
     Falls back verbatim to dispatch_local_build_agent for every other
     profile and for react-vite products with fewer than 2 components,
@@ -420,7 +1298,7 @@ def dispatch_local_build_agent_parallel(
     if profile != "react-vite" or len(groups) < 2:
         return dispatch_local_build_agent(repo_root, packet)
 
-    from .executor import run_isolated_build_tasks
+    from .executor import run_inprocess_build_tasks, run_isolated_build_tasks
 
     task_groups: list[tuple[str, list[dict]]] = [("foundation", foundation)]
     task_groups.extend(sorted(groups.items()))
@@ -437,7 +1315,20 @@ def dispatch_local_build_agent_parallel(
         sub_packet["task_id"] = f"{run_id}-{task_id}"
         packets.append(sub_packet)
 
-    report = run_isolated_build_tasks(repo_root, packets, max_workers=max_workers)
+    if isolate:
+        report = run_isolated_build_tasks(repo_root, packets, max_workers=max_workers)
+    else:
+        # Git-free fast path. Sub-tasks write in place against the SAME
+        # repo_root, so suppress each sub-task's RESULT.json -- a single
+        # aggregate RESULT.json is written below (exactly one agent-run
+        # entry, matching the worktree path which excluded .signalos from
+        # every merge).
+        def _dispatch_inplace(sub_repo: Path, sub_packet: dict) -> dict[str, Any]:
+            return dispatch_local_build_agent(sub_repo, sub_packet, write_result=False)
+
+        report = run_inprocess_build_tasks(
+            repo_root, packets, dispatch=_dispatch_inplace, max_workers=max_workers,
+        )
 
     aggregate: dict[str, Any] = {
         "status": "completed" if not report.dead_letters else "failed",
@@ -468,6 +1359,8 @@ def dispatch_local_build_agent_parallel(
 def dispatch_local_build_agent(
     repo_root: Path,
     packet: dict,
+    *,
+    write_result: bool = True,
 ) -> dict[str, Any]:
     """Execute a generation packet with the built-in governed local agent.
 
@@ -475,6 +1368,16 @@ def dispatch_local_build_agent(
     blueprints/profiles. It does not replace external agents; it gives the
     delivery bridge a reliable baseline that still obeys the same packet,
     allowed-path, forbidden-path, RESULT.json, and validation contract.
+
+    *write_result* controls whether this call persists its own
+    ``.signalos/product/agent-runs/<run_id>/RESULT.json``. It defaults to
+    True (every standalone dispatch records its result). The git-free
+    parallel path (``dispatch_local_build_agent_parallel`` with
+    ``isolate=False``) runs each sub-packet in place against the SAME
+    repo_root, so it passes ``write_result=False`` for the sub-tasks and
+    writes a single aggregate RESULT.json for the whole delivery instead --
+    exactly one agent-run entry, matching the worktree path (which achieved
+    the same by excluding ``.signalos`` from each task's merge).
     """
     run_id = packet.get("run_id", "unknown")
     result: dict[str, Any] = {
@@ -502,7 +1405,8 @@ def dispatch_local_build_agent(
         result["errors"].append(
             f"local build agent does not support profile: {profile}"
         )
-        _write_agent_result(repo_root, result)
+        if write_result:
+            _write_agent_result(repo_root, result)
         return result
 
     file_specs = gen.get("file_specs", [])
@@ -546,7 +1450,14 @@ def dispatch_local_build_agent(
     try:
         from .generation import validate_generation_output
 
-        generation_validation = validate_generation_output(repo_root, gen)
+        # Fix #12: when write_result is False this is a PARTIAL sub-task of the
+        # parallel in-place build -- a component subset can import ../types
+        # before the concurrent foundation task writes types.ts, so the
+        # cross-file check would false-positive. The authoritative whole-repo
+        # cross-file check runs once over the FULL packet in delivery.py.
+        generation_validation = validate_generation_output(
+            repo_root, gen, check_cross_file=write_result,
+        )
         result["validation_results"]["generation_output"] = generation_validation
         if not generation_validation.get("valid", False):
             result["errors"].extend(generation_validation.get("violations", []))
@@ -558,7 +1469,8 @@ def dispatch_local_build_agent(
         result["errors"].append(f"generation output validation failed: {exc}")
 
     result["status"] = "completed" if written and not result["errors"] else "failed"
-    _write_agent_result(repo_root, result)
+    if write_result:
+        _write_agent_result(repo_root, result)
     return result
 
 
@@ -646,6 +1558,8 @@ def _render_react_vite_files(gen: dict[str, Any]) -> dict[str, str]:
             continue
         if path == "src/types.ts":
             files[path] = _render_types(entities)
+        elif path == "src/test/setup.ts":
+            files[path] = _render_vitest_setup()
         elif path == "src/ui/theme.ts":
             files[path] = _render_theme(gen.get("design_constraints", {}))
         elif path == "src/ui/index.ts":
@@ -1013,6 +1927,14 @@ def _package_from_source_path(path: str) -> str:
     return ""
 
 
+def _render_vitest_setup() -> str:
+    return (
+        "// Generated by the SignalOS local build agent from the approved packet.\n"
+        "// Registers @testing-library/jest-dom matchers for every test.\n"
+        "import '@testing-library/jest-dom';\n"
+    )
+
+
 def _render_types(entities: list[Any]) -> str:
     lines = [
         "// Generated by the SignalOS local build agent from the approved packet.",
@@ -1364,12 +2286,36 @@ def _safe_ts_field(field: str) -> str:
     return cleaned
 
 
+_BOOLEAN_FIELD_WORDS = frozenset({
+    "recurring", "active", "enabled", "disabled", "reimbursed", "paid",
+    "completed", "done", "archived", "verified", "approved", "published",
+    "featured", "pinned", "starred", "favorite", "favorited", "read", "unread",
+    "locked", "deleted", "cancelled", "canceled", "confirmed", "resolved",
+    "closed", "shared", "public", "private", "required",
+})
+_NUMBER_FIELD_WORDS = (
+    "hours", "percent", "value", "target", "amount", "count", "rate", "total",
+    "price", "cost", "quantity", "qty", "balance", "budget", "score", "age",
+    "weight", "height", "duration", "number", "num", "sum", "limit", "size",
+)
+
+
 def _infer_ts_type(field: str) -> str:
+    # #24b: the frozen types.ts is the authoritative contract every component
+    # conforms to, so its field types must be SEMANTICALLY right -- a status
+    # toggle typed as `string` forces the component to re-drift when it sets a
+    # boolean.
     lower = field.lower()
-    if any(token in lower for token in ("hours", "percent", "value", "target", "amount", "count", "rate", "total")):
-        return "number"
-    if lower.startswith("is_") or lower in {"recurring", "active", "enabled"}:
+    is_bool = (
+        lower in _BOOLEAN_FIELD_WORDS
+        or lower.startswith(("is_", "has_"))
+        # camelCase isX/hasX (guard bare `island`/`hash` etc.)
+        or (lower[:2] in ("is", "ha") and len(field) > 2 and field[2:3].isupper())
+    )
+    if is_bool:
         return "boolean"
+    if any(token in lower for token in _NUMBER_FIELD_WORDS):
+        return "number"
     return "string"
 
 

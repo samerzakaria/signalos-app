@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Foundry — Fixes Log</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161c2b; --panel2:#1b2334; --ink:#e6ebf5; --muted:#93a1bd;
+    --line:#26314a; --accent:#4f8cff; --green:#2ecc71; --amber:#f5a623; --gray:#6b7890;
+    --red:#ff5c6c; --chip:#0e1626;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0c1120,#0f1420);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1200px;margin:0 auto;padding:40px 28px 80px}
+  header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;
+    border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:28px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:14px;margin:0}
+  .brand{color:var(--accent);font-weight:700}
+  .stats{display:flex;gap:12px;flex-wrap:wrap}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 16px;min-width:96px;text-align:center}
+  .stat b{display:block;font-size:24px;line-height:1}
+  .stat span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  .stat.green b{color:var(--green)} .stat.amber b{color:var(--amber)} .stat.accent b{color:var(--accent)}
+  h2{font-size:19px;margin:38px 0 6px;letter-spacing:-.01em}
+  h2 .n{color:var(--muted);font-weight:500;font-size:14px}
+  .note{color:var(--muted);font-size:13.5px;margin:0 0 16px;max-width:88ch}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{background:var(--panel2);color:var(--muted);text-align:left;font-weight:600;
+    padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0}
+  td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(79,140,255,.05)}
+  td.id{font-weight:700;color:var(--accent);white-space:nowrap}
+  td.issue{font-weight:600;min-width:180px}
+  code{background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:1px 6px;
+    font:12.5px/1.4 "SF Mono",ui-monospace,Consolas,monospace;color:#bcd2ff;white-space:nowrap}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+  .pill.done{background:rgba(46,204,113,.14);color:var(--green);border:1px solid rgba(46,204,113,.3)}
+  .pill.prog{background:rgba(245,166,35,.14);color:var(--amber);border:1px solid rgba(245,166,35,.3)}
+  .pill.plan{background:rgba(107,120,144,.16);color:var(--gray);border:1px solid rgba(107,120,144,.3)}
+  .sev{font-weight:700}
+  .sev.high{color:var(--red)} .sev.med{color:var(--amber)}
+  .verify{color:var(--muted);font-size:12.5px}
+  .through{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:10px;padding:14px 18px;margin:18px 0 0;color:#cdd8ee;font-size:14px;max-width:96ch}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-top:14px}
+  footer{margin-top:44px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:18px}
+  .win{color:var(--green);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Fixes Log &mdash; <span class="brand">Foundry by SignalOS</span></h1>
+      <p class="sub">A living ledger of concrete issues fixed &amp; in progress. Snapshot &middot; release <code>v3.2.3-internal.1</code></p>
+    </div>
+    <div class="stats">
+      <div class="stat green"><b>17</b><span>Fixed</span></div>
+      <div class="stat amber"><b>2</b><span>In&nbsp;progress</span></div>
+      <div class="stat" style="border-color:rgba(255,92,108,.4)"><b style="color:var(--red)">6</b><span>Audit&nbsp;gaps left</span></div>
+      <div class="stat accent"><b>4</b><span>CI green</span></div>
+    </div>
+  </header>
+
+  <!-- SECTION 1 -->
+  <h2>Release <span class="n">&mdash; supply-chain, CI &amp; executor fixes (2026-07-03)</span></h2>
+  <p class="note">Shipped in <code>v3.2.3-internal.1</code>. All four CI workflows green (Release published, Pages, Smoke, test-automation across Linux/Windows/macOS).</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Issue</th><th>Root cause</th><th>Fix</th><th>Verified</th><th>Commit</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">1</td>
+          <td class="issue">quick-xml RUSTSEC-2026-0194/0195 (2&times; high, DoS) failing <code>cargo audit</code></td>
+          <td>Two advisories against transitive <code>quick-xml</code> &mdash; not our code</td>
+          <td>Updated <code>notify-rust</code> 4.17&rarr;4.18 &amp; <code>tauri-winrt-notification</code> 0.7.2&rarr;0.7.3, dropping quick-xml from the Windows path. <span class="win">Real removal, not an audit ignore.</span></td>
+          <td class="verify">audit 4&rarr;2, <code>cargo check</code></td>
+          <td><code>69fbc20</code></td>
+        </tr>
+        <tr>
+          <td class="id">2</td>
+          <td class="issue">Remaining <code>quick-xml 0.39.4</code> (via <code>plist ^0.39.2</code>, no released fix)</td>
+          <td><code>plist</code> 1.9.0 can't take fixed quick-xml 0.41.0</td>
+          <td>Pointed <code>plist</code> at the <span class="win">real upstream fix</span> (PR <code>ebarnard/rust-plist#191</code>, pinned) via <code>[patch.crates-io]</code>. Reviewed (pure version bump). Not a suppression.</td>
+          <td class="verify">audit 2&rarr;0, <code>cargo check</code>, <b>CI</b></td>
+          <td><code>4637959</code></td>
+        </tr>
+        <tr>
+          <td class="id">3</td>
+          <td class="issue">Executor git-identity &mdash; parallel commits failed &rarr; delivery produced no files</td>
+          <td>Commits relied on ambient git identity; fresh scaffolds &amp; CI runners have none</td>
+          <td>Inject explicit <code>-c user.email -c user.name -c commit.gpgsign=false</code> on every git call. <b>Real app bug</b>, not just CI.</td>
+          <td class="verify">repro (<code>GIT_CONFIG_GLOBAL=/dev/null</code>), 44 tests, <b>CI</b></td>
+          <td><code>6b521ed</code></td>
+        </tr>
+        <tr>
+          <td class="id">4</td>
+          <td class="issue">macOS-only test false-negative in launch test</td>
+          <td><code>os.getcwd()</code> resolves <code>/var</code>&rarr;<code>/private/var</code>; raw-string <code>startswith</code> broke</td>
+          <td>Compare <b>resolved</b> paths via <code>is_relative_to</code>. Test-only.</td>
+          <td class="verify"><b>CI</b> (all 3 platforms)</td>
+          <td><code>211a2e4</code></td>
+        </tr>
+        <tr>
+          <td class="id">5</td>
+          <td class="issue">Unborn-branch crash on freshly-scaffolded repo</td>
+          <td>Fresh <code>git init</code> has zero commits; <code>git worktree add</code> can't fork an unborn branch</td>
+          <td><code>_ensure_has_commit()</code> makes a base commit; read branch via <code>symbolic-ref</code></td>
+          <td class="verify">test, repro</td>
+          <td><code>ba9a3da</code></td>
+        </tr>
+        <tr>
+          <td class="id">6</td>
+          <td class="issue"><code>.signalos/</code> leaked into merges &mdash; 9 <code>agent-runs/</code> instead of 1</td>
+          <td>Each worktree commit staged <code>.signalos/</code> bookkeeping</td>
+          <td>Exclude <code>.signalos/</code> from task commits via git pathspec</td>
+          <td class="verify">test, repro</td>
+          <td><code>ba9a3da</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SECTION 2 -->
+  <h2>Generation quality <span class="n">&mdash; the &ldquo;shity output&rdquo; root causes</span></h2>
+  <p class="note">Found by running a <b>real end-to-end generation</b> (not just tests) as Mester Tester (PO). A verify agent ran a <b>real Anthropic generation</b> of an expense tracker: 11/11 files, functional component confirmed, 44 Foundry suites pass. Truncation, shells, blueprint &amp; perf are fixed; cross-file cohesion (#12) is the remaining half.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Issue</th><th>Root cause</th><th>Fix</th><th>Verified</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">7</td>
+          <td class="issue">LLM generation truncates &mdash; asked for 18 files, got 2</td>
+          <td>One call (&ldquo;Output ALL files in one response&rdquo;) capped at <code>max_tokens=1024</code>; flattened the plan's small linked tasks into a monolithic dump</td>
+          <td>Per-file/per-task concurrent LLM calls via the worker pool, per-file token budget 8K&ndash;128K; truncation is now a retryable <code>TruncatedResponseError</code></td>
+          <td class="verify">e2e: <b>11/11 files, valid=true, no truncation</b></td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">8</td>
+          <td class="issue">Components are non-functional shells</td>
+          <td><code>_render_component</code> emitted a static &ldquo;metric card&rdquo; (<code>Ready for validation</code>) &mdash; no state/handlers/CRUD</td>
+          <td>Per-file prompt demands <b>functional</b> components (zustand/hooks state, handlers, add/edit/delete) + a real interaction test</td>
+          <td class="verify">e2e: <code>Expense.tsx</code> has store+CRUD+total; test uses <code>fireEvent</code></td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">9</td>
+          <td class="issue">Blueprint domain mismatch &mdash; &ldquo;expense tracker&rdquo; &rarr; metrics dashboard</td>
+          <td><code>match_blueprint</code> scoring picked the wrong domain</td>
+          <td>Match threshold; fall back to generic rather than wrong-domain</td>
+          <td class="verify"><b>REAL Anthropic e2e</b>: expense prompt &rarr; actual <code>Expense</code>/<code>Category</code> (add/total/per-category/reimburse), <code>DELIVERY_STATE.blueprint=''</code> &mdash; did NOT snap to financial-dashboard; 33 threshold/cohesion tests</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">10</td>
+          <td class="issue">Parallel executor too slow on Windows &mdash; 7-comp app timed out (&gt;3min)</td>
+          <td><code>run_isolated_build_tasks</code> uses git-worktree-per-task + merge queue (heavy on Windows)</td>
+          <td>Added <code>run_inprocess_build_tasks</code> (git-free fast path); worktree isolation now opt-in</td>
+          <td class="verify">test (<code>test_parallel_no_worktrees</code>), 44 suites</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">11</td>
+          <td class="issue">Generated UI tests are render-smoke only</td>
+          <td>Components had no behavior (see #8)</td>
+          <td>Per-file test prompt demands a real interaction (render&rarr;type&rarr;submit&rarr;assert)</td>
+          <td class="verify">e2e: interaction test generated (compiles pending #12)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">12</td>
+          <td class="issue">Cross-file drift &mdash; app doesn't build (the &ldquo;keep connected&rdquo; half)</td>
+          <td>Each file generated in <b>isolation</b> &rarr; inconsistent names/types: no shared <code>src/types.ts</code>; <code>App.tsx</code> imports <code>ExpenseManager</code> but file is <code>Expense.tsx</code>; test imports non-existent modules; field <code>isReimbursed</code> vs <code>reimbursed</code>; no vitest setup</td>
+          <td>Shared authoritative contract: <code>types.ts</code> always emitted+injected; canonical component manifest used by App+tests; shared field names; vitest setup; <code>check_cross_file_consistency</code></td>
+          <td class="verify"><b>Partial</b> &mdash; contract works (App&rarr;components, types, setup resolve); build still red, drift moved to a new layer (#22)</td>
+          <td><span class="pill prog">&#8635; Partial</span></td>
+        </tr>
+        <tr>
+          <td class="id">22</td>
+          <td class="issue">Drift layer 2 + compile-feedback repair loop</td>
+          <td>LLM invents modules/aliases + writes code inconsistent with its own types</td>
+          <td><b>Repair loop BUILT + works</b>: real <code>tsc&amp;&amp;vite build</code>+<code>vitest</code> in validation, structured per-file errors fed back, only failing files regenerated. Verified live: errors shrank 31&rarr;21&rarr;20&rarr;19. First-pass gen genuinely functional. <b>Doesn't fully converge (see #24)</b></td>
+          <td class="verify">loop runs + shrinks errors; build still red</td>
+          <td><span class="pill prog">&#8635; Partial</span></td>
+        </tr>
+        <tr>
+          <td class="id">23</td>
+          <td class="issue"><b>FAKE-GREEN in the pipeline</b> &mdash; generation failure reported as build passed (found by the repair e2e)</td>
+          <td>With the <code>anthropic</code> SDK absent, <code>is_llm_available()</code> (env-key-only) returned True, dispatch failed for every file, yet <code>run_delivery</code> emitted <code>build_status=passed</code> &mdash; masked by the scaffold stub</td>
+          <td>dispatch failure is now a <b>hard blocker</b> (<code>_generation_produced_real_files</code>); <code>is_llm_available</code> now requires an importable provider SDK, not just an env key</td>
+          <td class="verify"><b>e2e verified</b>: simulated dispatch failure fails-closed, no green off the stub</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">24</td>
+          <td class="issue">Repair loop non-convergence &mdash; the type module was excluded from repair scope</td>
+          <td>Filtered repair scope only picked files tsc <i>named</i> (the <code>.tsx</code>), so <code>src/types.ts</code> &mdash; which must change to reconcile a component&harr;type mismatch &mdash; was never regenerated &rarr; whack-a-mole</td>
+          <td>on contract-mismatch errors, <code>types.ts</code> now <b>enters the repair scope</b> with the component's error as context; add-dependency action for missing known devDeps</td>
+          <td class="verify"><b>e2e verified</b>: real gen converged <b>tsc 18&rarr;0 in ONE cycle</b>; <code>tsc</code>+<code>vite build</code> exit 0 (193 kB bundle)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">25</td>
+          <td class="issue">Illegal generated filenames (e.g. <code>Category;SeeRunningTotal.tsx</code>)</td>
+          <td>intent&rarr;file_spec naming didn't sanitize illegal path chars (a <code>;</code> from a workflow phrase)</td>
+          <td><code>_sanitize_component_name</code> collapses to PascalCase; specs sanitized before becoming paths</td>
+          <td class="verify">test verified</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr style="background:rgba(245,166,35,.08)">
+          <td class="id">26</td>
+          <td class="issue">Tests don't converge &mdash; test&harr;component <b>behavioral</b> contract mismatch (the same disease as #24, one level deeper)</td>
+          <td>Generated tests assume the component renders the form on mount (<code>getByLabelText(/description/i)</code>), but the component defaults to a dashboard view. The component is correct; the loop regenerates the <b>test alone</b> (13&rarr;14&rarr;15&rarr;15, never 0)</td>
+          <td><b>Change test strategy</b> (chosen): two-pass generation &mdash; generate + build-verify the component SOURCE first, THEN generate each test against the FINAL on-disk component source as ground truth. Kills the drift by construction</td>
+          <td class="verify"><b>mechanism verified</b> (<code>test_generated_against_source: TRUE</code>) &mdash; tests reflect real component behavior; App.test mocks the real components</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr style="background:rgba(245,166,35,.08)">
+          <td class="id">27</td>
+          <td class="issue">Generated <code>package.json</code> mismatched Mantine versions &mdash; vitest dies at import (<code>SyntaxError: Named export 'use' not found</code>)</td>
+          <td><b>Two compounding causes the first <code>9.4.1</code> pin missed</b> (caught by the real e2e): (a) Mantine <b>v9 requires React 19</b> but the react-vite template ships <b>React 18.3.1</b> &rarr; core imports React 19's <code>use</code> hook &rarr; the vitest error; (b) the <b>remote agent regenerates its own package.json</b> with skewed majors (core@9 + hooks@7) and <code>_merge_design_deps</code> only fills <i>missing</i> keys</td>
+          <td>Pin <code>_MANTINE_VERSION</code> to the <b>React-18-compatible v7 line</b> (<code>7.13.2</code>); add the <code>@mantine/charts</code>&rarr;<code>recharts</code> peer; and a <b>force-normalization</b> pass (<code>enforce_dependency_versions</code>/<code>_enforce_design_deps</code>) that re-pins <b>every</b> <code>@mantine/*</code> before the first validation <b>and inside every repair cycle</b></td>
+          <td class="verify">test (<code>test_mantine_version_normalization.py</code>: React&harr;Mantine major-compat invariant, re-pin of skew, on-disk rewrite). <b>e2e NOT exercised</b> &mdash; the attempted run used a Tailwind/shadcn profile (no Mantine) and was aborted by Anthropic credit exhaustion</td>
+          <td><span class="pill done">&#10003; code</span> <span class="pill prog">&#8635; e2e (billing)</span></td>
+        </tr>
+        <tr style="background:rgba(245,166,35,.08)">
+          <td class="id">24b</td>
+          <td class="issue">Type-contract drift &mdash; components disagree with <code>types.ts</code> (repair loop non-convergent at scale)</td>
+          <td>Real e2e: 13 tsc errors &mdash; <code>types.ts</code> declared <code>Expense.categoryId</code>/<code>date:string</code>/no <code>budget</code> but components used <code>expense.category</code>, <code>date:Date</code>, <code>Category.budget</code>. Root cause: <b><code>types.ts</code> was LLM-generated</b> (a contestable contract) and components got only interface <b>names</b>, not the field schema &mdash; each file invented its own fields; repair chased a <b>moving target</b></td>
+          <td><b>Freeze the contract</b>: render <code>types.ts</code> <b>deterministically</b> (<code>_render_types</code>), <b>short-circuit it in the LLM <code>run_task</code></b> (never LLM-owned), <b>inject the full source verbatim</b> into every component/test prompt (&ldquo;use these EXACT fields; do not redefine&rdquo;), harden <code>_infer_ts_type</code> (booleans/numbers). Repair conforms components to a <b>fixed</b> target &rarr; converges</td>
+          <td class="verify">test (<code>test_single_file_prompt.py</code> #24b: contract injected verbatim, prompt==on-disk, boolean typing; <code>test_chunked_dispatch.py</code>: <code>types.ts</code> deterministic + zero LLM calls). <b>Partial e2e</b>: freeze confirmed live (types.ts was the only file written &mdash; via the deterministic short-circuit &mdash; before billing killed the run); full build+vitest green <b>blocked on Anthropic credits</b>. Same run exposed #29 (now fixed)</td>
+          <td><span class="pill done">&#10003; code</span> <span class="pill prog">&#8635; e2e (billing)</span></td>
+        </tr>
+        <tr>
+          <td class="id">28</td>
+          <td class="issue">Model discovery picks a <b>NON-CHAT</b> model &mdash; OpenAI delivery 404s (&ldquo;This is not a chat model&rdquo;) with no explicit <code>SIGNALOS_LLM_MODEL</code></td>
+          <td><code>pick_best_model</code> picks the newest id by date; OpenAI's newest are <code>gpt-realtime-*</code>/<code>gpt-audio-*</code>/<code>gpt-4o-transcribe</code> (audio/realtime) which win discovery then hard-404 on <code>/chat/completions</code></td>
+          <td>Added <code>realtime</code>/<code>audio</code>/<code>transcribe</code>/<code>speech</code> to <code>_NON_FLAGSHIP_SUBSTRINGS</code> so discovery skips non-chat modalities. Known remaining limit (documented): responses-API-only flagships like <code>gpt-5-pro</code> still need an explicit pin</td>
+          <td class="verify">test (<code>test_model_discovery_chat_filter.py</code>); live probe (OpenAI funded; <code>gpt-4o</code> OK; no longer returns <code>gpt-realtime-*</code>)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">29</td>
+          <td class="issue">Deterministic intent extraction <b>garbles entities</b> &mdash; &ldquo;&hellip;category; running total; per-category breakdown; mark reimbursed&rdquo; &rarr; ONE entity <code>Category;RunningTotal;Per-categoryBreakdown;MarkReimbursed</code></td>
+          <td><code>_extract_entities</code> split on <code>,</code>/<code>and</code> but <b>not <code>;</code></b>, so a semicolon list merged into one blob; <code>_to_pascal_case</code> split on whitespace only, leaving <code>;</code>/<code>-</code> in the name. Normally masked by LLM refine &mdash; but #24b now <b>freezes</b> the contract from these entities, so a garbled name = an invalid frozen <code>interface</code></td>
+          <td>Split entity lists on <code>;</code> too; <code>_to_pascal_case</code> now splits on any non-alphanumeric run + prefixes a leading digit &rarr; entity names are <b>always valid TS identifiers</b>. (Semantics remain the LLM refine's job; this is the deterministic floor)</td>
+          <td class="verify">test (<code>test_intent_entity_identifiers.py</code>: garbled prompts &rarr; valid identifiers, <code>;</code>-split not merged, frozen interfaces valid); 74 intent tests pass</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="through">
+    <b>The through-line (confirmed by the e2e):</b> chunking small fixed truncation and shells, but generating each file
+    <b>independently</b> dropped the <i>connection</i> &mdash; exactly the &ldquo;small enough <b>and</b> keep everything connected&rdquo;
+    principle the plan/waves already encode. #12 restores cohesion via a shared, authoritative cross-file contract, so the
+    executor runs the plan's small <i>linked</i> tasks &mdash; not a monolithic blob, and not 18 disconnected fragments.
+  </div>
+
+  <!-- SECTION 2b: WIRING AUDIT -->
+  <h2>Wiring audit <span class="n">&mdash; declared-but-dead governance (full report: <code>docs/WIRING_AUDIT.md</code>)</span></h2>
+  <p class="note">A full audit of <b>every hook, agent, role &amp; enforcement rule</b> (3 parallel auditors, <code>file:line</code> evidence). Headline: only a thin spine is truly live &mdash; harness step-hooks, the 6 G0&ndash;G5 gate agents, and <b>4 of 12 rules</b> enforced in <code>agent_loop.py</code>. The rest is produced-then-ignored, plugin-only, or no-op &mdash; contradicting the &ldquo;fully wired &amp; enforced, never advisory&rdquo; promise. Each row is now a tracked fix with an exact wire-in location.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Gap</th><th>Why it's dead</th><th>Where it must be wired</th><th>Sev</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="id">14</td>
+          <td class="issue">Architect/plan contract never reaches code generation (signed, then ignored)</td>
+          <td><code>arch_review</code> + <code>design_decisions</code> are built/validated/signed but <code>build_generation_packet</code> has no arch param &mdash; generator ignores the architecture it just signed</td>
+          <td><code>delivery.py:535</code> + <code>generation.py:build_generation_packet</code></td>
+          <td><span class="sev high">Critical</span></td>
+          <td><span class="pill prog">&#8635; via #12</span></td>
+        </tr>
+        <tr>
+          <td class="id">15</td>
+          <td class="issue">UI rule modes silently discarded in production</td>
+          <td><code>_build_agent_enforcement</code> returned <code>None</code>; the Rust <code>EnforcementStore</code> was in-memory-only, never persisted, never read by the Python sidecar</td>
+          <td>Rust <code>set_rule_mode</code> now <b>persists to <code>.signalos/enforcement.json</code></b>; Python returns a real <code>FileEnforcementProvider</code> that reads it, applying the <b>core-invariant floor</b> (core rule = strict even if config says off)</td>
+          <td class="verify"><b>e2e verified</b>: <code>stack-contract:off</code> reads off, <code>trust-tier:off</code> forced strict; live loop denies/allows per config. 112 py + 88 Rust tests pass</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">16</td>
+          <td class="issue">6 of 12 enforcement rules were pure no-ops</td>
+          <td><code>plan-gating</code>, <code>audit-append</code>, <code>stack-contract</code>, <code>gate-compliance</code>, <code>zero-manual-regression</code>, <code>mutation-threshold</code> &mdash; toggleable, read by no path</td>
+          <td>wired to <b>real denials</b>: plan-gating + audit-append in <code>agent_loop._check_governance</code>; the other four in Rust <code>precheck_rules</code> (mode-guarded)</td>
+          <td class="verify"><b>verified</b>: block-and-relax test pairs for all; &#9888; <code>wave-freeze</code> block present but only indirectly tested (#18)</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">17</td>
+          <td class="issue">Role-gating bypassed on live manual sign &mdash; a PO could sign G5 (a QA gate)</td>
+          <td>Sidecar hardcoded <code>--role PO</code> + used <code>sign_artifact</code> (no role check), never <code>sign.sign_gate</code>; <code>role_can_sign</code> only advisory in JS</td>
+          <td><code>ipc.rs sign_gate</code> + Python <code>sign_gate</code> now pass the <b>real identity role</b> and route through <code>sign.sign_gate</code></td>
+          <td class="verify"><b>live-verified</b>: PO signing G5 &rarr; <code>ValueError</code> "not authorised… (required: ['QA'])", no signature; QA signs G5; PE can't sign G1</td>
+          <td><span class="pill done">&#10003; Fixed</span></td>
+        </tr>
+        <tr>
+          <td class="id">18</td>
+          <td class="issue">wave-freeze is a flag nothing enforces</td>
+          <td><code>freeze_wave</code> is UI-wired, but its only consumer <code>build_precheck</code> has <b>no caller in <code>src/</code></b></td>
+          <td>a live build entrypoint must call <code>build.precheck</code> (<code>ipc.js:317</code>)</td>
+          <td><span class="sev med">Med</span></td>
+          <td><span class="pill plan">&#8987; Queued</span></td>
+        </tr>
+        <tr>
+          <td class="id">19</td>
+          <td class="issue">Two dead hooks + one mis-registered + one inert</td>
+          <td><code>pre-deploy</code>/<code>post-retro</code> zero callers; <code>pre-session-compress</code> registered under a non-existent event; <code>step-pause-check.sh</code> needs an env var the harness never exports</td>
+          <td>wire to deploy/retro paths; <code>harness.py:1044</code> must export <code>SIGNALOS_PLAN_STEP_JSON</code></td>
+          <td><span class="sev med">Med</span></td>
+          <td><span class="pill plan">&#8987; Queued</span></td>
+        </tr>
+        <tr>
+          <td class="id">20</td>
+          <td class="issue">Plugin-only hooks masquerade as product enforcement</td>
+          <td><code>session-start</code>, <code>pre-commit</code>, <code>pre-merge</code>, <code>pre-tool-use-guard</code> (secret-scan + T3 write block) fire <b>only</b> under the Claude/Cursor plugin &mdash; no product-side fallback</td>
+          <td>Highest-severity slice <b>done via #20a</b>: <code>pre-tool-use-guard</code>'s two dimensions now have live product-runtime analogues in <code>agent_loop</code> (T3/path block + content secret-scan, audited <code>denied</code>). Broader <code>session-start</code>/<code>pre-commit</code>/<code>pre-merge</code> parity still open</td>
+          <td><span class="sev med">Med</span></td>
+          <td><span class="pill prog">&#9682; partial (#20a slice)</span></td>
+        </tr>
+        <tr style="background:rgba(255,92,108,.06)">
+          <td class="id">20a</td>
+          <td class="issue"><b>Data-leak hole</b> &mdash; write-content secret scan is plugin-only; an agent can hardcode <code>sk-ant-&hellip;</code> into a generated source file and the runtime won't catch it</td>
+          <td>Logs are redacted (<code>redact.py</code>) &amp; writes <i>to</i> <code>.env</code> are blocked (<code>secret-block</code>), but scanning write <i>content</i> for embedded secrets lives only in the plugin-only <code>pre-tool-use-guard.sh</code>/<code>pre-commit</code>; <code>agent_loop._scan_write_content</code> scans injection only and just warns</td>
+          <td>port <code>redact.py --scan-diff</code> into <code>agent_loop._scan_write_content</code> so every agent write is scanned for embedded secrets and <b>BLOCKED</b> (not warned) in the product runtime</td>
+          <td><span class="sev high">High</span></td>
+          <td><span class="pill plan">&#8987; Queued</span></td>
+        </tr>
+        <tr style="background:rgba(255,92,108,.06)">
+          <td class="id">21</td>
+          <td class="issue">The <b>Test + Review agents are never dispatched</b> &mdash; the missing generation quality gate <span style="color:var(--red)">(re-severitized from Low &mdash; a root cause of the broken output)</span></td>
+          <td>Architecture specifies <b>Build&rarr;Test&rarr;Review</b> (<code>test.md</code>: run the full suite on every Build PR before Review; <code>review.md</code>: spec-drift + correctness + test-evidence check before merge). But only Build runs &mdash; <code>test.md</code>/<code>review.md</code> are handed to Build as reference skills (<code>generation.py:80/89</code>), <b>never dispatched to check output</b>. So code ships unbuilt/untested/unreviewed. The repair loop (#22) is only a mechanical stand-in for the Test agent</td>
+          <td><b>Test</b> = the validation phase (real <code>tsc</code>+<code>vite build</code>+<code>vitest</code>, fail-closed via #23); <b>Review</b> = a new deterministic gate <code>review_gate.py</code> wired as phase 6c in <code>delivery.py</code> after Build+Test, before closeout. Checks <b>spec-coverage</b> (entity&rarr;component; entities-but-zero-components &rarr; block), <b>test-evidence</b> (every component has a sibling test that renders + asserts; missing/empty &rarr; block), <b>build-correctness</b> (a <code>failed</code> build &rarr; block). Governed by the <b><code>gate-compliance</code></b> core-invariant rule: <code>strict</code> fails the closeout <b>closed</b>, <code>warn</code> records limitations, <code>off</code> impossible. Verdict &rarr; <code>REVIEW_RESULT.json</code></td>
+          <td class="verify">test (<code>test_review_gate.py</code>, 10: block on missing/empty test, gross spec gap, failed build; warn records-not-blocks; render-only accepted); delivery e2e regression running</td>
+          <td><span class="pill done">&#10003; code</span></td>
+        </tr>
+        <tr>
+          <td class="id">21b</td>
+          <td class="issue">Remaining undispatched agents</td>
+          <td><code>security</code>/<code>release</code>/<code>worktree-sync</code> <code>.md</code> (real logic lives elsewhere); <code>.sh</code> utilities (zero invocation)</td>
+          <td>dispatch or reclassify as reference</td>
+          <td><span class="sev med" style="color:var(--gray)">Low</span></td>
+          <td><span class="pill plan">&#8987; Queued</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="through">
+    <b>Meta-finding:</b> #15 is the amplifier &mdash; because the production enforcement provider is <code>None</code>,
+    <i>nothing</i> the UI toggles reaches the agent loop. Fixing it makes the 4 real rules honor config <b>and</b> is the
+    precondition for the 6 no-op rules (#16) to mean anything. Fix order: <b>15 &rarr; 16 &rarr; 17</b>, with #14 handled by the #12 cohesion work.
+  </div>
+
+  <!-- SECTION 3 -->
+  <h2>Earlier this session <span class="n">&mdash; governance / enforcement integrity (v3.2.0-internal.1)</span></h2>
+  <p class="note">Summarized; see <code>CHANGELOG.md</code> and <code>docs/GOVERNED_PRODUCT_LIFECYCLE_IMPLEMENTATION_PLAN.md</code> for detail.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th>Area</th><th>Issue fixed</th></tr></thead>
+      <tbody>
+        <tr><td class="issue">Gate signing</td><td>Was fail-<b>open</b> when required artifacts missing/placeholder &rarr; now <b>fail-closed</b></td></tr>
+        <tr><td class="issue">Audit trail</td><td>Not tamper-evident &rarr; <b>hash-chained</b> and wired to <code>integrity-witness</code></td></tr>
+        <tr><td class="issue">Enforcement UI</td><td>Read wrong backend field (<code>.rules</code> vs <code>.modes</code>) &rarr; always &ldquo;No rules loaded&rdquo;; fixed</td></tr>
+        <tr><td class="issue">Enforcement toggles</td><td>Core invariants were toggleable off &rarr; <code>set_rule_mode</code> now refuses to disable core invariants</td></tr>
+        <tr><td class="issue">Dormant QA</td><td><code>ux_friction</code> agentic QA never ran &rarr; wired into the G3 design-gate preview</td></tr>
+        <tr><td class="issue">Belief resolution</td><td>Built a duplicate module &rarr; rewired the signed-threshold gate into the <b>real</b> live <code>evaluate_listening_window</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <span><span class="pill done">&#10003; Fixed</span> fixed &amp; verified</span>
+    <span><span class="pill prog">&#8635; In progress</span> being fixed</span>
+    <span><span class="pill plan">&#8987; Planned</span> queued</span>
+    <span>Verified: <code>test</code> unit &middot; <code>CI</code> green in CI &middot; <code>e2e</code> real end-to-end &middot; <code>repro</code> reproduced then confirmed</span>
+  </div>
+
+  <footer>
+    Generated from <code>docs/FIXES_LOG.md</code> &middot; Foundry by SignalOS &middot; source of truth is the Markdown ledger, kept current as fixes land.
+  </footer>
+
+</div>
+</body>
+</html>

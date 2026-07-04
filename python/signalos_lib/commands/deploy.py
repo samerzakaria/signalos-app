@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from signalos_lib.deploy import (
+    DeployHookError,
     canary_deploy_check,
     land_deploy,
     record_benchmark,
@@ -81,7 +82,16 @@ def cmd_signal_land_deploy(args: list[str]) -> int:
         return 1 if exc.code != 0 else 0
 
     root = Path(ns.repo_root) if ns.repo_root else Path.cwd()
-    record = land_deploy(root, ns.deploy_id)
+    try:
+        record = land_deploy(
+            root,
+            ns.deploy_id,
+            enforce_pre_deploy=True,
+            deploy_signer=ns.signer,
+        )
+    except DeployHookError as exc:
+        sys.stderr.write(f"pre-deploy blocked: {exc}\n")
+        return 1
 
     if record is None:
         sys.stderr.write(f"not found: {ns.deploy_id}\n")
@@ -102,6 +112,12 @@ def _build_land_parser() -> argparse.ArgumentParser:
     p.add_argument("deploy_id", help="Deploy record ID (e.g. 'deploy-001').")
     p.add_argument("--repo-root", default=None, metavar="PATH",
                    help="Repository root (default: cwd).")
+    p.add_argument(
+        "--signer",
+        default=None,
+        metavar="NAME",
+        help="DevOps deploy signer (or set DEVOPS_DEPLOY_SIGNER).",
+    )
     p.add_argument("--json", dest="json", action="store_true", default=False,
                    help="Emit machine-readable JSON.")
     return p

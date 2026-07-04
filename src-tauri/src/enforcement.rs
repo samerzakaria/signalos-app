@@ -8,7 +8,7 @@
 /// Overrides are first-class: the frontend can request a labeled override
 /// (with a reason string) which is audit-logged before the action proceeds.
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
@@ -133,6 +133,92 @@ impl EnforcementStore {
     }
 }
 
+// ─── Persistence (Phase 1 / #15) ─────────────────────────────────────────────
+//
+// Toggles must survive restart, so the store snapshots to
+// `ws/.signalos/enforcement.json` on every mutation. The Python
+// FileEnforcementProvider reads the same file. INV: the core-invariant floor is
+// re-applied on load so a corrupt/hand-edited file can never seed a core rule
+// to "off" — mirrors `validate_rule_mode` (the single write-side authority).
+
+/// Serializable snapshot of the enforcement store. Only the fields that must
+/// survive a restart are persisted; `overrides` is per-wave and intentionally
+/// not carried over.
+#[derive(Serialize, Deserialize, Default)]
+pub struct PersistedEnforcement {
+    #[serde(default)]
+    pub rule_modes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub wave_frozen: bool,
+}
+
+/// Path of the per-workspace enforcement snapshot. Mirrors the `.signalos/`
+/// convention used by `read_signed_gates` / gates.json / AUDIT_TRAIL.jsonl.
+fn enforcement_path(ws: &Path) -> PathBuf {
+    ws.join(".signalos").join("enforcement.json")
+}
+
+impl EnforcementStore {
+    /// Snapshot `modes` + `wave_frozen` and write atomically (temp + rename)
+    /// to `ws/.signalos/enforcement.json`.
+    pub fn persist(&self, ws: &Path) -> Result<(), String> {
+        let rule_modes: BTreeMap<String, String> = self
+            .modes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(r, m)| (r.clone(), mode_str(m)))
+            .collect();
+        let snapshot = PersistedEnforcement {
+            rule_modes,
+            wave_frozen: *self.wave_frozen.lock().unwrap(),
+        };
+        let dir = ws.join(".signalos");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create .signalos: {e}"))?;
+        let path = enforcement_path(ws);
+        let tmp = path.with_extension("json.tmp");
+        let body = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("Could not serialize enforcement: {e}"))?;
+        std::fs::write(&tmp, body)
+            .map_err(|e| format!("Could not write enforcement.json.tmp: {e}"))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("Could not rename enforcement.json: {e}"))?;
+        Ok(())
+    }
+
+    /// Load a store from `ws/.signalos/enforcement.json` if present. Each
+    /// `(rule, mode)` is run through `validate_rule_mode`; any that fails (unknown
+    /// rule/mode, or a core invariant set to "off") is dropped and left at its
+    /// `Default` (strict). Missing rules and an absent file fall back to Default.
+    pub fn load_from(ws: &Path) -> EnforcementStore {
+        let store = EnforcementStore::default();
+        let path = enforcement_path(ws);
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return store;
+        };
+        let Ok(snapshot) = serde_json::from_str::<PersistedEnforcement>(&content) else {
+            // A corrupt file must never weaken the floor: fall back to all-strict.
+            return store;
+        };
+        {
+            let mut modes = store.modes.lock().unwrap();
+            for (rule, mode) in &snapshot.rule_modes {
+                // Re-floor on read: validate_rule_mode rejects off-on-core-invariant,
+                // so a hand-edited `gate-gating:off` is dropped and stays strict.
+                if let Ok(valid) = validate_rule_mode(rule, mode) {
+                    for (r, m) in modes.iter_mut() {
+                        if r == rule {
+                            *m = valid.clone();
+                        }
+                    }
+                }
+            }
+        }
+        *store.wave_frozen.lock().unwrap() = snapshot.wave_frozen;
+        store
+    }
+}
+
 // ─── Tauri commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -169,6 +255,8 @@ pub fn get_enforcement_state(
 #[derive(Deserialize)]
 pub struct BuildPrecheckArgs {
     pub stack: String,
+    #[serde(default)]
+    pub rules: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -181,12 +269,31 @@ pub struct PrecheckResult {
 
 /// Run all build-time enforcement rules. Returns the first blocking rule
 /// (if any) so the UI can surface a clear "fix X to continue" message.
+/// Minimal, well-defined stack contract (#16 Edit 2.2): each declared stack has
+/// a set of top-level marker files that belong to a *foreign* stack. Their
+/// presence at the workspace root is a contract violation.
+fn stack_forbidden_markers(stack: &str) -> &'static [&'static str] {
+    match stack {
+        "python" => &["Cargo.toml", "package.json"],
+        "node" | "typescript" | "javascript" => &["Cargo.toml"],
+        "rust" => &["package.json"],
+        _ => &[],
+    }
+}
+
 #[tauri::command]
 pub fn build_precheck(
-    _args: BuildPrecheckArgs,
+    args: BuildPrecheckArgs,
     enforcement: State<EnforcementStore>,
     workspace: State<crate::ipc::WorkspaceState>,
 ) -> Result<PrecheckResult, String> {
+    if let Some(rules) = args.rules.as_ref() {
+        for rule in rules {
+            if !ALL_RULES.contains(&rule.as_str()) {
+                return Err(format!("Unknown rule: {rule}"));
+            }
+        }
+    }
     let ws = workspace
         .0
         .lock()
@@ -194,9 +301,37 @@ pub fn build_precheck(
         .clone()
         .ok_or("No workspace selected")?;
 
+    if let Some(result) = precheck_rules(&ws, &enforcement, &args) {
+        return Ok(result);
+    }
+
+    Ok(PrecheckResult {
+        allowed: true,
+        blocking_rule: None,
+        reason: None,
+        mode: None,
+    })
+}
+
+/// Pure-ish core of build_precheck, split out so unit tests can exercise every
+/// rule against a temp workspace + a plain `EnforcementStore` (no Tauri State).
+/// Returns `Some(blocking result)` on the first blocking rule, else `None`.
+///
+/// INV (anti-weakening): each new rule is guarded by `store_check_rule`, which
+/// returns true only for Mode::Strict — so a rule that is warn/off never fires
+/// and NEVER changes another rule's decision. The 4 already-enforcing rules
+/// (gate-gating here) keep their exact checks.
+fn precheck_rules(
+    ws: &Path,
+    enforcement: &EnforcementStore,
+    args: &BuildPrecheckArgs,
+) -> Option<PrecheckResult> {
     // Rule: wave-freeze
-    if check_rule(&enforcement, RULE_WAVE_FREEZE) && *enforcement.wave_frozen.lock().unwrap() {
-        return Ok(PrecheckResult {
+    if precheck_rule_requested(args, RULE_WAVE_FREEZE)
+        && store_check_rule(enforcement, RULE_WAVE_FREEZE)
+        && *enforcement.wave_frozen.lock().unwrap()
+    {
+        return Some(PrecheckResult {
             allowed: false,
             blocking_rule: Some(RULE_WAVE_FREEZE.into()),
             reason: Some(
@@ -206,18 +341,22 @@ pub fn build_precheck(
         });
     }
 
-    // Rule: gate-gating + gate-compliance
-    if check_rule(&enforcement, RULE_GATE_GATE) {
+    // Rule: gate-gating — the original G0-2 delivery-gate check (unchanged).
+    if precheck_rule_requested(args, RULE_GATE_GATE)
+        && store_check_rule(enforcement, RULE_GATE_GATE)
+    {
         let required: HashSet<u8> = [0u8, 1, 2].iter().copied().collect();
-        let signed: HashSet<u8> = read_signed_gates(&ws).into_iter().collect();
+        let signed: HashSet<u8> = read_signed_gates(ws).into_iter().collect();
         let missing: Vec<u8> = required.difference(&signed).copied().collect();
         if !missing.is_empty() {
-            let missing_str = missing
+            let mut missing_sorted = missing.clone();
+            missing_sorted.sort();
+            let missing_str = missing_sorted
                 .iter()
                 .map(|g| format!("G{g}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Ok(PrecheckResult {
+            return Some(PrecheckResult {
                 allowed: false,
                 blocking_rule: Some(RULE_GATE_GATE.into()),
                 reason: Some(format!("Sign {missing_str} before running Build.")),
@@ -226,12 +365,113 @@ pub fn build_precheck(
         }
     }
 
-    Ok(PrecheckResult {
-        allowed: true,
-        blocking_rule: None,
-        reason: None,
-        mode: None,
-    })
+    // Rule: gate-compliance (#16 Edit 2.3) — a SEPARATE, stricter check that the
+    // full advance-to-build gate set [0,1,2,3,4] is signed. gate-gating above is
+    // untouched; this adds the remaining gates as their own rule.
+    if precheck_rule_requested(args, RULE_GATE_COMPLIANCE)
+        && store_check_rule(enforcement, RULE_GATE_COMPLIANCE)
+    {
+        let required: HashSet<u8> = [0u8, 1, 2, 3, 4].iter().copied().collect();
+        let signed: HashSet<u8> = read_signed_gates(ws).into_iter().collect();
+        let mut missing: Vec<u8> = required.difference(&signed).copied().collect();
+        if !missing.is_empty() {
+            missing.sort();
+            let missing_str = missing
+                .iter()
+                .map(|g| format!("G{g}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(PrecheckResult {
+                allowed: false,
+                blocking_rule: Some(RULE_GATE_COMPLIANCE.into()),
+                reason: Some(format!(
+                    "Gate compliance is binary: sign {missing_str} before advancing to Build."
+                )),
+                mode: Some("strict".into()),
+            });
+        }
+    }
+
+    // Rule: stack-contract (#16 Edit 2.2) — foreign-stack marker files at the
+    // workspace root violate the declared stack contract.
+    if precheck_rule_requested(args, RULE_STACK_CONTRACT)
+        && store_check_rule(enforcement, RULE_STACK_CONTRACT)
+    {
+        for marker in stack_forbidden_markers(&args.stack) {
+            if ws.join(marker).exists() {
+                return Some(PrecheckResult {
+                    allowed: false,
+                    blocking_rule: Some(RULE_STACK_CONTRACT.into()),
+                    reason: Some(format!(
+                        "Stack contract violation: '{marker}' is not part of the '{}' stack.",
+                        args.stack
+                    )),
+                    mode: Some("strict".into()),
+                });
+            }
+        }
+    }
+
+    // Rule: zero-manual-regression (#16 Edit 2.4) — any open manual-defect
+    // test-debt entry blocks the build until it becomes a regression test.
+    if precheck_rule_requested(args, RULE_ZERO_MANUAL)
+        && store_check_rule(enforcement, RULE_ZERO_MANUAL)
+    {
+        let open = crate::test_automation::open_manual_defect_count(ws);
+        if open > 0 {
+            return Some(PrecheckResult {
+                allowed: false,
+                blocking_rule: Some(RULE_ZERO_MANUAL.into()),
+                reason: Some(format!(
+                    "{open} open manual-defect entr{} must become a regression test before Build.",
+                    if open == 1 { "y" } else { "ies" }
+                )),
+                mode: Some("strict".into()),
+            });
+        }
+    }
+
+    // Rule: mutation-threshold (#16 Edit 2.5) — reuse the existing pure fn.
+    // A missing score = cannot prove rule 12 = block.
+    if precheck_rule_requested(args, RULE_MUTATION) && store_check_rule(enforcement, RULE_MUTATION)
+    {
+        let score = crate::test_automation::read_mutation_score_value(ws);
+        let (allowed, reason) = match score {
+            Some(s) => {
+                let result = crate::test_automation::check_mutation_threshold(
+                    crate::test_automation::MutationScoreArgs {
+                        score: s,
+                        area: "workspace".into(),
+                    },
+                );
+                (result.allowed, result.reason)
+            }
+            None => (
+                false,
+                Some(
+                    "No mutation score on file: run mutation testing before Build (cannot prove the ≥95% threshold)."
+                        .to_string(),
+                ),
+            ),
+        };
+        if !allowed {
+            return Some(PrecheckResult {
+                allowed: false,
+                blocking_rule: Some(RULE_MUTATION.into()),
+                reason,
+                mode: Some("strict".into()),
+            });
+        }
+    }
+
+    None
+}
+
+fn precheck_rule_requested(args: &BuildPrecheckArgs, rule: &str) -> bool {
+    match args.rules.as_ref() {
+        None => true,
+        Some(rules) => rules.iter().any(|candidate| candidate == rule),
+    }
 }
 
 #[derive(Deserialize)]
@@ -273,6 +513,8 @@ pub fn override_rule(
         ),
     };
     append_audit(&ws, &entry).map_err(|e| format!("Could not write override audit: {e}"))?;
+    // Persist the modes/frozen snapshot so the override context survives restart.
+    enforcement.persist(&ws)?;
     Ok(())
 }
 
@@ -281,16 +523,32 @@ pub fn set_rule_mode(
     rule: String,
     mode: String,
     enforcement: State<EnforcementStore>,
+    workspace: State<crate::ipc::WorkspaceState>,
 ) -> Result<(), String> {
+    // validate_rule_mode is the single write-side authority: it rejects a core
+    // invariant set to "off" BEFORE we touch memory or disk, so no file is ever
+    // written for a rejected change (see set_rule_mode_core_invariant_off_still_errors).
     let m = validate_rule_mode(&rule, &mode)?;
-    let mut modes = enforcement.modes.lock().unwrap();
-    for (r, mode_v) in modes.iter_mut() {
-        if *r == rule {
-            *mode_v = m.clone();
-            return Ok(());
+    {
+        let mut modes = enforcement.modes.lock().unwrap();
+        let mut found = false;
+        for (r, mode_v) in modes.iter_mut() {
+            if *r == rule {
+                *mode_v = m.clone();
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(format!("Rule {} not found", rule));
         }
     }
-    Err(format!("Rule {} not found", rule))
+    // Persist so the toggle survives restart (read back by load_from + the
+    // Python FileEnforcementProvider). Persist is best-effort on missing ws.
+    if let Some(ws) = workspace.0.lock().unwrap().clone() {
+        enforcement.persist(&ws)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -308,6 +566,8 @@ pub fn freeze_wave(
             detail: "wave frozen".to_string(),
         };
         let _ = append_audit(&ws, &entry);
+        // Persist wave_frozen so a freeze survives restart.
+        enforcement.persist(&ws)?;
     }
     Ok(())
 }
@@ -328,14 +588,20 @@ pub fn unfreeze_wave(
             detail: "wave unfrozen".to_string(),
         };
         let _ = append_audit(&ws, &entry);
+        // Persist the cleared freeze so it survives restart.
+        enforcement.persist(&ws)?;
     }
     Ok(())
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-fn check_rule(state: &State<EnforcementStore>, rule: &str) -> bool {
-    state
+/// True only when `rule` is Mode::Strict. This is the "is this rule enforced
+/// right now" gate used by every build_precheck rule. Kept strict-only this pass
+/// (warn == not enforced in Rust) so enabling one rule never alters another's
+/// behavior — see the *_ok_when_disabled precheck tests.
+fn store_check_rule(store: &EnforcementStore, rule: &str) -> bool {
+    store
         .modes
         .lock()
         .unwrap()
@@ -490,5 +756,382 @@ mod rule_mode_tests {
     #[test]
     fn unknown_mode_is_rejected() {
         assert!(validate_rule_mode(RULE_TEST_FIRST, "loose").is_err());
+    }
+}
+
+#[cfg(test)]
+mod persist_tests {
+    use super::{
+        enforcement_path, mode_str, EnforcementStore, Mode, RULE_GATE_GATE, RULE_STACK_CONTRACT,
+        RULE_WAVE_FREEZE,
+    };
+    use std::path::Path;
+
+    fn mode_of(store: &EnforcementStore, rule: &str) -> String {
+        store
+            .modes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(r, _)| r == rule)
+            .map(|(_, m)| mode_str(m))
+            .unwrap()
+    }
+
+    fn tmp_ws() -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "signalos-enf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn persist_then_load_roundtrips_modes() {
+        let ws = tmp_ws();
+        let store = EnforcementStore::default();
+        {
+            let mut modes = store.modes.lock().unwrap();
+            for (r, m) in modes.iter_mut() {
+                if r == RULE_STACK_CONTRACT {
+                    *m = Mode::Warn;
+                }
+            }
+        }
+        store.persist(&ws).unwrap();
+        assert!(enforcement_path(&ws).is_file());
+
+        let loaded = EnforcementStore::load_from(&ws);
+        assert_eq!(mode_of(&loaded, RULE_STACK_CONTRACT), "warn");
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn load_rejects_core_invariant_off() {
+        // Hand-write an enforcement.json with a core invariant forced to "off"
+        // plus a legitimate warn on a tunable rule.
+        let ws = tmp_ws();
+        std::fs::create_dir_all(ws.join(".signalos")).unwrap();
+        let body = r#"{
+            "rule_modes": { "gate-gating": "off", "stack-contract": "warn" },
+            "wave_frozen": false
+        }"#;
+        std::fs::write(enforcement_path(&ws), body).unwrap();
+
+        let loaded = EnforcementStore::load_from(&ws);
+        // Floor re-applied: the core invariant loads as strict, never off.
+        assert_eq!(mode_of(&loaded, RULE_GATE_GATE), "strict");
+        // The other valid mode is preserved.
+        assert_eq!(mode_of(&loaded, RULE_STACK_CONTRACT), "warn");
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn set_rule_mode_writes_file() {
+        // Mirror set_rule_mode's persistence path without a live Tauri State:
+        // mutate + persist, then confirm the file contains the change.
+        let ws = tmp_ws();
+        let store = EnforcementStore::default();
+        {
+            let mut modes = store.modes.lock().unwrap();
+            for (r, m) in modes.iter_mut() {
+                if r == RULE_WAVE_FREEZE {
+                    *m = Mode::Warn;
+                }
+            }
+        }
+        store.persist(&ws).unwrap();
+        let path = enforcement_path(&ws);
+        assert!(path.is_file());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("wave-freeze"));
+        assert!(content.contains("warn"));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn set_rule_mode_core_invariant_off_still_errors_and_writes_nothing() {
+        // validate_rule_mode gates the mutation; a rejected off-on-core-invariant
+        // returns Err BEFORE any persist, so no file is written.
+        use super::validate_rule_mode;
+        let ws = tmp_ws();
+        let result = validate_rule_mode(RULE_GATE_GATE, "off");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("core invariant"));
+        // No persist happened for the rejected change.
+        assert!(!enforcement_path(&ws).exists());
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn absent_file_loads_all_strict() {
+        let ws = tmp_ws();
+        let loaded = EnforcementStore::load_from(&ws);
+        assert_eq!(mode_of(&loaded, RULE_STACK_CONTRACT), "strict");
+        assert_eq!(mode_of(&loaded, RULE_GATE_GATE), "strict");
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn enforcement_path_is_under_signalos() {
+        let p = enforcement_path(Path::new("/ws"));
+        assert!(
+            p.ends_with(".signalos/enforcement.json") || p.ends_with(".signalos\\enforcement.json")
+        );
+    }
+}
+
+#[cfg(test)]
+mod precheck_rule_tests {
+    use super::{
+        precheck_rules, BuildPrecheckArgs, EnforcementStore, Mode, RULE_GATE_COMPLIANCE,
+        RULE_GATE_GATE, RULE_MUTATION, RULE_STACK_CONTRACT, RULE_WAVE_FREEZE, RULE_ZERO_MANUAL,
+    };
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    fn tmp_ws() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "signalos-precheck-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(p.join(".signalos")).unwrap();
+        p
+    }
+
+    /// Set every rule to Off EXCEPT the one under test, so a single rule's
+    /// behavior is observed in isolation. (Core-invariant floor is not relevant
+    /// here — the store is built directly, not via set_rule_mode.)
+    fn only(rule: &str) -> EnforcementStore {
+        let store = EnforcementStore::default();
+        {
+            let mut modes = store.modes.lock().unwrap();
+            for (r, m) in modes.iter_mut() {
+                *m = if r == rule { Mode::Strict } else { Mode::Off };
+            }
+        }
+        store
+    }
+
+    fn set_mode(store: &EnforcementStore, rule: &str, mode: Mode) {
+        let mut modes = store.modes.lock().unwrap();
+        for (r, m) in modes.iter_mut() {
+            if r == rule {
+                *m = mode.clone();
+            }
+        }
+    }
+
+    fn sign_gates(ws: &std::path::Path, gates: &[u8]) {
+        let audit = ws.join(".signalos").join("AUDIT_TRAIL.jsonl");
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&audit)
+            .unwrap();
+        for g in gates {
+            writeln!(
+                f,
+                "{{\"action\":\"gate:sign\",\"gate_id\":{g},\"actor\":\"t\"}}"
+            )
+            .unwrap();
+        }
+    }
+
+    fn args(stack: &str) -> BuildPrecheckArgs {
+        BuildPrecheckArgs {
+            stack: stack.into(),
+            rules: None,
+        }
+    }
+
+    fn args_only(stack: &str, rules: &[&str]) -> BuildPrecheckArgs {
+        BuildPrecheckArgs {
+            stack: stack.into(),
+            rules: Some(rules.iter().map(|rule| (*rule).to_string()).collect()),
+        }
+    }
+
+    // ── stack-contract (2.2) ────────────────────────────────────────────────
+
+    #[test]
+    fn stack_contract_blocks_foreign_stack_marker() {
+        let ws = tmp_ws();
+        // python stack with a rust marker present = violation.
+        std::fs::write(ws.join("Cargo.toml"), "[package]\n").unwrap();
+        let store = only(RULE_STACK_CONTRACT);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_STACK_CONTRACT));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn stack_contract_ok_when_disabled() {
+        let ws = tmp_ws();
+        std::fs::write(ws.join("Cargo.toml"), "[package]\n").unwrap();
+        // Rule off (warn also non-strict) → same ws is allowed; proves it only
+        // fires when strict and never weakens the others.
+        let store = only(RULE_STACK_CONTRACT);
+        set_mode(&store, RULE_STACK_CONTRACT, Mode::Warn);
+        let r = precheck_rules(&ws, &store, &args("python"));
+        assert!(r.is_none(), "warn/off stack-contract must not block");
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    // ── gate-compliance (2.3) + gate-gating regression ──────────────────────
+
+    #[test]
+    fn gate_compliance_blocks_when_full_set_incomplete() {
+        let ws = tmp_ws();
+        sign_gates(&ws, &[0, 1, 2]); // G3/G4 missing
+        let store = only(RULE_GATE_COMPLIANCE);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_GATE_COMPLIANCE));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn gate_compliance_allows_when_full_set_signed() {
+        let ws = tmp_ws();
+        sign_gates(&ws, &[0, 1, 2, 3, 4]);
+        let store = only(RULE_GATE_COMPLIANCE);
+        let r = precheck_rules(&ws, &store, &args("python"));
+        assert!(r.is_none());
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn gate_gating_still_blocks_g0_2() {
+        // Regression: the original gate-gating behavior is intact.
+        let ws = tmp_ws();
+        sign_gates(&ws, &[0]); // G1/G2 missing
+        let store = only(RULE_GATE_GATE);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_GATE_GATE));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    // ── zero-manual-regression (2.4) ────────────────────────────────────────
+
+    #[test]
+    fn zero_manual_blocks_with_open_manual_defect() {
+        let ws = tmp_ws();
+        let debt = ws.join(".signalos").join("test-debt.jsonl");
+        std::fs::write(
+            &debt,
+            "{\"ts\":\"t\",\"kind\":\"manual-defect\",\"area\":\"a\",\"title\":\"t\",\"detail\":\"d\",\"resolved\":false}\n",
+        )
+        .unwrap();
+        let store = only(RULE_ZERO_MANUAL);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_ZERO_MANUAL));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn zero_manual_allows_when_none_open() {
+        let ws = tmp_ws();
+        let debt = ws.join(".signalos").join("test-debt.jsonl");
+        // A resolved manual-defect does not block.
+        std::fs::write(
+            &debt,
+            "{\"ts\":\"t\",\"kind\":\"manual-defect\",\"area\":\"a\",\"title\":\"t\",\"detail\":\"d\",\"resolved\":true}\n",
+        )
+        .unwrap();
+        let store = only(RULE_ZERO_MANUAL);
+        let r = precheck_rules(&ws, &store, &args("python"));
+        assert!(r.is_none());
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    // ── mutation-threshold (2.5) ────────────────────────────────────────────
+
+    #[test]
+    fn mutation_threshold_blocks_below_95() {
+        let ws = tmp_ws();
+        std::fs::write(
+            ws.join(".signalos").join("mutation-score.json"),
+            "{\"score\":0.80,\"area\":\"workspace\"}",
+        )
+        .unwrap();
+        let store = only(RULE_MUTATION);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_MUTATION));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn mutation_threshold_allows_at_or_above() {
+        let ws = tmp_ws();
+        std::fs::write(
+            ws.join(".signalos").join("mutation-score.json"),
+            "{\"score\":0.96,\"area\":\"workspace\"}",
+        )
+        .unwrap();
+        let store = only(RULE_MUTATION);
+        let r = precheck_rules(&ws, &store, &args("python"));
+        assert!(r.is_none());
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn mutation_threshold_missing_file_blocks() {
+        let ws = tmp_ws();
+        let store = only(RULE_MUTATION);
+        let r = precheck_rules(&ws, &store, &args("python")).expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_MUTATION));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn mutation_threshold_ok_when_disabled() {
+        // Missing file would block if strict; with the rule off it must not.
+        let ws = tmp_ws();
+        let store = only(RULE_MUTATION);
+        set_mode(&store, RULE_MUTATION, Mode::Off);
+        let r = precheck_rules(&ws, &store, &args("python"));
+        assert!(r.is_none());
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn wave_freeze_filter_blocks_frozen_wave_without_other_rules() {
+        let ws = tmp_ws();
+        let store = EnforcementStore::default();
+        *store.wave_frozen.lock().unwrap() = true;
+        let r = precheck_rules(&ws, &store, &args_only("auto", &[RULE_WAVE_FREEZE]))
+            .expect("should block");
+        assert!(!r.allowed);
+        assert_eq!(r.blocking_rule.as_deref(), Some(RULE_WAVE_FREEZE));
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn wave_freeze_filter_does_not_run_gate_or_mutation_rules() {
+        let ws = tmp_ws();
+        let store = EnforcementStore::default();
+        let r = precheck_rules(&ws, &store, &args_only("auto", &[RULE_WAVE_FREEZE]));
+        assert!(
+            r.is_none(),
+            "wave-freeze-only precheck must not require gates or mutation evidence"
+        );
+        std::fs::remove_dir_all(&ws).ok();
     }
 }

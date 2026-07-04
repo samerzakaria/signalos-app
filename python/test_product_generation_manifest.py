@@ -460,6 +460,75 @@ class TestManifestIntegrity:
         assert "state_management" in dc
         assert "conventions" in dc
 
+    def test_packet_consumes_signed_generation_contracts(
+        self, tmp_repo, task_intent, task_blueprint
+    ):
+        arch_review = {
+            "schema_version": "signalos.arch_review.v1",
+            "system_boundaries": ["profile: react-vite", "entities: Task"],
+            "data_flow": ["form input -> state -> rendered list"],
+            "trust_boundaries": ["user input to generated application"],
+            "test_strategy": ["unit/build validation must run"],
+        }
+        design_decisions = {
+            "schema_version": "signalos.design_decisions.v1",
+            "selected_variant": "variant-focused",
+            "selection_reason": "Dense task workflow wins",
+            "taste_findings": [
+                {
+                    "id": "TF-001",
+                    "finding": "Use compact task rows",
+                    "disposition": "accepted",
+                }
+            ],
+        }
+        scope_decisions = {
+            "schema_version": "signalos.scope_decisions.v1",
+            "decisions": [
+                {
+                    "id": "SD-001",
+                    "proposal": "Build task CRUD",
+                    "disposition": "accepted",
+                    "acceptance_criteria": ["AC-001"],
+                },
+                {
+                    "id": "SD-002",
+                    "proposal": "Add Slack sync",
+                    "disposition": "deferred",
+                },
+            ],
+        }
+
+        packet = prepare_generation(
+            tmp_repo,
+            task_intent,
+            task_blueprint,
+            "react-vite",
+            arch_review=arch_review,
+            design_decisions=design_decisions,
+            scope_decisions=scope_decisions,
+        )
+
+        contracts = packet["generation_contracts"]
+        assert contracts["source_artifacts"] == {
+            "architecture": "ARCH_REVIEW.yaml",
+            "design": "DESIGN_DECISIONS.yaml",
+            "scope": "SCOPE_DECISIONS.yaml",
+        }
+        assert "architecture" in contracts
+        assert contracts["design_decisions"]["selected_variant"] == "variant-focused"
+        assert contracts["scope_decisions"]["decisions"][0]["proposal"] == "Build task CRUD"
+        assert packet["design_constraints"]["selected_variant"] == "variant-focused"
+        assert "Use compact task rows" in packet["design_constraints"]["accepted_taste_findings"]
+
+        joined_constraints = "\n".join(
+            "\n".join(spec.get("constraints", []))
+            for spec in packet["file_specs"]
+        )
+        assert "ARCH_REVIEW.yaml" in joined_constraints
+        assert "DESIGN_DECISIONS.yaml" in joined_constraints
+        assert "SCOPE_DECISIONS.yaml" in joined_constraints
+
     def test_packet_has_allowed_forbidden_paths(self, tmp_repo, task_intent, task_blueprint):
         packet = prepare_generation(
             tmp_repo, task_intent, task_blueprint, "react-vite",
@@ -867,6 +936,13 @@ class TestPascalCaseHelper:
     def test_multiple_words(self):
         assert _to_pascal_case("my cool widget") == "MyCoolWidget"
 
+    def test_illegal_path_characters_are_removed(self):
+        assert (
+            _to_pascal_case("Category;See Running Total")
+            == "CategorySeeRunningTotal"
+        )
+        assert _to_pascal_case("9:bad/path?name*") == "BadPathName"
+
 
 class TestPascalCaseFileNames:
     def test_entity_with_spaces_generates_pascal_paths(self, tmp_repo):
@@ -903,6 +979,26 @@ class TestPascalCaseFileNames:
         paths = [f["path"] for f in packet["file_specs"]]
         assert "src/components/PatientIntake.tsx" in paths
         assert "src/components/Patient intake.tsx" not in paths
+
+    def test_entity_with_illegal_path_chars_generates_safe_paths(self, tmp_repo):
+        intent = {
+            "product_name": "Expense Tracker",
+            "product_type": "custom",
+            "entities": ["Category;SeeRunningTotal"],
+            "primary_workflows": [],
+            "ux_surfaces": [],
+        }
+        packet = prepare_generation(
+            tmp_repo, intent, None, "react-vite",
+        )
+        paths = [f["path"] for f in packet["file_specs"]]
+        assert "src/components/CategorySeeRunningTotal.tsx" in paths
+        assert "src/components/Category;SeeRunningTotal.tsx" not in paths
+        for path in paths:
+            assert ";" not in path
+            assert ":" not in path
+            assert "?" not in path
+            assert "*" not in path
 
 
 # ---------------------------------------------------------------------------

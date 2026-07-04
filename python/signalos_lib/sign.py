@@ -233,6 +233,8 @@ def sign_gate(
     conditions: str = "",
     audit_log: Path | None = None,
     wave: str | None = None,
+    oidc_sub_hash: str = "",
+    oidc_issuer: str = "",
 ) -> list[str]:
     """
     Sign every present artifact in *gate*.  Returns rel-paths of signed files.
@@ -241,6 +243,10 @@ def sign_gate(
     Raises ValueError if role is not authorised for any artifact in gate.
     This enforces segregation of duties: PO cannot sign G5 (requires QA),
     PE cannot sign G1 (requires PO), etc.
+
+    #17 Edit 3.4: `oidc_sub_hash`/`oidc_issuer` are threaded through so the CLI
+    sign path (commands/sign.py) can route through this single role-enforcing
+    function while preserving W6.3 OIDC evidence in the signature block.
     """
     if role not in VALID_ROLES:
         raise ValueError(f"role must be one of {VALID_ROLES}, got {role!r}")
@@ -269,7 +275,16 @@ def sign_gate(
                 f"role {role!r} is not authorised to sign {artifact.rel_path!r} "
                 f"(required: {list(artifact.required_roles)})"
             )
-        sign_artifact(p, signer, role, gate, verdict, conditions)
+        sign_artifact(
+            p,
+            signer,
+            role,
+            gate,
+            verdict,
+            conditions,
+            oidc_sub_hash=oidc_sub_hash,
+            oidc_issuer=oidc_issuer,
+        )
         if audit_log is not None:
             _append_audit(audit_log, signer, role, gate, artifact.rel_path, p, verdict, wave=wave)
         signed.append(artifact.rel_path)

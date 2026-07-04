@@ -6,8 +6,10 @@ __all__ = [
     "BENCHMARK_INDEX_RELATIVE",
     "DeployRecord",
     "BenchmarkRecord",
+    "DeployHookError",
     "setup_deploy",
     "land_deploy",
+    "run_pre_deploy_hook",
     "canary_deploy_check",
     "record_benchmark",
     "deploy_list",
@@ -19,6 +21,9 @@ __all__ = [
 ]
 
 import json
+import os
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +34,7 @@ from pathlib import Path
 
 DEPLOY_INDEX_RELATIVE = ".signalos/deploy/index.jsonl"
 BENCHMARK_INDEX_RELATIVE = ".signalos/deploy/benchmarks.jsonl"
+PRE_DEPLOY_HOOK_RELATIVE = "core/execution/hooks/pre-deploy"
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +68,10 @@ class BenchmarkRecord:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+class DeployHookError(RuntimeError):
+    """Raised when a deployment lifecycle hook blocks a deploy transition."""
 
 
 # ---------------------------------------------------------------------------
@@ -144,10 +154,20 @@ def setup_deploy(
 # land_deploy
 # ---------------------------------------------------------------------------
 
-def land_deploy(repo_root: Path, deploy_id: str) -> "DeployRecord | None":
+def land_deploy(
+    repo_root: Path,
+    deploy_id: str,
+    *,
+    enforce_pre_deploy: bool = False,
+    deploy_signer: str | None = None,
+) -> "DeployRecord | None":
     """Read deploy index, find record by id, rewrite file with status='landed'.
 
     Returns the updated DeployRecord, or None if not found.
+
+    When *enforce_pre_deploy* is true, the installed pre-deploy hook must pass
+    before the deploy index is mutated. A hook failure raises DeployHookError
+    and leaves the record at its prior status.
     """
     index_path = repo_root / DEPLOY_INDEX_RELATIVE
     try:
@@ -186,8 +206,60 @@ def land_deploy(repo_root: Path, deploy_id: str) -> "DeployRecord | None":
     if updated_record is None:
         return None
 
+    if enforce_pre_deploy:
+        run_pre_deploy_hook(repo_root, deploy_signer=deploy_signer)
+
     index_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     return updated_record
+
+
+def run_pre_deploy_hook(
+    repo_root: Path,
+    *,
+    deploy_signer: str | None = None,
+    timeout_s: int = 60,
+) -> None:
+    """Run the installed pre-deploy hook for the deploy lifecycle.
+
+    The hook is part of the initialized SignalOS workspace under
+    ``core/execution/hooks/pre-deploy``. It enforces deployment SoD using the
+    DevOps signer and the merge signer recorded by pre-merge. Missing, failing,
+    or non-runnable hooks block the live deploy transition instead of being
+    skipped.
+    """
+    repo_root = Path(repo_root)
+    hook = repo_root / PRE_DEPLOY_HOOK_RELATIVE
+    if not hook.is_file():
+        raise DeployHookError(f"pre-deploy hook is not installed at {PRE_DEPLOY_HOOK_RELATIVE}")
+
+    signer = (
+        (deploy_signer or "").strip()
+        or os.environ.get("DEVOPS_DEPLOY_SIGNER", "").strip()
+        or os.environ.get("SIGNALOS_DEVOPS_DEPLOY_SIGNER", "").strip()
+    )
+    env = os.environ.copy()
+    if signer:
+        env["DEVOPS_DEPLOY_SIGNER"] = signer
+
+    bash = shutil.which("bash")
+    if not bash:
+        raise DeployHookError("pre-deploy hook requires bash, but bash was not found")
+
+    proc = subprocess.run(
+        [bash, str(hook)],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if proc.returncode != 0:
+        output = "\n".join(
+            part.strip() for part in (proc.stdout, proc.stderr) if part and part.strip()
+        )
+        detail = output or f"pre-deploy exited with {proc.returncode}"
+        raise DeployHookError(detail)
 
 
 # ---------------------------------------------------------------------------

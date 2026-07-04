@@ -51,11 +51,14 @@ __all__ = [
     "run_step",
     "DEFAULT_MODEL",
     "LLMProvider",
+    "DEFAULT_MAX_TOKENS",
+    "TruncatedResponseError",
     # AMD-CORE-007.1 — multi-provider single source of truth + discovery
     "ProviderSpec",
     "PROVIDERS",
     "PROVIDER_NAMES",
     "PROVIDER_ENV_VARS",
+    "provider_sdk_importable",
     "OpenAICompatibleProvider",
     "discover_model",
     "list_models",
@@ -211,9 +214,74 @@ PROVIDER_ENV_VARS: list[str] = [
 ]
 
 
+# The Python package each provider *kind* dispatches through. A provider is
+# only truly usable when this SDK is importable -- an API key alone is not
+# enough (the #23 fake-green defect: key present, SDK absent, dispatch fails
+# for every file, yet delivery reported build passed). ``None`` means the kind
+# needs no third-party SDK (the deterministic TestProvider).
+_PROVIDER_KIND_SDK: dict[str, str | None] = {
+    "anthropic": "anthropic",
+    "openai-compatible": "openai",
+    "ollama": "openai",  # Ollama speaks the OpenAI wire format via the openai SDK
+    "gemini": "google.generativeai",
+    "test": None,
+}
+
+
+def provider_sdk_importable(provider_name: str | None = None) -> bool:
+    """Whether the provider that WOULD be used has an importable SDK.
+
+    Resolves the provider name the same way ``_resolve_provider`` would
+    (explicit arg → SIGNALOS_LLM_PROVIDER → auto-detect from the first present
+    key → anthropic), maps it to its SDK package, and reports whether that
+    package can actually be imported. Providers that need no SDK (``test``)
+    are always importable. Unknown names are treated as not importable.
+
+    This is the truth behind "is an LLM available?": a key with no SDK is not.
+    """
+    if os.environ.get("SIGNALOS_HARNESS_TEST") == "1":
+        # Harness-test mode always routes to the SDK-free TestProvider.
+        return True
+    try:
+        spec = _spec_for(_resolve_provider_name(provider_name))
+    except Exception:
+        return False
+    sdk = _PROVIDER_KIND_SDK.get(spec.kind, spec.kind)
+    if sdk is None:
+        return True
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(sdk) is not None
+    except (ImportError, ValueError, ModuleNotFoundError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # LLM Provider Protocol (AMD-CORE-007)
 # ---------------------------------------------------------------------------
+
+# Default per-call output budget. Kept at the historical 1024 so any legacy
+# caller that omits max_tokens sees ZERO behavior change; callers that need a
+# real file's worth of output (the chunked build dispatch) pass a larger cap.
+DEFAULT_MAX_TOKENS = 1024
+
+# Above this cap the Anthropic non-streaming SDK rejects the request (its
+# safety estimate for the max generation time exceeds the 10-minute
+# non-streaming ceiling). Stream instead so large single-file generations
+# (a full CRUD component can need tens of thousands of tokens) succeed.
+_ANTHROPIC_STREAM_THRESHOLD = 16000
+
+
+class TruncatedResponseError(RuntimeError):
+    """The provider stopped because it hit the output token cap, not because
+    the model was done (Anthropic stop_reason == "max_tokens", OpenAI
+    finish_reason == "length", Gemini MAX_TOKENS). The response is a partial
+    file and must not be treated as complete. Raised (rather than silently
+    returned) so the worker pool can RETRY with a larger budget instead of
+    writing a half-truncated file -- closes the "silently discarded stop
+    reason" hole."""
+
 
 @runtime_checkable
 class LLMProvider(Protocol):
@@ -222,12 +290,18 @@ class LLMProvider(Protocol):
     All concrete providers must implement `call()` and return a 3-tuple
     of (response_text, tokens_in, tokens_out). Token counts may be None
     if the provider does not report them.
+
+    `max_tokens` is a keyword-only per-call output budget (default
+    DEFAULT_MAX_TOKENS). Providers raise TruncatedResponseError when the
+    model stopped because it hit that cap.
     """
 
     def call(
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         """Invoke the LLM and return (response_text, tokens_in, tokens_out)."""
         ...
@@ -244,6 +318,8 @@ class AnthropicProvider:
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         try:
             import anthropic  # type: ignore[import-not-found]
@@ -255,11 +331,23 @@ class AnthropicProvider:
             ) from exc
 
         client = anthropic.Anthropic()  # picks up ANTHROPIC_API_KEY from env
-        resp = client.messages.create(
-            model=model,
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        messages = [{"role": "user", "content": prompt}]
+        # Large caps must stream: the non-streaming SDK refuses a request whose
+        # estimated generation time exceeds ~10 minutes. Streaming has no such
+        # ceiling; get_final_message() reassembles the full message + usage.
+        if max_tokens > _ANTHROPIC_STREAM_THRESHOLD:
+            with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                messages=messages,
+            ) as stream:
+                resp = stream.get_final_message()
+        else:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
         # Response shape: resp.content is a list of blocks; collect text blocks.
         text_parts = []
         for block in getattr(resp, "content", []) or []:
@@ -271,6 +359,11 @@ class AnthropicProvider:
         usage = getattr(resp, "usage", None)
         tokens_in = getattr(usage, "input_tokens", None) if usage else None
         tokens_out = getattr(usage, "output_tokens", None) if usage else None
+        if getattr(resp, "stop_reason", None) == "max_tokens":
+            raise TruncatedResponseError(
+                f"anthropic response truncated at max_tokens={max_tokens} "
+                f"(stop_reason=max_tokens); retry with a larger budget."
+            )
         return "\n".join(text_parts), tokens_in, tokens_out
 
 
@@ -329,19 +422,28 @@ class OpenAICompatibleProvider:
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         client = self._client()
         resp = client.chat.completions.create(
             model=model,
-            max_tokens=1024,
+            max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
         text = ""
+        finish_reason = None
         if resp.choices:
             text = resp.choices[0].message.content or ""
+            finish_reason = getattr(resp.choices[0], "finish_reason", None)
         usage = getattr(resp, "usage", None)
         tokens_in = getattr(usage, "prompt_tokens", None) if usage else None
         tokens_out = getattr(usage, "completion_tokens", None) if usage else None
+        if finish_reason == "length":
+            raise TruncatedResponseError(
+                f"openai-compatible response truncated at max_tokens={max_tokens} "
+                f"(finish_reason=length); retry with a larger budget."
+            )
         return text, tokens_in, tokens_out
 
 
@@ -363,6 +465,8 @@ class GeminiProvider:
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         try:
             import google.generativeai  # noqa: F401  # type: ignore[import-not-found]
@@ -378,7 +482,10 @@ class GeminiProvider:
         if api_key:
             genai.configure(api_key=api_key)
         _model = genai.GenerativeModel(model)
-        resp = _model.generate_content(prompt)
+        resp = _model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": max_tokens},
+        )
         text = ""
         if hasattr(resp, "text"):
             text = resp.text or ""
@@ -390,6 +497,16 @@ class GeminiProvider:
         if usage_meta:
             tokens_in = getattr(usage_meta, "prompt_token_count", None)
             tokens_out = getattr(usage_meta, "candidates_token_count", None)
+        # Detect a MAX_TOKENS finish on the first candidate (Gemini reports the
+        # stop reason on the candidate, not the top-level response). The enum
+        # stringifies to "...MAX_TOKENS" / "2", so match defensively.
+        for cand in getattr(resp, "candidates", None) or []:
+            fr = getattr(cand, "finish_reason", None)
+            if fr is not None and "MAX_TOKENS" in str(fr).upper():
+                raise TruncatedResponseError(
+                    f"gemini response truncated at max_output_tokens={max_tokens} "
+                    f"(finish_reason=MAX_TOKENS); retry with a larger budget."
+                )
         return text, tokens_in, tokens_out
 
 
@@ -406,6 +523,8 @@ class OllamaProvider:
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         import urllib.request
 
@@ -413,6 +532,7 @@ class OllamaProvider:
             "model": model,
             "prompt": prompt,
             "stream": False,
+            "options": {"num_predict": max_tokens},
         }).encode("utf-8")
 
         req = urllib.request.Request(
@@ -434,6 +554,12 @@ class OllamaProvider:
         text = data.get("response", "")
         tokens_in: int | None = data.get("prompt_eval_count")
         tokens_out: int | None = data.get("eval_count")
+        # Ollama reports a "length" done_reason when it stopped at num_predict.
+        if data.get("done_reason") == "length":
+            raise TruncatedResponseError(
+                f"ollama response truncated at num_predict={max_tokens} "
+                f"(done_reason=length); retry with a larger budget."
+            )
         return text, tokens_in, tokens_out
 
 
@@ -450,6 +576,8 @@ class TestProvider:
         self,
         prompt: str,
         model: str,
+        *,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> tuple[str, int | None, int | None]:
         return (
             _HARNESS_TEST_CANNED,
@@ -710,6 +838,14 @@ _NON_FLAGSHIP_SUBSTRINGS = (
     "mini", "nano", "lite", "flash", "small", "instant", "tiny", "haiku",
     "embed", "embedding", "whisper", "tts", "dall", "image", "rerank",
     "guard", "moderation",
+    # Non-CHAT modalities: these are among the newest ids by date at some
+    # providers (e.g. OpenAI's gpt-realtime-*, gpt-audio-*, gpt-4o-transcribe)
+    # and would otherwise win discovery, then hard-404 on /chat/completions
+    # ("not a chat model"). Plain chat flagships never carry these tokens. (#28)
+    # NOTE: endpoint-compatibility beyond modality (e.g. responses-API-only
+    # models like gpt-5-pro) is NOT solved here — pin SIGNALOS_LLM_MODEL for
+    # OpenAI codegen if discovery lands on a responses-only flagship.
+    "realtime", "audio", "transcribe", "speech",
 )
 
 # Cache: (provider_name, base_url) → discovered model id (or None).
@@ -942,6 +1078,7 @@ def _fire_hook(
     *,
     actor: str = HARNESS_TOOL_NAME,
     extra_args: list[str] | None = None,
+    step_spec: dict[str, Any] | None = None,
 ) -> int:
     """Invoke core/execution/hooks/<event>/<event>.sh as a subprocess.
 
@@ -949,6 +1086,15 @@ def _fire_hook(
     soft warning (returns 0 per the dispatcher's fail-open contract in
     W1.1) — this matches how `session-hook-dispatch.sh` treats the
     step-* events.
+
+    Step-pause wiring (#19): step-started.sh sources step-pause-check.sh only
+    when SIGNALOS_PLAN_STEP_JSON is exported (step-started.sh:129), and the
+    pause library hard-requires that env var (step-pause-check.sh:47). The
+    harness therefore threads the step-spec down and exports it here for the
+    step-started event so the opt-in pause gate can actually engage. Without a
+    step-spec the var is intentionally NOT set: absence means "no pause"
+    (CONSTITUTION §4 default), whereas an empty value would make the pause
+    library error out.
     """
     hook_script = _hooks_dir(root) / event / f"{event}.sh"
     if not hook_script.is_file():
@@ -967,9 +1113,17 @@ def _fire_hook(
         argv.extend(["--actor", actor])
     if extra_args:
         argv.extend(extra_args)
+
+    hook_env: dict[str, str] | None = None
+    if event == "step-started" and step_spec is not None:
+        hook_env = dict(os.environ)
+        hook_env["SIGNALOS_PLAN_STEP_JSON"] = json.dumps(
+            step_spec, separators=(",", ":")
+        )
+
     from signalos_lib.sandbox import maybe_wrap_for_sandbox
     argv, _ = maybe_wrap_for_sandbox(root, argv)
-    proc = subprocess.run(argv, check=False, cwd=str(root))
+    proc = subprocess.run(argv, check=False, cwd=str(root), env=hook_env)
     return proc.returncode
 
 
@@ -1127,8 +1281,14 @@ def run_step(
     intent: str | None = None,
     provider: LLMProvider | None = None,
     provider_name: str | None = None,
+    step_spec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one PLAN step headlessly and emit the four W1.1 events.
+
+    *step_spec* is the PLAN's declaration for this step (fields like
+    ``pause``/``tier``). When provided it is exported to step-started.sh as
+    SIGNALOS_PLAN_STEP_JSON so the opt-in step-pause gate (step-pause-check.sh)
+    can engage (#19). When omitted, no pause is requested (the default).
 
     Model resolution (when *model* is None): SIGNALOS_LLM_MODEL env →
     discovery from the resolved provider's API. There is no hardcoded
@@ -1183,6 +1343,7 @@ def run_step(
         root, "step-started",
         session_id=sid, step_id=step_id,
         extra_args=step_started_extra,
+        step_spec=step_spec,
     )
 
     t0 = time.perf_counter()

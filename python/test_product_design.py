@@ -207,6 +207,14 @@ class TestGetDesignDependencies:
         assert "@mantine/hooks" in deps
         assert "@mantine/form" in deps
         assert "@mantine/dates" in deps
+        assert "@mantine/charts" in deps
+        mantine_versions = {
+            name: version
+            for name, version in deps.items()
+            if name.startswith("@mantine/")
+        }
+        assert len(set(mantine_versions.values())) == 1
+        assert not next(iter(mantine_versions.values())).startswith("^")
         assert "@tabler/icons-react" in deps
         assert "dayjs" in deps
         # Also zustand

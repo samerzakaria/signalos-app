@@ -19,13 +19,16 @@ from __future__ import annotations
 
 __all__ = [
     "RUNTIME_RULES",
+    "CORE_INVARIANTS_PY",
     "DEFAULT_TRUST_TIER_PATHS",
     "EnforcementState",
     "EnforcementProvider",
     "StaticEnforcementProvider",
+    "FileEnforcementProvider",
     "load_trust_tier_paths",
     "seed_trust_tier_paths",
     "TRUST_TIER_PATHS_REL",
+    "ENFORCEMENT_REL",
 ]
 
 import json
@@ -50,9 +53,31 @@ RUNTIME_RULES: tuple[str, ...] = (
     "mutation-threshold",
 )
 
+# Core invariants that may NEVER be disabled — mirrors enforcement.rs
+# CORE_INVARIANTS *exactly* (see test_core_invariants_py_matches_rust, which
+# fails if these two floors ever drift). Rust validates every mode before it
+# hits disk; Python treats disk as untrusted and RE-APPLIES this floor on read
+# so a hand-edited enforcement.json can never seed a core rule to "off".
+CORE_INVARIANTS_PY: frozenset[str] = frozenset(
+    {
+        "gate-gating",
+        "plan-gating",
+        "trust-tier",
+        "audit-append",
+        "secret-block",
+        "role-sign",
+        "test-first",
+        "gate-compliance",
+    }
+)
+
 # Relative location of the per-tier path allowlist config, seeded by
 # `signalos init` (see the plan's "Trust-tier path allowlists" decision).
 TRUST_TIER_PATHS_REL = ".signalos/trust-tier-paths.json"
+
+# Relative location of the persisted enforcement snapshot written by the Rust
+# EnforcementStore (rule modes + wave_frozen). FileEnforcementProvider reads it.
+ENFORCEMENT_REL = ".signalos/enforcement.json"
 
 # Default per-tier allowlists. Typed (explicit strings) for forbidden_always,
 # globs allowed for the per-tier write source dirs. Matches the plan verbatim.
@@ -181,6 +206,67 @@ class StaticEnforcementProvider:
             forbidden_actions=list(forbidden.get("execute", [])),
             wave_frozen=self._wave_frozen,
             signed_gates=list(self._signed_gates),
+            trust_tier_paths=tier_paths,
+        )
+
+
+class FileEnforcementProvider:
+    """Production EnforcementProvider — reads the Rust-persisted snapshot.
+
+    The Rust EnforcementStore writes `.signalos/enforcement.json` on every
+    mutation (rule modes + wave_frozen). This provider reads it back so the
+    sidecar's agent loop enforces the same modes the user toggled in the app.
+
+    Defense in depth (matches the plan's INVs):
+      * Every mode was already validated by Rust before it hit disk, but Python
+        treats disk as untrusted and RE-APPLIES the core-invariant floor: any
+        core rule set to "off" on disk reads back as "strict".
+      * A missing file defaults every runtime rule to strict (== the static
+        provider's default), so absence never weakens.
+      * A corrupt/unreadable file raises RuntimeError (INV-4: no silent
+        fallback) — this fails safe, because a raise blocks the run rather than
+        proceeding with an unknown policy.
+    """
+
+    def get_enforcement_state(self, repo_root: Path) -> EnforcementState:
+        repo_root = Path(repo_root)
+        tier_paths = load_trust_tier_paths(repo_root)
+        forbidden = tier_paths.get("forbidden_always", {})
+
+        modes: dict[str, str] = {r: "strict" for r in RUNTIME_RULES}
+        wave_frozen = False
+
+        path = repo_root / ENFORCEMENT_REL
+        if path.is_file():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"enforcement.json is unreadable at {path}: {exc}. "
+                    "Fix or delete it; the run is blocked until the policy is legible."
+                ) from exc
+            if not isinstance(raw, dict):
+                raise RuntimeError(
+                    f"enforcement.json at {path} must be a JSON object."
+                )
+            file_modes = raw.get("rule_modes", {})
+            if isinstance(file_modes, dict):
+                for rule, mode in file_modes.items():
+                    if rule in RUNTIME_RULES and mode in ("strict", "warn", "off"):
+                        modes[rule] = mode
+            wave_frozen = bool(raw.get("wave_frozen", False))
+
+        # Re-apply the floor: a core invariant can be "warn" but never "off".
+        for rule in CORE_INVARIANTS_PY:
+            if modes.get(rule) == "off":
+                modes[rule] = "strict"
+
+        return EnforcementState(
+            trust_tier="T2",
+            rule_modes=modes,
+            forbidden_paths=list(forbidden.get("write", [])),
+            forbidden_actions=list(forbidden.get("execute", [])),
+            wave_frozen=wave_frozen,
             trust_tier_paths=tier_paths,
         )
 

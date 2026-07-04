@@ -37,11 +37,19 @@ fn main() {
             app.manage(provider::ProviderState::new(config_dir.clone()));
             let workspace_settings = ipc::WorkspaceSettingsState::new(config_dir.clone());
             let restored_workspace = workspace_settings.restored_active_workspace();
+            // Wave 3 / G2-21: enforcement state for runtime rule checks.
+            // Phase 1 / #15: load persisted rule modes so toggles survive restart.
+            // load_from re-applies the core-invariant floor on read (a hand-edited
+            // enforcement.json can never seed a core rule to "off"); see the
+            // enforcement.rs load_rejects_core_invariant_off unit test.
+            let enforcement_store = match restored_workspace.as_ref() {
+                Some(ws) => enforcement::EnforcementStore::load_from(ws),
+                None => enforcement::EnforcementStore::new(),
+            };
             app.manage(ipc::WorkspaceState::new(restored_workspace));
             app.manage(workspace_settings);
             app.manage(governance::GovernanceState::new());
-            // Wave 3 / G2-21: enforcement state for runtime rule checks.
-            app.manage(enforcement::EnforcementStore::new());
+            app.manage(enforcement_store);
 
             // â”€â”€ Spawn the Python SignalOS Core sidecar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             let app_handle = app.handle().clone();

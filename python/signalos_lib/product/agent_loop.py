@@ -38,10 +38,12 @@ __all__ = [
 
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -72,11 +74,51 @@ _SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}"),           # Anthropic-style
     re.compile(r"AIza[A-Za-z0-9_\-]{30,}"),              # Google API key
     re.compile(r"ghp_[A-Za-z0-9]{30,}"),                 # GitHub PAT
+    re.compile(
+        r"(?i)\b[a-z0-9_]*(?:api[_-]?key|secret(?:[_-]?key)?|token|"
+        r"password|credential|passphrase)\b\s*[=:]\s*['\"]?[^'\"\s;]+"
+    ),
     re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[=:]\s*\S+"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ]
 
+# Value-aware pattern for BLOCKING write content (distinct from the aggressive
+# _SECRET_PATTERNS above, which are fine for redacting logs but false-positive
+# when used to deny a write). This matches a secret-named variable assigned a
+# QUOTED string LITERAL only -- so a real hardcoded key (`API_KEY = "sk_live_..."`)
+# is caught while ordinary generated code that merely mentions the name is not:
+#   const token = response.headers.get('x-request-id')   -> value is a call, not a quoted literal
+#   let sessionToken: string | null = null               -> value is null
+#   const authToken = await getToken()                   -> value is a call
+#   password: userEnteredPassword                         -> value is an identifier
+# The canonical redactor (redact.py _redact_string) already catches concrete
+# token SHAPES (sk-ant-, ghp_, sk_live_, PEM, JWT); this adds the generic
+# "<secret-name> = "<literal>"" case with a value/entropy heuristic.
+# Letter-lookarounds (not \b): so the secret keyword also matches inside an
+# underscore-separated identifier like STRIPE_SECRET_KEY / MY_API_KEY (where \b
+# would fail because '_' is a word char), while still not matching a camelCase
+# substring like the 'token' in sessionToken.
+_WRITE_SECRET_VALUE_RE = re.compile(
+    r"(?i)(?<![A-Za-z])(?:api[_-]?key|secret(?:[_-]?key)?|token|passwd|password|"
+    r"credential|passphrase|access[_-]?key|private[_-]?key)(?![A-Za-z])\s*[=:]\s*"
+    r"(['\"])([^'\"\s]{16,})\1"
+)
+_SECRET_PLACEHOLDER_PREFIXES = ("YOUR", "CHANGE", "EXAMPLE", "PLACEHOLDER", "XXX", "TODO", "DUMMY", "TEST", "FAKE", "SAMPLE")
+
+
+def _looks_like_secret_literal(val: str) -> bool:
+    """Value/entropy heuristic: a quoted literal is a plausible hardcoded secret
+    if it mixes letters and digits, isn't a template/env reference, and isn't an
+    obvious placeholder. Keeps the write-block from firing on prose or scaffold
+    placeholders while still catching real keys."""
+    if "${" in val or "process.env" in val or "import.meta" in val:
+        return False
+    if val.upper().startswith(_SECRET_PLACEHOLDER_PREFIXES):
+        return False
+    return any(c.isdigit() for c in val) and any(c.isalpha() for c in val)
+
 _REDACTION = "[REDACTED]"
+_REDACTOR_MODULE: Any | None = None
 
 
 class ToolPolicyError(Exception):
@@ -315,6 +357,70 @@ def redact_secrets(text: str) -> str:
     for pat in _SECRET_PATTERNS:
         out = pat.sub(_REDACTION, out)
     return out
+
+
+def _resolve_redactor_path() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        frozen = (
+            Path(sys._MEIPASS)
+            / "signalos_lib"
+            / "_bundle"
+            / "core"
+            / "execution"
+            / "hooks"
+            / "_lib"
+            / "redact.py"
+        )
+        if frozen.is_file():
+            return frozen
+    return (
+        Path(__file__).resolve().parent.parent
+        / "_bundle"
+        / "core"
+        / "execution"
+        / "hooks"
+        / "_lib"
+        / "redact.py"
+    )
+
+
+def _load_redactor_module() -> Any:
+    global _REDACTOR_MODULE
+    if _REDACTOR_MODULE is not None:
+        return _REDACTOR_MODULE
+
+    path = _resolve_redactor_path()
+    spec = importlib.util.spec_from_file_location(
+        "signalos_runtime_redactor",
+        path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load redactor module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _REDACTOR_MODULE = module
+    return module
+
+
+def _scan_write_secrets(rel_path: str, content: str) -> list[str]:
+    """Mirror redact.py --scan-diff for to-be-written content."""
+    redactor = _load_redactor_module()
+    findings: list[str] = []
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        _redacted, rules = redactor._redact_string(line)
+        if rules:
+            findings.append(
+                f"{rel_path}:{lineno}: redaction rule(s) {rules} "
+                "matched generated write content"
+            )
+            continue
+        m = _WRITE_SECRET_VALUE_RE.search(line)
+        if m and _looks_like_secret_literal(m.group(2)):
+            findings.append(
+                f"{rel_path}:{lineno}: hardcoded secret literal assigned to a "
+                "secret-named variable in generated write content"
+            )
+    return findings
 
 
 def _sha256(text: str) -> str:
@@ -722,13 +828,34 @@ class AgentLoop:
 
         try:
             result_text = self._execute_tool(tc.name, args)
+        except ToolPolicyError as exc:
+            self._audit(tc, "denied", exc.reason, t0, content_sha, rule=exc.rule)
+            self._emit(
+                {"type": "tool_denied", "tool": tc.name, "reason": exc.reason}
+            )
+            return f"DENIED: {exc.reason}"
         except Exception as exc:  # INV-4: never except: pass
             reason = f"{type(exc).__name__}: {exc}"
             self._audit(tc, "error", reason, t0, content_sha)
             self._emit({"type": "tool_error", "tool": tc.name, "error": reason})
             return f"ERROR: {reason}"
 
-        self._audit(tc, "completed", "ok", t0, content_sha)
+        # audit-append (#16 Edit 2.6): the completed-audit append is a hard
+        # post-condition, not best-effort. If it fails while the rule is enabled
+        # (audit-append is a core invariant, so always enabled unless overridden),
+        # the write must NOT be surfaced as success — otherwise an un-audited
+        # write would look "done". Convert it to a hard ERROR.
+        try:
+            self._audit(tc, "completed", "ok", t0, content_sha)
+        except Exception as exc:  # INV-4: never swallow
+            enf = self._enforcement
+            if enf is not None and enf.rule_enabled("audit-append"):
+                reason = f"audit-append failed: {type(exc).__name__}: {exc}"
+                self._emit(
+                    {"type": "tool_error", "tool": tc.name, "error": reason}
+                )
+                return f"ERROR: {reason} (rule audit-append)"
+            raise
         self._emit({"type": "tool_done", "tool": tc.name})
         return result_text
 
@@ -760,7 +887,25 @@ class AgentLoop:
                     "complete the delivery gates before build work.",
                     rule="gate-gating",
                 )
+            # plan-gating (#16 Edit 2.1): inside a governed delivery, an
+            # implementation write requires the plan gate (G2 Expectation Map)
+            # to be signed — the plan-signed signal. Evaluated before the broader
+            # gate-gating required-gate set so that a missing G2 is cited under
+            # the specific plan-gating rule; gate-gating still enforces the rest
+            # of the required set (G0/G1/G3) below and is NOT weakened. Only fires
+            # when a delivery gate is active (matching gate-gating's scoping) so
+            # the trust-tier-only write path is unaffected. plan-gating is a core
+            # invariant (can be warn, never off) → rule_enabled True unless a
+            # governed override is in effect.
             required_gates = _required_prior_gate_numbers(self.active_gate)
+            if enf.rule_enabled("plan-gating") and is_impl_write and self.active_gate:
+                signed = set(enf.signed_gates) | self._context_signed_gates
+                if 2 not in signed:
+                    raise ToolPolicyError(
+                        f"Implementation write '{path}' is blocked until the plan "
+                        "gate (G2 Expectation Map) is signed.",
+                        rule="plan-gating",
+                    )
             if required_gates and is_impl_write:
                 signed = set(enf.signed_gates) | self._context_signed_gates
                 missing = sorted(required_gates - signed)
@@ -1067,8 +1212,33 @@ class AgentLoop:
         return "\n".join(entries)
 
     def _scan_write_content(self, rel_path: str, content: str) -> list[str]:
-        """Run the security gate's injection scan on write content (2.9)."""
+        """Run secret and injection scans on write content (2.9)."""
         warnings: list[str] = []
+        secret_block_enabled = (
+            self._enforcement is None
+            or self._enforcement.rule_enabled("secret-block")
+        )
+        try:
+            secret_findings = _scan_write_secrets(rel_path, content)
+        except Exception as exc:
+            if secret_block_enabled:
+                raise ToolPolicyError(
+                    f"Write denied: secret scan unavailable for '{rel_path}' "
+                    f"({type(exc).__name__}: {exc}).",
+                    rule="secret-block",
+                ) from exc
+            warnings.append(f"secret scan error: {exc}")
+        else:
+            if secret_findings and secret_block_enabled:
+                preview = "; ".join(secret_findings[:3])
+                more = "" if len(secret_findings) <= 3 else " ..."
+                raise ToolPolicyError(
+                    f"Write denied: secret-like content detected in '{rel_path}' "
+                    f"({preview}{more}). Rule: secret-block.",
+                    rule="secret-block",
+                )
+            warnings.extend(secret_findings)
+
         try:
             from .security_gate import _JS_INJECTION_PATTERNS, _JS_EXTENSIONS
             from ..security import scan_injection_risks

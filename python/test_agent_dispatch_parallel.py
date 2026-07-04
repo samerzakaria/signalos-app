@@ -1,10 +1,13 @@
 # python/test_agent_dispatch_parallel.py
-# 1.1: dispatch_local_build_agent_parallel proves the executor's worktree
-# path with a real, small, provably-safe caller -- react-vite components
-# are only ever imported from App.tsx (never from each other), so grouping
-# file_specs by component is a genuine dependency-safe partition, not an
-# inferred one. Verifies the parallel path produces the SAME files a single
-# synchronous call would, through the real git-worktree/merge-queue path.
+# dispatch_local_build_agent_parallel proves the executor's parallel path with
+# a real, small, provably-safe caller -- react-vite components are only ever
+# imported from App.tsx (never from each other), so grouping file_specs by
+# component is a genuine dependency-safe partition, not an inferred one.
+# Verifies the parallel path produces the SAME files a single synchronous call
+# would. Per the EXECUTOR PERF fix the DEFAULT partition path is git-free (no
+# worktrees, no merges -- that machinery timed out on Windows); the opt-in
+# worktree/merge-queue path is exercised separately in test_executor.py and
+# test_parallel_no_worktrees.py (isolate=True).
 
 from __future__ import annotations
 
@@ -134,30 +137,29 @@ class TestParallelLocalBuildRealPartition(unittest.TestCase):
                 par_content = (par_repo / spec_path).read_text(encoding="utf-8")
                 self.assertEqual(sync_content, par_content, spec_path)
 
-            # Worktrees were cleaned up; no half-finished merge left behind.
-            # (.signalos/ shows as untracked in git status -- each task's
-            # commit deliberately excludes it (it's SignalOS's own internal
-            # bookkeeping, not product source; see run_isolated_build_tasks),
-            # and the aggregate RESULT.json write after merging is a plain
-            # filesystem write, same as the synchronous path, never
-            # git-committed by design.)
+            # EXECUTOR PERF fix: the default parallel path is git-free -- it
+            # NEVER creates a worktree (the worktree machinery timed out a
+            # 7-component app on Windows). The generated files are written
+            # straight to disk (proven byte-identical above); git is not
+            # touched at all -- no worktree dir is even created.
             worktrees_dir = par_repo / ".signalos" / "product" / "worktrees"
             leftover = list(worktrees_dir.glob("*")) if worktrees_dir.exists() else []
             self.assertEqual(leftover, [])
+            # No executor commit/merge happened -- the git log still shows only
+            # the initial commit (the fast path does not commit or merge).
+            git_log = subprocess.run(
+                ["git", "log", "--oneline"], cwd=str(par_repo), capture_output=True, text=True,
+            ).stdout
+            self.assertNotIn("executor merge:", git_log)
+            self.assertNotIn("executor:", git_log)
             # Exactly one agent-runs/ entry for the whole delivery -- not
-            # one per parallel sub-task (that was a real bug: sub-task
-            # RESULT.json writes were leaking into the merged product tree).
+            # one per parallel sub-task. The git-free path suppresses each
+            # sub-task's RESULT.json (write_result=False) and writes a single
+            # aggregate RESULT.json instead.
             agent_runs_dir = par_repo / ".signalos" / "product" / "agent-runs"
             run_dirs = [p for p in agent_runs_dir.iterdir() if p.is_dir()] if agent_runs_dir.exists() else []
             self.assertEqual(len(run_dirs), 1, run_dirs)
-            status = subprocess.run(
-                ["git", "status", "--porcelain"], cwd=str(par_repo), capture_output=True, text=True,
-            ).stdout
-            non_signalos_lines = [
-                line for line in status.strip().splitlines()
-                if ".signalos" not in line
-            ]
-            self.assertEqual(non_signalos_lines, [])
+            # No half-finished merge left behind.
             merge_status = subprocess.run(
                 ["git", "status"], cwd=str(par_repo), capture_output=True, text=True,
             ).stdout

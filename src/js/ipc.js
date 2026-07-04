@@ -314,7 +314,7 @@ export const testAutomation = {
 
 export const enforcement = {
   state:    ()                      => invoke("get_enforcement_state"),
-  precheck: (stack)                 => invoke("build_precheck", { args: { stack } }),
+  precheck: (stack, options = {})   => invoke("build_precheck", { args: { stack, ...(options || {}) } }),
   override: (rule, reason, context) => invoke("override_rule", { args: { rule, reason, context: context || null } }),
   setMode:  (rule, mode)            => invoke("set_rule_mode", { rule, mode }),
   freeze:   ()                      => invoke("freeze_wave"),

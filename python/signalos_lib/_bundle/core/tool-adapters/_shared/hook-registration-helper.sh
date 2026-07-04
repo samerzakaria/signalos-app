@@ -10,6 +10,15 @@
 #   - step-failed            -> core/execution/hooks/step-failed
 #   - pre-session-compress   -> core/execution/hooks/pre-session-compress
 #
+# NOTE (#19 wiring audit): the three step-* events are fired live by the
+# headless harness (harness.py:_fire_hook). pre-session-compress is NOT a
+# runtime-fired event — no IDE exposes a "pre-session-compress" hook point, so
+# it never fires from any editor either. Its disk-truth-refusal invariant is
+# enforced in-product by signalos_lib/context.py::_reject_disk_truth_input; the
+# shell guard is a reference mirror. It is listed here only so the on-disk
+# selfcheck still asserts the reference script is present — do not treat it as
+# a live/registered runtime hook. See docs/WIRING_AUDIT.md (pre-session-compress).
+#
 # This helper centralises the naming + paths so each emitter's patch is
 # ~10 lines instead of 50.
 #

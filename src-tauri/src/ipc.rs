@@ -1092,12 +1092,18 @@ pub fn get_identity(state: State<WorkspaceState>) -> Result<Option<Identity>, St
 }
 
 /// Role required to sign each gate, per docs §11.4d rule 6.
-/// PO signs G0/G1/G3 ; PE signs G3/G4 ; QA signs G4/G5 ; DevOps signs deploy gates.
+/// PO signs G0/G1/G2/G3 ; PE signs G3/G4 ; QA signs G5 ; DevOps signs deploy gates.
+///
+/// #17 hardening: QA was previously granted G4, but G4's artifact requires
+/// PE/PO only (gate_artifacts.json). That over-permission was a segregation-of-
+/// duties hole and is removed here — a STRENGTHENING (no role gains a gate it
+/// lacked in the authoritative artifact required_roles). The one-directional
+/// invariant is locked by the role_matrices_agree_per_gate cross-source test.
 fn role_can_sign(role: &str, gate_id: u8) -> bool {
     match (role, gate_id) {
         ("PO", 0) | ("PO", 1) | ("PO", 2) | ("PO", 3) => true,
         ("PE", 3) | ("PE", 4) => true,
-        ("QA", 4) | ("QA", 5) => true,
+        ("QA", 5) => true,
         ("DevOps", _) => true, // DevOps can sign deploy-related ops; gates 0-5 PO/PE/QA also allowed via direct check.
         _ => false,
     }
@@ -1648,17 +1654,36 @@ pub fn sign_gate(
     signer: String,
     state: State<WorkspaceState>,
 ) -> Result<String, String> {
-    let cwd = state
+    // #17 Edit 3.1: enforce role authorization BEFORE dispatch. Load the
+    // workspace identity, read its role, and refuse an unauthorised signer
+    // (e.g. a PO signing a QA-only gate). The real role is then forwarded to
+    // the sidecar as args[2] so the sidecar can pass --role <real> instead of
+    // hardcoding PO. The Python sign path (sign.sign_gate) re-checks against
+    // artifact required_roles, so this is defense in depth, not the only gate.
+    let ws = state
         .0
         .lock()
         .unwrap()
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+        .clone()
+        .ok_or("No workspace selected")?;
+    let identity_path = ws.join(".signalos").join("identity.json");
+    if !identity_path.is_file() {
+        return Err("Identity not set. Run the wizard or set your role in Settings.".into());
+    }
+    let identity: Identity = std::fs::read_to_string(&identity_path)
+        .map_err(|e| format!("Read identity.json: {e}"))
+        .and_then(|c| serde_json::from_str(&c).map_err(|e| format!("Parse identity.json: {e}")))?;
+    let role = identity.role;
+    if !role_can_sign(&role, gate_id) {
+        return Err(format!("Role {role} is not authorised to sign G{gate_id}."));
+    }
+
+    let cwd = Some(ws.to_string_lossy().to_string());
     let id = uuid();
     send_command(SidecarRequest {
         id: id.clone(),
         command: "gate:sign".into(),
-        args: vec![gate_id.to_string(), signer],
+        args: vec![gate_id.to_string(), signer, role],
         cwd,
     })
     .map_err(|e| e.to_string())?;
@@ -2317,6 +2342,32 @@ mod tests {
     fn workspace_state_starts_empty() {
         let state = WorkspaceState::default();
         assert!(state.0.lock().unwrap().is_none());
+    }
+
+    // ── #17 Edit 3.1: role authorization on the manual sign path ─────────────
+
+    #[test]
+    fn role_can_sign_denies_po_on_qa_gate() {
+        // A PO must not be able to sign G5 (QA-only). This is the anti-bypass
+        // property the sign_gate command enforces before dispatch.
+        assert!(!role_can_sign("PO", 5));
+    }
+
+    #[test]
+    fn role_can_sign_allows_qa_on_g5() {
+        assert!(role_can_sign("QA", 5));
+    }
+
+    #[test]
+    fn role_can_sign_no_longer_grants_qa_on_g4() {
+        // Segregation-of-duties hardening: G4 requires PE/PO per the artifact
+        // manifest, so QA is no longer permitted (previously over-granted).
+        assert!(!role_can_sign("QA", 4));
+    }
+
+    #[test]
+    fn role_can_sign_unknown_role_denied() {
+        assert!(!role_can_sign("HACKER", 0));
     }
 
     #[test]

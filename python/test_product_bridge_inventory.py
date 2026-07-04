@@ -112,6 +112,7 @@ EXPECTED_CLI_COMMANDS = {
     "signal-devex-plan",
     "signal-devex",
     "signal-retro-global",
+    "signal-post-retro",
     "signal-careful",
     "signal-freeze",
     "signal-guard",

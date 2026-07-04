@@ -497,5 +497,29 @@ class TestAgentCancelResume(_AgentIpcBase):
         self.assertTrue(any(e.get("type") == "cancelled" for e in events))
 
 
+class TestBuildAgentEnforcement(unittest.TestCase):
+    """Edit 1.5 — production returns the real FileEnforcementProvider; the test
+    seam still wins when set."""
+
+    def setUp(self) -> None:
+        self._prev = srv._AGENT_ENFORCEMENT_FACTORY
+        srv._AGENT_ENFORCEMENT_FACTORY = None
+
+    def tearDown(self) -> None:
+        srv._AGENT_ENFORCEMENT_FACTORY = self._prev
+
+    def test_build_agent_enforcement_returns_file_provider(self):
+        from signalos_lib.product.enforcement_state import FileEnforcementProvider
+
+        srv._AGENT_ENFORCEMENT_FACTORY = None
+        provider = srv._build_agent_enforcement()
+        self.assertIsInstance(provider, FileEnforcementProvider)
+
+    def test_seam_still_wins(self):
+        sentinel = StaticEnforcementProvider(trust_tier="T3")
+        srv._AGENT_ENFORCEMENT_FACTORY = lambda: sentinel
+        self.assertIs(srv._build_agent_enforcement(), sentinel)
+
+
 if __name__ == "__main__":
     unittest.main()

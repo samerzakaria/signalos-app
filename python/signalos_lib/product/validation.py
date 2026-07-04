@@ -12,6 +12,8 @@ __all__ = [
     "build_validation_plan",
     "check_product_closure",
     "load_validation_result",
+    "parse_build_diagnostics",
+    "parse_test_diagnostics",
     "run_validation",
     "write_validation_plan",
     "write_validation_result",
@@ -19,6 +21,7 @@ __all__ = [
 
 import json
 import os
+import re
 import signal
 import shlex
 import shutil
@@ -48,6 +51,149 @@ _CATEGORIES = (
 # declares that it *can* validate them.
 _CRITICAL_CATEGORIES = {"build", "test"}
 _REQUIRED_CLOSE_CATEGORIES = {"build", "test"}
+
+# Profiles whose build (`npm run build` -> `tsc && vite build`) and test
+# (`vitest run`) output we parse into structured, per-file diagnostics so
+# the repair loop can target the failing file(s). Non-JS profiles keep
+# their existing aggregated-output validation unchanged.
+_JS_DIAGNOSTIC_PROFILES = {"react-vite", "nextjs-app", "vue-vite", "angular"}
+
+# tsc emits: `path(line,col): error TSxxxx: message`
+_TSC_DIAGNOSTIC_RE = re.compile(
+    r"^(?P<file>[^\s(].*?)\((?P<line>\d+),(?P<col>\d+)\):\s+"
+    r"error\s+(?P<code>TS\d+):\s+(?P<message>.*)$"
+)
+
+# vite/esbuild emits (rollup): `[vite]:` / `ERROR:` with `file:line:col`.
+_VITE_DIAGNOSTIC_RE = re.compile(
+    r"(?P<file>(?:\.{0,2}/)?[\w./\\-]+\.[cm]?[jt]sx?):(?P<line>\d+):(?P<col>\d+)"
+)
+
+# vitest emits (ANSI-stripped): ` FAIL src/foo.test.ts > test name`
+_VITEST_FAIL_RE = re.compile(
+    r"^\s*FAIL\s+(?P<file>[\w./\\-]+\.[cm]?[jt]sx?)(?:\s*>\s*(?P<name>.*))?$"
+)
+
+# vitest file location line (ANSI-stripped): ` ❯ src/foo.test.ts:2:48`
+_VITEST_LOC_RE = re.compile(
+    r"(?P<file>[\w./\\-]+\.[cm]?[jt]sx?):(?P<line>\d+):(?P<col>\d+)\s*$"
+)
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+def parse_build_diagnostics(output: str) -> list[dict[str, Any]]:
+    """Parse tsc / vite build output into structured per-file failures.
+
+    Returns a list of ``{file, line, col, code, message}`` dicts, one per
+    distinct diagnostic. tsc diagnostics are the primary, richly-coded
+    source; vite/rollup ``file:line:col`` references are a fallback so a
+    bundler-only failure still names a target file. Clean output yields
+    an empty list.
+    """
+    failures: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, str]] = set()
+    cleaned = _strip_ansi(output or "")
+    for raw in cleaned.splitlines():
+        line = raw.rstrip()
+        m = _TSC_DIAGNOSTIC_RE.match(line.strip())
+        if m:
+            key = (m.group("file"), int(m.group("line")), m.group("code"))
+            if key in seen:
+                continue
+            seen.add(key)
+            failures.append(
+                {
+                    "file": _normalize_diag_path(m.group("file")),
+                    "line": int(m.group("line")),
+                    "col": int(m.group("col")),
+                    "code": m.group("code"),
+                    "message": m.group("message").strip(),
+                    "source": "tsc",
+                }
+            )
+    if failures:
+        return failures
+
+    # No tsc diagnostics — fall back to vite/rollup file references so a
+    # bundler failure still names a target file for the repair loop.
+    for raw in cleaned.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if "error" not in lowered and "failed" not in lowered:
+            continue
+        m = _VITE_DIAGNOSTIC_RE.search(line)
+        if not m:
+            continue
+        key = (m.group("file"), int(m.group("line")), "VITE")
+        if key in seen:
+            continue
+        seen.add(key)
+        failures.append(
+            {
+                "file": _normalize_diag_path(m.group("file")),
+                "line": int(m.group("line")),
+                "col": int(m.group("col")),
+                "code": "VITE_BUILD",
+                "message": line,
+                "source": "vite",
+            }
+        )
+    return failures
+
+
+def parse_test_diagnostics(output: str) -> list[dict[str, Any]]:
+    """Parse vitest run output into structured per-file test failures.
+
+    Returns ``{file, line, col, code, message}`` dicts for each ``FAIL``
+    block, enriched with the first ``file:line:col`` location that follows
+    it when vitest prints one. Clean output yields an empty list.
+    """
+    failures: list[dict[str, Any]] = []
+    lines = _strip_ansi(output or "").splitlines()
+    for idx, raw in enumerate(lines):
+        stripped = raw.strip()
+        m = _VITEST_FAIL_RE.match(stripped)
+        if not m:
+            continue
+        file = _normalize_diag_path(m.group("file"))
+        name = (m.group("name") or "").strip()
+        line_no: int | None = None
+        col_no: int | None = None
+        message = name or f"test failed in {file}"
+        # Look ahead a bounded window for the location + assertion message.
+        for follow in lines[idx + 1 : idx + 12]:
+            fs = follow.strip()
+            loc = _VITEST_LOC_RE.search(fs)
+            if loc and _normalize_diag_path(loc.group("file")) == file:
+                line_no = int(loc.group("line"))
+                col_no = int(loc.group("col"))
+                break
+        failures.append(
+            {
+                "file": file,
+                "line": line_no,
+                "col": col_no,
+                "code": "TEST_FAIL",
+                "message": message,
+                "source": "vitest",
+            }
+        )
+    return failures
+
+
+def _normalize_diag_path(path: str) -> str:
+    """Normalize a diagnostic file path to a forward-slash relative form."""
+    cleaned = path.strip().strip('"').strip("'").replace("\\", "/")
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    return cleaned
 
 _SKIP_OWNERS = {
     "install": (
@@ -152,6 +298,9 @@ def run_validation(
     If *dry_run* is ``True``, check that commands exist but do not
     execute them.
     """
+    profile = plan.get("profile", "unknown")
+    parse_diagnostics = profile in _JS_DIAGNOSTIC_PROFILES and not dry_run
+
     results: dict[str, dict[str, Any]] = {}
     for cat in _CATEGORIES:
         cmds = plan.get(cat, [])
@@ -162,6 +311,10 @@ def run_validation(
             results[cat] = _dry_run_skipped_result(cat)
             continue
         results[cat] = _run_commands(repo_root, cmds)
+        if parse_diagnostics and results[cat].get("status") == "failed":
+            _attach_diagnostics(cat, results[cat])
+
+    violations = _collect_violations(results)
 
     # Summary
     total = len(_CATEGORIES)
@@ -175,7 +328,7 @@ def run_validation(
 
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
-        "profile": plan.get("profile", "unknown"),
+        "profile": profile,
         "dry_run": dry_run,
         "results": results,
         "summary": {
@@ -187,7 +340,41 @@ def run_validation(
         },
         "can_close_delivery": can_close,
         "blockers": blockers,
+        # Structured, per-file failures for the repair loop (empty for
+        # profiles/runs without diagnostic parsing).
+        "violations": violations,
     }
+
+
+def _attach_diagnostics(category: str, result: dict[str, Any]) -> None:
+    """Parse a failed build/test result's output into per-file failures.
+
+    Mutates *result* in place, adding a ``failures`` list of structured
+    ``{file, line, code, message}`` dicts. Never weakens status: a failed
+    category stays failed even when no per-file diagnostic could be parsed.
+    """
+    output = result.get("output", "") or ""
+    if category == "build":
+        failures = parse_build_diagnostics(output)
+    elif category == "test":
+        failures = parse_test_diagnostics(output)
+    else:
+        failures = []
+    if failures:
+        result["failures"] = failures
+
+
+def _collect_violations(
+    results: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate per-category structured failures into one violation list."""
+    violations: list[dict[str, Any]] = []
+    for cat in ("build", "test"):
+        for failure in results.get(cat, {}).get("failures", []) or []:
+            entry = dict(failure)
+            entry.setdefault("category", cat)
+            violations.append(entry)
+    return violations
 
 
 def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:

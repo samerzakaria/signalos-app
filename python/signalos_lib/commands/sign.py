@@ -169,39 +169,40 @@ def main(argv: list[str]) -> int:  # noqa: C901
     # ------------------------------------------------------------------
     # Write signatures
     # ------------------------------------------------------------------
+    # #17 Edit 3.4: route through the single role-enforcing sign_gate. It
+    # computes all_required from every artifact's required_roles and RAISES
+    # ValueError if `role` is not authorised for the gate — closing the SoD
+    # bypass on the real CLI path (a PO cannot sign a QA gate) even if the
+    # Rust/sidecar pre-checks are skipped. OIDC evidence is threaded through.
     audit_log = root / ".signalos" / "AUDIT_TRAIL.jsonl"
-    signed: list[str] = []
-    errors: list[str] = []
+    try:
+        signed_paths = sign_lib.sign_gate(
+            root,
+            gate,
+            signer,
+            role,
+            verdict,
+            conditions,
+            audit_log=audit_log,
+            wave=args.wave,
+            oidc_sub_hash=oidc_sub_hash,
+            oidc_issuer=oidc_issuer,
+        )
+    except ValueError as exc:
+        # Unauthorised role (or unknown gate): refuse without writing anything.
+        print(f"\n  ✗  {exc}", file=sys.stderr)
+        return 1
 
-    for s in present:
-        try:
-            sign_lib.sign_artifact(
-                s.path, signer, role, gate, verdict, conditions,
-                oidc_sub_hash=oidc_sub_hash, oidc_issuer=oidc_issuer,
-            )
-            sign_lib._append_audit(
-                audit_log,
-                signer,
-                role,
-                gate,
-                s.rel_path,
-                s.path,
-                verdict,
-                wave=args.wave,
-            )
-            signed.append(s.label)
-        except Exception as exc:
-            errors.append(f"{s.label}: {exc}")
+    # Map signed rel-paths back to labels for the summary.
+    label_by_rel = {s.rel_path: s.label for s in present}
+    signed = [label_by_rel.get(rp, rp) for rp in signed_paths]
 
     if signed:
         print(f"\n  ✓  Signed {len(signed)} artifact(s) for {gate}:")
         for name in signed:
             print(f"     {name}")
-
-    if errors:
-        print(f"\n  ✗  {len(errors)} error(s):", file=sys.stderr)
-        for e in errors:
-            print(f"     {e}", file=sys.stderr)
+    else:
+        print(f"\n  No artifacts signed for {gate}.")
         return 1
 
     print(f"\n  Verify: signalos sign --check {gate}")

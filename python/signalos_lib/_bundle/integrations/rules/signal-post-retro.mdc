@@ -1,0 +1,18 @@
+---
+description: Post-retro Phase-8 closure gate.
+globs: ["waves/**/review.md", "core/governance/Retro/AMENDMENTS.md", "core/execution/hooks/post-retro"]
+alwaysApply: false
+---
+
+# signal-post-retro
+
+Run the post-retro closure gate after a wave retro is complete.
+
+## When to use
+- Close a wave after retro: `signalos signal-post-retro wave-03-checkout`
+- Emit machine-readable output: `signalos signal-post-retro wave-03-checkout --json`
+
+## Key behaviours
+- Runs `core/execution/hooks/post-retro`
+- Blocks if `waves/<wave>/review.md` is missing
+- Blocks if `core/governance/Retro/AMENDMENTS.md` lacks a signed delta for the wave

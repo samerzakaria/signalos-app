@@ -199,12 +199,22 @@ def _singularize(word: str) -> str:
 
 
 def _to_pascal_case(phrase: str) -> str:
-    """Convert a phrase to PascalCase: 'lab results' -> 'LabResult'."""
-    words = phrase.strip().split()
+    """Convert a phrase to a valid PascalCase identifier: 'lab results' -> 'LabResult'.
+
+    #29: split on any non-alphanumeric run (not just whitespace) so stray
+    punctuation ('; - /') can never leak into an entity/interface name, and
+    prefix a leading digit. This keeps the frozen #24b type contract
+    syntactically valid even when the deterministic extractor mis-parses a
+    prompt (the LLM refine pass is unavailable offline / when billing-blocked).
+    """
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", phrase.strip()) if w]
     # Singularize the last word (the head noun)
     if words:
         words[-1] = _singularize(words[-1])
-    return "".join(w.capitalize() for w in words)
+    pascal = "".join(w.capitalize() for w in words)
+    if pascal[:1].isdigit():
+        pascal = "E" + pascal
+    return pascal
 
 
 def _extract_entities(text: str) -> list[str]:
@@ -212,8 +222,10 @@ def _extract_entities(text: str) -> list[str]:
     for pat in _ENTITY_PATTERNS:
         for m in pat.finditer(text):
             raw = m.group(1)
-            # Split on commas / "and"
-            parts = re.split(r"\s*,\s*|\s+and\s+", raw)
+            # Split on commas / semicolons / "and". #29: the missing ';' split
+            # is what merged "category; running total; per-category breakdown;
+            # mark reimbursed" into ONE garbage entity name.
+            parts = re.split(r"\s*[;,]\s*|\s+and\s+", raw)
             for part in parts:
                 cleaned = part.strip().strip(".")
                 # Keep only multi-word or meaningful single-word phrases
@@ -864,6 +876,20 @@ def refine_intent_with_llm(
 
     # Merge refinements back into intent -- only override with non-empty lists
     updated = dict(intent)
+
+    # Fix #9: preserve the DETERMINISTIC entities as an independent corroboration
+    # source BEFORE the LLM's entity list overwrites them.  ``match_blueprint``
+    # must not use the LLM's own rewritten entities to justify the LLM's own
+    # product_type label (a self-fulfilling loop that snapped an expense tracker
+    # onto the finance dashboard).  We snapshot the pre-refinement entities so a
+    # later trustworthiness check can compare the blueprint against a source the
+    # untrusted LLM step did not produce.
+    deterministic_entities = [
+        e for e in intent.get("entities", []) if isinstance(e, str)
+    ]
+    if deterministic_entities and "_deterministic_entities" not in updated:
+        updated["_deterministic_entities"] = deterministic_entities
+
     _LIST_FIELDS = {
         "entities": "entities",
         "target_users": "target_users",
@@ -879,6 +905,10 @@ def refine_intent_with_llm(
             updated[intent_key] = val
 
     if refined.get("product_type") and isinstance(refined["product_type"], str):
-        updated["product_type"] = refined["product_type"]
+        refined_type = refined["product_type"]
+        previous_type = intent.get("product_type")
+        updated["product_type"] = refined_type
+        if refined_type != previous_type:
+            updated["_product_type_source"] = "llm"
 
     return updated

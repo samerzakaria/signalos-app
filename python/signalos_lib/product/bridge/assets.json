@@ -418,6 +418,15 @@
       "notes": "Cross-product retrospective brain query"
     },
     {
+      "id": "cli-signal-post-retro",
+      "kind": "cli-command",
+      "path": "python/signalos_lib/commands/post_retro.py",
+      "bridge_status": "required",
+      "bridge_phase": "governance",
+      "proof": "python/test_post_retro_hook_wiring.py",
+      "notes": "Run the post-retro Phase-8 closure gate"
+    },
+    {
       "id": "cli-signal-careful",
       "kind": "cli-command",
       "path": "python/signalos_lib/commands/safety.py",

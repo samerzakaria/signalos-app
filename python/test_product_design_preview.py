@@ -2,6 +2,7 @@
 
 import pytest
 
+from signalos_lib.product.design import _MANTINE_VERSION
 from signalos_lib.product.design_preview import generate_design_preview_html
 
 
@@ -13,7 +14,7 @@ from signalos_lib.product.design_preview import generate_design_preview_html
 def mantine_design():
     return {
         "schema_version": "signalos.design_system.v1",
-        "ui_library": {"name": "@mantine/core", "version": "^7.11.0", "reason": "Entity-rich"},
+        "ui_library": {"name": "@mantine/core", "version": _MANTINE_VERSION, "reason": "Entity-rich"},
         "design_tokens": {
             "color_scheme": "light",
             "primary_color": "#059669",

@@ -487,6 +487,14 @@
     "amendment": "AMD-CORE-034"
   },
   {
+    "name": "signal-post-retro",
+    "source": "core/execution/commands/signal-post-retro.md",
+    "phase": "execution",
+    "description": "Run the post-retro Phase-8 closure gate for a wave.",
+    "wave": "Phase-8",
+    "amendment": "closure-gate"
+  },
+  {
     "name": "signal-careful",
     "source": "core/execution/commands/signal-careful.md",
     "phase": "execution",

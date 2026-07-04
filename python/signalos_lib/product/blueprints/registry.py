@@ -19,6 +19,7 @@ __all__ = [
 ]
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,16 @@ _DEFAULTABLE_STRING_FIELDS = frozenset({
     "product_type",
     "deployment_intent",
 })
+
+# Minimum overlapping tokens a fuzzy pass (entity / keyword) must clear before
+# it is allowed to commit the intent to a blueprint's whole domain.  A single
+# incidental coincidence (e.g. the word "dashboard" appearing in an expense
+# tracker's UI surface) is NOT enough: below this floor ``match_blueprint``
+# returns ``None`` so generation builds for the founder's actual stated domain
+# rather than snapping onto the nearest wrong-domain blueprint.  Deterministic
+# exact ``product_type`` matches bypass the floor; LLM-refined exact matches
+# must be corroborated when concrete domain evidence is present.
+_MIN_FUZZY_OVERLAP = 2
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +205,19 @@ def match_blueprint(
     """Match a product intent to the best blueprint id.
 
     Match priority:
-    1. Exact product_type match
-    2. Entity overlap scoring
-    3. Keyword overlap scoring (prompt text scanned against keywords)
+    1. Exact product_type match (deterministic exact matches bypass the floor;
+       LLM-refined exact matches must be corroborated)
+    2. Entity overlap scoring (must clear ``_MIN_FUZZY_OVERLAP``)
+    3. Keyword overlap scoring (must clear ``_MIN_FUZZY_OVERLAP``)
+
+    The fuzzy passes require a minimum-confidence floor so a single incidental
+    token coincidence does not force a wrong-domain blueprint (e.g. a personal
+    expense tracker snapping onto the revenue/metrics dashboard on the lone
+    shared word "dashboard").  LLM-refined exact type labels also need
+    corroboration when entities/workflows/surfaces are present, so a model's
+    label cannot override the extracted domain contract.  When no pass clears
+    its bar the intent is considered domain-unmatched and generation builds for
+    the founder's actual stated domain instead.
 
     Returns the blueprint id or ``None`` if no match.
     """
@@ -207,9 +228,20 @@ def match_blueprint(
         return None
 
     intent_type = intent.get("product_type", "")
-    intent_entities = {e.lower() for e in intent.get("entities", [])}
-    intent_prompt = intent.get("_prompt", "").lower()
-
+    # Fix #9: fuzzy entity overlap must score against the founder's INDEPENDENT
+    # domain contract.  When an LLM refinement rewrote ``entities`` (and stashed
+    # the pre-refinement snapshot in ``_deterministic_entities``) the rewritten
+    # finance entities must NOT be what we score a blueprint against -- otherwise
+    # a co-mislabelled intent snaps onto the wrong domain in Pass 2 even after
+    # Pass 1's corroboration check has rejected it.  Prefer the deterministic
+    # snapshot; fall back to current entities only when no snapshot exists.
+    det_entities = intent.get("_deterministic_entities")
+    if isinstance(det_entities, list) and det_entities:
+        source_entities = det_entities
+    else:
+        source_entities = intent.get("entities", [])
+    intent_entities = {_normalise_match_token(e) for e in source_entities}
+    intent_entities.discard("")
     # Also build keyword tokens from all intent string fields for keyword matching
     intent_keywords = _extract_intent_keywords(intent)
 
@@ -217,32 +249,45 @@ def match_blueprint(
     for bp in blueprints:
         match_spec = bp.get("intent_match", {})
         if intent_type in match_spec.get("product_type", []):
+            if not _exact_product_type_is_trustworthy(
+                intent,
+                match_spec,
+                intent_entities,
+                intent_keywords,
+            ):
+                continue
             return bp["id"]
 
-    # --- Pass 2: entity overlap ---
+    # --- Pass 2: entity overlap (must clear the confidence floor) ---
     best_id: str | None = None
     best_score = 0
     for bp in blueprints:
         match_spec = bp.get("intent_match", {})
-        bp_entities = {e.lower() for e in match_spec.get("entities", [])}
+        bp_entities = {
+            _normalise_match_token(e) for e in match_spec.get("entities", [])
+        }
+        bp_entities.discard("")
         overlap = len(intent_entities & bp_entities)
         if overlap > best_score:
             best_score = overlap
             best_id = bp["id"]
-    if best_score > 0:
+    if best_score >= _MIN_FUZZY_OVERLAP:
         return best_id
 
-    # --- Pass 3: keyword overlap ---
+    # --- Pass 3: keyword overlap (must clear the confidence floor) ---
     best_id = None
     best_score = 0
     for bp in blueprints:
         match_spec = bp.get("intent_match", {})
-        bp_keywords = {k.lower() for k in match_spec.get("keywords", [])}
+        bp_keywords = {
+            _normalise_match_token(k) for k in match_spec.get("keywords", [])
+        }
+        bp_keywords.discard("")
         overlap = len(intent_keywords & bp_keywords)
         if overlap > best_score:
             best_score = overlap
             best_id = bp["id"]
-    if best_score > 0:
+    if best_score >= _MIN_FUZZY_OVERLAP:
         return best_id
 
     return None
@@ -514,17 +559,107 @@ def _validate_component_files(bp_dir: Path) -> list[str]:
 
 
 def _extract_intent_keywords(intent: dict[str, Any]) -> set[str]:
-    """Build a set of lowercase keyword tokens from intent fields."""
+    """Build a set of lowercase keyword tokens from intent fields.
+
+    Fix #9: when a deterministic entity snapshot exists (LLM refinement rewrote
+    ``entities``), the keyword tokens are drawn from the INDEPENDENT snapshot so
+    an LLM-injected domain cannot corroborate its own product_type label via the
+    keyword pass either.
+    """
     tokens: set[str] = set()
     for key in ("product_name", "product_type"):
         val = intent.get(key, "")
         if isinstance(val, str):
-            tokens.update(val.lower().split())
-    for key in ("primary_workflows", "entities", "ux_surfaces",
-                "target_users", "integrations"):
-        val = intent.get(key, [])
+            tokens.update(_normalise_match_token(part) for part in val.split())
+
+    det_entities = intent.get("_deterministic_entities")
+    entities_source = (
+        det_entities
+        if isinstance(det_entities, list) and det_entities
+        else intent.get("entities", [])
+    )
+    list_sources: list[tuple[str, Any]] = [
+        ("primary_workflows", intent.get("primary_workflows", [])),
+        ("entities", entities_source),
+        ("ux_surfaces", intent.get("ux_surfaces", [])),
+        ("target_users", intent.get("target_users", [])),
+        ("integrations", intent.get("integrations", [])),
+    ]
+    for _key, val in list_sources:
         if isinstance(val, list):
             for item in val:
                 if isinstance(item, str):
-                    tokens.update(item.lower().split())
+                    tokens.update(
+                        _normalise_match_token(part) for part in item.split()
+                    )
+    tokens.discard("")
     return tokens
+
+
+def _normalise_match_token(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
+def _exact_product_type_is_trustworthy(
+    intent: dict[str, Any],
+    match_spec: dict[str, Any],
+    intent_entities: set[str],
+    intent_keywords: set[str],
+) -> bool:
+    """Return whether an exact type label can select this blueprint.
+
+    An exact ``product_type`` label is trusted ONLY when it does not contradict
+    the founder's concrete, independently-extracted domain contract.  Fix #9
+    closes two escape hatches the confidence-floor fix left open:
+
+    * **Self-fulfilling LLM corroboration.** When ``refine_intent_with_llm``
+      changes ``product_type`` it can also overwrite ``entities`` in the SAME
+      call, so ``intent['entities']`` is no longer independent of the label.
+      We therefore corroborate against ``_deterministic_entities`` (the
+      pre-refinement snapshot) whenever it is present -- not against the
+      possibly-LLM-rewritten current entities.
+
+    * **Missing provenance marker.** The label may reach here without the
+      ``_product_type_source == 'llm'`` marker (e.g. reloaded from INTENT.json,
+      or caller-injected).  When concrete domain entities are present they must
+      still corroborate the blueprint; an exact label that disagrees with the
+      extracted entities cannot silently override them.
+
+    A bare label with no concrete domain entities (the classic
+    deterministic/caller case) stays trusted for backwards compatibility.
+    """
+    bp_entities = {
+        _normalise_match_token(e) for e in match_spec.get("entities", [])
+    }
+    bp_keywords = {
+        _normalise_match_token(k) for k in match_spec.get("keywords", [])
+    }
+    bp_entities.discard("")
+    bp_keywords.discard("")
+
+    # Independent corroboration source: prefer the deterministic entity snapshot
+    # captured before any LLM refinement; fall back to the current entities only
+    # when no snapshot exists (deterministic-only pipelines never rewrite them).
+    det_entities_raw = intent.get("_deterministic_entities")
+    if isinstance(det_entities_raw, list) and det_entities_raw:
+        corroborating_entities = {
+            _normalise_match_token(e) for e in det_entities_raw
+        }
+        corroborating_entities.discard("")
+    else:
+        corroborating_entities = set(intent_entities)
+
+    # Is there a concrete, independent domain contract to protect?
+    has_concrete_entities = bool(corroborating_entities)
+
+    if not has_concrete_entities:
+        # No independent entity contract to contradict -> trust the label.
+        return True
+
+    # Concrete entities exist.  The exact label is trustworthy only if that
+    # independent evidence actually corroborates this blueprint's domain.
+    if len(corroborating_entities & bp_entities) >= _MIN_FUZZY_OVERLAP:
+        return True
+    if len(intent_keywords & bp_keywords) >= _MIN_FUZZY_OVERLAP:
+        return True
+    return False

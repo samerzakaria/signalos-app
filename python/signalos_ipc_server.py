@@ -255,20 +255,33 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
     if command == "gate:sign":
         if len(args) < 2:
             return err(req_id, "gate:sign requires [gate_id, signer]")
-        # Wave 5 / G4: test-first rule. G1 (Belief) sign requires test refs.
-        # Optional third arg is a comma-separated list of test file paths
-        # or test plan ids. If missing for G1, refuse with a clear message.
+        # #17 Edit 3.3: arg layout is [gate_id, signer, role?, test_refs_csv?].
+        # Rust forwards the real identity role as args[2]. To stay backward-
+        # compatible with the historical [gate_id, signer, test_refs_csv] layout,
+        # args[2] is treated as a role ONLY when it is a known role; otherwise it
+        # is the legacy test_refs CSV. test_refs may also come explicitly at args[3].
+        #
+        # Wave 5 / G4: G1 (Belief) sign still requires ≥1 test reference.
+        from signalos_lib.sign import VALID_ROLES
+
         gate_id = int(args[0])
         signer = args[1]
-        test_refs = []
+        role: str | None = None
+        test_refs: list[str] = []
         if len(args) >= 3:
-            test_refs = [t for t in args[2].split(",") if t.strip()]
+            third = str(args[2])
+            if third in VALID_ROLES:
+                role = third
+            elif third.strip():
+                test_refs = [t for t in third.split(",") if t.strip()]
+        if len(args) >= 4 and str(args[3]).strip():
+            test_refs = [t for t in str(args[3]).split(",") if t.strip()]
         if gate_id == 1 and not test_refs:
             return err(
                 req_id,
                 "G1 Belief sign requires at least one test reference. Pass test files or plan ids as the third argument.",
             )
-        return ok(req_id, data=sign_gate(gate_id, signer))
+        return ok(req_id, data=sign_gate(gate_id, signer, role))
 
     if command == "brain:search":
         return ok(req_id, data=brain_search(args[0] if args else ""))
@@ -531,12 +544,16 @@ def _agent_provider_and_model(payload: dict, command: str) -> tuple[str | None, 
 def _build_agent_enforcement():
     """Construct the EnforcementProvider. Honors the test injection seam.
 
-    Returns None in production so AgentLoop falls back to its own default
-    (StaticEnforcementProvider), which Phase 3 Stream B will swap for the
-    Rust-authoritative provider."""
+    Production (#15): returns a FileEnforcementProvider, which reads the
+    Rust-persisted `.signalos/enforcement.json` snapshot so the sidecar's agent
+    loop enforces the exact rule modes the user toggled in the app. The provider
+    re-applies the core-invariant floor on read (a hand-edited file can never
+    disable a core rule). The test seam wins first for deterministic CI."""
     if _AGENT_ENFORCEMENT_FACTORY is not None:
         return _AGENT_ENFORCEMENT_FACTORY()
-    return None
+    from signalos_lib.product.enforcement_state import FileEnforcementProvider
+
+    return FileEnforcementProvider()
 
 
 def _agent_emit(run_id: str):
@@ -1276,6 +1293,7 @@ def map_slash_command(command: str, args: list[str], cwd: str) -> list[str] | No
         "signal-devex-plan",
         "signal-devex",
         "signal-retro-global",
+        "signal-post-retro",
         "signal-careful",
         "signal-freeze",
         "signal-guard",
@@ -1387,7 +1405,21 @@ def get_gate_states(project_id: str = "default") -> list[dict]:
     return gates
 
 
-def sign_gate(gate_id: int, signer: str) -> dict:
+def sign_gate(gate_id: int, signer: str, role: str | None = None) -> dict:
+    # #17 Edit 3.3: use the REAL role, never a hardcoded "PO". Rust forwards the
+    # identity role as args[2]; if it is somehow absent, fall back to the
+    # workspace identity's role rather than defaulting to PO (which would let a
+    # non-PO caller sign PO gates). This closes the "always signs as PO" bypass.
+    if not role:
+        from signalos_lib.product.identity import load_identity
+
+        identity = load_identity(Path(os.getcwd()))
+        role = str((identity or {}).get("role") or "").strip()
+    if not role:
+        raise RuntimeError(
+            "Cannot sign: no role provided and no workspace identity is set. "
+            "Set your role in Settings and retry."
+        )
     rc, out, err_text = run_core_cli(
         [
             "sign",
@@ -1395,7 +1427,7 @@ def sign_gate(gate_id: int, signer: str) -> dict:
             "--signer",
             signer,
             "--role",
-            "PO",
+            role,
             "--verdict",
             "APPROVED",
             "--repo-root",
@@ -1404,7 +1436,7 @@ def sign_gate(gate_id: int, signer: str) -> dict:
     )
     if rc != 0:
         raise RuntimeError((err_text or out or f"sign exited {rc}").strip())
-    return {"gate_id": gate_id, "signer": signer, "ok": True, "output": out}
+    return {"gate_id": gate_id, "signer": signer, "role": role, "ok": True, "output": out}
 
 
 def brain_search(query: str) -> list[dict]:

@@ -21,6 +21,39 @@ from pathlib import Path
 from typing import Any
 from .llm_provider import is_llm_available
 
+# #27: pinned to the Mantine v7 line, which is built for React 18. The
+# react-vite scaffold (stacks.py) ships react/react-dom ^18.3.1, and Mantine v9
+# requires React 19 (its core imports React 19's `use` hook) -- shipping v9 on
+# React 18 produces the vitest `SyntaxError: Named export 'use' not found`. Every
+# @mantine/* sub-package MUST resolve to this single version; enforce_dependency_
+# versions() re-pins any skew a generation agent's self-written package.json adds.
+_MANTINE_VERSION = "7.13.2"
+
+
+def enforce_dependency_versions(
+    dependencies: dict[str, str], design_deps: dict[str, str]
+) -> bool:
+    """Force a package.json ``dependencies`` map onto the canonical design
+    versions. Returns True when anything changed.
+
+    #27: a remote build agent regenerates its OWN package.json and can emit
+    skewed @mantine/* majors (e.g. core@9 with hooks@7). ``_merge_design_deps``
+    only fills *missing* keys, so it cannot correct a version the agent already
+    wrote. This coerces (a) every design-system dependency to the version
+    ``get_design_dependencies`` computed, and (b) ANY stray ``@mantine/*`` the
+    agent added to the single ``_MANTINE_VERSION`` so the majors never skew.
+    """
+    changed = False
+    for name, version in design_deps.items():
+        if dependencies.get(name) != version:
+            dependencies[name] = version
+            changed = True
+    for name in list(dependencies):
+        if name.startswith("@mantine/") and dependencies[name] != _MANTINE_VERSION:
+            dependencies[name] = _MANTINE_VERSION
+            changed = True
+    return changed
+
 
 # ---------------------------------------------------------------------------
 # LLM-driven design selection (Architect agent)
@@ -366,7 +399,7 @@ def _select_ui_library(intent: dict, blueprint: dict | None) -> dict:
     ):
         return {
             "name": "@mantine/core",
-            "version": "^7.11.0",
+            "version": _MANTINE_VERSION,
             "reason": (
                 "Entity-rich product needs robust form controls, "
                 "tables, and date pickers"
@@ -532,10 +565,16 @@ def get_design_dependencies(design: dict) -> dict[str, str]:
 
     ui = design.get("ui_library", {}).get("name", "")
     if ui == "@mantine/core":
-        deps["@mantine/core"] = "^7.11.0"
-        deps["@mantine/hooks"] = "^7.11.0"
-        deps["@mantine/form"] = "^7.11.0"
-        deps["@mantine/dates"] = "^7.11.0"
+        deps["@mantine/core"] = _MANTINE_VERSION
+        deps["@mantine/hooks"] = _MANTINE_VERSION
+        deps["@mantine/form"] = _MANTINE_VERSION
+        deps["@mantine/dates"] = _MANTINE_VERSION
+        deps["@mantine/charts"] = _MANTINE_VERSION
+        # Fix #27: @mantine/charts requires recharts as a peer dependency.
+        # Ship it on the Mantine branch too (previously recharts was only added
+        # on the shadcn/ui branch), otherwise a Mantine dashboard installs
+        # @mantine/charts with an unmet recharts peer.
+        deps["recharts"] = "^2.12.0"
         deps["@tabler/icons-react"] = "^3.5.0"
         deps["dayjs"] = "^1.11.11"
     elif ui == "shadcn/ui":

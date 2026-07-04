@@ -11,6 +11,7 @@ from __future__ import annotations
 __all__ = [
     "build_generation_manifest",
     "build_generation_packet",
+    "check_cross_file_consistency",
     "check_file_ownership",
     "collect_governance_instructions",
     "compute_sha256_lf",
@@ -18,6 +19,7 @@ __all__ = [
     "link_generation_to_acceptance",
     "load_generation_manifest",
     "prepare_generation",
+    "_sanitize_component_name",
     "validate_generation_output",
     "verify_trace_completeness",
     "write_generation_manifest",
@@ -188,24 +190,152 @@ def _to_pascal(name: str) -> str:
 
 
 def _to_pascal_case(name: str) -> str:
-    """Convert any entity/workflow name to PascalCase.
+    """Convert any entity/workflow name to a PascalCase, path-safe token.
 
-    Handles spaces, hyphens, and underscores as word separators.
+    Splits on ANY non-alphanumeric character (spaces, hyphens, underscores,
+    AND illegal path characters like ';', ':', '*', '?') so a stray workflow
+    phrase such as "categorize; see running total" can never produce an illegal
+    file path (Fix #25: 'src/components/Category;SeeRunningTotal.tsx'). Any
+    leading digits (illegal at the start of a JS identifier) are dropped.
     Already-PascalCase names pass through unchanged.
 
     Examples:
-        "patient intake" -> "PatientIntake"
-        "clinical notes" -> "ClinicalNotes"
-        "lab results"    -> "LabResults"
-        "Task"           -> "Task"
-        "revenue-chart"  -> "RevenueChart"
-        "some_thing"     -> "SomeThing"
+        "patient intake"              -> "PatientIntake"
+        "clinical notes"              -> "ClinicalNotes"
+        "lab results"                 -> "LabResults"
+        "Task"                        -> "Task"
+        "revenue-chart"               -> "RevenueChart"
+        "some_thing"                  -> "SomeThing"
+        "Category;See Running Total"  -> "CategorySeeRunningTotal"
     """
-    # Split on spaces, hyphens, and underscores
-    words = re.split(r"[\s\-_]+", name.strip())
+    # Split on every run of non-alphanumeric characters. This turns illegal
+    # path/identifier characters into word boundaries rather than letting them
+    # survive into a filename.
+    words = re.split(r"[^0-9A-Za-z]+", name.strip())
     # Upper-case the first letter of each word; preserve the rest so that
     # already-PascalCase tokens like "ClinicalNote" are not flattened.
-    return "".join((word[0].upper() + word[1:]) if word else "" for word in words if word)
+    pascal = "".join(
+        (word[0].upper() + word[1:]) if word else "" for word in words if word
+    )
+    # A component identifier may not start with a digit.
+    pascal = pascal.lstrip("0123456789")
+    return pascal
+
+
+def _sanitize_component_name(name: str) -> str:
+    """Collapse any entity/workflow phrase to a valid PascalCase component name.
+
+    Strips ';' and every other illegal path/identifier character (Fix #25) so
+    the derived ``<name>.tsx`` file spec is always a legal path. Delegates to
+    ``_to_pascal_case`` (the single normalization point) so callers cannot
+    drift from it.
+    """
+    return _to_pascal_case(name)
+
+
+def _clean_contract(value: Any) -> Any:
+    """Return a JSON-safe contract copy with empty noise removed."""
+    if isinstance(value, dict):
+        cleaned: dict[str, Any] = {}
+        for key, item in value.items():
+            if item in (None, "", [], {}):
+                continue
+            cleaned[str(key)] = _clean_contract(item)
+        return cleaned
+    if isinstance(value, list):
+        return [_clean_contract(item) for item in value if item not in (None, "")]
+    return value
+
+
+def _build_generation_contracts(
+    *,
+    arch_review: dict | None,
+    design_decisions: dict | None,
+    scope_decisions: dict | None,
+) -> dict[str, Any]:
+    """Build the binding contract bundle consumed by generation.
+
+    These artifacts are authored and validated before generation.  Passing them
+    into the packet prevents architecture/design/scope gates from becoming
+    signed side documents that code generation ignores.
+    """
+    contracts: dict[str, Any] = {
+        "source_artifacts": {},
+        "binding_rules": [],
+    }
+    if isinstance(arch_review, dict):
+        contracts["source_artifacts"]["architecture"] = "ARCH_REVIEW.yaml"
+        contracts["architecture"] = _clean_contract(arch_review)
+        contracts["binding_rules"].append(
+            "Generated files must honor ARCH_REVIEW.yaml system boundaries, "
+            "data flow, trust boundaries, edge cases, and test strategy."
+        )
+    if isinstance(design_decisions, dict):
+        contracts["source_artifacts"]["design"] = "DESIGN_DECISIONS.yaml"
+        contracts["design_decisions"] = _clean_contract(design_decisions)
+        contracts["binding_rules"].append(
+            "Generated UI must honor DESIGN_DECISIONS.yaml selected_variant, "
+            "selection_reason, and accepted taste findings."
+        )
+    if isinstance(scope_decisions, dict):
+        contracts["source_artifacts"]["scope"] = "SCOPE_DECISIONS.yaml"
+        contracts["scope_decisions"] = _clean_contract(scope_decisions)
+        contracts["binding_rules"].append(
+            "Generated scope must implement accepted SCOPE_DECISIONS.yaml items "
+            "and must not add rejected or deferred scope as built functionality."
+        )
+    if not contracts["source_artifacts"]:
+        return {}
+    return contracts
+
+
+def _generation_contract_constraints(contracts: dict[str, Any]) -> list[str]:
+    if not contracts:
+        return []
+    constraints = [
+        "Treat generation_contracts as binding signed product contracts.",
+    ]
+    if "architecture" in contracts:
+        constraints.append(
+            "Obey ARCH_REVIEW.yaml architecture: boundaries, data flow, trust "
+            "boundaries, edge cases, and test strategy are binding."
+        )
+    if "design_decisions" in contracts:
+        constraints.append(
+            "Obey DESIGN_DECISIONS.yaml: selected variant and accepted taste "
+            "findings are binding UI decisions."
+        )
+    if "scope_decisions" in contracts:
+        constraints.append(
+            "Obey SCOPE_DECISIONS.yaml: implement accepted scope only; do not "
+            "quietly add rejected/deferred scope."
+        )
+    return constraints
+
+
+def _apply_design_decision_constraints(
+    design_constraints: dict[str, Any],
+    design_decisions: dict | None,
+) -> None:
+    if not isinstance(design_decisions, dict):
+        return
+    selected = design_decisions.get("selected_variant")
+    if selected:
+        design_constraints["selected_variant"] = str(selected)
+    reason = design_decisions.get("selection_reason")
+    if reason:
+        design_constraints["selection_reason"] = str(reason)
+    findings = []
+    for finding in design_decisions.get("taste_findings", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("disposition", "")).lower() != "accepted":
+            continue
+        label = finding.get("finding") or finding.get("summary") or finding.get("id")
+        if label:
+            findings.append(str(label))
+    if findings:
+        design_constraints["accepted_taste_findings"] = findings
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +362,11 @@ def _derive_components_from_blueprint(blueprint: dict) -> list[dict[str, str]]:
 
     if surfaces:
         for surface in surfaces:
-            comp_name = surface.get("component", _to_pascal_case(surface.get("id", "")))
+            # Sanitize even an explicit blueprint `component` value so an
+            # illegal path character can never reach a file spec (Fix #25).
+            comp_name = _sanitize_component_name(
+                surface.get("component") or surface.get("id", "")
+            )
             surface_id = surface.get("id", "")
             # Try to infer entity from surface metadata or from surface id
             entity_name = surface.get("entity", "")
@@ -330,6 +464,9 @@ def build_generation_packet(
     blueprint: dict | None,
     profile: str,
     design: dict | None = None,
+    arch_review: dict | None = None,
+    design_decisions: dict | None = None,
+    scope_decisions: dict | None = None,
     wave: str = "1",
     task_ids: list[str] | None = None,
     acceptance_matrix: dict | None = None,
@@ -393,10 +530,12 @@ def build_generation_packet(
 
     # Build file specs from blueprint or intent
     file_specs: list[dict[str, Any]] = []
+    react_vite_meta: dict[str, Any] = {}
     if profile == "react-vite":
         file_specs = _build_react_vite_file_specs(
             intent, blueprint, targets, design,
         )
+        react_vite_meta = _REACT_VITE_META_CACHE.pop(id(file_specs), {})
     elif profile == "nextjs-app":
         file_specs = _build_nextjs_file_specs(
             intent, blueprint, targets, design,
@@ -466,6 +605,20 @@ def build_generation_packet(
             intent, blueprint, targets,
         )
 
+    generation_contracts = _build_generation_contracts(
+        arch_review=arch_review,
+        design_decisions=design_decisions,
+        scope_decisions=scope_decisions,
+    )
+    contract_constraints = _generation_contract_constraints(generation_contracts)
+    if contract_constraints:
+        for spec in file_specs:
+            constraints = list(spec.get("constraints") or [])
+            for item in contract_constraints:
+                if item not in constraints:
+                    constraints.append(item)
+            spec["constraints"] = constraints
+
     # Assign task_ids round-robin if provided
     if task_ids:
         for i, spec in enumerate(file_specs):
@@ -490,6 +643,7 @@ def build_generation_packet(
 
     # Design constraints
     design_constraints = _extract_design_constraints(design)
+    _apply_design_decision_constraints(design_constraints, design_decisions)
     capability_profile = build_capability_profile(
         intent,
         adapter_profile=profile,
@@ -522,6 +676,11 @@ def build_generation_packet(
         "workflows": bp_workflows,
         "acceptance_criteria": acceptance_criteria,
         "design_constraints": design_constraints,
+        "generation_contracts": generation_contracts,
+        # Fix #12: authoritative cross-file contract for the per-file dispatcher.
+        "component_manifest": react_vite_meta.get("component_manifest", []),
+        "types_module_names": react_vite_meta.get("types_module_names", []),
+        "entity_field_map": react_vite_meta.get("entity_field_map", {}),
         "capability_profile": capability_profile,
         "allowed_paths": allowed_paths,
         "forbidden_paths": forbidden_paths,
@@ -597,6 +756,15 @@ def _build_react_vite_file_specs(
             "constraints": [
                 "Export a theme object",
                 "Follow the selected design system instructions from the packet",
+                # Fix #12/E: keep `tsc --strict` (noUnusedParameters) green.
+                "This file MUST typecheck under `tsc --strict` with "
+                "noUnusedLocals/noUnusedParameters -- no unused imports, "
+                "variables, or function parameters.",
+                "If the UI library is Mantine, every entry in a "
+                "MantineColorsTuple `colors` map MUST be a readonly 10-string "
+                "tuple, e.g. `['#f0f','#e0e', ... 10 shades]` (or cast with "
+                "`as const`/`as MantineColorsTuple`). Never assign a plain "
+                "string[] to a Mantine colors key.",
             ],
         },
         {
@@ -643,6 +811,59 @@ def _build_react_vite_file_specs(
         if not _is_reserved(spec["path"]):
             file_specs.append(spec)
 
+    # Fix #12/D: a vitest setup file that registers @testing-library/jest-dom
+    # matchers (toBeInTheDocument/toBeChecked). Referenced by vite.config's
+    # setupFiles (see stacks._VITE_CONFIG) so tests typecheck AND run.
+    setup_path = f"{source_base}/test/setup.ts"
+    if not _is_reserved(setup_path):
+        file_specs.append({
+            "path": setup_path,
+            "kind": "config",
+            "description": (
+                "Vitest setup file. Import '@testing-library/jest-dom' so its "
+                "custom matchers (toBeInTheDocument, toBeChecked, etc.) are "
+                "registered for every test. Referenced by vite.config setupFiles."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Import '@testing-library/jest-dom' (side-effect import)",
+                "Keep it minimal -- matcher registration only",
+            ],
+        })
+
+    # Fix #12/A+B+C: resolve the authoritative shared contract ONCE.
+    #   - types_module_names: the exact exported interface names (from entities)
+    #   - entity_field_map: entity -> exact field names (source AND test agree)
+    #   - component_manifest: {filePath, componentName, importPath} for App.tsx
+    entities_for_types = _resolve_entities_to_gen(bp_entities, intent)
+    types_module_names = [
+        _to_pascal(e.get("name", "")) for e in entities_for_types if e.get("name")
+    ]
+    entity_field_map: dict[str, list[str]] = {}
+    for e in entities_for_types:
+        nm = e.get("name")
+        if nm:
+            entity_field_map[str(nm)] = [str(f) for f in (e.get("fields") or [])]
+    component_manifest: list[dict[str, str]] = []
+
+    def _fields_desc_for(entity_name: str, entity: dict | None) -> str:
+        fields = (entity or {}).get("fields") or entity_field_map.get(entity_name, [])
+        if fields:
+            return (
+                f" Use these EXACT entity field names (do not rename): "
+                f"{', '.join(str(f) for f in fields)}."
+            )
+        return ""
+
+    def _record_component(comp_name: str) -> None:
+        component_manifest.append({
+            "filePath": f"{source_base}/components/{comp_name}.tsx",
+            "componentName": comp_name,
+            "importPath": f"./components/{comp_name}",
+        })
+
     # Data-driven: derive component list from blueprint ui data
     component_specs = (
         _derive_components_from_blueprint(blueprint) if blueprint else []
@@ -661,20 +882,23 @@ def _build_react_vite_file_specs(
             if _is_reserved(test_path) or _is_reserved(source_path):
                 continue
 
-            # Build description from surface data
-            fields_desc = ""
-            if entity and entity.get("fields"):
-                fields_desc = f" Entity fields: {', '.join(entity['fields'])}."
-
+            _record_component(comp_name)
+            fields_desc = _fields_desc_for(entity_name, entity)
             surface_desc = spec.get("surface", "")
             entity_ref = entity_name or comp_name
 
-            # TDD: test first
+            # TDD: test first. The test imports the REAL component under test
+            # (default export from ./<comp>) and uses the SAME exact fields as
+            # the source -- no inventing sub-components or store paths.
             file_specs.append({
                 "path": test_path,
                 "kind": "test",
                 "description": (
                     f"Vitest test file for {comp_name}. "
+                    f"Import the {comp_name} default export from ./{comp_name} "
+                    f"(the real generated component -- do NOT import sibling "
+                    f"sub-components or stores that are not in the file_specs)."
+                    f"{fields_desc} "
                     f"Tests rendering, user interactions, and data display."
                 ),
                 "entity": entity_name or None,
@@ -683,6 +907,8 @@ def _build_react_vite_file_specs(
                 "constraints": [
                     "Use @testing-library/react for rendering",
                     "Use vitest describe/it/expect",
+                    f"Import {comp_name} from './{comp_name}' (default export)",
+                    "Do not import modules or sub-components not in file_specs",
                     "Test renders without crashing",
                     "Test displays expected content",
                 ],
@@ -691,14 +917,17 @@ def _build_react_vite_file_specs(
                 "path": source_path,
                 "kind": "source",
                 "description": (
-                    f"React component for {entity_ref}. "
-                    f"Surface: {surface_desc}.{fields_desc} "
+                    f"React component named {comp_name} (default export). "
+                    f"For {entity_ref}. Surface: {surface_desc}.{fields_desc} "
+                    f"Type against src/types.ts. "
                     f"Uses design tokens from src/ui/theme.ts."
                 ),
                 "entity": entity_name or None,
                 "acceptance_id": None,
                 "task_id": None,
-                "constraints": list(base_constraints),
+                "constraints": list(base_constraints) + [
+                    f"Export a default React component named {comp_name}",
+                ],
             })
     else:
         # No blueprint - generate from intent entities
@@ -712,11 +941,21 @@ def _build_react_vite_file_specs(
             if _is_reserved(test_path) or _is_reserved(source_path):
                 continue
 
+            _record_component(pascal)
+            entity = _entity_by_name(bp_entities, pascal) or _entity_by_name(
+                bp_entities, ent_name
+            )
+            fields_desc = _fields_desc_for(pascal, entity)
+
             file_specs.append({
                 "path": test_path,
                 "kind": "test",
                 "description": (
                     f"Vitest test file for {pascal}. "
+                    f"Import the {pascal} default export from ./{pascal} "
+                    f"(the real generated component -- do NOT import sibling "
+                    f"sub-components or stores that are not in the file_specs)."
+                    f"{fields_desc} "
                     f"Tests rendering, user interactions, and data display."
                 ),
                 "entity": ent_name,
@@ -725,6 +964,8 @@ def _build_react_vite_file_specs(
                 "constraints": [
                     "Use @testing-library/react for rendering",
                     "Use vitest describe/it/expect",
+                    f"Import {pascal} from './{pascal}' (default export)",
+                    "Do not import modules or sub-components not in file_specs",
                     "Test renders without crashing",
                     "Test displays expected content",
                 ],
@@ -733,37 +974,45 @@ def _build_react_vite_file_specs(
                 "path": source_path,
                 "kind": "source",
                 "description": (
-                    f"React component for the {pascal} entity. "
-                    f"Renders with CRUD operations. "
+                    f"React component named {pascal} (default export) for the "
+                    f"{pascal} entity.{fields_desc} "
+                    f"Renders with CRUD operations. Type against src/types.ts. "
                     f"Uses design tokens from src/ui/theme.ts."
                 ),
                 "entity": ent_name,
                 "acceptance_id": None,
                 "task_id": None,
-                "constraints": list(base_constraints),
-            })
-
-    # Types file (config)
-    if bp_entities:
-        types_path = f"{source_base}/types.ts"
-        if not _is_reserved(types_path):
-            entity_names = [e.get("name", "") for e in bp_entities]
-            file_specs.append({
-                "path": types_path,
-                "kind": "config",
-                "description": (
-                    f"TypeScript type definitions for entities: "
-                    f"{', '.join(entity_names)}. "
-                    f"Export an interface for each entity with its fields."
-                ),
-                "entity": None,
-                "acceptance_id": None,
-                "task_id": None,
-                "constraints": [
-                    "Export one interface per entity",
-                    "Use appropriate TypeScript types for each field",
+                "constraints": list(base_constraints) + [
+                    f"Export a default React component named {pascal}",
                 ],
             })
+
+    # Fix #12/A: types.ts is a MANDATORY foundation file for react-vite --
+    # ALWAYS emitted (even without blueprint entities) so components that
+    # import '../types' / 'src/types' resolve (no TS2307). It names the exact
+    # interfaces every component/test must import.
+    types_path = f"{source_base}/types.ts"
+    if not _is_reserved(types_path):
+        entity_names = types_module_names or ["ProductRecord"]
+        file_specs.append({
+            "path": types_path,
+            "kind": "config",
+            "description": (
+                f"TypeScript type definitions for entities: "
+                f"{', '.join(entity_names)}. "
+                f"Export ONE interface per entity with these EXACT names: "
+                f"{', '.join(entity_names)}. Components and tests import these "
+                f"from 'src/types' / '../types'."
+            ),
+            "entity": None,
+            "acceptance_id": None,
+            "task_id": None,
+            "constraints": [
+                "Export one interface per entity",
+                f"Interface names MUST be exactly: {', '.join(entity_names)}",
+                "Use appropriate TypeScript types for each field",
+            ],
+        })
 
     # App registration
     if component_names:
@@ -786,24 +1035,51 @@ def _build_react_vite_file_specs(
             })
         app_path = f"{source_base}/App.tsx"
         if not _is_reserved(app_path):
+            # Fix #12/B: App.tsx must import the EXACT generated components from
+            # the canonical manifest -- no inventing ExpenseManager vs Expense.
+            import_lines = "; ".join(
+                f"import {m['componentName']} from '{m['importPath']}'"
+                for m in component_manifest
+            )
             file_specs.append({
                 "path": app_path,
                 "kind": "registration",
                 "description": (
-                    f"Root App component that imports and renders: "
-                    f"{', '.join(component_names)}. "
-                    f"Wire all generated components into the app."
+                    f"Root App component that imports and renders the real "
+                    f"generated components using EXACTLY these imports: "
+                    f"{import_lines}. Do not invent component names or import "
+                    f"paths -- use the ones listed. Render every component in "
+                    f"the JSX tree."
                 ),
                 "entity": None,
                 "acceptance_id": None,
                 "task_id": None,
                 "constraints": [
-                    f"Import each component from ./components/",
+                    "Import each component from its exact path (see description)",
+                    "Use the exact default-export component names listed",
                     "Render all components in the JSX tree",
                 ],
             })
 
+    # Fix #12/A+B+C: publish the authoritative cross-file contract so
+    # build_generation_packet can lift it onto the packet without changing the
+    # _build_*_file_specs return signature shared by every profile. Keyed by
+    # the returned list's id; build_generation_packet pops it immediately.
+    # Bounded so direct callers (tests) that never pop cannot grow it forever.
+    if len(_REACT_VITE_META_CACHE) > 64:
+        _REACT_VITE_META_CACHE.clear()
+    _REACT_VITE_META_CACHE[id(file_specs)] = {
+        "component_manifest": component_manifest,
+        "types_module_names": types_module_names,
+        "entity_field_map": entity_field_map,
+    }
     return file_specs
+
+
+# Cross-file contract computed alongside react-vite file_specs, keyed by the
+# list's id so build_generation_packet can lift it onto the packet without
+# changing the _build_*_file_specs return signature shared by every profile.
+_REACT_VITE_META_CACHE: dict[int, dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -2677,6 +2953,9 @@ def prepare_generation(
     task_ids: list[str] | None = None,
     acceptance_matrix: dict | None = None,
     design: dict | None = None,
+    arch_review: dict | None = None,
+    design_decisions: dict | None = None,
+    scope_decisions: dict | None = None,
 ) -> dict:
     """Prepare the generation packet and manifest.
 
@@ -2704,6 +2983,9 @@ def prepare_generation(
         blueprint=blueprint,
         profile=profile,
         design=design,
+        arch_review=arch_review,
+        design_decisions=design_decisions,
+        scope_decisions=scope_decisions,
         wave=wave,
         task_ids=task_ids,
         acceptance_matrix=acceptance_matrix,
@@ -2757,12 +3039,110 @@ generate_product = prepare_generation
 
 
 # ---------------------------------------------------------------------------
+# Public: check_cross_file_consistency (Fix #12)
+# ---------------------------------------------------------------------------
+
+# Relative ES-module import specifiers (./ or ../). Bare specifiers (react,
+# @mantine/core, zustand) are dependency-provided and never flagged.
+_REL_IMPORT_RE = re.compile(
+    r"""(?:import|export)\b[^;'"]*?\bfrom\s*['"](\.[^'"]+)['"]"""
+    r"""|import\s*['"](\.[^'"]+)['"]"""  # side-effect import './x'
+    r"""|(?:require|import)\(\s*['"](\.[^'"]+)['"]\s*\)""",  # dynamic/require
+)
+
+# Extensions a TS/TSX import may resolve to on disk.
+_RESOLVE_EXTS = (
+    "", ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs",
+    "/index.ts", "/index.tsx", "/index.js", "/index.jsx",
+)
+
+
+def _resolves_on_disk(repo_root: Path, importer_rel: str, spec: str) -> bool:
+    """True if a relative import specifier from *importer_rel* resolves to a
+    real file under *repo_root* (trying the standard TS/TSX extension order)."""
+    importer_dir = (repo_root / importer_rel).parent
+    base = (importer_dir / spec).resolve()
+    for ext in _RESOLVE_EXTS:
+        candidate = Path(str(base) + ext) if ext and not ext.startswith("/") else (
+            base / ext.lstrip("/") if ext.startswith("/") else base
+        )
+        try:
+            if candidate.is_file():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def check_cross_file_consistency(
+    repo_root: Path,
+    packet: dict,
+) -> dict:
+    """Cross-file import-resolution check (Fix #12).
+
+    The chunked per-file dispatch generates each file independently, so one
+    file can import a module/path that NO generated file (or dependency)
+    provides -- e.g. App importing ``./components/ExpenseManager`` while only
+    ``Expense.tsx`` exists, or a component importing ``../types`` when no
+    ``types.ts`` was generated (TS2307). ``tsc`` catches this only later; this
+    lifts it into SignalOS governance so import drift is caught here too.
+
+    Only RELATIVE imports (``./`` / ``../``) are checked -- bare package
+    specifiers (react, @mantine/core, zustand) are provided by dependencies,
+    not generated files, and are never flagged. Consistent with
+    ``validate_generation_output``: returns violations, never weakens rules.
+
+    Returns ``{"valid": bool, "violations": list[str], "checked": int}``.
+    """
+    file_specs = packet.get("file_specs", [])
+    # Only source/registration/config TS-family files declare imports we own.
+    candidates = [
+        s["path"].replace("\\", "/")
+        for s in file_specs
+        if str(s.get("path", "")).replace("\\", "/").endswith(
+            (".ts", ".tsx", ".js", ".jsx")
+        )
+    ]
+
+    violations: list[str] = []
+    checked = 0
+    for rel in candidates:
+        abs_path = repo_root / rel
+        if not abs_path.is_file():
+            continue  # missing-file drift is reported by validate_generation_output
+        try:
+            content = abs_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        checked += 1
+        seen: set[str] = set()
+        for match in _REL_IMPORT_RE.finditer(content):
+            spec = match.group(1) or match.group(2) or match.group(3)
+            if not spec or spec in seen:
+                continue
+            seen.add(spec)
+            if not _resolves_on_disk(repo_root, rel, spec):
+                violations.append(
+                    f"{rel} imports '{spec}' which no generated file provides "
+                    f"(unresolved cross-file import)"
+                )
+
+    return {
+        "valid": len(violations) == 0,
+        "violations": violations,
+        "checked": checked,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public: validate_generation_output
 # ---------------------------------------------------------------------------
 
 def validate_generation_output(
     repo_root: Path,
     packet: dict,
+    *,
+    check_cross_file: bool = True,
 ) -> dict:
     """Validate that the agent's output matches the generation packet.
 
@@ -2772,6 +3152,15 @@ def validate_generation_output(
     3. No files in forbidden_paths
     4. Files are non-empty
     5. Test files exist for source files (TDD check)
+    6. Cross-file import resolution (Fix #12), when ``check_cross_file`` is set.
+
+    ``check_cross_file`` must be False when validating a PARTIAL subset of a
+    product (e.g. one file-disjoint sub-task of the parallel in-place build):
+    a component sub-task can legitimately import ``../types`` before the
+    concurrent foundation sub-task has written ``types.ts``. The authoritative
+    whole-repo cross-file check runs once, after all tasks complete, over the
+    FULL packet (see delivery.py). Standalone/full-packet validation keeps it
+    on (the default).
 
     Returns:
     {
@@ -2878,6 +3267,18 @@ def validate_generation_output(
                 if rel not in spec_paths:
                     files_unexpected.append(rel)
 
+    # Fix #12: cross-file import-resolution drift is a governance violation.
+    # A file importing a module no generated file (or dependency) provides
+    # would fail `tsc && vite build`; catch it here, not only at npm time.
+    # Skipped for partial-subset validation (parallel sub-tasks) -- see the
+    # check_cross_file docstring.
+    cross_file = (
+        check_cross_file_consistency(repo_root, packet)
+        if check_cross_file
+        else {"valid": True, "violations": [], "checked": 0, "skipped": True}
+    )
+    violations.extend(cross_file.get("violations", []))
+
     valid = len(violations) == 0 and len(files_missing) == 0
     return {
         "valid": valid,
@@ -2886,6 +3287,7 @@ def validate_generation_output(
         "files_missing": files_missing,
         "files_unexpected": files_unexpected,
         "violations": violations,
+        "cross_file_consistency": cross_file,
     }
 
 

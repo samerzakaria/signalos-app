@@ -31,6 +31,38 @@ async function runSignal(command: string, args: string[]): Promise<unknown> {
   return tauriInvoke('run_signal_command', { command, args });
 }
 
+type PrecheckResult = {
+  allowed?: boolean;
+  blocking_rule?: string | null;
+  reason?: string | null;
+};
+
+async function ensureBuildEntrypointAllowed(): Promise<boolean> {
+  let result: PrecheckResult;
+  try {
+    result = await tauriInvoke<PrecheckResult>('build_precheck', {
+      args: { stack: 'auto', rules: ['wave-freeze'] },
+    });
+  } catch (e) {
+    pushBubble({
+      id: nowId(),
+      kind: 'error',
+      text: 'Build precheck failed: ' + ((e as Error).message || String(e)),
+    });
+    return false;
+  }
+  if (result && result.allowed === false) {
+    const rule = result.blocking_rule || 'build precheck';
+    pushBubble({
+      id: nowId(),
+      kind: 'error',
+      text: result.reason || `Build is blocked by ${rule}.`,
+    });
+    return false;
+  }
+  return true;
+}
+
 /**
  * After a successful wave, auto-start the preview if:
  *   1. There's no preview already running.
@@ -93,6 +125,10 @@ export async function approvePlan(bubbleId: string): Promise<void> {
 
   if (!ws) {
     pushBubble({ id: nowId(), kind: 'error', text: 'No project workspace is set. Finish onboarding or use Settings -> Workspace.' });
+    return;
+  }
+  if (!(await ensureBuildEntrypointAllowed())) {
+    updateBubble(bubbleId, { planStatus: 'failed' });
     return;
   }
 
@@ -243,6 +279,9 @@ export async function retryTask(bubbleId: string, taskId: string): Promise<void>
   const ws = workspacePath.value;
   if (!ws) {
     pushBubble({ id: nowId(), kind: 'error', text: 'No workspace set; can\'t retry.' });
+    return;
+  }
+  if (!(await ensureBuildEntrypointAllowed())) {
     return;
   }
 
