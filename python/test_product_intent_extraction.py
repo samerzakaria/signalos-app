@@ -494,3 +494,75 @@ class TestLLMAssumptionsFallback:
         from signalos_lib.product.assumptions import record_assumptions_with_llm
         result = record_assumptions_with_llm(extract_product_intent(""))
         assert result is None
+
+
+class TestEntityFieldExtraction:
+    """#41: per-entity FIELD extraction + entity-list reconciliation.
+
+    The prompt's field clauses ("each task has a title, a priority, a due
+    date"; "mark a task as done") must populate the entity's fields -- and the
+    field nouns must NOT survive as their own entities."""
+
+    def test_has_clause_populates_fields_not_entities(self):
+        intent = extract_product_intent(
+            "Build a task tracker. Each task has a title, a priority, and a "
+            "due date."
+        )
+        assert intent["entities"] == ["Task"]
+        fields = intent["entity_fields"]["Task"]
+        assert fields[0] == "id"
+        for f in ("title", "priority", "due_date"):
+            assert f in fields, f
+        # the field nouns are NOT entities
+        assert "Title" not in intent["entities"]
+        assert "Priority" not in intent["entities"]
+        assert "DueDate" not in intent["entities"]
+
+    def test_mark_as_status_becomes_boolean_field(self):
+        intent = extract_product_intent(
+            "A task tracker where I can mark a task as done and delete tasks. "
+            "Each task has a title."
+        )
+        assert "Task" in intent["entities"]
+        assert "done" in intent["entity_fields"]["Task"]
+
+    def test_no_field_clause_leaves_fields_empty(self):
+        # No "X has Y" construction -> no entity_fields, entities untouched.
+        intent = extract_product_intent("Build an app to track expenses and categories.")
+        assert intent.get("entity_fields") == {}
+
+    def test_medical_domain_nouns_not_mis_stripped(self):
+        # Regression: "a medical records system for clinical notes, lab results,
+        # prescriptions" must keep those as entities (no has-clause fields).
+        intent = extract_product_intent(
+            "Build a medical records system for patient intake, clinical notes, "
+            "lab results, prescriptions, and provider scheduling."
+        )
+        lower = [e.lower() for e in intent["entities"]]
+        assert any("clinicalnote" in e for e in lower)
+        assert any("labresult" in e for e in lower)
+        assert any("prescription" in e for e in lower)
+
+    def test_extracted_fields_flow_into_generation_types(self):
+        # End-to-end: the recovered fields reach the generated types.ts (no
+        # blueprint), so the entity is no longer flattened to {id, name}.
+        import tempfile as _tmp
+        from pathlib import Path as _P
+        from signalos_lib.product.generation import build_generation_packet
+        from signalos_lib.product.agent_dispatch import _render_react_vite_files
+
+        intent = extract_product_intent(
+            "Build a task tracker. Each task has a title, a priority, and a "
+            "due date. I can mark a task as done."
+        )
+        with _tmp.TemporaryDirectory() as d:
+            packet = build_generation_packet(
+                repo_root=_P(d), intent=intent, blueprint=None,
+                profile="react-vite", design={"ui_library": {"name": "Mantine"}},
+            )
+            files = _render_react_vite_files(packet)
+            types = files["src/types.ts"]
+            for f in ("title", "priority", "due_date", "done"):
+                assert f in types, f
+            # the status field is a boolean in the frozen contract
+            assert "done: boolean;" in types

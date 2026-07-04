@@ -236,6 +236,149 @@ def _extract_entities(text: str) -> list[str]:
     return _dedup(entities)
 
 
+# ---------------------------------------------------------------------------
+# #41: per-entity FIELD extraction.
+#
+# `_extract_entities` yields entity NAMES only. Without a matching blueprint the
+# fields default to {id, name} (see generation._resolve_entities_to_gen ->
+# agent_dispatch._render_types), which throws away everything the prompt said:
+# "each task has a title, a priority, and a due date ... mark a task as done".
+# A thin entity yields a thin component while the prompt-informed test-writer
+# still asserts the dropped behavior -- the DOMINANT vitest failure class in the
+# funded e2e. This recovers those fields from the prompt so the entity (and thus
+# types.ts, the #37 operations contract, the component and its tests) reflects
+# what the user actually asked for.
+# ---------------------------------------------------------------------------
+
+# Articles/determiners that are never part of a field name.
+_FIELD_ARTICLES = frozenset({
+    "a", "an", "the", "some", "each", "every", "its", "their", "any", "of",
+    "for", "per", "to", "with", "and", "or",
+})
+# Tokens that slip through but are never a standalone field.
+_FIELD_NOISE = frozenset({
+    "it", "them", "that", "this", "these", "those", "which", "where", "when",
+    "can", "will", "should", "must", "i", "you", "we", "they", "be",
+})
+# Verbs that introduce a field list after an entity. Deliberately EXCLUDES the
+# noun-homographs (records/tracks/stores/holds/captures) -- "a medical records
+# system" would otherwise parse "records" as a verb and mis-list the domain
+# nouns as fields. has/have/contains/includes are unambiguous.
+_HAS_VERBS = (
+    r"(?:has|have|having|contains?|containing|includes?|including)"
+)
+# Verbs that flip a status -> a boolean field ("mark a task as done").
+_STATUS_VERBS = r"(?:mark|flag|set|toggle|marks|flags|sets|toggles)"
+# A prompt rarely declares more than a handful of real fields; cap to avoid a
+# run-on clause becoming 20 junk fields.
+_MAX_FIELDS_PER_ENTITY = 10
+
+
+def _clean_field_phrase(phrase: str) -> str:
+    """A raw noun phrase ("a due date") -> a snake_case field ("due_date").
+
+    Drops articles/determiners; keeps up to the last 3 significant words (the
+    field noun is at the tail of a phrase like "a due date")."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", phrase.lower()) if w]
+    words = [w for w in words if w not in _FIELD_ARTICLES and w not in _FIELD_NOISE]
+    if not words:
+        return ""
+    words = words[-3:]
+    return "_".join(words)
+
+
+def _split_field_list(chunk: str) -> list[str]:
+    """"a title, a priority, and a due date" -> [title, priority, due_date]."""
+    out: list[str] = []
+    for part in re.split(r",|\band\b|\bwith\b|&|/|\bplus\b", chunk):
+        f = _clean_field_phrase(part)
+        if f and f not in out:
+            out.append(f)
+    return out
+
+
+def _entity_aliases(name: str) -> list[str]:
+    """Regex-escaped text forms an entity name may take: the lowered name and a
+    spaced camelCase split (TeamMember -> "team member")."""
+    low = name.lower().strip()
+    spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name).lower().strip()
+    return [re.escape(f) for f in {low, spaced} if f]
+
+
+def _extract_entity_fields(
+    text: str, entity_names: list[str]
+) -> dict[str, list[str]]:
+    """Recover per-entity fields from the prompt, DISCOVERING the entity subject.
+
+    Returns ``{PascalEntity: [id, field, ...]}`` for every entity the prompt
+    describes fields for. Crucially it identifies the SUBJECT of a
+    "<entity> has <list>" clause as the entity and the list items as its FIELDS
+    (the deterministic entity extractor otherwise grabs the field list itself as
+    entities). Entities with no discernible fields are omitted -- the {id, name}
+    default still applies to them."""
+    result: dict[str, list[str]] = {}
+
+    def _add(entity: str, fields: list[str]) -> None:
+        if not entity:
+            return
+        bucket = result.setdefault(entity, [])
+        for f in fields:
+            if f and f not in bucket:
+                bucket.append(f)
+
+    # A: "<det> <subject> <has-verb> <field list>" -> subject IS the entity.
+    for m in re.finditer(
+        rf"\b(?:each|every|a|an|the|per|any)\s+(?P<subj>[A-Za-z][A-Za-z]+)\s+"
+        rf"{_HAS_VERBS}\b\s+(?P<list>[^.;!?]+)",
+        text, re.IGNORECASE,
+    ):
+        subj = _to_pascal_case(_singularize(m.group("subj")))
+        _add(subj, _split_field_list(m.group("list")))
+
+    # B: "<status-verb> <det>? <subject>(s) ... as <status>" -> boolean field.
+    for m in re.finditer(
+        rf"\b{_STATUS_VERBS}\s+(?:a|an|the|each|every|this|that|all)?\s*"
+        rf"(?P<subj>[A-Za-z]+)\b[^.;!?]*?\bas\b\s+(?P<status>[A-Za-z][A-Za-z-]*)",
+        text, re.IGNORECASE,
+    ):
+        subj = _to_pascal_case(_singularize(m.group("subj")))
+        st = _clean_field_phrase(m.group("status"))
+        if st:
+            _add(subj, [st])
+
+    # C: a KNOWN entity name followed by a has-verb, even without a determiner
+    # ("tasks have a title") -- covers entities the LLM-refined path supplies.
+    for name in entity_names:
+        aliases = _entity_aliases(name)
+        if not aliases:
+            continue
+        alt = "|".join(aliases)
+        pascal = _to_pascal_case(name)
+        for m in re.finditer(
+            rf"\b(?:{alt})s?\b\s+{_HAS_VERBS}\b\s+(?P<list>[^.;!?]+)",
+            text, re.IGNORECASE,
+        ):
+            _add(pascal, _split_field_list(m.group("list")))
+        for m in re.finditer(
+            rf"\b{_STATUS_VERBS}\s+(?:a|an|the|each|every)?\s*(?:{alt})s?\b"
+            rf"[^.;!?]*?\bas\b\s+(?P<status>[A-Za-z][A-Za-z-]*)",
+            text, re.IGNORECASE,
+        ):
+            st = _clean_field_phrase(m.group("status"))
+            if st:
+                _add(pascal, [st])
+
+    out: dict[str, list[str]] = {}
+    for entity, fields in result.items():
+        cleaned = [
+            f for f in fields
+            if f and f != "id" and f not in _FIELD_NOISE
+        ]
+        if cleaned:
+            out[entity] = ["id"] + cleaned[:_MAX_FIELDS_PER_ENTITY]
+    return out
+
+
 # Phrases that are security/auth/audit concerns, not domain entities
 _QUALIFIER_WORDS = {
     "veterinary", "corporate", "enterprise", "personal",
@@ -698,6 +841,35 @@ def extract_product_intent(
         raw_entities, text,
     )
     intent["entities"] = classified_entities
+
+    # #41: recover per-entity fields from the prompt ("each task has a title, a
+    # priority, a due date"; "mark a task as done") so a no-blueprint entity is
+    # not flattened to {id, name} downstream. This also RECONCILES the entity
+    # list: the deterministic extractor grabs the field list ("title, priority,
+    # due date") AS entities, so when a field clause names a subject we add that
+    # subject as the entity and drop the field tokens that were mis-listed.
+    entity_fields = _extract_entity_fields(text, classified_entities)
+    if entity_fields:
+        field_tokens = {
+            _to_pascal_case(_singularize(f))
+            for fields in entity_fields.values() for f in fields
+        }
+        merged = list(classified_entities)
+        for ent in entity_fields:
+            if ent not in merged:
+                merged.append(ent)
+        # keep an item unless it is purely a field of some entity (and not
+        # itself an entity that owns fields)
+        merged = [
+            e for e in merged
+            if e in entity_fields or e not in field_tokens
+        ]
+        intent["entities"] = merged
+        # re-key fields to the surviving entities only
+        entity_fields = {
+            k: v for k, v in entity_fields.items() if k in merged
+        }
+    intent["entity_fields"] = entity_fields
 
     # Merge extra users and workflows from entity classification
     for u in extra_users:

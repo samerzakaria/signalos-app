@@ -444,10 +444,17 @@ def _resolve_entities_to_gen(
     fall back to PascalCased intent entities, and default to a single
     ``ProductResource`` entity when neither is present.
     """
+    # #41: when there is no blueprint, seed each intent entity with the fields
+    # recovered from the prompt (intent.extract_product_intent -> entity_fields)
+    # instead of an empty list that downstream flattens to {id, name}.
+    entity_fields = intent.get("entity_fields", {}) or {}
     entities_to_gen = (
         bp_entities
         if bp_entities
-        else [{"name": _to_pascal(e), "fields": []} for e in intent.get("entities", [])]
+        else [
+            {"name": _to_pascal(e), "fields": list(entity_fields.get(e, []))}
+            for e in intent.get("entities", [])
+        ]
     )
     if not entities_to_gen:
         entities_to_gen = [{"name": "ProductResource", "fields": []}]
@@ -632,8 +639,12 @@ def build_generation_packet(
     bp_entities = (blueprint or {}).get("entities", [])
     bp_workflows = (blueprint or {}).get("workflows", [])
     if not bp_entities:
+        # #41: seed no-blueprint entities with the fields recovered from the
+        # prompt (intent.entity_fields) instead of an empty list that
+        # downstream (_render_types) flattens to {id, name}.
+        _entity_fields = intent.get("entity_fields", {}) or {}
         bp_entities = [
-            {"name": _to_pascal(e), "fields": []}
+            {"name": _to_pascal(e), "fields": list(_entity_fields.get(e, []))}
             for e in intent.get("entities", [])
         ]
     if not bp_workflows:
