@@ -508,25 +508,16 @@ def _import_allowlist_lines(
         return []
     bare = list(_REACT_VITE_BARE_ALLOWLIST)
     ui_lib = (shared_context.get("design_constraints", {}) or {}).get("ui_library")
-    # Fold in ONLY the SELECTED design system's packages. Never hardcode
-    # @mantine -- doing so told a shadcn product it may import @mantine/core
-    # (not a dependency -> build fails, then the repair loop burns cycles/tokens
-    # chasing it, cf. #31). Each branch lists the real npm deps that design's
-    # get_design_dependencies() installs.
-    if ui_lib == "@mantine/core":
-        bare += [
-            p for p in (
-                "@mantine/core", "@mantine/hooks", "@mantine/form",
-                "@mantine/dates", "@mantine/charts", "@tabler/icons-react", "dayjs",
-            ) if p not in bare
-        ]
-    elif ui_lib == "shadcn/ui":
-        bare += [
-            p for p in (
-                "lucide-react", "class-variance-authority", "clsx",
-                "tailwind-merge",
-            ) if p not in bare
-        ]
+    # Fold in ONLY the SELECTED design system's packages, sourced from the #44
+    # UI-library registry (single source of truth). Never hardcode @mantine --
+    # doing so told a shadcn product it may import @mantine/core (not a
+    # dependency -> build fails, then the repair loop burns cycles/tokens chasing
+    # it, cf. #31). The registry's import_packages ARE the real npm deps that
+    # design.get_design_dependencies() installs for that library.
+    from .design import get_ui_library
+    adapter = get_ui_library(ui_lib) if ui_lib else None
+    if adapter:
+        bare += [p for p in adapter.import_packages if p not in bare]
     elif ui_lib and ui_lib not in bare:
         bare.append(ui_lib)
 

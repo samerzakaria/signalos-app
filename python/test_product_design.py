@@ -411,3 +411,83 @@ class TestLLMDesignSelection:
         design = build_design_system(_financial_dashboard_intent(), "react-vite")
         assert design["ui_library"]["name"] == "shadcn/ui"
         assert design["state_management"]["name"] == "zustand"
+
+
+# ---------------------------------------------------------------------------
+# #44: UI-library adapter registry -- the single, extensible source of truth.
+# Registering ONE adapter must wire it across validator + deps + LLM prompt +
+# heuristic + import allowlist, replacing the old hardcoded pair-in-5-places.
+# ---------------------------------------------------------------------------
+
+class TestUILibraryRegistry:
+    def test_registry_accessors(self):
+        from signalos_lib.product import design as d
+        names = d.supported_ui_library_names()
+        assert "@mantine/core" in names
+        assert "shadcn/ui" in names
+        assert d.get_ui_library("@mantine/core").id == "mantine"
+        assert d.get_ui_library("mantine").name == "@mantine/core"   # by id too
+        assert d.get_ui_library("@mui/material") is None             # unsupported
+
+    def test_validator_uses_registry(self):
+        from signalos_lib.product import design as d
+        # a name in the registry parses; one outside is rejected
+        good = json.dumps({
+            "ui_library": {"name": "@mantine/core", "version": "7", "reason": "x"},
+            "design_tokens": {"primary_color": "#111", "font_family": "Inter"},
+            "state_management": {"name": "zustand"},
+            "data_layer": {"name": "local"},
+            "form_handling": {"name": "native"},
+        })
+        bad = good.replace("@mantine/core", "@mui/material")
+        assert d._parse_design_response(good) is not None
+        assert d._parse_design_response(bad) is None
+
+    def test_deps_and_prompt_come_from_registry(self):
+        from signalos_lib.product import design as d
+        for lib in d.ui_library_registry():
+            deps = d.get_design_dependencies({"ui_library": {"name": lib.name}})
+            # every dependency the adapter declares is installed
+            for pkg in lib.dependencies:
+                assert pkg in deps, (lib.name, pkg)
+            # the adapter is offered in the LLM prompt
+            assert lib.name in d._ARCHITECT_SYSTEM_PROMPT
+
+    def test_new_adapter_flows_everywhere(self, monkeypatch):
+        # The extensibility contract: append ONE adapter -> it is supported,
+        # validated, and its deps resolve, with NO other code change.
+        from signalos_lib.product import design as d
+        fake = d.UILibraryAdapter(
+            id="chakra",
+            name="@chakra-ui/react",
+            version="^2.8.0",
+            prompt_desc="accessible component library",
+            dependencies={"@chakra-ui/react": "^2.8.0", "@emotion/react": "^11"},
+            import_packages=("@chakra-ui/react", "@emotion/react"),
+        )
+        monkeypatch.setattr(
+            d, "_UI_LIBRARY_REGISTRY", d._UI_LIBRARY_REGISTRY + (fake,)
+        )
+        assert "@chakra-ui/react" in d.supported_ui_library_names()
+        deps = d.get_design_dependencies({"ui_library": {"name": "@chakra-ui/react"}})
+        assert "@chakra-ui/react" in deps and "@emotion/react" in deps
+        # and the import allowlist (agent_dispatch) honors it too
+        from signalos_lib.product.agent_dispatch import _import_allowlist_lines
+        lines = _import_allowlist_lines(
+            "src/components/Foo.tsx", "source",
+            {"profile": "react-vite", "design_constraints": {"ui_library": "@chakra-ui/react"}},
+            [],
+        )
+        blob = "\n".join(lines)
+        assert "@chakra-ui/react" in blob and "@emotion/react" in blob
+
+    def test_heuristic_precedence_preserved(self):
+        from signalos_lib.product.design import _select_ui_library
+        dash = _select_ui_library(
+            {"product_type": "financial-dashboard", "ux_surfaces": ["chart"]}, None)
+        forms = _select_ui_library(
+            {"entities": ["A", "B", "C", "D"], "ux_surfaces": ["form"]}, None)
+        default = _select_ui_library({"entities": ["A"], "ux_surfaces": []}, None)
+        assert dash["name"] == "shadcn/ui"
+        assert forms["name"] == "@mantine/core"
+        assert default["name"] == "shadcn/ui"

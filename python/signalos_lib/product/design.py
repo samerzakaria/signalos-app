@@ -7,11 +7,15 @@
 from __future__ import annotations
 
 __all__ = [
+    "UILibraryAdapter",
     "build_design_system",
     "get_design_dependencies",
     "get_design_instructions",
+    "get_ui_library",
     "load_design",
     "select_design_with_llm",
+    "supported_ui_library_names",
+    "ui_library_registry",
     "write_design",
 ]
 
@@ -56,6 +60,144 @@ def enforce_dependency_versions(
 
 
 # ---------------------------------------------------------------------------
+# #44: UI-library adapter REGISTRY -- the single source of truth for the
+# supported design systems.
+#
+# The choice used to be a hardcoded pair repeated in FIVE places (the LLM
+# prompt, _parse_design_response's validator, _select_ui_library's heuristic,
+# get_design_dependencies, and agent_dispatch's import allowlist). That made
+# the set unextendable and gave the founder no say. Now a design system is one
+# registry entry; registering it wires it EVERYWHERE. A curated set is fine --
+# a hardcoded, unextendable one was the problem.
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass  # noqa: E402
+from typing import Callable, Optional  # noqa: E402
+
+
+@dataclass(frozen=True)
+class UILibraryAdapter:
+    """A pluggable UI-library adapter. One entry makes the library a first-class
+    choice across the whole design + generation pipeline."""
+    id: str
+    name: str                            # the ui_library.name value used everywhere
+    version: str
+    prompt_desc: str                     # one-line description in the LLM options
+    dependencies: dict[str, str]         # npm deps get_design_dependencies installs
+    import_packages: tuple[str, ...]     # bare packages a component/test may import
+    selection_priority: int = 0          # higher = considered first by the heuristic
+    is_default: bool = False             # heuristic fallback when nothing else fits
+    default_reason: str = ""
+    # fit(intent, blueprint) -> a reason string if this library fits, else None.
+    fit: Optional[Callable[[dict, Optional[dict]], Optional[str]]] = None
+
+
+def _mantine_fit(intent: dict, blueprint: dict | None) -> str | None:
+    surfaces = set(intent.get("ux_surfaces", []))
+    entities = intent.get("entities", [])
+    if len(entities) >= 4 or surfaces & {"form", "table", "calendar"}:
+        return (
+            "Entity-rich product needs robust form controls, tables, and "
+            "date pickers"
+        )
+    return None
+
+
+def _shadcn_fit(intent: dict, blueprint: dict | None) -> str | None:
+    surfaces = set(intent.get("ux_surfaces", []))
+    if (
+        intent.get("product_type") == "financial-dashboard"
+        or surfaces & {"chart", "gauge"}
+    ):
+        return (
+            "Data visualization product benefits from composable "
+            "primitives + recharts"
+        )
+    return None
+
+
+_UI_LIBRARY_REGISTRY: tuple[UILibraryAdapter, ...] = (
+    UILibraryAdapter(
+        id="shadcn",
+        name="shadcn/ui",
+        version="latest",
+        prompt_desc=(
+            "composable primitives, lightweight; good for dashboards and "
+            "general UI"
+        ),
+        dependencies={
+            "tailwindcss": "^3.4.0",
+            "class-variance-authority": "^0.7.0",
+            "clsx": "^2.1.0",
+            "tailwind-merge": "^2.3.0",
+            "lucide-react": "^0.378.0",
+        },
+        import_packages=(
+            "lucide-react", "class-variance-authority", "clsx", "tailwind-merge",
+        ),
+        # dashboard-fit is checked BEFORE mantine's forms-fit (preserves the
+        # prior precedence where a dashboard product picked shadcn).
+        selection_priority=20,
+        is_default=True,
+        default_reason="General-purpose composable UI primitives",
+        fit=_shadcn_fit,
+    ),
+    UILibraryAdapter(
+        id="mantine",
+        name="@mantine/core",
+        version=_MANTINE_VERSION,
+        prompt_desc=(
+            "rich form controls, tables, date pickers; good for entity-heavy apps"
+        ),
+        dependencies={
+            "@mantine/core": _MANTINE_VERSION,
+            "@mantine/hooks": _MANTINE_VERSION,
+            "@mantine/form": _MANTINE_VERSION,
+            "@mantine/dates": _MANTINE_VERSION,
+            "@mantine/charts": _MANTINE_VERSION,
+            # #27: @mantine/charts needs recharts as a peer.
+            "recharts": "^2.12.0",
+            "@tabler/icons-react": "^3.5.0",
+            "dayjs": "^1.11.11",
+        },
+        import_packages=(
+            "@mantine/core", "@mantine/hooks", "@mantine/form",
+            "@mantine/dates", "@mantine/charts", "@tabler/icons-react", "dayjs",
+        ),
+        selection_priority=10,
+        fit=_mantine_fit,
+    ),
+)
+
+
+def ui_library_registry() -> tuple[UILibraryAdapter, ...]:
+    """The ordered tuple of supported UI-library adapters."""
+    return _UI_LIBRARY_REGISTRY
+
+
+def get_ui_library(name: str) -> UILibraryAdapter | None:
+    """Look up an adapter by its ui_library.name (e.g. '@mantine/core') or its
+    short id (e.g. 'mantine'). None when unsupported."""
+    for lib in _UI_LIBRARY_REGISTRY:
+        if lib.name == name or lib.id == name:
+            return lib
+    return None
+
+
+def supported_ui_library_names() -> tuple[str, ...]:
+    """The ui_library.name values the design phase accepts."""
+    return tuple(lib.name for lib in _UI_LIBRARY_REGISTRY)
+
+
+def _ui_library_options_block() -> str:
+    """Render the 'UI library (pick one)' options for the LLM prompt from the
+    registry, so a newly-registered library is offered automatically."""
+    return "\n".join(
+        f'- "{lib.name}" — {lib.prompt_desc}' for lib in _UI_LIBRARY_REGISTRY
+    )
+
+
+# ---------------------------------------------------------------------------
 # LLM-driven design selection (Architect agent)
 # ---------------------------------------------------------------------------
 
@@ -87,8 +229,7 @@ You must pick from the SUPPORTED OPTIONS below. Do not invent new libraries.
 ## Supported Options
 
 UI library (pick one):
-- "@mantine/core" — rich form controls, tables, date pickers; good for entity-heavy apps
-- "shadcn/ui" — composable primitives, lightweight; good for dashboards and general UI
+__UI_LIBRARY_OPTIONS__
 
 State management (pick one):
 - "zustand" — minimal boilerplate, scales well
@@ -130,6 +271,12 @@ Return ONLY valid JSON (no markdown fencing, no explanation outside the JSON):
   "additional_deps": {}
 }
 """
+
+# #44: inject the registry's UI-library options so a newly-registered library is
+# offered to the architect automatically (single source of truth).
+_ARCHITECT_SYSTEM_PROMPT = _ARCHITECT_SYSTEM_PROMPT.replace(
+    "__UI_LIBRARY_OPTIONS__", _ui_library_options_block()
+)
 
 
 def select_design_with_llm(
@@ -235,10 +382,9 @@ def _parse_design_response(response: str) -> dict | None:
     if not required.issubset(data.keys()):
         return None
 
-    # Validate ui_library is from supported set
-    valid_ui = {"@mantine/core", "shadcn/ui"}
+    # Validate ui_library is from the supported set (#44: from the registry).
     ui_name = data.get("ui_library", {}).get("name", "")
-    if ui_name not in valid_ui:
+    if ui_name not in supported_ui_library_names():
         return None
 
     # Validate state_management
@@ -370,47 +516,29 @@ def _deterministic_design(intent: dict, profile: str, blueprint: dict | None = N
 # ---------------------------------------------------------------------------
 
 def _select_ui_library(intent: dict, blueprint: dict | None) -> dict:
-    """Select UI library based on product characteristics."""
-    surfaces = set(intent.get("ux_surfaces", []))
-    entities = intent.get("entities", [])
-    product_type = intent.get("product_type", "custom")
+    """Select a UI library from the registry (#44).
 
-    # Dashboard products -> shadcn + recharts
-    if (
-        product_type == "financial-dashboard"
-        or "chart" in surfaces
-        or "gauge" in surfaces
-    ):
-        return {
-            "name": "shadcn/ui",
-            "version": "latest",
-            "reason": (
-                "Data visualization product benefits from composable "
-                "primitives + recharts"
-            ),
-        }
+    Each adapter's ``fit`` votes on the intent; the highest-priority match wins,
+    else the ``is_default`` library. Registering a new adapter with a ``fit``
+    makes it selectable here too -- no edit to this function."""
+    candidates = sorted(
+        (lib for lib in _UI_LIBRARY_REGISTRY if lib.fit is not None),
+        key=lambda lib: lib.selection_priority,
+        reverse=True,
+    )
+    for lib in candidates:
+        reason = lib.fit(intent, blueprint)
+        if reason:
+            return {"name": lib.name, "version": lib.version, "reason": reason}
 
-    # Forms-heavy / records -> Mantine (rich form controls, tables, dates)
-    if (
-        len(entities) >= 4
-        or "form" in surfaces
-        or "table" in surfaces
-        or "calendar" in surfaces
-    ):
-        return {
-            "name": "@mantine/core",
-            "version": _MANTINE_VERSION,
-            "reason": (
-                "Entity-rich product needs robust form controls, "
-                "tables, and date pickers"
-            ),
-        }
-
-    # Default -> shadcn/ui (lightweight)
+    default = next(
+        (lib for lib in _UI_LIBRARY_REGISTRY if lib.is_default),
+        _UI_LIBRARY_REGISTRY[0],
+    )
     return {
-        "name": "shadcn/ui",
-        "version": "latest",
-        "reason": "General-purpose composable UI primitives",
+        "name": default.name,
+        "version": default.version,
+        "reason": default.default_reason or "Default UI library",
     }
 
 
@@ -563,26 +691,11 @@ def get_design_dependencies(design: dict) -> dict[str, str]:
     """Return all npm dependencies implied by the design system selection."""
     deps: dict[str, str] = {}
 
+    # #44: the selected library's npm deps come straight from its registry entry.
     ui = design.get("ui_library", {}).get("name", "")
-    if ui == "@mantine/core":
-        deps["@mantine/core"] = _MANTINE_VERSION
-        deps["@mantine/hooks"] = _MANTINE_VERSION
-        deps["@mantine/form"] = _MANTINE_VERSION
-        deps["@mantine/dates"] = _MANTINE_VERSION
-        deps["@mantine/charts"] = _MANTINE_VERSION
-        # Fix #27: @mantine/charts requires recharts as a peer dependency.
-        # Ship it on the Mantine branch too (previously recharts was only added
-        # on the shadcn/ui branch), otherwise a Mantine dashboard installs
-        # @mantine/charts with an unmet recharts peer.
-        deps["recharts"] = "^2.12.0"
-        deps["@tabler/icons-react"] = "^3.5.0"
-        deps["dayjs"] = "^1.11.11"
-    elif ui == "shadcn/ui":
-        deps["tailwindcss"] = "^3.4.0"
-        deps["class-variance-authority"] = "^0.7.0"
-        deps["clsx"] = "^2.1.0"
-        deps["tailwind-merge"] = "^2.3.0"
-        deps["lucide-react"] = "^0.378.0"
+    ui_lib = get_ui_library(ui)
+    if ui_lib:
+        deps.update(ui_lib.dependencies)
 
     state = design.get("state_management", {}).get("name", "")
     if state == "zustand":
