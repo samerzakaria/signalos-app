@@ -108,6 +108,21 @@ def test_component_prompt_demands_interactivity():
         assert token in prompt, token
 
 
+def test_test_prompt_demands_unambiguous_queries():
+    # #43: the test prompt must steer toward anchored role-based queries so a
+    # bare substring like getByLabelText(/priority/i) can't match both the form
+    # label AND the same word in the rendered list ("found multiple elements").
+    packet = _packet()
+    gen = packet["generation"]
+    shared = _build_shared_context(gen)
+    prompt = _build_single_file_prompt(_test_spec(packet), gen, _gov(), shared)
+    low = prompt.lower()
+    assert "unambiguous" in low
+    assert "getbyrole" in low
+    assert "found multiple elements" in low
+    assert "within(" in low
+
+
 def test_test_prompt_demands_interaction():
     packet = _packet()
     gen = packet["generation"]

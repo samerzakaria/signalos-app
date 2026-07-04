@@ -855,6 +855,23 @@ def _build_single_file_prompt(
             "- Assert on observable behavior/state, not merely that the "
             "component rendered without throwing."
         )
+        # #43: robust, UNAMBIGUOUS queries. A bare substring regex like
+        # `getByLabelText(/priority/i)` also matches the SAME word rendered in
+        # the list (e.g. a task showing "Priority: High") -> Testing Library
+        # throws "found multiple elements" and the test fails. Query form
+        # controls by ROLE + an ANCHORED exact name, and scope list assertions.
+        lines.append(
+            "- Use ROBUST, UNAMBIGUOUS queries. Query each FORM control by its "
+            "role and an ANCHORED accessible name -- e.g. "
+            "`getByRole('textbox', { name: /^title$/i })`, "
+            "`getByRole('combobox', { name: /^priority$/i })`, "
+            "`getByRole('checkbox', { name: /^done$/i })` -- NOT a bare "
+            "substring like `getByLabelText(/priority/i)`, because that same "
+            "word usually also appears in the rendered list and the query then "
+            "throws 'found multiple elements'. When asserting on a specific list "
+            "row vs the form, narrow with `within(...)`. Prefer `findBy*` for "
+            "anything that appears after an interaction."
+        )
         # #32: the stack is VITEST, not jest -- gpt-class models default to
         # jest idioms that fail tsc ("Cannot use namespace 'jest' as a value").
         lines.append(
