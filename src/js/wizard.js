@@ -85,7 +85,13 @@ function save() {
 
 export function isFinished() {
   const s = load();
-  return Boolean(s?.completedSteps?.includes("done"));
+  if (!s?.completedSteps?.includes("done")) return false;
+  // A genuinely completed onboarding recorded a projects root (finishOnboarding
+  // writes `projectsRoot`; the legacy wizard used `folder`). A persisted "done"
+  // flag with no root — corrupt/partial state, or a build predating the root
+  // step — must re-show onboarding rather than drop the user into an app with
+  // nowhere to place products and an active folder of (none).
+  return Boolean(String(s?.projectsRoot || s?.folder || "").trim());
 }
 
 export function resetWizard() {

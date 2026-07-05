@@ -42,6 +42,20 @@ async function buildEntrypointAllowed() {
   return { allowed: true, message: '' };
 }
 
+// A build needs a product *project* (workspace) to build into. Onboarding only
+// sets the projects root; the active workspace stays (none) until a project is
+// created or opened — so a first delivery (or a reinstall that skipped
+// onboarding via persisted state) otherwise dies in the Rust precheck with a
+// cryptic "No workspace selected". Instead, guide the user to make one.
+function guideToCreateProject() {
+  state.chatBubbles = [...state.chatBubbles, {
+    id: nowId(),
+    kind: 'system',
+    text: 'No project open yet — Foundry builds inside a product folder. Create or open a project to start building. Opening New Project…',
+  }];
+  if (typeof window.openNewProject === 'function') window.openNewProject();
+}
+
 function parseGovernedChatCommand(value) {
   const normalized = String(value || '').trim().replace(/\s+/g, ' ');
   const lower = normalized.toLowerCase();
@@ -200,6 +214,13 @@ async function sendMsg() {
       // and cancel/resume are driven by agentEvents.ts.
       const isDelivery = isDeliveryIntent(val);
       if (isDelivery) {
+        // Guard before the precheck: a build with no active project would fail
+        // the Rust precheck with "No workspace selected". Route to New Project.
+        if (!String(state.workspace || '').trim()) {
+          guideToCreateProject();
+          state.busy = false;
+          return;
+        }
         const precheck = await buildEntrypointAllowed();
         if (!precheck.allowed) {
           state.chatBubbles = [...state.chatBubbles, {
@@ -217,6 +238,13 @@ async function sendMsg() {
       await ipc.signal.runAndWait(command, [JSON.stringify(activeAgentPayload({ prompt: val }))], 600000);
     } catch (e) {
       const raw = e && e.message ? e.message : String(e);
+      // Safety net: if the sidecar/Rust side reports no workspace despite the
+      // pre-guard (state can diverge), guide instead of surfacing raw internals.
+      if (/no workspace selected/i.test(raw)) {
+        guideToCreateProject();
+        state.busy = false;
+        return;
+      }
       const message = isDeliveryIntent(val) && !buildPrecheckComplete
         ? `Build precheck failed: ${raw}`
         : providerConnectionMessage(e, state.ai || 'AI provider');

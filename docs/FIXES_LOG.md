@@ -8,6 +8,21 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Real user-journey / cockpit UX — the layer that was never e2e-tested (v3.2.4-internal.2 + follow-up)
+
+Every UI unit test mocks the Tauri bridge, so nothing ever walked the real cockpit — journey-breaking
+bugs shipped "green". Found by direct user reports on the installed app + a new Playwright journey smoke
+(`e2e/user-journey.smoke.mjs`).
+
+| # | Issue | Root cause | Fix | Location | Verified | Commit |
+|---|-------|-----------|-----|----------|----------|--------|
+| 50 | **Chat wiped on tab switch** — moving away from Build and back showed a brand-new chat with no history, even mid-task | `loadBuild()` runs on *every* switch to Build and unconditionally overwrote `state.chatBubbles`, rebuilding from only persisted turns → a live/unpersisted conversation was replaced by just the welcome bubble | Only **hydrate when the chat is empty**; never clobber a live/loaded conversation on re-entry | `src/js/ui/chat.js` | test (2), build | `8d33c19` |
+| 51 | **"Picked a folder, still 'Choose a projects root'"** — onboarding dead-ended; Browse never registered the folder | `browseProjectsRoot` used `window.__TAURI__.dialog`, usually **undefined** under `withGlobalTauri` in Tauri v2 → silently fell through to `window.prompt` (a no-op in the webview) | Use the reliable `@tauri-apps/plugin-dialog` binding (same pattern chat.js uses), with global + prompt as ordered fallbacks | `src/components/Onboarding.tsx` | test, build | `8d33c19` |
+| 52 | **Models sometimes not fetched → nothing works (no model selectable)** | `fetch_provider_models` can fire before the sidecar picked up the freshly-stored key / finished starting; a single attempt returned empty/errored with no retry | Retry transient failures **and empty results** (3×, backoff); auth failures still fail fast so a bad key is cleared | `src/services/providerModels.ts` | test (2), build | `8d33c19` |
+| 53 | **Fresh install → "Agent run failed: Build precheck failed: No workspace selected"** — new install skipped onboarding, landed with `Active folder: (none)`, and every build died in the Rust precheck | Two-part: (a) WebView2 `localStorage` persists across reinstalls → the `signalos.onboarding.wizard.v1` "done" flag survived → onboarding skipped; (b) onboarding **by design** only sets the projects *root* (workspace stays `(none)` until a project is created) but nothing guided the user there — the first delivery fired straight into `enforcement.rs` `"No workspace selected"`. Hit **every** first-time user, not just reinstalls. | (a) `isFinished()` now also requires a real persisted `projectsRoot` (corrupt/partial "done" re-shows onboarding); (b) a **workspace guard** in the delivery path: no active workspace → plain-language system bubble + open **New Project** instead of firing a doomed build; plus a catch-net that re-routes any `"no workspace selected"` surfacing from the sidecar | `src/js/wizard.js`, `src/js/ui/chat.js` | test (3), repro, build | _pending_ |
+
+---
+
 ## Release v3.2.3-internal.1 — supply-chain, CI, and executor fixes (2026-07-03)
 
 | # | Issue | Root cause | Fix | Location | Verified | Commit |

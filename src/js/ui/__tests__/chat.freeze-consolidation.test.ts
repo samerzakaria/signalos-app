@@ -22,6 +22,7 @@ import {
   cmdPaletteOpen,
   ai,
   aiModel,
+  workspacePath,
 } from '../../../state';
 
 // Mock ipc.js BEFORE importing chat.js so the imports resolve to our
@@ -90,6 +91,9 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     cmdPaletteOpen.value = false;
     ai.value = 'openai';
     aiModel.value = 'gpt-test';
+    // A delivery now requires an active product workspace (#53 guard); these
+    // tests exercise the delivery/precheck path, so give them one.
+    workspacePath.value = 'C:/Users/foundry/Foundry Projects/task-manager';
   });
 
   it('typing /signal-freeze calls BOTH the Python CLI and the Rust enforcement IPC', async () => {
