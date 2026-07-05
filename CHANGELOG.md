@@ -2,6 +2,20 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.4-internal.1] - 2026-07-05
+
+### Generation quality — a real prompt now produces a working, tested app
+
+Six credit-funded end-to-end runs on real `claude-sonnet-4-5` drove the generated app from "domain-correct + builds" to **tsc-clean, build-passing, vitest 8/8** (both test files green). Each fix proven against real generated code:
+
+- **Component prop-drift eliminated (#36):** a symmetric *propless* contract — App composes `<Component />` with no props; components are self-contained and declare no required props — so no prop shape can drift.
+- **Shared operations contract (#37):** one deterministic op list (create / delete / toggle-per-boolean) injected into BOTH the component and its test, so they can't disagree on which operations exist.
+- **Richer entities (#41):** intent extraction recovers per-entity fields from the prompt ("each task has a title, a priority, a due date … mark as done" → `Task {id, title, priority, due_date, done}`) instead of collapsing to `{id, name}`.
+- **Extensible UI-library registry (#44):** the design system is a pluggable `UILibraryAdapter` registry (single source across validator / prompt / heuristic / deps / import-allowlist), not a pair hardcoded in five places — adding MUI/Chakra is one entry.
+- **Deterministic App-shell test (#48):** `src/App.test.tsx` is a deterministic composition smoke ("App mounts"), removing the perennial LLM drift point (phantom store imports, malformed JSX).
+- **jsdom + test robustness (#42/#43/#45/#46/#49):** the generated vitest setup stubs `matchMedia`/`ResizeObserver`; tests use anchored role queries, per-row `within()`, store reset between tests, `clear`-before-retype, and `findBy*` for post-interaction assertions.
+- **Repair + scaffold:** a delimiter-balance pass sharpens tsc syntax diagnostics (#38) and an import-drift enrichment feeds the repair loop the real manifest paths (#47); ship `@testing-library/user-event` (#40); dependency-install gets its own larger validation timeout so a slow install isn't misread as a build failure.
+
 ## [3.2.3-internal.2] - 2026-07-04
 
 ### Generation quality — domain-correct, building apps; governance wiring; hermetic tests

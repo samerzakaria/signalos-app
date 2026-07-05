@@ -4174,7 +4174,7 @@ dependencies = [
 
 [[package]]
 name = "signalos-desktop"
-version = "3.2.3-internal.2"
+version = "3.2.4-internal.1"
 dependencies = [
  "anyhow",
  "env_logger",

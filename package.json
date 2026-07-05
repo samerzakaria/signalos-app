@@ -1,6 +1,6 @@
 {
   "name": "foundry-desktop",
-  "version": "3.2.3-internal.2",
+  "version": "3.2.4-internal.1",
   "private": true,
   "description": "Foundry by SignalOS: a governed AI product studio for non-technical founders",
   "scripts": {

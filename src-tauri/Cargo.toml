@@ -1,6 +1,6 @@
 [package]
 name    = "signalos-desktop"
-version = "3.2.3-internal.2"
+version = "3.2.4-internal.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
