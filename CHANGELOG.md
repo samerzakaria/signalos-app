@@ -2,6 +2,19 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.4-internal.2] - 2026-07-05
+
+### UI/UX user-journey fixes — the cockpit was never e2e-tested
+
+The desktop app's UI journey was validated only by mocked unit tests, never walked end-to-end, so three journey-breaking bugs shipped. Found by building a real user-journey E2E (Playwright over the built UI + a faithful `__TAURI__` mock) and from direct testing:
+
+- **Chat wiped on tab switch (#50):** `loadBuild()` runs on every switch to the Build tab and unconditionally overwrote the conversation, rebuilding it from persisted turns only — so a mid-flight or unpersisted chat was replaced by just the welcome message on every navigation ("new chat, no history"). Now it only hydrates when the chat is empty; a live conversation is never clobbered.
+- **Projects-root Browse didn't register (#51):** the folder picker used `window.__TAURI__.dialog`, which is often undefined under `withGlobalTauri` in Tauri v2, so Browse silently fell through to a no-op `window.prompt` — the picked folder never registered and onboarding dead-ended on "Choose a projects root folder." Now uses the reliable `@tauri-apps/plugin-dialog` binding.
+- **Model fetch race (#52):** `fetch_provider_models` could fire before the sidecar picked up the freshly-stored key / finished starting; a single attempt returned empty or errored with no retry, leaving no selectable model. Now retries transient failures and empty results (auth failures still fail fast).
+- **Added the missing layer:** a committed user-journey smoke E2E (`e2e/`) that walks launch → onboarding → app-boot against the built UI, so this class of bug can't ship green again.
+
+Full frontend suite 309/309; tsc clean; build green.
+
 ## [3.2.4-internal.1] - 2026-07-05
 
 ### Generation quality — a real prompt now produces a working, tested app
