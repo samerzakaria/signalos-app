@@ -82,23 +82,34 @@ function activeAgentPayload(extra = {}) {
 
 export async function loadBuild() {
   try {
-    const buildId = await activeBuildId();
-    const turns = await loadConvHistory(buildId);
-    const bubbles = [
-      {
-        id: 'welcome',
-        kind: 'ai',
-        text: `Hi ${state.userName || 'there'}! What do you want to build today?`,
-        historical: true,
-      },
-    ];
-    if (turns && turns.length > 0) {
-      turns.forEach((t) => {
-        if (t.user_idea || t.user) bubbles.push({ id: nowId(), kind: 'user', text: t.user_idea || t.user, historical: true });
-        if (t.ai_summary || t.summary) bubbles.push({ id: nowId(), kind: 'ai', text: t.ai_summary || t.summary, historical: true });
-      });
+    // #50: loadBuild runs on EVERY switch to the Build tab (switchTab's
+    // loaders). It must NOT clobber a live or already-loaded conversation --
+    // unconditionally overwriting state.chatBubbles here wiped a mid-flight
+    // chat (streaming/tool/gate bubbles that aren't persisted turns yet) back
+    // to just the welcome message every time the user navigated away and
+    // back ("new chat without history"). Only HYDRATE when the chat is empty
+    // (first visit, or after a project switch has cleared it); otherwise keep
+    // whatever is already on screen.
+    const current = state.chatBubbles || [];
+    if (current.length === 0) {
+      const buildId = await activeBuildId();
+      const turns = await loadConvHistory(buildId);
+      const bubbles = [
+        {
+          id: 'welcome',
+          kind: 'ai',
+          text: `Hi ${state.userName || 'there'}! What do you want to build today?`,
+          historical: true,
+        },
+      ];
+      if (turns && turns.length > 0) {
+        turns.forEach((t) => {
+          if (t.user_idea || t.user) bubbles.push({ id: nowId(), kind: 'user', text: t.user_idea || t.user, historical: true });
+          if (t.ai_summary || t.summary) bubbles.push({ id: nowId(), kind: 'ai', text: t.ai_summary || t.summary, historical: true });
+        });
+      }
+      state.chatBubbles = bubbles;
     }
-    state.chatBubbles = bubbles;
   } catch (e) {
     console.warn('Could not load conversation history:', e.message);
   }

@@ -78,14 +78,31 @@ export function Onboarding() {
   };
 
   const browseProjectsRoot = async () => {
-    const tauri = window.__TAURI__;
-    const dialog = tauri?.dialog;
-    if (!dialog?.open) {
+    // #51: the reliable folder picker in Tauri v2 is the
+    // @tauri-apps/plugin-dialog JS binding (chat.js uses the same). Relying on
+    // window.__TAURI__.dialog is fragile -- under withGlobalTauri it is often
+    // undefined, so Browse silently fell through to window.prompt (a no-op in
+    // the webview) and the picked folder NEVER registered -> onboarding stayed
+    // stuck on "Choose a projects root folder" even after the user picked one.
+    let openDialog: ((opts: Record<string, unknown>) => Promise<unknown>) | null = null;
+    try {
+      const dialog = await import('@tauri-apps/plugin-dialog');
+      if (typeof (dialog as { open?: unknown })?.open === 'function') {
+        openDialog = (dialog as { open: (o: Record<string, unknown>) => Promise<unknown> }).open;
+      }
+    } catch {
+      /* fall through to the global / prompt below */
+    }
+    const globalOpen = (window.__TAURI__ as { dialog?: { open?: unknown } } | undefined)?.dialog?.open;
+    if (!openDialog && typeof globalOpen === 'function') {
+      openDialog = globalOpen as (o: Record<string, unknown>) => Promise<unknown>;
+    }
+    if (!openDialog) {
       const fallback = window.prompt('Projects root folder path');
       if (fallback) projectsRoot.value = fallback;
       return;
     }
-    const result = await dialog.open({
+    const result = await openDialog({
       directory: true,
       multiple: false,
       title: 'Choose projects root',

@@ -88,10 +88,32 @@ export async function loadProviderModels(
   providerModelsLoading.value = true;
   providerModelsError.value = null;
   try {
-    const models = await tauriInvoke<ProviderModel[]>('fetch_provider_models', {
-      provider,
-      api_key: apiKey || null,
-    });
+    // #52: "models sometimes not fetched -> no model -> nothing works" was a
+    // transient race -- the fetch can fire before the sidecar has picked up the
+    // freshly-stored key / finished starting, and a single attempt then returns
+    // empty or errors with no retry. Retry transient failures (NOT auth
+    // failures -- a bad key must fail fast so the UI clears it); also retry when
+    // a valid provider returns an empty list, which is effectively a transient.
+    let models: ProviderModel[] = [];
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const fetched = await tauriInvoke<ProviderModel[]>('fetch_provider_models', {
+          provider,
+          api_key: apiKey || null,
+        });
+        models = fetched || [];
+        if (models.length > 0) break;      // got models -> done
+        lastError = null;                  // empty is treated as transient below
+      } catch (e) {
+        lastError = e;
+        if (isProviderAuthFailure(messageFrom(e))) throw e; // bad key: fail fast
+      }
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    if (models.length === 0 && lastError) throw lastError;
     const next = models || [];
     providerModels.value = next;
     let selectedChanged = false;

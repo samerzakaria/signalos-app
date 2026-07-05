@@ -99,4 +99,51 @@ describe('loadProviderModels', () => {
       model: '',
     });
   });
+
+  it('#52 retries a TRANSIENT fetch failure and then succeeds', async () => {
+    let calls = 0;
+    const invoke = vi.fn(async <T,>(cmd: string): Promise<T> => {
+      if (cmd === 'fetch_provider_models') {
+        calls += 1;
+        if (calls === 1) throw new Error('engine not ready yet'); // transient
+        return [{ id: 'claude-sonnet-4-5', label: 'Claude' }] as T;
+      }
+      return null as T;
+    });
+    window.__TAURI__ = { core: { invoke: invoke as Invoke } };
+
+    const state = await import('../state');
+    state.ai.value = 'anthropic';
+    state.providerModels.value = [];
+    const { loadProviderModels } = await import('./providerModels');
+
+    const result = await loadProviderModels('anthropic', 'good-key');
+
+    expect(calls).toBe(2); // retried once, succeeded
+    expect(result).toHaveLength(1);
+    expect(state.providerModels.value).toHaveLength(1);
+  });
+
+  it('#52 retries an empty result once, then keeps the models when they arrive', async () => {
+    let calls = 0;
+    const invoke = vi.fn(async <T,>(cmd: string): Promise<T> => {
+      if (cmd === 'fetch_provider_models') {
+        calls += 1;
+        // first attempt: engine not ready -> empty; second: models present.
+        return (calls === 1 ? [] : [{ id: 'claude-sonnet-4-5', label: 'Claude' }]) as T;
+      }
+      return null as T;
+    });
+    window.__TAURI__ = { core: { invoke: invoke as Invoke } };
+
+    const state = await import('../state');
+    state.ai.value = 'anthropic';
+    state.providerModels.value = [];
+    const { loadProviderModels } = await import('./providerModels');
+
+    const result = await loadProviderModels('anthropic', 'good-key');
+
+    expect(calls).toBe(2); // an empty result is transient -> retried
+    expect(result).toHaveLength(1);
+  });
 });
