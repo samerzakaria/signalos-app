@@ -1,23 +1,23 @@
 {
-  "version": "3.2.4-internal.2",
-  "notes":   " ### UI/UX user-journey fixes — the cockpit was never e2e-tested  ",
-  "pub_date": "2026-07-05T20:12:35Z",
+  "version": "3.2.4-internal.3",
+  "notes":   " ### Fresh install no longer dead-ends at "No workspace selected"  ",
+  "pub_date": "2026-07-06T05:50:13Z",
   "platforms": {
     "darwin-aarch64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.2/Foundry_3.2.4-internal.2_aarch64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3JuU0kzeXpwSy9hK1JGYUdkOFZaVitIcTl2cDJXeE5DbXZLSUlwL1BYaFAxSjRveHBSYjJLWXYzY3pNUllHR1ZDT3piZXVHdXlrSmtjUVo0eGZORFFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgwNjYwCWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6Ck45YlJWYVdNVVVpdlF4elVJSW9ZV0VhTEVWN3FUdjRpaXlTSHNxekNwaHl4cXBxUFNxK3RxM0tNaUdCUzd3eXJkVW91VUdYNFZxcU1aMXJ1dVRGYkR3PT0K"
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.3/Foundry_3.2.4-internal.3_aarch64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2dZL3kvaHRsa3o3VWlYalp3VlR2anpGWjRqOC9xM2tYSFo1YVBSSm1uK3BCaDdmUVhMM21jQUIzMmpwRWx2Z1pYM0pJWVpkaWFMZUJDN0QzU2ZnS0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzE1MTUwCWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CkZMaTNVQ2RmaTNCR2h0anpXV0dWczFUdFNya2dGTzc2NmdSZXg5MldQT0tFZ25FNnhXT3JqUVhkRVJEQVhaa2ZEaGtjSlV2Wnd4d1U4QTViVHVJTkRBPT0K"
     },
     "darwin-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.2/Foundry_3.2.4-internal.2_x64.app.tar.gz",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3JxYXk2ZHlIajF0OVl2cnhJOTdxckhrUlpidDZsWnFicVZvcGJiOUt1MFk3bllxTTZjTS9odlRSTlU5V1dBZ3V1M3R4RXRDVVlLU2ZhZXNPa2JOeHcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgxNjYwCWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6CnMvRXlDTXVvTHpCWEcxVjlnaFdkQThtOHplWUlQR1l2Yy9KRXNQS3dJbDB0NnNTSXJiS1h2RnQ2aUJkejMycy81c1VZbWgwd3RVYVZYaVJVZGFiZkJRPT0K"
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.3/Foundry_3.2.4-internal.3_x64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3VKdVFzazB6UTlqSks1MDl6TGpqVE5ZSnozcFRlYm9EdVkxdHpYYlZvdllLN21hN0JqT24xbng5emd4OURwL1Zxc240b2FTaHZQUGdqaWJkb1h6SVE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzE2MTU5CWZpbGU6Rm91bmRyeS5hcHAudGFyLmd6Cmx2VXNJU2NNay95Z3pmbkw1ZWRzS1c1Yi9sNUlGUldZUDg3bTVRb3RpcElteFl3Z0NkampFSHJHTXB1WlpSTWMwYkl4RFo0VVBJOXg4bXBWOTg5aUFnPT0K"
     },
     "windows-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.2/Foundry_3.2.4-internal.2_x64-setup.exe",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2pEVlFHNnE0M21jRlkxRzJzbEhTYlY2dElpL3NOdUdweFkweUJYU01oVmR6MGNQZkt0Zmo5Q1RDR3FUMFF4NG5OT3V1disvVS85VmFQdXdFQ3lQNVFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgyMTM2CWZpbGU6Rm91bmRyeV8zLjIuNC1pbnRlcm5hbC4yX3g2NC1zZXR1cC5leGUKaUhaSWl6Y3FGWDlJQkd6YWZwMFg4QlplR1N4eHpveDNVOVhOVUhZQk1OampBMjZDd2RSTlpEUjQxRFpwaXFhMjZGemM4ZS9rd21jQW1PY1dhVzlPQUE9PQo="
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.3/Foundry_3.2.4-internal.3_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2kvM2dHclc0SFQ4UGpvNHoyVE5WaVpVd214ZUMzMFg5WEJ3anYyOXNVL0hLSERaenMxLzVRT0NZSWN5VUxLYkxuVG1SUEJKa2hjK0FnWTRGbTVnSVE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzE2Nzc5CWZpbGU6Rm91bmRyeV8zLjIuNC1pbnRlcm5hbC4zX3g2NC1zZXR1cC5leGUKc0R1aDRjT2pPaTRQMXRjZHR3TmZLT0tiT0IwLzVhL1l5eFh6Qi82ZEJyL1cyd29MWGMzTC9qL1B1OVpqQUNHdks4KzRCYnJIc0pndG9UM0N3dC9XQnc9PQo="
     },
     "linux-x86_64": {
-      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.2/Foundry_3.2.4-internal.2_amd64.AppImage",
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM3NVQnRzb1ArMDdHSDV2Q1lnK0F6ejVKR3J1UXdIaERYbE5CVXg3cnp2WWFyMHVWdkdmaGhFWkZuakdvUkF3OXgyRzRMMkp2V3hVRllvWUZCeHdNNnc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgxMzYyCWZpbGU6Rm91bmRyeV8zLjIuNC1pbnRlcm5hbC4yX2FtZDY0LkFwcEltYWdlCnZLT0ZCODJJWmJubkxwRC95N04xZ3NGdGttZE9aeU9BK0NXM1RuQlM0T3Zlb3BqQlhUUVhlUzZUYVc3VGxqQS91WGM0cFZDZ1RaZlpRczB0TVVEYUJBPT0K"
+      "url":       "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.3/Foundry_3.2.4-internal.3_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQ2I4NkNxYWNNM2h1WThGakZsWm5YeUVQU25LUW9lOWhQWmpCMTJIcE9GQlRmK1QzcU5YNWJwRTlrbVZXbHlyc1lmeFlsQzlGYXdwNThRUXFJR0xQNURmZ0xQSXo0b2dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzE1NzU1CWZpbGU6Rm91bmRyeV8zLjIuNC1pbnRlcm5hbC4zX2FtZDY0LkFwcEltYWdlClVUdjlvVzhUZmpoRVkzUkZsS3dmM0g1cGpxWTdtK0UwTzgzbzEzeEg3TlZCeCtQWkdGbFA5WXdMWnJObXFKRjhObVhYemZnMkhqbkt0K3lrWXhsbkFBPT0K"
     }
   }
 }
