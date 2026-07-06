@@ -11,8 +11,9 @@ alwaysApply: false
 Owner: PO. Agent executes.
 
 ## Your first action
-Read `core/governance/Governance/SOUL-DOCUMENT.md` and `core/execution/Plans/wave-{N}-plan.md`.
-Confirm plan is signed and acceptance criteria document exists.
+Read `core/governance/Governance/SOUL-DOCUMENT.md`, `core/execution/PLAN.md`,
+`core/execution/ACCEPTANCE_CRITERIA.md`, and `core/execution/TRUST_TIER.md`.
+Confirm Gate 3 is signed before writing tests or implementation.
 
 ## Memory search (before every ticket)
 **Before starting any ticket**, run this query against `core/governance/Governance/DECISION-DNA.md`:
@@ -32,7 +33,7 @@ Check your current context usage before starting:
 1. **RED** — write a failing test. Run it. Watch it fail. Do not write implementation yet.
 2. **GREEN** — write minimal code to pass. No more than needed.
 3. **REFACTOR** — clean up, keep tests green, commit.
-4. **Spec re-check** — before picking up the next ticket, re-read `core/execution/Plans/wave-{N}-acceptance-criteria.md`. If specs or priorities have changed, re-scope before coding resumes.
+4. **Spec re-check** — before picking up the next ticket, re-read `core/execution/ACCEPTANCE_CRITERIA.md`. If specs or priorities have changed, re-scope before coding resumes.
 
 ## Feature Gate (mid-wave)
 Every new idea that surfaces mid-wave must pass two questions:
@@ -72,6 +73,7 @@ Pass → proceed to `/signal-review`.
 - [ ] No scope creep beyond signed Expectation Map
 - [ ] Integration Checkpoint passed
 - [ ] Memory search was run for every ticket
+- [ ] `core/execution/BUILD_EVIDENCE.md` records the red/green/build commands, results, touched files, and blockers
 
 ## Next phase
 Run `/signal-review` when Integration Checkpoint passes.

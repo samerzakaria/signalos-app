@@ -31,6 +31,7 @@ def _seed_gate_artifacts(root: Path) -> None:
         "core/execution/PLAN.md": "# Plan\n\n- implement validator\n",
         "core/execution/ACCEPTANCE_CRITERIA.md": "# Acceptance Criteria\n\n- validator blocks on evidence gaps\n",
         "core/execution/TRUST_TIER.md": "# Trust Tier\n\nT2 governance validator.\n",
+        "core/execution/BUILD_EVIDENCE.md": "# Build Evidence\n\nBuild and test evidence attached.\n",
         "core/governance/QUALITY_CHECK.md": "# Quality Check\n\nStage 1 review: PASS\nStage 2 review: PASS\n",
     }
     for rel, text in artifacts.items():

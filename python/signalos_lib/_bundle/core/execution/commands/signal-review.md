@@ -9,7 +9,8 @@ description: "Phase 4 review. Runs validators, generates QA evidence pack."
 Owner: QC / reviewing agent. Execution phase.
 
 ## Your first action
-Read `core/execution/Plans/wave-{N}-plan.md` and `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+Read `core/execution/PLAN.md`, `core/execution/ACCEPTANCE_CRITERIA.md`, and
+`core/execution/BUILD_EVIDENCE.md`.
 Confirm Integration Checkpoint passed.
 
 ## Two-stage review
@@ -23,7 +24,7 @@ Confirm Integration Checkpoint passed.
 Review the AI's review report, not just the code. Spot what the AI missed.
 
 ## Acceptance criteria verification
-Open `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+Open `core/execution/ACCEPTANCE_CRITERIA.md`.
 For each criterion: mark ✅ PASS or ❌ FAIL with evidence.
 Critical failures block merge. Minor findings → add to backlog as `status: raw`.
 

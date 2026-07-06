@@ -38,24 +38,38 @@ def _mk_workspace_signed_through(gate_signed_through: str) -> Path:
     (root / ".signalos").mkdir()
 
     artifacts = [
-        ("G0", ("core", "governance", "Governance", "SOUL-DOCUMENT.md"),
-         _pad("Customer onboarding helper for the team.")),
-        ("G1", ("core", "strategy", "BELIEF.md"),
-         _pad("Belief: customer ingestion improves by 20%.")),
-        ("G2", ("core", "strategy", "EXPECTATION_MAP.md"),
-         _pad("Expectation Map: 10 tickets/day.")),
-        ("G3", ("core", "strategy", "DESIGN_NOTE.md"),
-         _pad("Design Note: chosen approach.")),
-        ("G4", ("core", "execution", "TRUST_TIER.md"),
-         _pad("Trust Tier: T2.")),
-        ("G5", ("core", "governance", "QUALITY_CHECK.md"),
-         _pad("Quality Check: passed.")),
+        ("G0", [
+            (("core", "governance", "Governance", "SOUL-DOCUMENT.md"),
+             _pad("Customer onboarding helper for the team.")),
+        ]),
+        ("G1", [
+            (("core", "strategy", "BELIEF.md"),
+             _pad("Belief: customer ingestion improves by 20%.")),
+        ]),
+        ("G2", [
+            (("core", "strategy", "EXPECTATION_MAP.md"),
+             _pad("Expectation Map: 10 tickets/day.")),
+        ]),
+        ("G3", [
+            (("core", "strategy", "DESIGN_NOTE.md"),
+             _pad("Design Note: chosen approach.")),
+        ]),
+        ("G4", [
+            (("core", "execution", "TRUST_TIER.md"), _pad("Trust Tier: T2.")),
+            (("core", "execution", "BUILD_EVIDENCE.md"),
+             _pad("Build Evidence: tests passed.")),
+        ]),
+        ("G5", [
+            (("core", "governance", "QUALITY_CHECK.md"),
+             _pad("Quality Check: passed.")),
+        ]),
     ]
 
     target_idx = GATE_ORDER.index(gate_signed_through)
-    for i, (gate, parts, body) in enumerate(artifacts):
+    for i, (gate, entries) in enumerate(artifacts):
         if i <= target_idx:
-            _seed(root, parts, body)
+            for parts, body in entries:
+                _seed(root, parts, body)
     return root
 
 

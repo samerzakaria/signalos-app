@@ -45,9 +45,9 @@ The signed artifact is the authoritative record. Layers 2-5 reference these sign
 | Gate 0 | `Governance/SOUL-DOCUMENT.md` | PO |
 | Gate 1 | `core/strategy/BELIEF.md` (or BELIEF_LITE) | PO |
 | Gate 2 | `core/strategy/EXPECTATION_MAP.md` | PO + Client |
-| Gate 3 | `core/execution/DESIGN_NOTE.md` | PO + PE |
-| Gate 4 | `core/execution/TRUST_TIER.md` | PE + PO |
-| Gate 5 | `core/execution/SIGNAL_LOG.md` verdict + `core/execution/WAVE_DEBRIEF.md` | PO + QA |
+| Gate 3 | `core/strategy/DESIGN_NOTE.md`; `core/execution/PLAN.md`; `core/execution/ACCEPTANCE_CRITERIA.md` | PO; PE; PE |
+| Gate 4 | `core/execution/TRUST_TIER.md`; `core/execution/BUILD_EVIDENCE.md` | PE + PO; PE |
+| Gate 5 | `core/governance/QUALITY_CHECK.md` | QA |
 
 ---
 

@@ -10,13 +10,13 @@
 - Branch: _______________
 
 ## TDD compliance
-- [ ] All acceptance criteria from `wave-{N}-acceptance-criteria.md` have a corresponding test
+- [ ] All acceptance criteria from `core/execution/ACCEPTANCE_CRITERIA.md` have a corresponding test
 - [ ] Tests were written BEFORE implementation (RED → GREEN → REFACTOR)
 - [ ] All tests pass in CI: _______________  (paste CI link or result)
 - [ ] Test coverage delta: +___% (no regressions)
 
 ## Spec compliance
-- [ ] Implementation matches `governance/plans/wave-{N}-plan.md`
+- [ ] Implementation matches `core/execution/PLAN.md`
 - [ ] No scope added beyond the signed Expectation Map
 - [ ] DEFER comments added for any deferred ideas (not deleted, not built)
 

@@ -34,8 +34,22 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p.add_argument("--max-repair-cycles", type=int, default=3)
     p.add_argument(
         "--agent",
-        choices=["none", "packet-only", "local", "orchestrator", "auto"],
+        choices=[
+            "none",
+            "packet-only",
+            "local",
+            "remote",
+            "auto",
+            "chunked",
+            "legacy-chunked",
+            "orchestrator",
+        ],
         default="auto",
+        help=(
+            "Agent execution mode. auto/remote use governed AgentLoop when an "
+            "LLM is available; chunked/legacy-chunked explicitly opt into the "
+            "old per-file generator."
+        ),
     )
     p.add_argument("--json", action="store_true", dest="as_json")
     return p

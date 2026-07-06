@@ -21,7 +21,7 @@ Agent runs three discipline sub-roles in parallel — do not chain them sequenti
 2. **Data** → data model, migration strategy, schema constraints
 3. **Security** → threat model, auth surface, data sensitivity
 
-Converge all three at a single **Plan Synthesis node** → produce `core/execution/Plans/wave-{N}-plan.md`
+Converge all three at a single **Plan Synthesis node** → produce `core/execution/PLAN.md`.
 
 No single discipline can unilaterally block the plan. Disagreements surface here for PO resolution.
 
@@ -29,7 +29,7 @@ No single discipline can unilaterally block the plan. Disagreements surface here
 
 1. Brainstorm skill — refine design sections, validate each component
 2. Break Belief into 2–5 min tasks (file paths, code sketch, verification)
-3. Write `core/execution/Plans/wave-{N}-acceptance-criteria.md` — use template at `core/governance/Templates/acceptance-criteria-template.md`
+3. Write `core/execution/ACCEPTANCE_CRITERIA.md` — use template at `core/governance/Templates/acceptance-criteria-template.md`
 4. Declare Trust Tier: **T1 Proceed** / **T2 Propose** / **T3 Suggest** — log in `core/governance/Governance/DECISION-DNA.md`
 5. Check Trust Tier score from `core/governance/Templates/trust-tier-scoring.md` — tier should match your project's earned trust level
 
@@ -39,12 +39,12 @@ Before finalising tasks, query `core/governance/Governance/DECISION-DNA.md`:
 - Any Gotchas in the Prompt Library related to this area?
 
 ## Spec seed
-Seed `core/execution/Plans/wave-{N}-acceptance-criteria.md` now.
+Seed `core/execution/ACCEPTANCE_CRITERIA.md` now.
 PO reviews and signs it before build begins.
 
 ## Exit criteria
 
-- [ ] `core/execution/Plans/wave-{N}-plan.md` written by agent (Architecture + Data + Security sub-roles) and signed by PO
+- [ ] `core/execution/PLAN.md` written by agent (Architecture + Data + Security sub-roles) and signed by PO
 - [ ] Each task has a failing test scaffold written first
 - [ ] Review Gate tier declared in Decision DNA
 - [ ] Acceptance criteria document seeded and co-signed

@@ -134,28 +134,32 @@ def _choose_dispatch_route(
 ) -> str:
     """Decide which build-agent path a delivery takes.
 
-    Returns "chunked-llm" (real per-file LLM generation -> a working product)
-    or "local-parallel" (deterministic, git-free, no-key fallback that stays
-    complete + buildable).
+    Returns:
+      - "agent-loop" for governed LLM-backed production generation.
+      - "local-parallel" for deterministic, git-free, no-key fallback.
+      - "chunked-llm" only for explicit legacy/dev opt-in.
 
     - agent_mode == "local": always local (explicit operator choice).
-    - agent_mode in ("auto", "remote"): use the chunked LLM path when a key is
-      available, so a founder WITH a key gets a real app instead of the
-      deterministic shell. With no key, fall back to local for renderable
-      profiles; for a profile the local renderer cannot build there is no
-      deterministic fallback, so still take the LLM path (it will honestly
-      report no_api_key when it truly cannot run).
+    - agent_mode in ("chunked", "legacy-chunked"): preserve the old per-file
+      LLM path for focused regression/debug use.
+    - agent_mode in ("auto", "remote"): use AgentLoop when a usable LLM exists.
+      With no key, fall back to local for renderable profiles; for unsupported
+      profiles return AgentLoop so it can fail closed with a no-key/governance
+      handoff instead of silently generating through the legacy file splitter.
     """
-    if agent_mode == "local":
+    normalized = (agent_mode or "auto").strip().lower()
+    if normalized == "local":
         return "local-parallel"
-    if agent_mode in ("auto", "remote"):
+    if normalized in ("chunked", "legacy-chunked"):
+        return "chunked-llm"
+    if normalized in ("auto", "remote", "orchestrator"):
         if llm_available:
-            return "chunked-llm"
+            return "agent-loop"
         if actual_profile in _LOCAL_RENDERABLE_PROFILES:
             return "local-parallel"
-        return "chunked-llm"
+        return "agent-loop"
     # Any other/unknown mode: prefer local for a renderable profile.
-    return "local-parallel" if actual_profile in _LOCAL_RENDERABLE_PROFILES else "chunked-llm"
+    return "local-parallel" if actual_profile in _LOCAL_RENDERABLE_PROFILES else "agent-loop"
 
 
 def run_delivery(
@@ -617,10 +621,7 @@ def run_delivery(
     if generation_packet and agent_mode not in ("none", "packet-only"):
         _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
-            from .agent_dispatch import (
-                dispatch_build_agent_chunked,
-                dispatch_local_build_agent_parallel,
-            )
+            from .agent_dispatch import dispatch_local_build_agent_parallel
             from .executor import run_worker_pool
             from .secrets_resolver import is_llm_available
             from signalos_lib.task_store import InMemoryTaskStore
@@ -632,10 +633,10 @@ def run_delivery(
                 ),
             )
             packet_for_agent = agent_packet or generation_packet
-            # A founder WITH a key gets the real per-file LLM app; without a
+            # A founder WITH a key gets the governed AgentLoop path. Without a
             # key we stay on the deterministic, git-free local parallel path
-            # (complete + buildable). The chunked LLM path itself runs its own
-            # concurrency internally, so real parallelism lives inside it.
+            # for renderable profiles. The legacy per-file splitter is only
+            # reachable through an explicit chunked/legacy-chunked agent_mode.
             route = _choose_dispatch_route(
                 agent_mode,
                 actual_profile,
@@ -651,17 +652,33 @@ def run_delivery(
                         repo_root=repo_root,
                         packet=packet_for_agent,
                     )
-                else:
+                elif route == "chunked-llm":
+                    from .agent_dispatch import dispatch_build_agent_chunked
+
                     dispatched = dispatch_build_agent_chunked(
                         repo_root=repo_root,
                         packet=packet_for_agent,
                         governance=governance,
                     )
+                else:
+                    dispatched = _dispatch_agent_loop_build(
+                        repo_root=repo_root,
+                        packet=packet_for_agent,
+                        governance=governance,
+                        prompt=prompt,
+                        profile=actual_profile,
+                    )
                 # "no_api_key" is a config problem retrying can't fix -- terminal,
-                # not a transient failure. Anything else non-"completed" is worth
-                # one bounded retry through the same claim/lease/retry contract
-                # the parallel executor uses (executor.py, Wave 1.1).
-                if dispatched.get("status") not in ("completed", "no_api_key"):
+                # not a transient failure. "governance_required" is also terminal:
+                # the system needs signed prior gates, not another retry.
+                # Anything else non-"completed" is worth one bounded retry
+                # through the same claim/lease/retry contract the parallel
+                # executor uses (executor.py, Wave 1.1).
+                if dispatched.get("status") not in (
+                    "completed",
+                    "no_api_key",
+                    "governance_required",
+                ):
                     raise RuntimeError(
                         "; ".join(dispatched.get("errors", [])) or "agent dispatch failed"
                     )
@@ -707,6 +724,14 @@ def run_delivery(
                 update_delivery_phase(repo_root, "generated", "complete")
             elif agent_result.get("status") == "no_api_key":
                 warnings.append("No API key; agent not dispatched. Packet written for external execution.")
+            elif agent_result.get("status") == "governance_required":
+                blocker = (
+                    "; ".join(str(e) for e in agent_result.get("errors", []))
+                    or "governed AgentLoop build requires signed G0-G3 before implementation writes"
+                )
+                errors.append(blocker)
+                generation_blocked = True
+                generation_blocker = blocker
             else:
                 # Dispatch FAILED. This is a hard blocker -- a generation that
                 # produced no real files is a failure, not a green build off the
@@ -761,6 +786,37 @@ def run_delivery(
                 plan = build_validation_plan(rr, actual_profile)
                 return run_validation(rr, plan, dry_run=False)
 
+            repair_dispatch_fn = None
+            try:
+                from .secrets_resolver import is_llm_available as _repair_llm_available
+
+                repair_route = _choose_dispatch_route(
+                    agent_mode,
+                    actual_profile,
+                    llm_available=_repair_llm_available(repo_root),
+                )
+            except Exception:
+                repair_route = "agent-loop"
+            if repair_route == "agent-loop":
+                def _repair_agent_loop_dispatch(
+                    repair_repo_root: Path,
+                    repair_packet: dict,
+                    repair_governance: dict[str, str],
+                ) -> dict:
+                    return _dispatch_agent_loop_build(
+                        repo_root=repair_repo_root,
+                        packet=repair_packet,
+                        governance=repair_governance,
+                        prompt=(
+                            prompt
+                            + "\n\nRepair the current validation failures using the "
+                            "same governed G4 AgentLoop path."
+                        ),
+                        profile=actual_profile,
+                    )
+
+                repair_dispatch_fn = _repair_agent_loop_dispatch
+
             repair_result = run_repair_loop(
                 repo_root=repo_root,
                 validation_result=val_result,
@@ -769,6 +825,7 @@ def run_delivery(
                 agent_mode=agent_mode,
                 governance=repair_governance,
                 validate_fn=_repair_validate,
+                dispatch_fn=repair_dispatch_fn,
             )
             # Active modes re-validate INTERNALLY each cycle and return the
             # final validation, so adopt it directly (the build-error feedback
@@ -1105,6 +1162,288 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _dispatch_agent_loop_build(
+    *,
+    repo_root: Path,
+    packet: dict,
+    governance: dict[str, str],
+    prompt: str,
+    profile: str,
+) -> dict[str, Any]:
+    """Run the production build through the governed AgentLoop.
+
+    This is the production LLM route. It deliberately refuses to proceed when
+    prior gates cannot be validated instead of falling back to the legacy
+    per-file generator. The interactive `agent:deliver` path remains the full
+    G0->G5 experience; this bridge entrypoint is only allowed to execute G4 when
+    the workspace already proves G0-G3 are signed.
+    """
+
+    from .secrets_resolver import apply_product_secrets, is_llm_available
+
+    run_id = str(packet.get("run_id") or f"delivery-agent-loop-{int(time.time())}")
+    if not is_llm_available(repo_root):
+        _write_agent_loop_handoff(
+            repo_root,
+            run_id=run_id,
+            status="no_api_key",
+            prompt=prompt,
+            profile=profile,
+            blockers=[
+                "No usable LLM provider is configured; governed AgentLoop build cannot start."
+            ],
+        )
+        return {
+            "status": "no_api_key",
+            "run_id": run_id,
+            "files_written": [],
+            "errors": ["No usable LLM provider is configured."],
+        }
+
+    signed_prior, blockers = _signed_prior_gates_for_g4(repo_root)
+    if blockers:
+        _write_agent_loop_handoff(
+            repo_root,
+            run_id=run_id,
+            status="governance_required",
+            prompt=prompt,
+            profile=profile,
+            blockers=blockers,
+        )
+        return {
+            "status": "governance_required",
+            "run_id": run_id,
+            "files_written": [],
+            "errors": blockers,
+        }
+
+    events: list[dict[str, Any]] = []
+
+    def _capture(ev: dict[str, Any]) -> None:
+        events.append(dict(ev))
+
+    try:
+        with apply_product_secrets(repo_root):
+            from signalos_lib import agent_loader
+            from signalos_lib.harness import _resolve_provider_name, resolve_model
+            from signalos_lib.product.agent_loop import AgentLoop
+            from signalos_lib.product.enforcement_state import FileEnforcementProvider
+            from signalos_lib.product.provider_adapter import ProviderAdapter
+
+            provider_name = _resolve_provider_name(None)
+            model = resolve_model(None, provider_name)
+            adapter = ProviderAdapter(model=model, provider_name=provider_name)
+            agent = agent_loader.load_agent("G4")
+            system_prompt = agent.get("content") or "You are the SignalOS G4 Build agent."
+            loop = AgentLoop(
+                adapter=adapter,
+                repo_root=repo_root,
+                enforcement_provider=FileEnforcementProvider(),
+                run_id=run_id,
+                emit=_capture,
+                execution_context="delivery",
+                active_gate="G4",
+                signed_gates=signed_prior,
+            )
+            result = loop.run(
+                system_prompt,
+                _build_agent_loop_message(packet, governance, prompt, profile),
+            )
+    except Exception as exc:
+        _write_build_evidence(
+            repo_root,
+            run_id=run_id,
+            profile=profile,
+            status="failed",
+            files_written=[],
+            events=events,
+            errors=[str(exc)],
+        )
+        return {
+            "status": "failed",
+            "run_id": run_id,
+            "files_written": [],
+            "errors": [f"AgentLoop dispatch failed: {exc}"],
+        }
+
+    files_written = sorted({
+        str(ev.get("path"))
+        for ev in events
+        if ev.get("type") == "diff" and ev.get("path")
+    })
+    errors: list[str] = []
+    status = "completed"
+    if result.status != "completed":
+        status = "failed"
+        errors.append(result.error or f"AgentLoop ended with status {result.status}")
+    elif not _generation_produced_real_files(
+        repo_root,
+        _generation_packet_from_agent_packet(packet),
+        {"files_written": files_written},
+    ):
+        status = "failed"
+        errors.append(
+            "AgentLoop completed without producing expected product source, registration, or test files."
+        )
+
+    _write_build_evidence(
+        repo_root,
+        run_id=run_id,
+        profile=profile,
+        status=status,
+        files_written=files_written,
+        events=events,
+        errors=errors,
+        tool_calls_made=result.tool_calls_made,
+    )
+    return {
+        "status": status,
+        "run_id": run_id,
+        "files_written": files_written,
+        "errors": errors,
+        "tool_calls_made": result.tool_calls_made,
+    }
+
+
+def _signed_prior_gates_for_g4(repo_root: Path) -> tuple[list[int], list[str]]:
+    signed: list[int] = []
+    blockers: list[str] = []
+    try:
+        from signalos_lib.commands.validate_gate import validate_gate
+    except Exception as exc:
+        return [], [f"cannot validate prior gates before G4 build: {exc}"]
+
+    for number in range(0, 4):
+        gate = f"G{number}"
+        try:
+            result = validate_gate(repo_root, gate, write_evidence=False)
+        except Exception as exc:
+            blockers.append(f"{gate} validation failed before G4 build: {exc}")
+            continue
+        if result.get("ok"):
+            signed.append(number)
+        else:
+            messages = [
+                str(item.get("message"))
+                for item in result.get("blockers", [])
+                if item.get("message")
+            ]
+            detail = "; ".join(messages) if messages else "gate is not signed and audit-linked"
+            blockers.append(f"{gate} must be signed before AgentLoop build: {detail}")
+    return signed, blockers
+
+
+def _generation_packet_from_agent_packet(packet: dict | None) -> dict | None:
+    if not isinstance(packet, dict):
+        return None
+    nested = packet.get("generation_packet")
+    if isinstance(nested, dict):
+        return nested
+    generation = packet.get("generation")
+    if isinstance(generation, dict):
+        return generation
+    return packet
+
+
+def _build_agent_loop_message(
+    packet: dict,
+    governance: dict[str, str],
+    prompt: str,
+    profile: str,
+) -> str:
+    packet_json = json.dumps(packet, indent=2, ensure_ascii=False)
+    governance_json = json.dumps(governance, indent=2, ensure_ascii=False)
+    return (
+        "Execute the approved G4 build through governed tools only.\n\n"
+        f"Original product request:\n{prompt}\n\n"
+        f"Profile: {profile}\n\n"
+        "Rules:\n"
+        "- Read the repo and signed artifacts before writing.\n"
+        "- Write or update matching tests before implementation files.\n"
+        "- Stay inside allowed paths and trust-tier policy.\n"
+        "- Record exact blockers instead of guessing or fabricating evidence.\n"
+        "- Update core/execution/BUILD_EVIDENCE.md before ending the turn.\n\n"
+        f"Governance instructions:\n```json\n{governance_json}\n```\n\n"
+        f"Agent packet:\n```json\n{packet_json}\n```\n"
+    )
+
+
+def _write_agent_loop_handoff(
+    repo_root: Path,
+    *,
+    run_id: str,
+    status: str,
+    prompt: str,
+    profile: str,
+    blockers: list[str],
+) -> None:
+    path = repo_root / ".signalos" / "product" / "AGENT_LOOP_HANDOFF.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "signalos.agent_loop_handoff.v1",
+                "run_id": run_id,
+                "status": status,
+                "profile": profile,
+                "prompt": prompt,
+                "required_route": "agent:deliver",
+                "blockers": blockers,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_build_evidence(
+    repo_root: Path,
+    *,
+    run_id: str,
+    profile: str,
+    status: str,
+    files_written: list[str],
+    events: list[dict[str, Any]],
+    errors: list[str],
+    tool_calls_made: int | None = None,
+) -> None:
+    path = repo_root / "core" / "execution" / "BUILD_EVIDENCE.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# BUILD_EVIDENCE",
+        "",
+        f"- run_id: {run_id}",
+        f"- status: {status}",
+        f"- profile: {profile}",
+        f"- generated_at: {datetime.now(timezone.utc).isoformat()}",
+    ]
+    if tool_calls_made is not None:
+        lines.append(f"- tool_calls_made: {tool_calls_made}")
+    lines.extend(["", "## Files Written", ""])
+    if files_written:
+        lines.extend(f"- `{path}`" for path in files_written)
+    else:
+        lines.append("- None recorded")
+    lines.extend(["", "## Errors", ""])
+    if errors:
+        lines.extend(f"- {err}" for err in errors)
+    else:
+        lines.append("- None")
+    lines.extend(["", "## Agent Events", ""])
+    diff_events = [ev for ev in events if ev.get("type") in {"diff", "tool_denied", "tool_error", "error"}]
+    if diff_events:
+        for ev in diff_events[:50]:
+            event_type = ev.get("type", "event")
+            detail = ev.get("path") or ev.get("reason") or ev.get("error") or ev.get("tool") or ""
+            lines.append(f"- {event_type}: {detail}")
+    else:
+        lines.append("- No write/error events recorded")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
 
 def _generation_produced_real_files(
     repo_root: Path,

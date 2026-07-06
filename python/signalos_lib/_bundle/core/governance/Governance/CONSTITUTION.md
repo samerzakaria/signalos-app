@@ -106,8 +106,8 @@ A Wave passes through six gates in order. No gate may be skipped. Each gate has 
 |---|---|---|---|---|
 | 1 | Belief signed | PO | `core/strategy/BELIEF.md` — Wave hypothesis, user served, disproof condition, PO signature | Wave blocked |
 | 2 | Expectation Map signed | PO | `core/strategy/EXPECTATION_MAP.md` with PO signature | Wave blocked |
-| 3 | Design Approval | PO (+ client for T3) | `core/strategy/DESIGN_NOTE.md` at Trust-Tier-appropriate depth | **Defaults to T3 full brief + client sign** |
-| 4 | Trust Tier declared | PE | `core/execution/TRUST_TIER.md` (per-Wave) signed by PE, counter-signed by PO | **Defaults to T3 on all surfaces** |
+| 3 | Design Approval | PO (+ client for T3) + PE | `core/strategy/DESIGN_NOTE.md`; `core/execution/PLAN.md`; `core/execution/ACCEPTANCE_CRITERIA.md` | **Defaults to T3 full brief + client sign; no plan or acceptance criteria, no Gate 3 pass** |
+| 4 | Trust Tier + Build Evidence | PE | `core/execution/TRUST_TIER.md` (per-Wave) signed by PE, counter-signed by PO; `core/execution/BUILD_EVIDENCE.md` signed by PE after build/test verification | **Defaults to T3 on all surfaces; no build evidence, no Gate 4 pass** |
 | 5 | Quality Check passed | QA | `core/governance/QUALITY_CHECK.md` with Stage-1 (automated) + Stage-2 (manual) both green | Merge blocked |
 
 ### §4.1 Gate sequence is strict

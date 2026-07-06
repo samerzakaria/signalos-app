@@ -11,7 +11,8 @@ alwaysApply: false
 Owner: PO. Agent executes review; PO signs gate.
 
 ## Your first action
-Read `core/execution/Plans/wave-{N}-plan.md` and `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+Read `core/execution/PLAN.md`, `core/execution/ACCEPTANCE_CRITERIA.md`, and
+`core/execution/BUILD_EVIDENCE.md`.
 Confirm Integration Checkpoint passed.
 
 ## Two-stage review
@@ -25,7 +26,7 @@ Confirm Integration Checkpoint passed.
 PO reviews the agent's review report, not just the code. Spot what the agent missed.
 
 ## Acceptance criteria verification
-Open `core/execution/Plans/wave-{N}-acceptance-criteria.md`.
+Open `core/execution/ACCEPTANCE_CRITERIA.md`.
 For each criterion: mark ✅ PASS or ❌ FAIL with evidence.
 Critical failures block merge. Minor findings → add to backlog as `status: raw`.
 

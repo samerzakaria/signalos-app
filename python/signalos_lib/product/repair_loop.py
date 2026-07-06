@@ -105,9 +105,10 @@ def run_repair_loop(
        * ``"none"``          -- return ``manual_repair_needed`` (no packet).
        * ``"packet-only"``   -- write the repair packet and pause
          (``awaiting_agent``).
-       * ``"orchestrator"`` / ``"auto"`` -- DISPATCH the filtered per-file
-         packet through the #12 chunked dispatcher, then RE-VALIDATE, looping
-         up to *max_cycles*; stop as soon as the build passes.
+       * ``"auto"`` / ``"remote"`` with an injected dispatch_fn -- DISPATCH
+         through the caller's governed executor, then RE-VALIDATE.
+       * ``"chunked"`` / ``"legacy-chunked"`` -- explicit legacy opt-in to the
+         #12 chunked dispatcher, then RE-VALIDATE.
     4. Track cycle count; stop at *max_cycles* with truthful evidence.
 
     Parameters
@@ -126,8 +127,9 @@ def run_repair_loop(
         See above.
     dispatch_fn:
         ``(repo_root, packet, governance) -> {status, files_written, errors}``.
-        Defaults to ``agent_dispatch.dispatch_build_agent_chunked``. Injected
-        in tests for a hermetic loop.
+        In production this should be a governed AgentLoop dispatcher. If omitted,
+        active repair pauses unless *agent_mode* explicitly opts into the legacy
+        chunked dispatcher.
     validate_fn:
         ``(repo_root) -> validation_result``. Defaults to a real
         ``run_validation`` against the profile's plan. Injected in tests.
@@ -139,6 +141,7 @@ def run_repair_loop(
         Defaults to ``agent_dispatch``'s npm install helper. Injected in tests.
     """
     repairs: list[dict[str, Any]] = []
+    normalized_agent_mode = (agent_mode or "packet-only").strip().lower()
 
     if max_cycles <= 0:
         return {
@@ -191,7 +194,7 @@ def run_repair_loop(
             indent=2,
         )
 
-        if agent_mode == "none":
+        if normalized_agent_mode == "none":
             repairs.append({
                 "cycle": cycle,
                 "failures": failures,
@@ -224,7 +227,7 @@ def run_repair_loop(
             run_dir.mkdir(parents=True, exist_ok=True)
         packet_path = write_repair_packet(packet, run_dir, cycle)
 
-        if agent_mode == "packet-only":
+        if normalized_agent_mode == "packet-only":
             repairs.append({
                 "cycle": cycle,
                 "failures": failures,
@@ -240,9 +243,29 @@ def run_repair_loop(
                 "final_validation": current_validation,
             }
 
-        # Active modes (anything that is not "none" or "packet-only", e.g.
-        # "auto" / "local" / "remote" / "orchestrator"): dispatch the filtered
-        # per-file packet through the #12 chunked dispatcher, then re-validate.
+        # Active modes dispatch through the caller-supplied governed executor.
+        # The legacy chunked repair path is retained only behind explicit
+        # chunked/legacy-chunked modes for regression/debug use.
+        if dispatch_fn is None and normalized_agent_mode not in ("chunked", "legacy-chunked"):
+            repairs.append({
+                "cycle": cycle,
+                "failures": failures,
+                "action": "packet_created",
+                "repair_type": packet.get("repair_type"),
+                "packet_path": str(packet_path),
+                "reason": (
+                    "active repair requires a governed dispatch_fn; legacy "
+                    "chunked repair requires agent_mode='legacy-chunked'"
+                ),
+            })
+            return {
+                "status": "awaiting_agent_loop",
+                "cycles_used": cycle,
+                "max_cycles": max_cycles,
+                "repairs": repairs,
+                "final_validation": current_validation,
+            }
+
         dispatch = dispatch_fn or _default_dispatch
         validate = validate_fn or _make_default_validate(profile)
         install = install_fn or _default_install
@@ -337,7 +360,7 @@ def run_repair_loop(
 def _default_dispatch(
     repo_root: Path, packet: dict, governance: dict[str, str],
 ) -> dict:
-    """Default active-mode dispatch: the #12 chunked per-file build agent."""
+    """Explicit legacy active-mode dispatch: the #12 chunked per-file build agent."""
     from .agent_dispatch import dispatch_build_agent_chunked
 
     return dispatch_build_agent_chunked(

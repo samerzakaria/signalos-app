@@ -72,6 +72,11 @@
         "rel_path": "core/execution/TRUST_TIER.md",
         "required_roles": ["PE", "PO"],
         "label": "Trust Tier"
+      },
+      {
+        "rel_path": "core/execution/BUILD_EVIDENCE.md",
+        "required_roles": ["PE"],
+        "label": "Build Evidence"
       }
     ],
     "G5": [

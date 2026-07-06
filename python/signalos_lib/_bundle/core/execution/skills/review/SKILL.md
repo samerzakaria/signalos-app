@@ -26,7 +26,7 @@ Stage-1 spec-drift review: compare a Build PR's diff against the Wave's Belief +
   - `core/strategy/BELIEF.md`
   - `core/strategy/EXPECTATION_MAP.md`
   - `core/execution/PLAN.md`
-  - `core/execution/DESIGN_NOTE.md`
+  - `core/strategy/DESIGN_NOTE.md`
   - `core/execution/TRUST_TIER.md`
 
 ## Outputs

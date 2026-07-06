@@ -4,7 +4,7 @@
 
 ## Purpose (one sentence)
 
-Translate a signed Belief + Expectation Map into a `PLAN.md` with parallelizable tasks and the failing-test skeleton for each task.
+Translate a signed Belief + Expectation Map into `PLAN.tasks.yaml` as the machine-readable task source, render `PLAN.md` for human review, seed `ACCEPTANCE_CRITERIA`, and create failing-test skeletons for buildable tasks.
 
 ## Expertise frame
 
@@ -27,24 +27,30 @@ If either signature is missing → refuse.
 - `core/strategy/EXPECTATION_MAP.md`
 - `Governance/SOUL-DOCUMENT.md`
 - `core/governance/Governance/CONSTITUTION.md` (especially §6 TDD)
-- Existing `core/execution/plan/PLAN.md` from prior Wave (for continuity)
+- Existing `core/execution/PLAN.tasks.yaml` and rendered `core/execution/PLAN.md` from prior Wave (for continuity)
 
 ## Outputs (paths the agent writes, with template links)
 
-- `core/execution/PLAN.md` (canonical location for this Wave) — follows `core/governance/Templates/plan-template.md`
+- `core/execution/PLAN.tasks.yaml` — canonical machine-readable task source; follows `core/execution/plan/PLAN_SCHEMA.json`
+- `core/execution/PLAN.md` — rendered human view generated from `PLAN.tasks.yaml`; follows `core/governance/Templates/plan-template.md`
+- `core/execution/ACCEPTANCE_CRITERIA.md` — follows `core/governance/Templates/acceptance-criteria-template.md`
 - `core/execution/tests/skeletons/wave-{N}/` — one failing-test stub per task
 
 ## Success criteria
 
-- PLAN.md decomposes the signed Belief and Expectation Map into bounded, parallelizable tasks.
+- `PLAN.tasks.yaml` decomposes the signed Belief and Expectation Map into bounded, parallelizable tasks.
+- `PLAN.md` is rendered from `PLAN.tasks.yaml`; task fields are not maintained only in prose.
 - Every task has acceptance trace, owner/seat, Trust Tier, files or surfaces, and test-first expectation.
+- `ACCEPTANCE_CRITERIA` exists and maps each acceptance row back to the Belief signal and Expectation Map.
 - Failing-test skeletons exist for buildable tasks before Build activates.
 - Dependencies and sequencing are explicit enough for parallel dispatch.
 - No production code, signed artifact, or scope expansion is written by the Plan seat.
 
 ## Evidence required
 
-- PLAN.md SHA.
+- `PLAN.tasks.yaml` SHA and `signalos plan validate` result.
+- Rendered `PLAN.md` SHA.
+- `ACCEPTANCE_CRITERIA` SHA.
 - Task count and parallelization/dependency summary.
 - Test skeleton paths created for each implementation task.
 - Trace from each task to Belief/Expectation Map row.
@@ -62,7 +68,7 @@ If either signature is missing → refuse.
 - If tasks are too large, untestable, or untraceable, split and rework until dispatchable.
 - If scope requires human approval or T3 authority, stop autonomous planning and escalate.
 - If a forbidden rule is violated, reject the plan output and regenerate from signed inputs.
-- Keep the wave in planning until PLAN.md and test skeleton evidence satisfy the criteria.
+- Keep the wave in planning until `PLAN.tasks.yaml`, rendered `PLAN.md`, `ACCEPTANCE_CRITERIA`, and test skeleton evidence satisfy the criteria.
 
 ## Refusal conditions (when this agent STOPS and does not act)
 
@@ -74,8 +80,8 @@ If either signature is missing → refuse.
 
 Receiver: **PE**.
 
-HAND entry records: PLAN.md SHA, task count, which tasks are parallelizable (for Build ×N assignment), and which tasks touch T3 surfaces.
+HAND entry records: `PLAN.tasks.yaml` SHA, rendered `PLAN.md` SHA, `ACCEPTANCE_CRITERIA` SHA, task count, which tasks are parallelizable (for Build ×N assignment), and which tasks touch T3 surfaces.
 
 ## Trust Tier ceiling (from Charter, surface-overridable per Wave)
 
-**T1** — proceeds unsupervised within the declared task set. Writes only to PLAN.md and test skeletons; does not modify production code.
+**T1** — proceeds unsupervised within the declared task set. Writes only to `PLAN.tasks.yaml`, rendered `PLAN.md`, `ACCEPTANCE_CRITERIA`, and test skeletons; does not modify production code.

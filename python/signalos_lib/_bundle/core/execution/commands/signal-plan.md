@@ -19,7 +19,7 @@ Run Architecture, Data, and Security sub-roles in parallel — do not chain them
 2. **Data** → data model, migration strategy, schema constraints
 3. **Security** → threat model, auth surface, data sensitivity
 
-Converge all three at a single **Plan Synthesis node** → produce `core/execution/Plans/wave-{N}-plan.md`
+Converge all three at a single **Plan Synthesis node** → produce `core/execution/PLAN.md`.
 
 No single sub-role can unilaterally block the plan. Disagreements surface here and are resolved by the PO.
 
@@ -27,7 +27,7 @@ No single sub-role can unilaterally block the plan. Disagreements surface here a
 
 1. Brainstorm skill — refine design sections, validate each component
 2. Break Belief into 2–5 min tasks (file paths, code sketch, verification)
-3. Write `core/execution/Plans/wave-{N}-acceptance-criteria.md` — use template at `core/governance/Templates/acceptance-criteria-template.md`
+3. Write `core/execution/ACCEPTANCE_CRITERIA.md` — use template at `core/governance/Templates/acceptance-criteria-template.md`
 4. Declare Trust Tier: **T1 Proceed** / **T2 Propose** / **T3 Suggest** — log in `core/governance/Governance/DECISION-DNA.md`
 5. Check Trust Tier score from `core/governance/Templates/trust-tier-scoring.md` — tier should match the project's earned trust level
 
@@ -37,12 +37,12 @@ Before finalising tasks, query `core/governance/Governance/DECISION-DNA.md`:
 - Any Gotchas in the Prompt Library related to this area?
 
 ## Spec seed
-Seed `core/execution/Plans/wave-{N}-acceptance-criteria.md` now.
+Seed `core/execution/ACCEPTANCE_CRITERIA.md` now.
 PO reviews and co-signs before build begins.
 
 ## Exit criteria
 
-- [ ] `core/execution/Plans/wave-{N}-plan.md` written by agent (Architecture · Data · Security) and ready for PO sign (Gate 3)
+- [ ] `core/execution/PLAN.md` written by agent (Architecture · Data · Security) and ready for PO sign (Gate 3)
 - [ ] Each task has a failing test scaffold written first
 - [ ] Trust Tier declared per surface in Decision DNA — ready for PO sign (Gate 4)
 - [ ] Acceptance criteria document seeded and PO-signed

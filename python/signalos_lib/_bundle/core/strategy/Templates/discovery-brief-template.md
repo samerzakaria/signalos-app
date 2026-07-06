@@ -69,7 +69,7 @@ Window: {how long to observe}
 
 ## Expectation Map update needed?
 
-- [ ] YES — update `governance/plans/wave-{N}-expectation-map.md` before next Pre-Wave
+- [ ] YES — update `core/strategy/EXPECTATION_MAP.md` before next Pre-Wave
   - What changed: {brief description}
 - [ ] NO — no changes to Expectation Map required
 

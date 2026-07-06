@@ -60,7 +60,7 @@ last_commit: a1b2c3d
 |---|---|
 | Belief | `core/strategy/BELIEF.md` |
 | Expectation Map | `core/strategy/EXPECTATION_MAP.md` |
-| Design Note | `core/execution/DESIGN_NOTE.md` |
+| Design Note | `core/strategy/DESIGN_NOTE.md` |
 | Trust Tier | `core/execution/TRUST_TIER.md` |
 | Signal Log (in-progress) | `Governance/signal-logs/wave-01-signal-log.md` |
 
@@ -152,7 +152,7 @@ last_commit: {SHA}
 |---|---|
 | Belief | `core/strategy/BELIEF.md` |
 | Expectation Map | `core/strategy/EXPECTATION_MAP.md` |
-| Design Note | `core/execution/DESIGN_NOTE.md` |
+| Design Note | `core/strategy/DESIGN_NOTE.md` |
 | Trust Tier | `core/execution/TRUST_TIER.md` |
 | Signal Log (in-progress) | `Governance/signal-logs/wave-{N}-signal-log.md` |
 

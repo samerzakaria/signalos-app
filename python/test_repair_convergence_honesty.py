@@ -305,6 +305,34 @@ class TestAddDependencyRepairAction(unittest.TestCase):
             self.assertEqual(pkg.get("devDependencies", {}), {})
             self.assertEqual(len(dispatched), 1)
 
+    def test_auto_repair_without_governed_dispatch_pauses_instead_of_chunking(self):
+        """The production default must not silently fall back to the legacy
+        per-file chunked repair dispatcher. Active auto repair needs an
+        injected governed dispatcher; otherwise it writes a packet and pauses."""
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            _write_scope(repo, _original_packet())
+            initial = _validation_with_violations([
+                {"file": "src/App.tsx", "line": 1, "code": "TS2307",
+                 "message": "Cannot find module './components/Missing'.",
+                 "category": "build"},
+            ])
+
+            result = run_repair_loop(
+                repo_root=repo,
+                validation_result=initial,
+                profile="react-vite",
+                max_cycles=1,
+                agent_mode="auto",
+                dispatch_fn=None,
+                validate_fn=lambda *a, **k: self.fail("must not revalidate without dispatch"),
+                install_fn=lambda r: {"status": "ok"},
+            )
+
+            self.assertEqual(result["status"], "awaiting_agent_loop")
+            self.assertEqual(result["repairs"][0]["action"], "packet_created")
+            self.assertIn("governed dispatch_fn", result["repairs"][0]["reason"])
+
 
 # ---------------------------------------------------------------------------
 # #23 -- dispatch failure is a HARD BLOCKER (no fake-green off the scaffold stub)

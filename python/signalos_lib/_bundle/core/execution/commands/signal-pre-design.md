@@ -10,7 +10,7 @@ Owner: PO agent. Design phase. Run before any design work begins. Produces `core
 
 ## Your first action
 Read `core/governance/Governance/SOUL-DOCUMENT.md` and the current Wave's `core/strategy/BELIEF.md`.
-Confirm Gate 3 artifacts are in place: `core/strategy/DESIGN_NOTE.md` stub may not yet exist, but `core/strategy/BELIEF.md` and `core/execution/PLAN.md` must be signed.
+Confirm the pre-G3 packet is in place: `DESIGN_NOTE.md` stub may not yet exist, but `core/strategy/BELIEF.md` and `core/strategy/EXPECTATION_MAP.md` must be signed; `core/execution/PLAN.tasks.yaml` must validate; `core/execution/PLAN.md` must be rendered from it; `core/execution/ACCEPTANCE_CRITERIA.md` and failing-test skeletons must exist.
 
 ## Four design modes
 
@@ -55,4 +55,4 @@ signalos pre-design --mode Expansion --wave 08 \
 - `/signal-design explore` (generates variants)
 - Any DESIGN_NOTE.md signing
 
-C13 in `wiring-guard.sh` enforces this. DESIGN_NOTE.md signed without a signed PO_BRIEF → **FAIL**.
+C13 in `wiring-guard.sh` enforces this. DESIGN_NOTE.md signing is also blocked unless the G3 packet is complete: DESIGN_NOTE, valid `PLAN.tasks.yaml`, rendered `PLAN.md`, `ACCEPTANCE_CRITERIA`, and failing-test skeletons. DESIGN_NOTE.md signed without a signed PO_BRIEF → **FAIL**.

@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE))
 
 from signalos_lib.status import (  # noqa: E402
     build_status_json,
+    get_wave_status,
     _collect_gate_activities,
     _collect_gate_criteria,
 )
@@ -238,6 +239,24 @@ class BuildStatusJsonGateEmissions(unittest.TestCase):
         for i in range(6):
             self.assertIn(f"G{i}", data["gates"])
             self.assertIsInstance(data["gates"][f"G{i}"], bool)
+
+    def test_g4_status_requires_build_evidence_not_trust_tier_only(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            trust_tier = root / "core" / "execution" / "TRUST_TIER.md"
+            trust_tier.parent.mkdir(parents=True, exist_ok=True)
+            trust_tier.write_text("# Trust Tier\n\nT2.\n", encoding="utf-8")
+
+            trust_only = get_wave_status(root)
+            self.assertFalse(trust_only["gates"]["G4"])
+
+            (root / "core" / "execution" / "BUILD_EVIDENCE.md").write_text(
+                "# Build Evidence\n\nTests passed.\n",
+                encoding="utf-8",
+            )
+            with_build_evidence = get_wave_status(root)
+            self.assertTrue(with_build_evidence["gates"]["G4"])
 
     def test_empty_workspace_emits_empty_arrays(self) -> None:
         """Gate emissions still produce a 6-entry list with empty arrays

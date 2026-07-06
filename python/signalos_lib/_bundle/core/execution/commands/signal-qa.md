@@ -1,5 +1,5 @@
 ---
-description: "Phase 4 QA. Runs browser-based scenario suite via SBrowser, emits QUALITY_CHECK.md evidence pack."
+description: "Phase 4 QA. Runs browser-based scenario suite via SBrowser, emits QUALITY_CHECK.md evidence pack tied to the Belief signal."
 ---
 
 <!-- SignalOS v1.0 — W7 Sprint QA -->
@@ -9,12 +9,12 @@ description: "Phase 4 QA. Runs browser-based scenario suite via SBrowser, emits 
 Owner: QA agent. Execution phase. Sits between Gate 4 (Trust Tier Declared) and Gate 5 (Quality Check).
 
 ## Your first action
-Read `core/governance/Governance/SOUL-DOCUMENT.md` and `core/governance/QA_ACTIVATION_CARD.md`.
-Confirm Gate 4 is passed: `core/execution/TRUST_TIER.md` must exist, be PE-signed, and carry a PO counter-signature.
+Read `core/governance/Governance/SOUL-DOCUMENT.md`, `core/governance/QA_ACTIVATION_CARD.md`, `core/strategy/BELIEF.md`, `core/strategy/EXPECTATION_MAP.md`, `core/execution/ACCEPTANCE_CRITERIA.md`, and `core/execution/BUILD_EVIDENCE.md`.
+Confirm Gate 4 is passed: `core/execution/TRUST_TIER.md` must exist, be PE-signed, and carry a PO counter-signature; `core/execution/BUILD_EVIDENCE.md` must exist and be PE-signed.
 If Gate 4 is not signed → **hard stop**. Print:
 ```
 PROTOCOL VIOLATION: Gate 4 (Trust Tier Declared) not signed.
-/signal-qa cannot run. PE must sign core/execution/TRUST_TIER.md; PO must counter-sign.
+/signal-qa cannot run. PE must sign core/execution/TRUST_TIER.md and core/execution/BUILD_EVIDENCE.md; PO must counter-sign the Trust Tier.
 ```
 
 ## Gate 4 gate-check (automated, before any scenario runs)
@@ -25,6 +25,7 @@ signalos wiring-guard --check C11
 
 C11 verifies:
 - `core/execution/TRUST_TIER.md` exists and is signed
+- `core/execution/BUILD_EVIDENCE.md` exists and is signed
 - `core/governance/QA_ACTIVATION_CARD.md` exists for this Wave
 - At least one scenario file exists at `core/governance/QA/scenarios/`
 
@@ -81,12 +82,15 @@ Write `core/governance/QA/evidence/wave-{N}-qa-evidence.json`:
 {
   "wave": "{N}",
   "run_at": "ISO-8601",
+  "belief_signal": { "metric": "...", "threshold": "...", "direction": "...", "window": "..." },
   "browser_engine": "SBrowser/playwright-{version}",
+  "build_evidence_path": "core/execution/BUILD_EVIDENCE.md",
   "scenario_count": N,
   "regression_count": N,
   "pass": N,
   "fail": N,
   "skip": N,
+  "acceptance_coverage": [ { "criterion": "AC-01", "scenario": "qa-1", "status": "pass|fail|skip", "signal_risk": "none|watch|blocks" } ],
   "scenarios": [ { "id": "...", "name": "...", "status": "pass|fail|skip", "duration_ms": N, "screenshot": "path", "vitals": {...}, "error": null } ],
   "qa_evidence_path": "core/governance/QA/evidence/wave-{N}-qa-evidence.json"
 }
@@ -95,6 +99,8 @@ Write `core/governance/QA/evidence/wave-{N}-qa-evidence.json`:
 ### Step 5 — Fill QUALITY_CHECK.md
 Write `core/governance/QUALITY_CHECK.md` from `core/governance/Templates/quality-check-template.md`.
 Populate all machine-readable fields from the evidence pack.
+Populate the coverage summary so each scenario/regression maps to an acceptance criterion and the Belief signal it protects.
+Record waived findings, coverage gaps, and MINOR issues as next-wave learning candidates for Observe/Wave Debrief.
 Leave QA signature line blank — **QA signs manually after reviewing the filled document**.
 
 ## Stage-2 manual review (after automated run)
@@ -103,9 +109,12 @@ QA reviews the filled QUALITY_CHECK.md and the screenshot archive at `core/gover
 For any FAIL:
 - Write a finding in `core/governance/QA/findings/wave-{N}-finding-{id}.md`
 - Tag severity: CRITICAL (blocks Gate 5) / MAJOR (must fix before ship) / MINOR (backlog)
+- State the affected acceptance criterion and whether the finding puts the Belief signal at risk
 - CRITICAL findings → route back to Phase 3 Build immediately
 
 For all PASS + no CRITICAL findings:
+- Confirm `QUALITY_CHECK.md` traces Stage-1 and Stage-2 results back to acceptance criteria and Belief signal
+- Move MINOR findings and learning candidates into next-wave backlog/debrief notes
 - QA signs `core/governance/QUALITY_CHECK.md`
 - Gate 5 is now unlockable by PE merge
 
@@ -116,6 +125,8 @@ For all PASS + no CRITICAL findings:
 - [ ] Evidence pack written to `core/governance/QA/evidence/wave-{N}-qa-evidence.json`
 - [ ] Regression suite run
 - [ ] `core/governance/QUALITY_CHECK.md` populated
+- [ ] QUALITY_CHECK traces QA results to `ACCEPTANCE_CRITERIA` and the Belief signal
+- [ ] Next-wave learning candidates recorded from findings, waivers, and coverage gaps
 - [ ] No unreviewed CRITICAL findings
 - [ ] QA signature applied to QUALITY_CHECK.md
 

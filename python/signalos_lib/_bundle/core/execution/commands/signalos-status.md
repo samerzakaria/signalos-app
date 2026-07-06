@@ -81,8 +81,8 @@ signalos status --repo-root /path/to/product-repo
 | G0 | `core/governance/Governance/SOUL-DOCUMENT.md` | Exists and is not a blank template |
 | G1 | `core/strategy/BELIEF.md` or `BELIEF_LITE.md` | Either file exists |
 | G2 | `core/strategy/EXPECTATION_MAP.md` | File exists |
-| G3 | `core/strategy/DESIGN_NOTE.md` | File exists |
-| G4 | `core/execution/TRUST_TIER.md` | File exists |
+| G3 | `core/strategy/DESIGN_NOTE.md` | Design note exists for status; signing validator requires Design Note, Plan, and Acceptance Criteria |
+| G4 | `core/execution/BUILD_EVIDENCE.md` | Build evidence exists for status; signing validator requires both Build Evidence and Trust Tier |
 | G5 | `core/governance/QUALITY_CHECK.md` | File exists |
 
 ## Next action logic

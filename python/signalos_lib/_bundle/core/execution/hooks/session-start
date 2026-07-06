@@ -57,7 +57,8 @@ GATE1="$REPO_ROOT/core/strategy/BELIEF.md"
 GATE1_LITE="$REPO_ROOT/core/strategy/BELIEF_LITE.md"
 GATE2="$REPO_ROOT/core/strategy/EXPECTATION_MAP.md"
 GATE3="$REPO_ROOT/core/strategy/DESIGN_NOTE.md"
-GATE4="$REPO_ROOT/core/execution/TRUST_TIER.md"
+GATE4_TRUST="$REPO_ROOT/core/execution/TRUST_TIER.md"
+GATE4_BUILD="$REPO_ROOT/core/execution/BUILD_EVIDENCE.md"
 GATE5="$REPO_ROOT/core/governance/QUALITY_CHECK.md"
 
 # Quick track is allowed to skip Gate 2 full artifact; Belief-lite covers both.
@@ -65,13 +66,17 @@ GATE5="$REPO_ROOT/core/governance/QUALITY_CHECK.md"
 HAS_BELIEF=false
 if [ -f "$GATE1" ] || [ -f "$GATE1_LITE" ]; then HAS_BELIEF=true; fi
 
-if [ -f "$GATE5" ] && [ ! -f "$GATE4" ]; then
-  echo -e "${RED}✗ BLOCKED: Gate 5 artifact present but Gate 4 (TRUST_TIER.md) missing.${NC}"
+if [ -f "$GATE5" ] && { [ ! -f "$GATE4_TRUST" ] || [ ! -f "$GATE4_BUILD" ]; }; then
+  echo -e "${RED}✗ BLOCKED: Gate 5 artifact present but Gate 4 (TRUST_TIER.md + BUILD_EVIDENCE.md) incomplete.${NC}"
   ERRORS=$((ERRORS + 1))
 fi
-if [ -f "$GATE4" ] && [ ! -f "$GATE3" ]; then
+if { [ -f "$GATE4_TRUST" ] || [ -f "$GATE4_BUILD" ]; } && [ ! -f "$GATE3" ]; then
   echo -e "${YELLOW}⚠ Gate 4 present but Gate 3 (DESIGN_NOTE.md) missing — allowed only if scale_track=quick + trust_tier_ceiling=T1${NC}"
   WARNINGS=$((WARNINGS + 1))
+fi
+if [ -f "$GATE4_BUILD" ] && [ ! -f "$GATE4_TRUST" ]; then
+  echo -e "${RED}✗ BLOCKED: BUILD_EVIDENCE.md exists but TRUST_TIER.md is missing.${NC}"
+  ERRORS=$((ERRORS + 1))
 fi
 if [ -f "$GATE3" ] && [ ! -f "$GATE2" ] && [ ! -f "$GATE1_LITE" ]; then
   echo -e "${RED}✗ BLOCKED: Gate 3 present but Gate 2 (EXPECTATION_MAP.md) missing.${NC}"

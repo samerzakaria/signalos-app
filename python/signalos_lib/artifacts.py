@@ -106,12 +106,21 @@ def gate_detection_paths() -> dict[str, tuple[str, ...]]:
 
     The first manifest artifact of each gate is its primary artifact; detection
     surfaces (status board, wave engine) treat a gate as materialised when the
-    primary artifact — or a registered lite alternative — exists. Signing-level
-    enforcement always uses the full manifest, never this list.
+    primary artifact — or a registered lite alternative — exists. G4 is stricter:
+    build status only materialises after BUILD_EVIDENCE exists, so TRUST_TIER
+    alone cannot advance the wave into review. Signing-level enforcement always
+    uses the full manifest, never this list.
     """
     detection: dict[str, tuple[str, ...]] = {}
     for gate, artifacts in GATE_ARTIFACTS.items():
-        paths: list[str] = [artifacts[0].rel_path] if artifacts else []
+        if gate == "G4":
+            paths = [
+                artifact.rel_path
+                for artifact in artifacts
+                if artifact.label == "Build Evidence"
+            ]
+        else:
+            paths = [artifacts[0].rel_path] if artifacts else []
         paths.extend(_GATE_DETECTION_ALTERNATIVES.get(gate, ()))
         detection[gate] = tuple(paths)
     return detection
