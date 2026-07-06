@@ -208,11 +208,10 @@ scan_markdown_markers() {
 # ─── SCAN: DEBRIEF action items ───────────────────────────────────────────
 
 scan_debrief_actions() {
-  echo -e "  ${BLUE}Scanning DEBRIEF.md action items...${NC}"
+  echo -e "  ${BLUE}Scanning RETROSPECTIVE.md action items...${NC}"
   local count=0
 
-  for debrief in "${REPO_ROOT}"/core/governance/DEBRIEF*.md \
-                 "${REPO_ROOT}"/core/governance/debriefs/wave-*.md; do
+  for debrief in "${REPO_ROOT}"/core/governance/Governance/RETROSPECTIVE.md; do
     [[ -f "$debrief" ]] || continue
 
     local rel_path="${debrief#$REPO_ROOT/}"

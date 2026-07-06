@@ -64,7 +64,7 @@ Stale states are a protocol smell. A Belief in 🔭 Observing past its Signal Wi
 | Reads from | Writes to |
 |---|---|
 | `core/strategy/BELIEF.md` (per Wave) | `governance/DECISION-DNA.md` — any Belief state transition that embodies a strategic decision |
-| `core/execution/PLAN.md` (for Wave state) | `governance/conversations/` — Wave Debrief transcripts that updated the map |
+| `core/execution/PLAN.md` (for Wave state) | `core/governance/Governance/RETROSPECTIVE.md` — retrospective entries that updated the map |
 | `core/governance/Governance/CLIENT-SIGNAL-LOG.md` (for resolution evidence) | Next Wave's `BELIEF.md` if Iterate state spawns follow-on |
 
 The map is a read-heavy artifact at Pre-Wave and a write-heavy artifact at Wave Debrief.

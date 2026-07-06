@@ -14,7 +14,7 @@ Owner: Product Owner. SIGNAL phase.
 Verify `core/governance/Governance/CONSTITUTION.md` exists and is signed. If it does not exist, stop immediately — Phase 0 (`/signal-init`) was not completed. Do not proceed until CONSTITUTION.md is present and has at least 5 rules, each with a violation condition.
 
 Then read `core/governance/Governance/SOUL-DOCUMENT.md` and `core/governance/Governance/CONSTITUTION.md`.
-Then read the last Wave Debrief if one exists at `core/governance/Governance/debriefs/wave-{N-1}-debrief.md`.
+Then read the latest retrospective entry if one exists in `core/governance/Governance/RETROSPECTIVE.md`.
 
 ## Scale check
 Before doing anything else, declare the Scale Track for this wave:

@@ -26,7 +26,7 @@ If either is missing → refuse to activate, emit blocker message naming the mis
 - Draft `core/strategy/BELIEF.md`
 - `Governance/SOUL-DOCUMENT.md`
 - `Governance/DECISION-DNA.md`
-- Last 3 Wave Debriefs at `core/execution/wave-debriefs/`
+- Last 3 retrospective entries in `core/governance/Governance/RETROSPECTIVE.md`
 - `core/governance/Governance/CONSTITUTION.md`
 
 ## Outputs (paths the agent writes, with template links)
@@ -68,7 +68,7 @@ Body shape: `## Hypotheses` (8-12) · `## Risks` (3) · `## Edge cases` (3) · `
 
 - Draft Belief is not falsifiable (no metric, no time window) — emit: "Belief is not falsifiable. Expect PO to rewrite before brainstorm."
 - Draft Belief touches permanently-T3 surface without explicit PE acknowledgment — emit: "Permanently-T3 surface in scope; PE must be consulted before brainstorm."
-- Prior Wave Debriefs are missing for a product past Wave 03 — emit: "Cannot ground hypotheses; prior debriefs absent."
+- Prior retrospective entries are missing for a product past Wave 03 — emit: "Cannot ground hypotheses; prior retrospectives absent."
 
 ## Handoff (who receives the output + what goes in the HAND entry)
 

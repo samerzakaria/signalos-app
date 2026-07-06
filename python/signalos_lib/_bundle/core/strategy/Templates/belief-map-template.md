@@ -25,8 +25,8 @@ author: {PO name}
 | Belief ID | Wave | State | Headline | Signal Window | Opened | Resolves by | Evidence link | Notes |
 |---|---|---|---|---|---|---|---|---|
 | BEL-20260416-1 | W1 | 📝 Drafting | {one-line paraphrase of the Belief} | {event + threshold + days} | {date} | {date} | — | {e.g. seeded from kick-off} |
-| BEL-20260401-3 | W0 | ✅ Keep | {headline} | {window} | {date} | {date} | `governance/debriefs/wave-0-debrief.md` | {lesson} |
-| BEL-20260315-2 | W-1 | ❌ Kill | {headline} | {window} | {date} | {date} | `governance/debriefs/wave--1-debrief.md` | {lesson} |
+| BEL-20260401-3 | W0 | ✅ Keep | {headline} | {window} | {date} | {date} | `core/governance/Governance/RETROSPECTIVE.md#wave-0-retrospective` | {lesson} |
+| BEL-20260315-2 | W-1 | ❌ Kill | {headline} | {window} | {date} | {date} | `core/governance/Governance/RETROSPECTIVE.md#wave--1-retrospective` | {lesson} |
 
 ### State legend
 

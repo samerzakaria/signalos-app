@@ -11,8 +11,8 @@ Owner: You + Constitution Guardian. SIGNAL + Agency borrowed.
 ## Your first action
 Read the full wave history: Soul Document, Signal Log, Client Signal Log, all Decision DNA entries from this wave.
 
-## Debrief document
-Create `core/governance/Governance/debriefs/wave-{N}-debrief.md` and complete all fields:
+## Retrospective entry
+Append a `## Wave {N} Retrospective` entry to `core/governance/Governance/RETROSPECTIVE.md` and complete all fields:
 
 ```
 Wave: {N}
@@ -53,7 +53,7 @@ Run worktree-sync to ensure all artifacts match final state:
 
 ## Exit criteria
 
-- [ ] Debrief document written with all fields completed
+- [ ] Retrospective entry written with all fields completed
 - [ ] "Biggest surprise" field is specific, not generic
 - [ ] At least one Gotcha captured (if AI made any mistake this wave)
 - [ ] Constitution updated if a new durable rule emerged

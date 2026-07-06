@@ -17,7 +17,7 @@ Phase 3 (Build), after Gate 3 (Design Approval) and Gate 4 (Trust Tier Declarati
 ## Prerequisites (signed artifacts required before activation)
 
 - `core/strategy/DESIGN_NOTE.md` — Gate 3 signed (PO + PE)
-- `core/execution/TRUST_TIER.md` — Gate 4 signed (PE + PO)
+- `core/execution/TRUST_TIER.md` — pre-build trust-tier declaration signed (PE + PO); `BUILD_EVIDENCE.md` produced by this run completes G4
 - `core/execution/PLAN.tasks.yaml` — valid machine-readable task source
 - `core/execution/PLAN.md` — rendered from `PLAN.tasks.yaml`
 - `core/execution/ACCEPTANCE_CRITERIA.md` — accepted by PO/PE packet

@@ -892,7 +892,7 @@ The `_bundle/core/governance/QUALITY_CHECK.md` file in the bundle is the **templ
 [Templates/*.md](python/signalos_lib/_bundle/core/governance/Templates/) — 21 files. Verified via the `signalos init` flow ([cli.py:936-938](python/signalos_lib/cli.py#L936) → `commands/init.py`): these are copied into the user's workspace at `signal-init` time, never re-read.
 
 Quick inventory:
-- `acceptance-criteria-template.md`, `agent-file-template.md`, `analytics-activation-card-template.md`, `checklist-template.md`, `client-signal-log-template.md`, `cr-classifier.md`, `cr-log.md`, `decision-dna-template.md`, `example-product-constitution.md`, `gotcha-skill-template.md`, `plan-template.md`, `po-brief-template.md`, `pr-checklist.md`, `prompt-library-template.md`, `qa-activation-card-template.md`, `quality-check-template.md`, `requirement-dna-template.md`, `signal-log-template.md`, `soul-document-template.md`, `spec-template.md`, `tasks-template.md`, `trust-tier-scoring.md`
+- `acceptance-criteria-template.md`, `agent-file-template.md`, `checklist-template.md`, `client-signal-log-template.md`, `cr-classifier.md`, `cr-log.md`, `decision-dna-template.md`, `example-product-constitution.md`, `gotcha-skill-template.md`, `plan-template.md`, `po-brief-template.md`, `pr-checklist.md`, `prompt-library-template.md`, `qa-activation-card-template.md`, `quality-check-template.md`, `requirement-dna-template.md`, `signal-log-template.md`, `soul-document-template.md`, `spec-template.md`, `tasks-template.md`, `trust-tier-scoring.md`
 
 `plan-template.md` is the one exception — it's BOTH a template (copied by init) AND read at decision time by `protocolContext.ts:53` (listed in §2.8.2).
 

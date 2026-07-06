@@ -241,11 +241,9 @@ def _signal_debrief(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     wave = _normalize_wave(args.wave or _read_wave(root) or "W01")
     summary = _summary(args, "Wave debrief captured; next belief candidate requires PO approval.")
     files = [
-        root / "core" / "execution" / "WAVE_DEBRIEF.md",
         root / "core" / "governance" / "Governance" / "RETROSPECTIVE.md",
     ]
-    _write_text(files[0], f"# Wave Debrief\n\nWave: {wave}\n\n{summary}\n", force=args.force)
-    _append_text(files[1], f"\n## {wave} Retrospective - {_utc_now()}\n\n{summary}\n")
+    _append_text(files[0], f"\n## {wave} Retrospective - {_utc_now()}\n\n{summary}\n")
     return _finish(root, "signal-debrief", args, files, {"wave": wave})
 
 

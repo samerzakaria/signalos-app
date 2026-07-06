@@ -19,7 +19,7 @@ Before any metric is read, load the full context of what this Wave promised:
 
 - Read `core/strategy/BELIEF.md` — extract: metric name, threshold, direction (up/down), window duration, kill rule
 - Read `core/strategy/EXPECTATION_MAP.md` — extract: in-scope behaviours, observable signals, acceptance criteria
-- Read the Analytics Activation Card (`core/governance/Templates/analytics-activation-card-template.md`) — extract: event names, dashboard URLs, SQL queries, SLO definitions
+- Read `core/strategy/BELIEF.md`, `core/governance/QUALITY_CHECK.md`, and the current signal log — extract metric names, dashboard URLs, SQL queries, and SLO definitions from those signed/evidence artifacts.
 - Cross-check: every in-scope item in the Expectation Map must have a corresponding metric or event in the Activation Card. Flag any gap immediately.
 
 ## 2. Read configured metrics
@@ -78,7 +78,7 @@ On close:
 
 1. **Draft the verdict** — Keep / Kill / Iterate, written into the signal-log's verdict section. Marked DRAFT until PO + QA sign.
 2. **Compile the evidence pack** — signal-log + SLO report + cohort report + anomaly log, bundled for the Wave Review.
-3. **Seed the Wave Debrief** — write initial data into `core/execution/WAVE_DEBRIEF.md` with: final metric value, threshold delta, cohort size, SLO status, proposed verdict.
+3. **Seed the Retrospective draft** — append initial data into `core/governance/Governance/RETROSPECTIVE.md` with: final metric value, threshold delta, cohort size, SLO status, proposed verdict.
 4. **Handoff** — deliver evidence pack and draft debrief to PO + QA for Gate 5 signature.
 
 ---
@@ -89,7 +89,7 @@ On close:
 
 ## Exit criteria
 
-- [ ] Belief and Expectation Map context loaded and cross-checked against Activation Card
+- [ ] Belief and Expectation Map context loaded and cross-checked against QUALITY_CHECK evidence and the signal log
 - [ ] All configured metrics read with no dead primary endpoints
 - [ ] Staleness checks passed for every metric source
 - [ ] Actual vs target comparison computed for every reading interval
@@ -98,7 +98,7 @@ On close:
 - [ ] Signal-log, SLO report, cohort report, and anomaly log written
 - [ ] Draft verdict (Keep / Kill / Iterate) written with supporting evidence
 - [ ] Evidence pack compiled for Wave Review
-- [ ] Draft Wave Debrief seeded
+- [ ] Retrospective draft seeded
 - [ ] Handoff to PO + QA for Gate 5 signature
 
 ## Next phase

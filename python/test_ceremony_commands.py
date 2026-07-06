@@ -59,7 +59,6 @@ def test_ceremony_commands_write_artifacts_evidence_and_audit(tmp_path: Path) ->
         ".signalos/evidence/W03/signal-review.json",
         "core/governance/Governance/CLIENT-SIGNAL-LOG.md",
         "core/execution/WAVE_REVIEW.md",
-        "core/execution/WAVE_DEBRIEF.md",
         "core/governance/Governance/RETROSPECTIVE.md",
     ]
     for rel_path in expected_files:

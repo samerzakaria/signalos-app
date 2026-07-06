@@ -43,6 +43,7 @@ def _bound_live_product_commands(monkeypatch: pytest.MonkeyPatch):
     """Keep live product proof bounded on machines without registry access."""
     monkeypatch.setenv("SIGNALOS_DISABLE_LLM", "1")
     monkeypatch.setenv("SIGNALOS_VALIDATION_COMMAND_TIMEOUT_S", "10")
+    monkeypatch.setenv("SIGNALOS_VALIDATION_INSTALL_TIMEOUT_S", "10")
     monkeypatch.setenv("SIGNALOS_PROOF_TIMEOUT_S", "5")
 
 

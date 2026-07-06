@@ -10,7 +10,7 @@ Owner: Product Owner. SIGNAL phase.
 
 ## Your first action
 Read `core/governance/Governance/SOUL-DOCUMENT.md` and `core/governance/Governance/CONSTITUTION.md`.
-Then read the last Wave Debrief if one exists at `core/governance/Governance/debriefs/wave-{N-1}-debrief.md`.
+Then read the latest retrospective entry if one exists in `core/governance/Governance/RETROSPECTIVE.md`.
 
 ## Scale check
 Before doing anything else, declare the Scale Track for this wave:

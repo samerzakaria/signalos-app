@@ -66,7 +66,7 @@ INTEGRITY_CANDIDATES = (
     "core/governance/Governance/SOUL-DOCUMENT.md",
     "core/governance/Governance/SURFACE_INVENTORY.md",
     "core/governance/Governance/PERMANENTLY_T3.md",
-    "core/governance/DECISION-DNA.md",
+    "core/governance/Governance/DECISION-DNA.md",
     "core/governance/Retro/.constitution-hashes.log",
     "scripts/pre-push-security-gate.sh",
 )

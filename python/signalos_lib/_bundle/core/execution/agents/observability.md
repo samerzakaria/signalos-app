@@ -19,7 +19,7 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 - `core/strategy/BELIEF.md` signed (Gate 1)
 - `core/governance/QUALITY_CHECK.md` signed by QA (Gate 5 entry)
 - `Governance/signal-logs/wave-{N}-signal-log.md` opened by Release agent
-- Analytics Activation Card present — metric event names + dashboards + SQL queries
+- Belief metric, QUALITY_CHECK evidence, and signal-log metric source are present.
 
 ## Inputs (paths the agent reads)
 
@@ -33,7 +33,7 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 ## Outputs (paths the agent writes, with template links)
 
 - `Governance/signal-logs/wave-{N}-signal-log.md` — hourly readings, activation checks, SLO status
-- Draft `core/execution/WAVE_DEBRIEF.md` — at Window close, draft only (PO + QA sign)
+- Draft closeout section in `core/governance/Governance/RETROSPECTIVE.md` — at Window close, draft only (PO + QA sign)
 - Draft Keep/Kill/Iterate verdict written into the signal-log's verdict section — marked DRAFT until human signature
 
 ## Success criteria
@@ -52,7 +52,7 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 - `QUALITY_CHECK.md` SHA and summary of QA risks that can influence the Belief signal.
 - Cohort-size and freshness checks.
 - SLO status for the window.
-- Draft debrief with proposed verdict, QA-to-Belief trace, and next-wave learning.
+- Draft retrospective closeout with proposed verdict, QA-to-Belief trace, and next-wave learning.
 - Alerts emitted when disproof or kill conditions are met.
 
 ## Forbidden rules
