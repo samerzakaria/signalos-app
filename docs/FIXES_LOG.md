@@ -120,12 +120,20 @@ plan's decomposition** — small enough + kept connected — rather than flatten
 
 ---
 
-## Option 2 — containerized build/validation (🔄 in progress, branch `feat/option2-containerized-validation`)
+## Option 2 — containerized build/validation (✅ landed on main)
 
 A capability, not a bug-fix: build/validate **any** stack in an on-demand container so the operator
 installs **no language toolchain** — the answer to "we're always one language short" and "assume nothing
 local." **Proven:** a Go app `go vet`'d + compiled to a binary with **zero Go on the host** (ran in a
 `golang` container).
+
+**Landed on main** (was on `feat/option2-containerized-validation`, which went stale as main was rewritten):
+the runtime-agnostic sandbox (`sandbox.py`, already wired into the harness/e2e/tdd runners) + its
+consent-gated Podman auto-install came across as a clean forward-evolution, and `validation._run_commands`
+now routes the build/test commands through the container shim. Wiring, runtime detection, image resolution,
+and the install plan are **test-covered offline** (46 sandbox + 5 validation-shim tests, no real runtime
+needed); the default path (host tool present) is byte-unchanged. End-to-end container execution still needs
+a runtime on the machine to exercise live (proven earlier on the branch with Go).
 
 | # | Item | What it does | Status |
 |---|------|--------------|--------|

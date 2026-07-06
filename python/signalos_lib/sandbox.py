@@ -42,6 +42,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,53 @@ _DEFAULT_IMAGE_PY = "python:3.11-slim"
 # `bash` invocation against it would fail with "bash: not found".
 # debian:bookworm-slim is ~75 MB and has bash + sed + awk + coreutils.
 _DEFAULT_IMAGE_SH = "debian:bookworm-slim"
+# Option 2: per-stack official base images, pulled on demand. Adding a language
+# is one entry here -- Docker Hub already ships the image, so the platform never
+# builds or installs a toolchain and is never "one language short".
+#
+# These are FLOATING FALLBACK tags (major line only, never a pinned minor), so
+# they don't go stale as new versions ship. The EXACT version is resolved
+# dynamically from what the generated app itself declares (go.mod / *.csproj /
+# pom.xml / package.json / pyproject.toml) via ``resolve_stack_image`` -- the
+# platform hardcodes no version; the app is the source of truth, and this map is
+# only the "the app didn't say" default.
+_DEFAULT_IMAGES: dict[str, str] = {
+    "js": _DEFAULT_IMAGE_JS,
+    "py": _DEFAULT_IMAGE_PY,
+    "sh": _DEFAULT_IMAGE_SH,
+    "go": "golang:1-bookworm",
+    "dotnet": "mcr.microsoft.com/dotnet/sdk:latest",
+    "java": "maven:3-eclipse-temurin-21",
+    "rust": "rust:1-bookworm",
+}
+
+# Repositories per kind; the TAG is filled in from the app's declared version.
+_IMAGE_REPO: dict[str, str] = {
+    "go": "golang",
+    "dotnet": "mcr.microsoft.com/dotnet/sdk",
+    "java": "eclipse-temurin",
+    "rust": "rust",
+    "js": "node",
+    "py": "python",
+}
+
+
+def resolve_stack_image(root: Path, kind: str) -> str:
+    """Resolve the base image for *kind* — the LATEST, fetched from the registry
+    at pull time, never a version the agent guessed from its training cutoff.
+
+    We deliberately do NOT read the version out of the app's go.mod / *.csproj /
+    package.json: those were written by the model from stale knowledge. Instead
+    we return a FLOATING tag (major line / LTS) that the Docker registry resolves
+    to the newest matching image *when it is pulled* -- so the build always uses
+    the current release, and a new language version needs zero changes here. An
+    explicit per-workspace ``image_<kind>`` override in sandbox.json still wins
+    (that is an operator decision, not a model guess).
+
+    (The registry IS the source of truth for "latest", exactly like discovering
+    a model id from the provider API instead of hardcoding one.)
+    """
+    return _DEFAULT_IMAGES.get(kind, _DEFAULT_IMAGE_JS)
 
 
 def _sandbox_path(root: Path) -> Path:
@@ -134,18 +182,21 @@ def is_sandbox_enabled(root: Path) -> bool:
 # Capability detection
 # ---------------------------------------------------------------------------
 
-def docker_available() -> bool:
-    """Return True iff `docker` resolves AND `docker --version` works.
+# Preference order for the container runtime. Docker first (most common when
+# present), then Podman -- rootless, daemonless, LICENSE-CLEAN, and drop-in
+# `docker`-CLI compatible, so it's the one we auto-install when nothing exists.
+_CONTAINER_RUNTIMES = ("docker", "podman")
 
-    Docker Desktop being installed but stopped doesn't count -- a
-    `docker run` against a stopped daemon hangs. We probe with
-    `docker info` and a short timeout to filter that case out.
-    """
-    if shutil.which("docker") is None:
+
+def _runtime_works(runtime: str) -> bool:
+    """True iff *runtime* resolves AND its engine responds. An installed-but-
+    stopped Docker Desktop / uninitialized podman machine does NOT count -- a
+    `run` against it hangs, so we probe `info` with a short timeout."""
+    if shutil.which(runtime) is None:
         return False
     try:
         proc = subprocess.run(
-            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            [runtime, "info", "--format", "{{.ServerVersion}}"],
             capture_output=True,
             text=True,
             timeout=15,
@@ -154,6 +205,98 @@ def docker_available() -> bool:
         return proc.returncode == 0 and bool((proc.stdout or "").strip())
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def container_runtime() -> str | None:
+    """The name of the first working container runtime (``docker``|``podman``),
+    or None when neither is installed+running. Runtime-agnostic: the sandbox
+    shells `<runtime> run ...` and both speak the same CLI."""
+    for rt in _CONTAINER_RUNTIMES:
+        if _runtime_works(rt):
+            return rt
+    return None
+
+
+def _runtime_cli() -> str:
+    """The runtime CLI NAME for argv construction -- resolves by PATH presence
+    only (fast, no engine probe), since callers verify the engine works via
+    container_runtime() before wrapping. Falls back to 'docker'."""
+    for rt in _CONTAINER_RUNTIMES:
+        if shutil.which(rt) is not None:
+            return rt
+    return "docker"
+
+
+def docker_available() -> bool:
+    """Back-compat: any working container runtime is available."""
+    return container_runtime() is not None
+
+
+# --- Auto-install (consent-gated) -----------------------------------------
+# Per-OS command to install Podman -- the license-clean, rootless runtime we
+# bring up when a machine has none. NOT run silently: installing system
+# software is privileged + hard to reverse, so ensure_container_runtime()
+# requires explicit consent before invoking these.
+def _podman_install_plan() -> list[list[str]]:
+    """The ordered commands to install + start Podman for this OS. Empty when
+    we don't have a supported installer path (caller surfaces a manual hint)."""
+    plat = sys.platform
+    if plat.startswith("win"):
+        if shutil.which("winget"):
+            return [
+                ["winget", "install", "--id", "RedHat.Podman", "-e",
+                 "--accept-source-agreements", "--accept-package-agreements"],
+                ["podman", "machine", "init"],
+                ["podman", "machine", "start"],
+            ]
+        return []
+    if plat == "darwin":
+        if shutil.which("brew"):
+            return [
+                ["brew", "install", "podman"],
+                ["podman", "machine", "init"],
+                ["podman", "machine", "start"],
+            ]
+        return []
+    # linux -- host kernel runs containers natively, no VM/machine needed.
+    if shutil.which("apt-get"):
+        return [["sudo", "apt-get", "update"], ["sudo", "apt-get", "install", "-y", "podman"]]
+    if shutil.which("dnf"):
+        return [["sudo", "dnf", "install", "-y", "podman"]]
+    return []
+
+
+def ensure_container_runtime(*, consent: bool = False, timeout_s: int = 600) -> dict[str, Any]:
+    """Ensure a container runtime exists. Detect first; only install with
+    explicit *consent* (installing system software is privileged/irreversible).
+
+    Returns {runtime, installed, needs_consent, plan, error}:
+      - runtime present already      -> {runtime, installed: False}
+      - none, consent=False          -> {runtime: None, needs_consent: True, plan}
+      - none, consent=True, ok        -> {runtime, installed: True}
+      - none, no installer path/fail -> {runtime: None, error}
+    """
+    existing = container_runtime()
+    if existing:
+        return {"runtime": existing, "installed": False}
+    plan = _podman_install_plan()
+    if not consent:
+        return {"runtime": None, "installed": False, "needs_consent": True, "plan": plan}
+    if not plan:
+        return {"runtime": None, "installed": False,
+                "error": "no supported auto-installer for this OS; install Podman or Docker manually"}
+    for step in plan:
+        try:
+            proc = subprocess.run(step, capture_output=True, text=True, timeout=timeout_s, shell=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"runtime": None, "installed": False, "error": f"{' '.join(step)}: {exc}"}
+        if proc.returncode != 0:
+            return {"runtime": None, "installed": False,
+                    "error": f"{' '.join(step)} failed: {(proc.stderr or proc.stdout or '')[:300]}"}
+    rt = container_runtime()
+    if rt:
+        return {"runtime": rt, "installed": True}
+    return {"runtime": None, "installed": False, "error": "runtime not usable after install"}
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +324,15 @@ def _classify_command(cmd: list[str]) -> str:
         return "py"
     if name in {"bash", "sh", "dash", "zsh", "bash.exe"}:
         return "sh"
+    # Option 2: compiled-stack toolchains -> their official base image.
+    if name in {"go", "go.exe"}:
+        return "go"
+    if name in {"dotnet", "dotnet.exe"}:
+        return "dotnet"
+    if name in {"mvn", "mvn.cmd", "gradle", "gradlew", "java", "javac"}:
+        return "java"
+    if name in {"cargo", "cargo.exe", "rustc"}:
+        return "rust"
     return "js"
 
 
@@ -221,12 +373,17 @@ def build_docker_run_argv(
     cfg = get_sandbox_config(root)
     if image is None:
         kind = _classify_command(cmd)
-        # kind -> config key
-        image_key = {"py": "image_py", "sh": "image_sh", "js": "image_js"}.get(kind, "image_js")
-        image = cfg.get(image_key)
-    workspace_abs = str(root.resolve())
+        # Prefer an explicit per-workspace override (image_<kind>); otherwise
+        # resolve the image DYNAMICALLY from the app's declared version -- never
+        # a platform-hardcoded pin (Option 2).
+        image = cfg.get(f"image_{kind}") or resolve_stack_image(root, kind)
+    # Docker's -v parser wants forward slashes even on Windows: a native
+    # `C:\path` mangles the source/dest split, so the container mounts nothing
+    # and every build "fails" with empty output. Forward slashes work on Docker
+    # Desktop (Windows) and are a no-op on Linux/CI.
+    workspace_abs = str(root.resolve()).replace("\\", "/")
     argv = [
-        "docker", "run", "--rm", "-i",
+        _runtime_cli(), "run", "--rm", "-i",
         # -i (--interactive): forward stdin into the container. Required
         # for any wrapped call that passes input= to subprocess.run
         # (e.g. the harness's redact.py filter pipes text through stdin).

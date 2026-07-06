@@ -565,21 +565,49 @@ def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
         argv = _split_command(cmd)
         if not argv:
             continue
-        exe = shutil.which(argv[0])
-        if exe is None:
-            elapsed = time.perf_counter() - start
-            return {
-                "status": "blocked",
-                "output": f"command not found: {argv[0]}",
-                "duration_s": round(elapsed, 3),
-            }
         # #41-env: dependency install gets its own (larger) budget so a slow
         # install is not misread as a build/test failure.
         cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
+        # Option 2 -- containerized validation. Run the build/test command in its
+        # per-stack container when the host LACKS the toolchain (or the workspace
+        # forces sandboxed validation) -- this is what lets a Go/.NET/Java/react
+        # product build+test with ZERO language toolchain on the operator's
+        # machine, only a container runtime (docker|podman). The official base
+        # image is pulled on demand (see sandbox.resolve_stack_image). Host
+        # toolchain wins when present and not forced (the fast path); neither
+        # present -> an honest "need a container runtime" blocker.
+        from signalos_lib.sandbox import (
+            build_docker_run_argv,
+            docker_available,
+            is_sandbox_enabled,
+        )
+
+        exe = shutil.which(argv[0])
+        force_sandbox = (
+            os.environ.get("SIGNALOS_VALIDATE_IN_SANDBOX", "").strip() == "1"
+            or is_sandbox_enabled(repo_root)
+        )
+        if exe is not None and not force_sandbox:
+            run_argv = [exe, *argv[1:]]
+        elif docker_available():
+            run_argv = build_docker_run_argv(repo_root, argv)
+        elif exe is not None:
+            run_argv = [exe, *argv[1:]]  # forced but no runtime -> host fallback
+        else:
+            elapsed = time.perf_counter() - start
+            return {
+                "status": "blocked",
+                "output": (
+                    f"command '{argv[0]}' is not installed on the host, and no "
+                    f"container runtime (docker/podman) is available to run it "
+                    f"in a per-stack container"
+                ),
+                "duration_s": round(elapsed, 3),
+            }
         try:
             proc = _run_shell_command(
                 cmd,
-                [exe, *argv[1:]],
+                run_argv,
                 repo_root,
                 cmd_timeout,
             )

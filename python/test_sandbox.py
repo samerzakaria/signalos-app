@@ -20,6 +20,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -104,13 +105,17 @@ class DockerRunArgvShape(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             argv = build_docker_run_argv(root, ["npm", "test"])
-            self.assertEqual(argv[0], "docker")
+            # Runtime-agnostic: docker or podman, whichever is on PATH.
+            self.assertIn(argv[0], ("docker", "podman"))
             self.assertEqual(argv[1], "run")
             self.assertIn("--rm", argv)
-            # Workspace -> /workspace mount
+            # Workspace -> /workspace mount. Docker's -v wants forward slashes
+            # even on Windows (a native C:\ path mangles the src/dest split), so
+            # the source is normalized; this is a no-op on Linux/CI.
             self.assertIn("-v", argv)
             mount_idx = argv.index("-v")
-            self.assertEqual(argv[mount_idx + 1], f"{root.resolve()}:/workspace")
+            expected_src = str(root.resolve()).replace("\\", "/")
+            self.assertEqual(argv[mount_idx + 1], f"{expected_src}:/workspace")
             # WORKDIR
             wd_idx = argv.index("-w")
             self.assertEqual(argv[wd_idx + 1], "/workspace")
@@ -295,6 +300,73 @@ class DockerAvailableSmoke(unittest.TestCase):
         # We don't assert True or False -- depends on the machine.
         # We assert the function doesn't crash.
         self.assertIsInstance(docker_available(), bool)
+
+
+class ContainerRuntimeDetection(unittest.TestCase):
+    def test_container_runtime_prefers_docker_then_podman(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb, "_runtime_works", side_effect=lambda rt: rt == "podman"):
+            self.assertEqual(sb.container_runtime(), "podman")
+        with unittest.mock.patch.object(sb, "_runtime_works", return_value=False):
+            self.assertIsNone(sb.container_runtime())
+        # docker_available() is just "any runtime present".
+        with unittest.mock.patch.object(sb, "container_runtime", return_value=None):
+            self.assertFalse(sb.docker_available())
+
+    def test_runtime_cli_resolves_by_path_only(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb.shutil, "which", side_effect=lambda n: "/x" if n == "podman" else None):
+            self.assertEqual(sb._runtime_cli(), "podman")
+        with unittest.mock.patch.object(sb.shutil, "which", return_value=None):
+            self.assertEqual(sb._runtime_cli(), "docker")  # safe fallback
+
+    def test_docker_run_argv_uses_detected_runtime(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb, "_runtime_cli", return_value="podman"):
+            with tempfile.TemporaryDirectory() as d:
+                argv = sb.build_docker_run_argv(Path(d), ["go", "build", "./..."])
+                self.assertEqual(argv[0], "podman")
+                self.assertIn("golang:1-bookworm", argv)  # go -> official image
+
+
+class EnsureContainerRuntime(unittest.TestCase):
+    def test_existing_runtime_is_not_reinstalled(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb, "container_runtime", return_value="docker"):
+            r = sb.ensure_container_runtime(consent=False)
+            self.assertEqual(r["runtime"], "docker")
+            self.assertFalse(r["installed"])
+
+    def test_missing_runtime_without_consent_asks_first(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb, "container_runtime", return_value=None):
+            r = sb.ensure_container_runtime(consent=False)
+            self.assertIsNone(r["runtime"])
+            self.assertTrue(r["needs_consent"])
+            self.assertIn("plan", r)  # never installs silently
+
+    def test_consent_but_no_installer_path_errors_cleanly(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb, "container_runtime", return_value=None), \
+             unittest.mock.patch.object(sb, "_podman_install_plan", return_value=[]):
+            r = sb.ensure_container_runtime(consent=True)
+            self.assertIsNone(r["runtime"])
+            self.assertIn("error", r)
+
+    def test_install_plan_is_os_specific(self) -> None:
+        import signalos_lib.sandbox as sb
+
+        with unittest.mock.patch.object(sb.sys, "platform", "linux"), \
+             unittest.mock.patch.object(sb.shutil, "which", side_effect=lambda n: "/x" if n == "apt-get" else None):
+            plan = sb._podman_install_plan()
+            self.assertTrue(any("podman" in " ".join(step) for step in plan))
+            self.assertTrue(all(step[0] in {"sudo"} for step in plan))  # privileged
 
 
 if __name__ == "__main__":
