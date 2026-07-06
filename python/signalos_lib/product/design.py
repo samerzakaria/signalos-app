@@ -455,6 +455,12 @@ def build_design_system(
     if profile == "agent-selected":
         return _portable_design(intent, profile)
 
+    # #44: a founder-DECLARED design system is a signed decision. Honor it
+    # verbatim via the deterministic path (which validates + applies it) and do
+    # NOT let the LLM architect re-propose over the founder's choice.
+    if str(intent.get("declared_ui_library") or "").strip():
+        return _deterministic_design(intent, profile, blueprint)
+
     # Try LLM architect agent first
     if is_llm_available():
         llm_result = select_design_with_llm(intent, profile, blueprint)
@@ -518,9 +524,28 @@ def _deterministic_design(intent: dict, profile: str, blueprint: dict | None = N
 def _select_ui_library(intent: dict, blueprint: dict | None) -> dict:
     """Select a UI library from the registry (#44).
 
-    Each adapter's ``fit`` votes on the intent; the highest-priority match wins,
-    else the ``is_default`` library. Registering a new adapter with a ``fit``
-    makes it selectable here too -- no edit to this function."""
+    A founder-DECLARED library (``intent['declared_ui_library']``) wins outright:
+    the design system is a signed scoping decision ("A proposes, B signs"), so
+    once the founder declares one the agent honors it verbatim and does not vote.
+    An unsupported declaration is REJECTED, never silently swapped for a guess.
+
+    Otherwise each adapter's ``fit`` votes on the intent; the highest-priority
+    match wins, else the ``is_default`` library. Registering a new adapter with a
+    ``fit`` makes it selectable here too -- no edit to this function."""
+    declared = str(intent.get("declared_ui_library") or "").strip()
+    if declared:
+        adapter = get_ui_library(declared)
+        if adapter is None:
+            raise ValueError(
+                f"Founder-declared UI library {declared!r} is not supported. "
+                f"Choose one of: {', '.join(supported_ui_library_names())}"
+            )
+        return {
+            "name": adapter.name,
+            "version": adapter.version,
+            "reason": "Founder-declared design system.",
+        }
+
     candidates = sorted(
         (lib for lib in _UI_LIBRARY_REGISTRY if lib.fit is not None),
         key=lambda lib: lib.selection_priority,

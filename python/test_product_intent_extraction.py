@@ -566,3 +566,29 @@ class TestEntityFieldExtraction:
                 assert f in types, f
             # the status field is a boolean in the frozen contract
             assert "done: boolean;" in types
+
+
+# ---------------------------------------------------------------------------
+# #44 -- founder declares the design system in the prompt
+# ---------------------------------------------------------------------------
+
+class TestDeclaredUILibraryDetection:
+    def test_using_mantine_is_captured(self):
+        intent = extract_product_intent("Build a task manager using Mantine")
+        assert intent["declared_ui_library"] == "@mantine/core"
+
+    def test_with_shadcn_is_captured(self):
+        intent = extract_product_intent("Build a sales dashboard with shadcn")
+        assert intent["declared_ui_library"] == "shadcn/ui"
+
+    def test_no_library_mention_leaves_it_empty(self):
+        intent = extract_product_intent("Build a task manager for a small team")
+        assert intent["declared_ui_library"] == ""
+
+    def test_two_libraries_named_does_not_guess(self):
+        # ambiguous -> declare nothing; the agent proposes (founder still signs)
+        intent = extract_product_intent("Should I use shadcn or Mantine for my app?")
+        assert intent["declared_ui_library"] == ""
+
+    def test_empty_intent_template_carries_the_field(self):
+        assert "declared_ui_library" in EMPTY_INTENT

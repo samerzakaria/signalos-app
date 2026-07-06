@@ -491,3 +491,47 @@ class TestUILibraryRegistry:
         assert dash["name"] == "shadcn/ui"
         assert forms["name"] == "@mantine/core"
         assert default["name"] == "shadcn/ui"
+
+
+# ---------------------------------------------------------------------------
+# #44 -- founder-DECLARED design system ("A proposes, B signs")
+# ---------------------------------------------------------------------------
+
+class TestFounderDeclaredUILibrary:
+    def test_declared_library_is_honored_verbatim(self):
+        intent = _minimal_intent()
+        intent["declared_ui_library"] = "@mantine/core"
+        design = build_design_system(intent, "react-vite")
+        assert design["ui_library"]["name"] == "@mantine/core"
+        assert "Founder-declared" in design["ui_library"]["reason"]
+
+    def test_declaration_OVERRIDES_the_heuristic(self):
+        # A financial dashboard heuristically picks shadcn; a founder who declares
+        # Mantine must get Mantine -- the agent does not overrule a signed choice.
+        intent = _financial_dashboard_intent()
+        assert build_design_system(intent, "react-vite")["ui_library"]["name"] == "shadcn/ui"
+        intent["declared_ui_library"] = "@mantine/core"
+        assert build_design_system(intent, "react-vite")["ui_library"]["name"] == "@mantine/core"
+
+    def test_declaration_accepts_short_id(self):
+        intent = _minimal_intent()
+        intent["declared_ui_library"] = "shadcn"  # short id, not the full name
+        design = build_design_system(intent, "react-vite")
+        assert design["ui_library"]["name"] == "shadcn/ui"
+
+    def test_unsupported_declaration_is_rejected_never_guessed(self):
+        intent = _minimal_intent()
+        intent["declared_ui_library"] = "chakra"  # not in the registry
+        with pytest.raises(ValueError) as exc:
+            build_design_system(intent, "react-vite")
+        # the error names the supported set so the founder can fix the declaration
+        assert "chakra" in str(exc.value)
+        assert "shadcn/ui" in str(exc.value)
+
+    def test_no_declaration_falls_back_to_proposal(self):
+        intent = _minimal_intent()
+        intent["declared_ui_library"] = ""
+        design = build_design_system(intent, "react-vite")
+        # a real library is still chosen (the "A proposes" path), just not forced
+        assert design["ui_library"]["name"] in {"shadcn/ui", "@mantine/core"}
+        assert "Founder-declared" not in design["ui_library"]["reason"]

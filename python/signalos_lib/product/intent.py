@@ -43,6 +43,7 @@ def _empty_intent() -> dict[str, Any]:
         "performance_expectations": [],
         "deployment_intent": "none",
         "stack_preferences": [],
+        "declared_ui_library": "",
         "unknowns": [],
         "assumptions": [],
         "out_of_scope": [],
@@ -811,6 +812,36 @@ def _merge_repo_context(intent: dict[str, Any], repo_context: dict[str, Any]) ->
 
 
 # ---------------------------------------------------------------------------
+# Founder-declared design system (#44)
+# ---------------------------------------------------------------------------
+
+def _detect_declared_ui_library(text: str) -> str:
+    """Detect an EXPLICIT founder declaration of the design system in the prompt.
+
+    Tokens are derived from the design registry (so a newly registered UI
+    library is recognized automatically -- no edit here). Returns the adapter's
+    canonical ``name`` when the founder unambiguously named ONE library (e.g.
+    "build it with Mantine", "use shadcn"), else "". These are distinctive
+    proper-noun library names, so a bare mention is treated as a deliberate
+    choice -- never guessed from generic UX words. If two are named we do not
+    guess: return "" and let the agent propose (which the founder still signs).
+    """
+    from .design import ui_library_registry  # lazy import: avoid a cycle
+
+    lowered = text.lower()
+    matched: list[str] = []
+    for adapter in ui_library_registry():
+        tokens = {adapter.id.lower(), adapter.name.lower()}
+        brand = adapter.name.lower().lstrip("@").split("/")[0]  # "@mantine/core"->"mantine"
+        if brand:
+            tokens.add(brand)
+        if any(re.search(r"\b" + re.escape(tok) + r"\b", lowered) for tok in tokens):
+            matched.append(adapter.name)
+    unique = sorted(set(matched))
+    return unique[0] if len(unique) == 1 else ""
+
+
+# ---------------------------------------------------------------------------
 # Main extraction entry point
 # ---------------------------------------------------------------------------
 
@@ -897,6 +928,9 @@ def extract_product_intent(
         name for name, pat in _STACK_PATTERNS.items()
         if pat.search(text)
     ]
+    # #44: honor an explicit founder-declared design system ("A proposes, B
+    # signs") -- when present it overrides the design phase's own proposal.
+    intent["declared_ui_library"] = _detect_declared_ui_library(text)
 
     if repo_context is not None:
         _merge_repo_context(intent, repo_context)
