@@ -305,6 +305,15 @@ def run_isolated_build_tasks(
         store.enqueue(task_id, {"packet": packet})
 
     base_branch = base_branch or _current_branch(repo_root)
+    # Fork every worktree from a FIXED base commit, not the (moving) base
+    # branch. The branch ref advances as each task merges, so forking from it
+    # made isolation timing-dependent: a task whose worktree was created after
+    # a sibling already merged would fork from the post-merge tip and merge back
+    # cleanly -- hiding a real same-path conflict (both should not "win"). This
+    # also flaked the conflict test under load. Pinning the base commit makes
+    # every task fork from the same point, so a genuine conflict is detected at
+    # merge deterministically, independent of worker scheduling.
+    base_commit = _git(repo_root, "rev-parse", base_branch).strip()
     merge_lock = threading.Lock()
     worktrees_root = repo_root / ".signalos" / "product" / "worktrees"
 
@@ -315,7 +324,7 @@ def run_isolated_build_tasks(
         branch = f"executor/{task_id}-{uuid.uuid4().hex[:8]}"
         worktree_dir = worktrees_root / f"{task_id}-{uuid.uuid4().hex[:8]}"
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
-        _git(repo_root, "worktree", "add", "-b", branch, str(worktree_dir), base_branch)
+        _git(repo_root, "worktree", "add", "-b", branch, str(worktree_dir), base_commit)
         try:
             result = dispatch(worktree_dir, packet)
             if result.get("status") != "completed":
