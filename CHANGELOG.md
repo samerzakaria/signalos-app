@@ -2,6 +2,17 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.4-internal.3] - 2026-07-06
+
+### Fresh install no longer dead-ends at "No workspace selected"
+
+A new install skipped onboarding and dropped the user into the app with **Active folder: (none)**, and every build then failed with *"Agent run failed: Build precheck failed: No workspace selected."* One root-cause chain — and the second half hit **every** first-time user, not just reinstalls:
+
+- **Onboarding skipped on reinstall (#53a):** WebView2 `localStorage` persists across reinstalls, so the prior install's `signalos.onboarding.wizard.v1` "done" flag survived and onboarding was skipped. `isFinished()` now also requires a real persisted projects root — corrupt/partial "done" state re-shows onboarding, while validly configured users are not forced to re-onboard.
+- **No bridge from "onboarded" to "buildable" (#53b):** onboarding, by design, only sets the projects *root*; the active workspace stays `(none)` until a product project is created. Nothing guided the user there, so the first delivery fired straight into the Rust precheck and died with raw internals. A **workspace guard** now intercepts a build with no active project: it posts a plain-language prompt and opens **New Project** instead of firing a doomed build. A catch-net re-routes any `"no workspace selected"` surfacing from the sidecar the same way.
+
+Full frontend suite 312/312; tsc clean; build green. 3 new regression tests.
+
 ## [3.2.4-internal.2] - 2026-07-05
 
 ### UI/UX user-journey fixes — the cockpit was never e2e-tested

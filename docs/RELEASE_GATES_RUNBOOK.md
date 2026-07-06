@@ -1,6 +1,6 @@
 # Release Gates Runbook — what I (Claude) cannot do and you must
 
-This file lists the three release gates that the v3.2.4-internal.2 push **cannot** finish without credentials, hardware, or accounts that live with you, plus the exact commands to run when you do them.
+This file lists the three release gates that the v3.2.4-internal.3 push **cannot** finish without credentials, hardware, or accounts that live with you, plus the exact commands to run when you do them.
 
 Last updated: 2026-05-15 — after the Wave 1–5 merge to `main` (PR #1).
 
@@ -13,7 +13,7 @@ Last updated: 2026-05-15 — after the Wave 1–5 merge to `main` (PR #1).
 | **Internal testing** (attested by name, not signed) | Shipping to known testers now, certs not yet acquired | [INTERNAL_TESTING_BUILD.md](INTERNAL_TESTING_BUILD.md) |
 | **Signed public release** (Authenticode + notarized + minisign-stamped) | Public download / auto-updater required | this file (R1–R3 below) |
 
-The current v3.2.4-internal.2 ship plan is the **internal testing** path. R1–R3 below remain blocked on your credentials. Run `scripts/build-internal.ps1` (or `.sh`) to produce the internal artifacts.
+The current v3.2.4-internal.3 ship plan is the **internal testing** path. R1–R3 below remain blocked on your credentials. Run `scripts/build-internal.ps1` (or `.sh`) to produce the internal artifacts.
 
 The implementation gates (G0–G4) are signed in `.signalos/AUDIT_TRAIL.jsonl`. The remaining gates are the operational/external ones: code signing, notarization, updater signatures, clean-machine validation.
 
@@ -44,15 +44,15 @@ distribution/update-manifest/latest.json:4
 
    This produces (for Windows):
    ```
-   src-tauri/target/release/bundle/nsis/Foundry_3.2.4-internal.2_x64-setup.exe
-   src-tauri/target/release/bundle/msi/Foundry_3.2.4-internal.2_x64_en-US.msi
+   src-tauri/target/release/bundle/nsis/Foundry_3.2.4-internal.3_x64-setup.exe
+   src-tauri/target/release/bundle/msi/Foundry_3.2.4-internal.3_x64_en-US.msi
    ```
 
 2. For each installer, run `minisign -S` with the project private key:
 
    ```bash
    minisign -S -s "$TAURI_PRIVATE_KEY_PATH" \
-     -m src-tauri/target/release/bundle/nsis/Foundry_3.2.4-internal.2_x64-setup.exe
+     -m src-tauri/target/release/bundle/nsis/Foundry_3.2.4-internal.3_x64-setup.exe
    ```
 
    The signature is written to `<file>.sig` and the base64-encoded payload is what goes into the manifest.
@@ -61,7 +61,7 @@ distribution/update-manifest/latest.json:4
 
    ```json
    "windows-x86_64": {
-     "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.2/Foundry_3.2.4-internal.2_x64-setup.exe",
+     "url": "https://github.com/samerzakaria/signalos-app/releases/download/v3.2.4-internal.3/Foundry_3.2.4-internal.3_x64-setup.exe",
      "signature": "<base64-minisign-signature-here>"
    }
    ```
@@ -149,7 +149,7 @@ distribution/update-manifest/latest.json:4
 2. Copy the signed installer onto the VM:
 
    ```
-   Foundry_3.2.4-internal.2_x64-setup.exe   (or the .msi)
+   Foundry_3.2.4-internal.3_x64-setup.exe   (or the .msi)
    ```
 
 3. Run the installer. Confirm:
