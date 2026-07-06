@@ -147,6 +147,24 @@ jobs:
       - name: npm build
         run: npm run build
 
+  l1-journey-e2e:
+    name: L1 user-journey E2E (cockpit gate)
+    needs: l0-precommit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: npm install
+        run: npm install
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+      - name: Build UI
+        run: npm run build
+      - name: User-journey smoke (launch → onboarding → app boot → views → #53 build guard)
+        run: npm run e2e:journey
+
   l2-installer-smoke:
     name: L2 installer smoke
     needs: l1-build

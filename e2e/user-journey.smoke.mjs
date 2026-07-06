@@ -50,6 +50,10 @@ await page.addInitScript(() => {
   const smart = (cmd) => {
     const c = String(cmd);
     if (/model/i.test(c)) return ['claude-sonnet-4-5', 'claude-opus-4-8'];
+    // No active product workspace after onboarding (the honest state: onboarding
+    // sets only the projects root). Must precede the generic /workspace/ match so
+    // get_workspace_status still returns an object.
+    if (c === 'get_workspace') return null;
     if (/list|history|projects|artifacts|secrets|audit/i.test(c)) return [];
     if (/status|state|workspace|identity|budget|cost|update|version/i.test(c)) return { ok: true };
     if (/store|clear|set_|save|test|restart|ensure|mkdir|watch/i.test(c)) return true;
@@ -97,8 +101,37 @@ if (!appVisible) fail('app did not become visible after onboarding (stuck on onb
 // Stage 4 — no console errors surfaced during the journey.
 if (consoleErrors.length) fail('console errors during journey: ' + JSON.stringify(consoleErrors.slice(0, 5)));
 
+// Stage 5 — the cockpit's major views all render (dead-view / broken-wiring guard).
+// Onboarding lands on 'dashboard'; walk each nav target and assert the app shell
+// still renders substantial content and surfaces no new console errors.
+const errBefore5 = consoleErrors.length;
+for (const view of ['build', 'dashboard', 'vault', 'settings', 'preview', 'build']) {
+  await page.evaluate((v) => { if (typeof window.switchTab === 'function') window.switchTab(v); }, view).catch((e) => fail(`switchTab(${view}): ${e.message}`));
+  await page.waitForTimeout(250);
+  const len = await page.evaluate(() => (document.getElementById('app')?.innerHTML || '').length);
+  if (len < 500) fail(`view '${view}' rendered too little (app length ${len})`);
+}
+if (consoleErrors.length > errBefore5) fail('console errors during view navigation: ' + JSON.stringify(consoleErrors.slice(errBefore5, errBefore5 + 5)));
+
+// Stage 6 — #53: a build with no active project must GUIDE (open New Project),
+// never dead-end in "No workspace selected". We're on the Build tab; type a
+// delivery intent and send.
+await page.evaluate(() => { if (typeof window.switchTab === 'function') window.switchTab('build'); });
+await page.waitForTimeout(300);
+const composer = page.locator('#chatInput');
+if (await composer.count() && await composer.first().isVisible().catch(() => false)) {
+  await composer.first().fill('build a task manager app').catch(() => {});
+  await page.evaluate(() => { if (typeof window.sendMsg === 'function') window.sendMsg(); });
+  await page.waitForTimeout(600);
+  const appText = await page.evaluate(() => document.getElementById('app')?.textContent || '');
+  if (!/no project open yet/i.test(appText)) fail('#53: build with no workspace did not surface the New-Project guidance');
+  if (/no workspace selected/i.test(appText)) fail('#53: raw "No workspace selected" leaked to the user instead of guidance');
+} else {
+  fail('#53: composer (#chatInput) not found on the Build tab');
+}
+
 await browser.close();
 server.close();
 
 if (failures.length) { console.error(`\nJOURNEY SMOKE FAILED (${failures.length}).`); process.exit(1); }
-console.log('JOURNEY SMOKE PASSED: shell renders, onboarding completes, app boots, no console errors.');
+console.log('JOURNEY SMOKE PASSED: shell renders, onboarding completes, app boots, all major views render, #53 no-workspace build guides to New Project, no console errors.');
