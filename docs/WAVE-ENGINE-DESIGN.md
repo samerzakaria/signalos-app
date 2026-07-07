@@ -88,7 +88,15 @@ spans three `core/` subtrees — a base-dir swap keeps every rel_path identical.
 All gate readers/writers route through it: `sign.check_gate`/`sign_gate`,
 `wave_engine.inspect`, `status` gate detection + belief/soul reads,
 `orchestrator._route_next_gate_action` (via status), `validate-gate` /
-`validate-wave-status`, and `product.gate_orchestrator`. Per-project
+`validate-wave-status`, and `product.gate_orchestrator`. Artifact *generation*
+is namespaced on the same resolver: the delivery bridge's `AgentLoop` physically
+rebases file writes addressed to the three canonical subtrees under the
+project's governance base (`_artifact_base` in `product/agent_loop.py`), so a
+non-default delivery's gate agent creates its artifact exactly where the sign
+path reads it; product-source writes never rebase, enforcement keeps operating
+on the canonical rel_paths, and the default project stays byte-identical.
+`GateOrchestrator` persists the delivery's `project_id` in `delivery.json` so a
+resumed delivery keeps its namespace binding. Per-project
 `PLAN.tasks.yaml` resolves via `projects.project_plan_path`
 (`.signalos/projects/<id>/PLAN.tasks.yaml`). The audit trail deliberately stays
 one workspace-global chain at `.signalos/AUDIT_TRAIL.jsonl` (rows record

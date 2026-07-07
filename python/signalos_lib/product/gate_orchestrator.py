@@ -64,6 +64,10 @@ class DeliveryState:
     prompt: str
     current_gate: str = "G0"
     status: str = "active"
+    # §3.2: the project namespace this delivery signs/generates artifacts in.
+    # Persisted so resume_delivery restores the SAME namespace binding (an
+    # older persisted state without the field resumes as "default").
+    project_id: str = "default"
     rework: dict = field(default_factory=dict)
     rejections: dict = field(default_factory=dict)
     signed: list = field(default_factory=list)
@@ -227,7 +231,9 @@ class GateOrchestrator:
         rid = run_id or (
             f"delivery-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         )
-        self.state = DeliveryState(run_id=rid, prompt=prompt, current_gate=self._current_gate())
+        self.state = DeliveryState(run_id=rid, prompt=prompt,
+                                   project_id=project_id,
+                                   current_gate=self._current_gate())
 
     def _current_gate(self) -> str:
         try:
@@ -307,6 +313,11 @@ class GateOrchestrator:
             emit=self.emit,
             execution_context="delivery",
             active_gate=gate,
+            # §3.2 creation side: the loop rebases gate-artifact writes
+            # (core/governance|strategy|execution/**) under this project's
+            # governance base, so the artifact this gate generates is the
+            # one _default_sign/inspect/status resolve at sign time.
+            project_id=self.project_id,
             signed_gates=[
                 int(str(g).lstrip("G"))
                 for g in self.state.signed
@@ -682,6 +693,10 @@ def resume_delivery(
         repo_root, adapter, emit,
         enforcement_provider=enforcement_provider, sign_fn=sign_fn,
         signer=signer, run_id=run_id, prompt=data.get("prompt", ""),
+        # §3.2: restore the persisted project binding so a resumed delivery
+        # keeps signing/generating in the same namespace it started in.
+        # Older persisted states predate the field -> "default".
+        project_id=str(data.get("project_id") or "default"),
     )
     st = orch.state
     st.current_gate = data.get("current_gate", "G0")

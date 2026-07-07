@@ -89,9 +89,19 @@ byte-identical single-project layout:
   `product.gate_orchestrator`. Invariant (pinned in
   test_project_governance_namespacing.py): a gate signed as project X is
   seen signed by X's inspect/status/check_gate and NOT by default.
-  Known limit: gate-agent artifact *generation* (AgentLoop file writes)
-  still targets repo-root-relative paths; a non-default delivery fails
-  closed at sign time until creation-side namespacing lands.
+  Creation side is namespaced too: `AgentLoop` physically rebases file
+  writes/reads/edits addressed to the three canonical gate-artifact
+  subtrees (`core/governance/**`, `core/strategy/**`, `core/execution/**`
+  — `_artifact_base` in `product/agent_loop.py`) under the same resolver
+  for non-default projects, so a non-default delivery's gate agent creates
+  its artifact exactly where sign/inspect/status read it. Policy checks
+  still run on the canonical rel_path (already in the trust-tier write
+  allowlist; direct `.signalos/**` writes stay forbidden, `..` segments
+  never rebase). Product-source writes (`src/**`, `tests/**`, …) are NOT
+  gate artifacts and never rebase; the default project is byte-identical.
+  `GateOrchestrator` threads its `project_id` into every gate's AgentLoop,
+  persists it in delivery.json, and `resume_delivery` / `agent:deliver`
+  restore/bind it.
 
 Workspace-global by design: `AUDIT_TRAIL.jsonl` (one append-only chain),
 vault/secrets, git checkpoints (`.signalos/wave-checkpoints/`),

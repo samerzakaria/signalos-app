@@ -20,6 +20,14 @@ Pins three contracts:
    orchestrator gating, and NOT by the default project. All readers and
    writers share ONE resolver (projects.project_governance_dir), so the
    engine and the status board cannot disagree.
+
+4. Creation side — the delivery bridge (GateOrchestrator -> AgentLoop)
+   GENERATES gate artifacts in the same namespace it signs them: writes
+   addressed to the canonical gate-artifact subtrees (core/governance/**,
+   core/strategy/**, core/execution/**) physically rebase under
+   project_governance_dir for a non-default project, product-source writes
+   never rebase, the default project stays byte-identical, and trust-tier /
+   `.signalos/` enforcement is neither bypassed nor loosened.
 """
 
 from __future__ import annotations
@@ -35,7 +43,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib import orchestrator, projects, sign, status as status_lib, wave_engine
 from signalos_lib.artifacts import resolve_gate_artifacts, resolve_workspace_path
+from signalos_lib.harness import AgentResponse, TokenUsage, ToolCall
 from signalos_lib.plan import PlanDoc, Task, dump_tasks
+from signalos_lib.product.agent_loop import AgentLoop
+from signalos_lib.product.enforcement_state import StaticEnforcementProvider
+from signalos_lib.product.gate_orchestrator import GateOrchestrator, resume_delivery
 from signalos_lib.projects import (
     project_governance_dir,
     project_plan_path,
@@ -398,6 +410,194 @@ class GovernanceNamespacingInvariantTests(unittest.TestCase):
             self.assertIn("## Signatures", artifact.read_text(encoding="utf-8"))
             # Alpha's namespace is untouched by a default-project sign.
             self.assertFalse(project_governance_dir(root, "alpha").exists())
+
+
+# ---------------------------------------------------------------------------
+# Creation side — the delivery bridge writes gate artifacts in-namespace
+# ---------------------------------------------------------------------------
+
+_G2_REL = "core/strategy/EXPECTATION_MAP.md"
+
+
+class _ScriptedWriteAdapter:
+    """Deterministic adapter double for the delivery bridge: the first
+    tool-loop turn writes one gate artifact via the loop's own write path,
+    every later turn (including brief/critic calls) ends immediately."""
+
+    supports_tool_calls = True
+
+    def __init__(self, rel_path: str, content: str) -> None:
+        self._script = [
+            AgentResponse(
+                content=None,
+                tool_calls=[ToolCall(
+                    id="t-write", name="write_file",
+                    arguments={"path": rel_path, "content": content},
+                )],
+                stop_reason="tool_use", usage=TokenUsage(),
+            ),
+        ]
+
+    def chat(self, messages, model="test", tools=None, stream=False):
+        if tools and self._script:
+            return self._script.pop(0)
+        return AgentResponse(content="(gate work done)", tool_calls=None,
+                             stop_reason="end_turn", usage=TokenUsage())
+
+
+class DeliveryBridgeCreationNamespacingTests(unittest.TestCase):
+    def _delivery(self, root: Path, project_id: str) -> tuple[GateOrchestrator, list]:
+        events: list[dict] = []
+        orch = GateOrchestrator(
+            root, _ScriptedWriteAdapter(_G2_REL, _REAL_CONTENT), events.append,
+            enforcement_provider=StaticEnforcementProvider(),  # T2, all strict
+            prompt="build task management", project_id=project_id,
+        )
+        return orch, events
+
+    def test_non_default_delivery_generates_and_signs_in_its_namespace(self) -> None:
+        """End-to-end alpha bridge: the gate agent's write lands under
+        .signalos/projects/alpha/governance/core/..., the production sign
+        path reads it there, and the default root stays clean."""
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            orch, events = self._delivery(root, "alpha")
+            orch._run_gate("G2")
+
+            expected = project_governance_dir(root, "alpha").joinpath(
+                *_G2_REL.split("/"))
+            self.assertTrue(expected.is_file(),
+                            "gate-agent write must land in alpha's namespace")
+            self.assertEqual(expected.read_text(encoding="utf-8"), _REAL_CONTENT)
+            self.assertFalse((root / "core").exists(),
+                             "default root must stay clean")
+
+            # Production _default_sign (no sign_fn override) must find and
+            # sign the artifact where the loop wrote it.
+            res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "advanced")
+            self.assertIn("G2", orch.state.signed)
+            self.assertIn("## Signatures", expected.read_text(encoding="utf-8"))
+            self.assertFalse((root / "core").exists())
+
+            # Readers agree: alpha sees the signed gate, default does not.
+            self.assertTrue(wave_engine.inspect(root, project_id="alpha")["gates"]["G2"])
+            self.assertFalse(wave_engine.inspect(root)["gates"]["G2"])
+            self.assertFalse(
+                any(e.get("type") == "error" for e in events),
+                f"unexpected error events: {[e for e in events if e.get('type') == 'error']}",
+            )
+
+    def test_default_delivery_writes_at_root_exactly_as_before(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            orch, _events = self._delivery(root, "default")
+            orch._run_gate("G2")
+
+            artifact = root.joinpath(*_G2_REL.split("/"))
+            self.assertTrue(artifact.is_file(),
+                            "default project must keep the root layout")
+            self.assertFalse((root / ".signalos" / "projects").exists())
+
+            res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "advanced")
+            self.assertIn("## Signatures", artifact.read_text(encoding="utf-8"))
+            self.assertTrue(wave_engine.inspect(root)["gates"]["G2"])
+
+    def test_project_binding_survives_persist_and_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            orch, _events = self._delivery(root, "alpha")
+            orch._run_gate("G2")
+            persisted = json.loads(
+                (root / ".signalos" / "agent-runs" / orch.state.run_id
+                 / "delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(persisted["project_id"], "alpha")
+
+            resumed = resume_delivery(
+                root, orch.state.run_id,
+                _ScriptedWriteAdapter(_G2_REL, _REAL_CONTENT), lambda _e: None,
+            )
+            self.assertEqual(resumed.project_id, "alpha")
+            self.assertEqual(resumed.state.project_id, "alpha")
+
+
+class AgentLoopRebaseEnforcementTests(unittest.TestCase):
+    """The rebase hook's path classes + the enforcement contract: rebased
+    governance writes pass trust-tier (canonical rel_path is the policy
+    identity), non-governance paths never rebase, `.signalos/` writes stay
+    forbidden, traversal cannot steer the rebase."""
+
+    def _loop(self, root: Path, project_id: str) -> AgentLoop:
+        loop = AgentLoop(
+            adapter=object(),  # governance checks never call the provider
+            repo_root=root,
+            enforcement_provider=StaticEnforcementProvider(),  # T2, all strict
+            execution_context="delivery",
+            project_id=project_id,
+        )
+        self.assertIsNone(loop._load_enforcement())
+        return loop
+
+    @staticmethod
+    def _write(loop: AgentLoop, path: str, content: str = _REAL_CONTENT) -> str:
+        return loop._dispatch_tool(ToolCall(
+            id=f"t-{path}", name="write_file",
+            arguments={"path": path, "content": content},
+        ))
+
+    def test_governance_write_rebases_and_passes_trust_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "alpha")
+            rel = "core/governance/Governance/SOUL-DOCUMENT.md"
+            res = self._write(loop, rel)
+            self.assertTrue(res.startswith("OK"), res)
+            base = project_governance_dir(root, "alpha")
+            self.assertTrue(base.joinpath(*rel.split("/")).is_file())
+            self.assertFalse((root / "core").exists())
+            # The loop's own read path resolves the SAME rebased file.
+            read = loop._dispatch_tool(ToolCall(
+                id="t-read", name="read_file", arguments={"path": rel}))
+            # write_text translates newlines on Windows; compare normalized.
+            self.assertEqual(read.replace("\r\n", "\n"), _REAL_CONTENT)
+
+    def test_non_governance_write_is_untouched_by_rebasing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "alpha")
+            res = self._write(loop, "src/App.css", "body { color: red }\n")
+            self.assertTrue(res.startswith("OK"), res)
+            self.assertTrue((root / "src" / "App.css").is_file(),
+                            "product-source writes must stay at the repo root")
+            self.assertFalse(
+                (project_governance_dir(root, "alpha") / "src").exists())
+
+    def test_direct_signalos_write_stays_forbidden_for_any_project(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "alpha")
+            res = self._write(
+                loop, ".signalos/projects/alpha/governance/core/strategy/X.md")
+            self.assertTrue(res.startswith("DENIED"), res)
+
+    def test_traversal_segments_never_steer_the_rebase(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "alpha")
+            res = self._write(loop, "core/strategy/../../../escape.md")
+            self.assertTrue(res.startswith("DENIED"), res)
+            self.assertFalse((root.parent / "escape.md").exists())
+
+    def test_default_project_resolution_is_byte_identical(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "default")
+            rel = "core/strategy/EXPECTATION_MAP.md"
+            res = self._write(loop, rel)
+            self.assertTrue(res.startswith("OK"), res)
+            self.assertTrue(root.joinpath(*rel.split("/")).is_file())
+            self.assertFalse((root / ".signalos" / "projects").exists())
 
 
 if __name__ == "__main__":

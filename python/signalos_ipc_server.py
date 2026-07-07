@@ -699,6 +699,10 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
         prompt=prompt, run_id=run_id,
         signer=format_signer(load_identity(repo_root)),
+        # §3.2: bind the request's project namespace into the delivery so
+        # gate-artifact generation AND signing land under
+        # projects.project_governance_dir(root, project_id).
+        project_id=project_id,
     )
     _ACTIVE_DELIVERIES[run_id] = orch
     try:
