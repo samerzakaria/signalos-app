@@ -2,6 +2,18 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.3.0-internal.1] - 2026-07-07
+
+### Multi-project workspace + governed-delivery hardening
+
+Minor bump: the studio goes from single-workspace to real multi-project, and the governed delivery loop gains reopen/drift/verifiability teeth. Closes the 21 master-table issues.
+
+- **Real multi-project support:** a project registry, `project:*` IPC, per-project namespace threading, and a project picker — Foundry now manages many products, each with its own coherent gate artifacts, plan, and worktree state (not one shared workspace).
+- **Governed delivery hardening:** acceptance-traceability enforced at closeout; signed gates can be reopened with **cascade invalidation**; **drift detection** against signed G2/G3; verifiability tiers with evidence-freshness binding and a test-quality gate; reviewer feedback threads into rework with a reachable standalone rework budget.
+- **New cockpit surfaces:** real voice input, native notifications (incl. live G5-completion), an audit time-travel scrubber + replay timeline, share/export, brownfield audit, competitor analysis, a UX-friction gate card, per-rule mode toggles, and a project-health card.
+- **Design:** free safe design tokens, a brand brief captured in intent, and MUI + Chakra registry entries.
+- **Release/CI:** prerelease manifests validated by channel; `cargo fmt` clean.
+
 ## [3.2.4-internal.4] - 2026-07-07
 
 ### Governed AgentLoop becomes the production generation path
