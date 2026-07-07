@@ -25,6 +25,7 @@ import { state } from "./state.js";
 
 import { esc, errorMessage, isProviderAuthFailure, providerConnectionMessage, showError, showWarning } from "./util.js";
 import { mapEnforcementRules } from "../enforcementView.js";
+import { runShareExport } from "../services/shareExport.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -1427,9 +1428,12 @@ function showNotifications() {
 }
 window.showNotifications = showNotifications;
 
+// #18 — share export. Calls the share:export IPC command; the service shows
+// a toast with the export path + "Open folder" on success, or the backend's
+// error message. Signature stays () => void so the Toolbar binding
+// (window.shareProject) keeps working.
 function shareProject() {
-  addAIBubble("Sharing exports a read-only build report. Run /signal-ship to generate the full handoff package.");
-  switchTab("build");
+  runShareExport().catch((e) => showError("Share failed: " + errorMessage(e)));
 }
 window.shareProject = shareProject;
 

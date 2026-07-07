@@ -7,8 +7,12 @@ import {
   gateCriteria,
   releaseReadiness,
   signFormOpen,
+  resumableRunId,
+  busy,
 } from '../../state';
 import { refreshReleaseReadiness } from '../../services/releaseReadiness';
+import { getAgentRunId } from '../../services/agentEvents';
+import { ReopenGateDialog, openReopenGateDialog } from '../ReopenGateDialog';
 import {
   GateTimeline,
   activeGateIndex,
@@ -126,7 +130,17 @@ export function DashboardView() {
           {gates.length > 0 ? (
             <div className="card card-pad">
               <div className="sec-cap">Gates</div>
-              <GateTimeline gates={gates} />
+              <GateTimeline
+                gates={gates}
+                onReopen={
+                  // Reopen needs a delivery to act on: offer it while a run
+                  // exists this session (active or parked/resumable). The
+                  // backend still refuses mid-run ("delivery-busy").
+                  (resumableRunId.value || getAgentRunId()) && !busy.value
+                    ? (code) => openReopenGateDialog(code)
+                    : undefined
+                }
+              />
             </div>
           ) : null}
 
@@ -279,6 +293,7 @@ export function DashboardView() {
             </div>
           )}
         </div>
+        <ReopenGateDialog />
       </div>
     </>
   );

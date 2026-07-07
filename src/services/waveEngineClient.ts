@@ -59,7 +59,11 @@ export interface DriftVerdict {
   current_soul_summary: string;
   new_request_summary: string;
   signals: string[];
-  recommended_action: 'keep' | 'amend' | 'new-project' | 'ambiguous';
+  recommended_action: 'keep' | 'amend' | 'new-project' | 'ambiguous' | 'reopen-gate' | string;
+  /** GATE-REOPEN-DESIGN #5: set when the request contradicts a signed
+   *  later gate (G2 plan / G3 design). Enables scope-drift option (e). */
+  conflicting_gate?: GateId | null;
+  conflicting_summary?: string;
 }
 
 export interface BeginResult {
@@ -154,11 +158,20 @@ export function reply(userReply: string, currentGate: GateId): Promise<ReplyResu
   return call<ReplyResult>('wave:reply', [userReply, currentGate]);
 }
 
-/** §6 4-way scope-drift resolution (a/b/c/d → amend/new-parallel/new-folder/keep). */
+/** §6 scope-drift resolution (a/b/c/d → amend/new-parallel/new-folder/keep;
+ *  e → reopen the conflicting signed gate per GATE-REOPEN-DESIGN #5, in which
+ *  case the result carries {action:"reopen-gate", gate, reason} and the caller
+ *  fires agent:reopen-gate — the engine never rewrites signatures itself). */
 export function resolveScopeDrift(
   userRequest: string,
-  choice: 'a' | 'b' | 'c' | 'd' | string,
-): Promise<{ action: string; mode?: string; current_gate?: GateId | null }> {
+  choice: 'a' | 'b' | 'c' | 'd' | 'e' | string,
+): Promise<{
+  action: string;
+  mode?: string;
+  current_gate?: GateId | null;
+  gate?: GateId | null;
+  reason?: string;
+}> {
   return call('wave:scope-drift-resolve', [userRequest, choice]);
 }
 

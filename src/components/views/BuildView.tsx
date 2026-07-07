@@ -14,6 +14,7 @@ import { UxFrictionCard } from '../UxFrictionCard';
 import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
 import { BUSINESS_STAGES } from '../../services/deliveryFlow';
+import { CompetitorPanel } from '../CompetitorPanel';
 import { viewClass } from '../viewShell';
 
 function fileLanguage(path: string, fallback?: string): string {
@@ -128,6 +129,9 @@ export function BuildView() {
             </div>
           ) : null;
         })()}
+
+        {/* #16 — competitor URLs for the brief step (analysis stored backend-side). */}
+        <CompetitorPanel />
 
         <div className="chat-scroll" id="chatScroll">
           <div className="chat-inner" id="chatInner">

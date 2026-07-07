@@ -22,6 +22,7 @@ import {
   resolveScopeDrift,
   confirmViolation,
 } from '../services/waveEngineClient';
+import { reopenGate } from '../services/agentEvents';
 
 interface Props {
   bubble: ChatBubble;
@@ -68,11 +69,26 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
     errorMsg.value = null;
     try {
       const result = await resolveScopeDrift(bubble.waveUserRequest, choice);
+      let followupText = scopeDriftFollowupText(choice, result);
+      // Option (e): the engine hands back {action:"reopen-gate", gate, reason}
+      // and the frontend fires agent:reopen-gate — the engine never rewrites
+      // signatures itself (GATE-REOPEN-DESIGN #5).
+      if (result.action === 'reopen-gate' && result.gate) {
+        const reopened = await reopenGate(
+          result.gate,
+          result.reason || bubble.waveUserRequest,
+        );
+        if (reopened.status !== 'ok') {
+          errorMsg.value = reopened.error || `Reopen refused (${reopened.status}).`;
+          return;
+        }
+        followupText = `Reopening ${result.gate} — later signed gates are invalidated and rework starts from there.`;
+      }
       const followup: ChatBubble = {
         id: nowId(),
         kind: 'system',
-        text: scopeDriftFollowupText(choice, result),
-        gate: (result.current_gate as ChatBubble['gate']) || null,
+        text: followupText,
+        gate: (result.current_gate as ChatBubble['gate']) || (result.gate as ChatBubble['gate']) || null,
         waveAction: result.action,
       };
       onFollowup?.(followup);
@@ -113,6 +129,22 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
   }
 
   if (isScopeDrift) {
+    // GATE-REOPEN-DESIGN #5: when the drift verdict names a conflicting
+    // signed gate (recommended_action "reopen-gate"), offer a 5th option (e).
+    const drift = bubble.waveDrift;
+    const reopenTarget = drift && (drift.recommended_action === 'reopen-gate' || drift.conflicting_gate)
+      ? (drift.conflicting_gate || null)
+      : null;
+    const options = reopenTarget
+      ? [
+          ...SCOPE_DRIFT_OPTIONS,
+          {
+            key: 'e',
+            label: `Reopen ${reopenTarget} and rework from there`,
+            sub: 'Later signed gates are invalidated (audit-logged)',
+          },
+        ]
+      : SCOPE_DRIFT_OPTIONS;
     return (
       <div className="msg spark" data-testid="chat-bubble-system-scope-drift">
         <div className="msg-av"><i className="ti ti-git-fork"></i></div>
@@ -129,7 +161,7 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
                 gap: 6,
               }}
             >
-              {SCOPE_DRIFT_OPTIONS.map((opt) => (
+              {options.map((opt) => (
                 <button
                   key={opt.key}
                   type="button"
@@ -234,7 +266,10 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
   );
 }
 
-function scopeDriftFollowupText(choice: string, result: { action?: string; mode?: string }): string {
+function scopeDriftFollowupText(choice: string, result: { action?: string; mode?: string; gate?: string | null }): string {
+  if (result.action === 'reopen-gate') {
+    return `Reopening ${result.gate || 'the conflicting gate'} — rework starts from there.`;
+  }
   if (result.action === 'fire-agent-G0' && result.mode === 'amend') {
     return 'Amending the signed Soul — firing the onboarding agent in amend mode.';
   }

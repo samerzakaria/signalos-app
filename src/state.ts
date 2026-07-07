@@ -202,6 +202,14 @@ export interface ChatBubble {
   waveAction?: string;
   /** Original user request — needed to re-fire wave:scope-drift-resolve. */
   waveUserRequest?: string;
+  /** Drift-verdict extras (GATE-REOPEN-DESIGN #5): when the drift conflicts
+   *  with a later signed gate (G2/G3), the prompt grows a 5th option (e)
+   *  "Reopen <gate> and rework from there". */
+  waveDrift?: {
+    recommended_action?: string;
+    conflicting_gate?: 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | string | null;
+    conflicting_summary?: string;
+  };
   /** Violation prompt payload — needed to re-fire wave:violation-confirm. */
   waveViolation?: {
     violation_kind: string;

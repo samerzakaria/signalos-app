@@ -43,9 +43,13 @@ export function activeGateIndex(gates: Gate[]): number {
 interface GateTimelineProps {
   gates: Gate[];
   testId?: string;
+  /** When provided, signed gates grow a small "Reopen" affordance
+   *  (GATE-REOPEN-DESIGN). Callers pass it only while a run is
+   *  active/resumable — reopening needs a delivery to park on. */
+  onReopen?: (gateCode: string) => void;
 }
 
-export function GateTimeline({ gates, testId = 'gate-timeline' }: GateTimelineProps) {
+export function GateTimeline({ gates, testId = 'gate-timeline', onReopen }: GateTimelineProps) {
   return (
     <div className="stepper" data-testid={testId}>
       {gates.map((gate, index) => {
@@ -68,6 +72,18 @@ export function GateTimeline({ gates, testId = 'gate-timeline' }: GateTimelinePr
             <div className="scirc">{marker}</div>
             <div className="slbl">{gate.name || code}</div>
             <div className="sstatus">{gateStatusLabel(gate)}</div>
+            {state === 'signed' && onReopen ? (
+              <button
+                type="button"
+                className="btn btn-soft"
+                data-testid={`gate-reopen-${code}`}
+                title={`Reopen ${code} — later signed gates are invalidated`}
+                style={{ fontSize: '10px', padding: '2px 7px', marginTop: '4px' }}
+                onClick={() => onReopen(code)}
+              >
+                <i className="ti ti-lock-open"></i> Reopen
+              </button>
+            ) : null}
             {!isLast ? <div className="conn"></div> : null}
           </div>
         );

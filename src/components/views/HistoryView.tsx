@@ -1,5 +1,6 @@
 import { auditList } from '../../state';
 import { viewClass } from '../viewShell';
+import { AuditTimeTravel } from '../AuditTimeTravel';
 
 export function HistoryView() {
   const entries = auditList.value;
@@ -55,6 +56,7 @@ export function HistoryView() {
               })
             )}
           </div>
+          <AuditTimeTravel />
         </div>
       </div>
     </>
