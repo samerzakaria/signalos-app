@@ -162,19 +162,47 @@ def expected_gate_artifacts(gate: str | None = None) -> list[GateArtifact]:
     return list(GATE_ARTIFACTS.get(gate.upper(), ()))
 
 
-def resolve_workspace_path(repo_root: Path, rel_path: str) -> Path:
-    """Resolve *rel_path* under *repo_root* and reject path escape attempts."""
+def resolve_workspace_path(
+    repo_root: Path,
+    rel_path: str,
+    project_id: str = "default",
+) -> Path:
+    """Resolve *rel_path* under *repo_root* and reject path escape attempts.
+
+    *project_id* namespaces gate-artifact paths per WAVE-ENGINE-DESIGN §3.2:
+    the rel_path is resolved under ``projects.project_governance_dir`` — the
+    workspace root itself for "default" (byte-identical), or
+    ``.signalos/projects/<id>/governance/`` for any other id. The escape
+    check stays anchored to the WORKSPACE root so a namespaced base can
+    never be abused to step outside the workspace.
+    """
 
     relative = _relative_path(rel_path)
     root = Path(repo_root).expanduser().resolve(strict=False)
-    candidate = (root / relative).resolve(strict=False)
+    if project_id == "default":
+        base = root
+    else:
+        from signalos_lib.projects import project_governance_dir
+
+        base = project_governance_dir(root, project_id)
+    candidate = (base / relative).resolve(strict=False)
     if not _is_relative_to(candidate, root):
         raise ValueError(f"path escapes workspace root: {rel_path!r}")
     return candidate
 
 
-def resolve_gate_artifacts(repo_root: Path, gate: str | None = None) -> list[ResolvedGateArtifact]:
-    """Resolve expected gate artifacts under *repo_root* with escape checks."""
+def resolve_gate_artifacts(
+    repo_root: Path,
+    gate: str | None = None,
+    project_id: str = "default",
+) -> list[ResolvedGateArtifact]:
+    """Resolve expected gate artifacts under *repo_root* with escape checks.
+
+    *project_id* routes every artifact path through the §3.2 governance
+    namespace (see ``resolve_workspace_path``); rel_paths stay canonical so
+    engine, status, sign and validators can never disagree about a
+    project's gate layout.
+    """
 
     resolved: list[ResolvedGateArtifact] = []
     for artifact in expected_gate_artifacts(gate):
@@ -184,7 +212,9 @@ def resolve_gate_artifacts(repo_root: Path, gate: str | None = None) -> list[Res
                 rel_path=artifact.rel_path,
                 required_roles=artifact.required_roles,
                 label=artifact.label,
-                path=resolve_workspace_path(repo_root, artifact.rel_path),
+                path=resolve_workspace_path(
+                    repo_root, artifact.rel_path, project_id=project_id,
+                ),
             )
         )
     return resolved

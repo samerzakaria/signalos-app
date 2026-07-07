@@ -165,6 +165,85 @@ class TestSnapshotAndVerify:
         )
         assert report["fresh"] is True
 
+    def test_arbitrary_post_proof_file_outside_manifest_is_caught(
+        self, tmp_path: Path,
+    ) -> None:
+        """The added-file blind spot: a file written after proof that never
+        appears in the manifest-derived candidate set must still be flagged
+        via the scoped source-root scan."""
+        manifest = _seed(tmp_path)
+        snapshot = snapshot_workspace(
+            tmp_path, workspace_snapshot_files(tmp_path, manifest),
+        )
+        # Written post-proof, NOT added to the manifest -- previously invisible.
+        (tmp_path / "src" / "Backdoor.tsx").write_text("rogue", encoding="utf-8")
+        report = verify_workspace_snapshot(
+            tmp_path, snapshot, workspace_snapshot_files(tmp_path, manifest),
+        )
+        assert report["fresh"] is False
+        assert report["added"] == ["src/Backdoor.tsx"]
+        assert report["changed"] == []
+        assert report["removed"] == []
+
+    def test_excluded_dirs_never_flag_as_added(self, tmp_path: Path) -> None:
+        """dist/ and node_modules/ writes (build outputs, installed deps)
+        must not read as post-proof drift -- documented exclusions."""
+        manifest = _seed(tmp_path)
+        snapshot = snapshot_workspace(
+            tmp_path, workspace_snapshot_files(tmp_path, manifest),
+        )
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "dist" / "bundle.js").write_text("built", encoding="utf-8")
+        (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+        (tmp_path / "node_modules" / "pkg" / "index.js").write_text(
+            "dep", encoding="utf-8",
+        )
+        # Nested exclusions inside a scanned root are skipped too.
+        (tmp_path / "src" / "node_modules").mkdir()
+        (tmp_path / "src" / "node_modules" / "x.js").write_text(
+            "dep", encoding="utf-8",
+        )
+        (tmp_path / "src" / "App.js.map").write_text("{}", encoding="utf-8")
+        report = verify_workspace_snapshot(
+            tmp_path, snapshot, workspace_snapshot_files(tmp_path, manifest),
+        )
+        assert report["fresh"] is True
+        assert report["added"] == []
+
+    def test_pre_existing_non_manifest_file_is_not_added(
+        self, tmp_path: Path,
+    ) -> None:
+        """False-positive discipline: a file that existed at capture time but
+        was never in the manifest (scaffold leftovers) is in the snapshot's
+        scan baseline, so it must NOT read as post-proof drift."""
+        manifest = _seed(tmp_path)
+        (tmp_path / "src" / "scaffold.ts").write_text("pre", encoding="utf-8")
+        snapshot = snapshot_workspace(
+            tmp_path, workspace_snapshot_files(tmp_path, manifest),
+        )
+        assert "src/scaffold.ts" in snapshot["scanned"]
+        report = verify_workspace_snapshot(
+            tmp_path, snapshot, workspace_snapshot_files(tmp_path, manifest),
+        )
+        assert report["fresh"] is True
+
+    def test_old_snapshot_without_baseline_keeps_narrow_semantics(
+        self, tmp_path: Path,
+    ) -> None:
+        """A pre-widening snapshot (no 'scanned' key) cannot distinguish
+        pre-existing files from post-proof writes -- the scan-widened check
+        is skipped rather than risking false positives."""
+        manifest = _seed(tmp_path)
+        snapshot = snapshot_workspace(
+            tmp_path, workspace_snapshot_files(tmp_path, manifest),
+        )
+        snapshot.pop("scanned")
+        (tmp_path / "src" / "Unknowable.tsx").write_text("?", encoding="utf-8")
+        report = verify_workspace_snapshot(
+            tmp_path, snapshot, workspace_snapshot_files(tmp_path, manifest),
+        )
+        assert report["added"] == []  # honest: cannot attribute, so no claim
+
     def test_repair_loop_ordering_no_false_positive(self, tmp_path: Path) -> None:
         """The pipeline captures the snapshot AFTER the repair loop finishes;
         this test pins the semantics that ordering relies on: a repair

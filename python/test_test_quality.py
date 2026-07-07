@@ -226,6 +226,185 @@ it("lists expenses", () => {
 
 
 # ---------------------------------------------------------------------------
+# Python analyzer (ast) -- fastapi-api products generate pytest suites
+# ---------------------------------------------------------------------------
+
+_MIXED_PYTEST = '''\
+import pytest
+from httpx import AsyncClient
+
+from src.main import app
+
+
+@pytest.fixture
+def client():
+    return AsyncClient(app=app, base_url="http://test")
+
+
+@pytest.fixture
+def test_data():
+    # test_-prefixed name + no assert: would be a vacuous false positive
+    # if fixtures were treated as tests.
+    return {"title": "x"}
+
+
+@pytest.mark.parametrize("path", ["/tasks", "/tasks/1"])
+def test_routes_respond(path, client):
+    response = client.get(path)
+    assert response.status_code == 200
+
+
+def test_create_task_smoke(client):
+    client.post("/tasks", json={"title": "x"})  # no assertion at all
+
+
+class TestTaskValidation:
+    def test_rejects_empty_title(self, client):
+        with pytest.raises(ValueError):
+            validate_title("")
+
+    def test_touches_endpoint(self, client):
+        client.get("/tasks")  # vacuous method
+'''
+
+_CLEAN_PYTEST = '''\
+from src.calc import add
+
+
+def test_add_two_numbers():
+    assert add(1, 2) == 3
+
+
+def test_add_is_commutative():
+    assert add(2, 3) == add(3, 2)
+'''
+
+_RAISES_ONLY_PYTEST = '''\
+import pytest
+
+from src.calc import divide
+
+
+def test_divide_by_zero_raises():
+    with pytest.raises(ZeroDivisionError):
+        divide(1, 0)
+'''
+
+_UNITTEST_STYLE_PYTEST = '''\
+import unittest
+
+
+class TestThing(unittest.TestCase):
+    def test_equal(self):
+        self.assertEqual(1, 1)
+
+    def test_explicit_fail_path(self):
+        self.fail("not implemented is an explicit claim")
+'''
+
+_ALL_VACUOUS_PYTEST = '''\
+def test_first():
+    print("ran")
+
+
+def test_second():
+    value = 1 + 1
+'''
+
+_SYNTAX_ERROR_PYTEST = '''\
+def test_broken(:
+    assert True
+'''
+
+
+class TestPythonAnalyzer:
+    def test_vacuous_functions_detected_in_mixed_file(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tests/test_tasks.py", _MIXED_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_tasks.py", "kind": "test"}),
+        )
+        assert report["files_analyzed"] == 1
+        flagged = {v["test_name"] for v in report["vacuous_tests"]}
+        assert flagged == {"test_create_task_smoke", "test_touches_endpoint"}
+        # Parametrized test with a plain assert is NOT flagged; fixtures are
+        # plumbing, never tests -- even the test_-prefixed one.
+        assert "test_routes_respond" not in flagged
+        assert "test_data" not in flagged
+        # File has asserting tests elsewhere -> not assertion-free.
+        assert report["assertion_free_files"] == []
+
+    def test_clean_pytest_file_produces_no_findings(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tests/test_calc.py", _CLEAN_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_calc.py", "kind": "test"}),
+        )
+        assert report["files_analyzed"] == 1
+        assert report["vacuous_tests"] == []
+        assert report["assertion_free_files"] == []
+        assert report["unanalyzable_files"] == []
+
+    def test_pytest_raises_only_test_is_not_flagged(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tests/test_divide.py", _RAISES_ONLY_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_divide.py", "kind": "test"}),
+        )
+        assert report["vacuous_tests"] == []
+        assert report["assertion_free_files"] == []
+
+    def test_unittest_style_assertions_count(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tests/test_thing.py", _UNITTEST_STYLE_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_thing.py", "kind": "test"}),
+        )
+        assert report["vacuous_tests"] == []
+        assert report["assertion_free_files"] == []
+
+    def test_all_vacuous_file_is_assertion_free(self, tmp_path: Path) -> None:
+        _write(tmp_path, "tests/test_nothing.py", _ALL_VACUOUS_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_nothing.py", "kind": "test"}),
+        )
+        assert {v["test_name"] for v in report["vacuous_tests"]} == {
+            "test_first", "test_second",
+        }
+        assert report["assertion_free_files"] == ["tests/test_nothing.py"]
+
+    def test_syntax_error_file_is_unanalyzable_never_a_crash(
+        self, tmp_path: Path,
+    ) -> None:
+        _write(tmp_path, "tests/test_broken.py", _SYNTAX_ERROR_PYTEST)
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest({"path": "tests/test_broken.py", "kind": "test"}),
+        )
+        assert report["files_analyzed"] == 0
+        assert len(report["unanalyzable_files"]) == 1
+        entry = report["unanalyzable_files"][0]
+        assert entry["file"] == "tests/test_broken.py"
+        assert "SyntaxError" in entry["reason"]
+        # An unanalyzable file makes no vacuity claims either way.
+        assert report["vacuous_tests"] == []
+        assert report["assertion_free_files"] == []
+
+    def test_non_test_python_files_ignored(self, tmp_path: Path) -> None:
+        _write(tmp_path, "src/main.py", "app = 1\n")
+        _write(tmp_path, "tests/conftest.py", "import pytest\n")
+        report = analyze_test_quality(
+            tmp_path,
+            _manifest(
+                {"path": "src/main.py", "kind": "source"},
+                {"path": "tests/conftest.py", "kind": "test"},
+            ),
+        )
+        assert report["files_analyzed"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Review-gate folding (strict blocks, warn records, advisory never blocks)
 # ---------------------------------------------------------------------------
 

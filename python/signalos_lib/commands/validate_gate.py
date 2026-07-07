@@ -52,6 +52,7 @@ def validate_gate(
     *,
     wave: str | int | None = None,
     write_evidence: bool = True,
+    project_id: str = "default",
 ) -> dict[str, Any]:
     root = Path(repo_root or Path.cwd()).resolve()
     normalized_gate = _normalize_gate(gate)
@@ -70,7 +71,9 @@ def validate_gate(
         )
         return _payload(root, normalized_gate, normalized_wave, checks, write_evidence=False)
 
-    statuses = check_gate(root, normalized_gate)
+    # §3.2: artifact paths resolve through the shared governance resolver;
+    # "default" keeps the workspace-root layout byte-identical.
+    statuses = check_gate(root, normalized_gate, project_id=project_id)
     artifact_checks = _check_artifacts(statuses)
     checks.extend(artifact_checks)
     checks.extend(_check_audit(root, normalized_gate, normalized_wave, statuses))
@@ -348,6 +351,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--wave", default=None, help="Optional wave id, e.g. 01 or W01")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--no-evidence", action="store_true")
+    parser.add_argument(
+        "--project-id", default="default", dest="project_id", metavar="ID",
+        help="Multi-project namespace (§3.2); default keeps workspace-root paths.",
+    )
     args = parser.parse_args(argv)
 
     payload = validate_gate(
@@ -355,6 +362,7 @@ def main(argv: list[str]) -> int:
         args.gate,
         wave=args.wave,
         write_evidence=not args.no_evidence,
+        project_id=args.project_id,
     )
     if args.as_json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))

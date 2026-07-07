@@ -61,15 +61,43 @@ project-aware CLI subcommands (`status`, `orchestrate`). IPC commands
 registry; create/switch refuse with `{"status": "delivery-active"}`
 while `_ACTIVE_DELIVERIES` is non-empty.
 
-Namespacing: `projects.project_state_dir` is the single source of truth
-(`"default"` → workspace-root `.signalos/`, any other id →
-`.signalos/projects/<id>/`). Per-project state: `wave-engine-state.json`
-(wave_engine) and the `worktree-state.json` reads in
-status.py/orchestrator.py. Workspace-global by design: `AUDIT_TRAIL.jsonl`
-(one append-only chain), vault/secrets, git checkpoints
-(`.signalos/wave-checkpoints/`), `sessions/`, `missing-deps.json`, and
-the signed gate artifacts under `core/governance` (their namespacing is
-a future milestone per WAVE-ENGINE-DESIGN §3.2).
+Namespacing — three resolvers in `projects.py`, all defaulting to the
+byte-identical single-project layout:
+
+- `project_state_dir` (`"default"` → workspace-root `.signalos/`, any
+  other id → `.signalos/projects/<id>/`): `wave-engine-state.json`
+  (wave_engine) and `worktree-state.json`. `worktree-manager.sh` accepts
+  `--project-id` (or `SIGNALOS_PROJECT_ID` env) and writes the state
+  file to the SAME path; `orchestrator._run_wm` / `signalos worktree`
+  append the flag only for non-default ids (older deployed scripts keep
+  working for default workspaces).
+- `project_plan_path` (`"default"` → `<root>/PLAN.tasks.yaml`, else
+  `.signalos/projects/<id>/PLAN.tasks.yaml`): `orchestrator.run_wave`
+  (plan_path=None now resolves per-project — the no-worktree fallback
+  reads the project's own plan), `status._load_plan_doc`, `signalos
+  plan`, `preamble._wave_id_from_plan`, and the `writing-plans` skill
+  validator (run_wave stamps `project_id` on each task).
+- `project_governance_dir` (WAVE-ENGINE-DESIGN §3.2 milestone SHIPPED —
+  `"default"` → the workspace root itself, else
+  `.signalos/projects/<id>/governance/` as the base for the canonical
+  `core/...` gate-artifact rel_paths): routed through
+  `artifacts.resolve_workspace_path`/`resolve_gate_artifacts` and
+  threaded into `sign.check_gate`/`sign_gate` (+ `signalos sign
+  --project-id`), `wave_engine.inspect`, `status` gate detection and
+  belief/soul/delivery-mode reads, orchestrator gating (via status),
+  `validate-gate`, `validate-wave-status`, and
+  `product.gate_orchestrator`. Invariant (pinned in
+  test_project_governance_namespacing.py): a gate signed as project X is
+  seen signed by X's inspect/status/check_gate and NOT by default.
+  Known limit: gate-agent artifact *generation* (AgentLoop file writes)
+  still targets repo-root-relative paths; a non-default delivery fails
+  closed at sign time until creation-side namespacing lands.
+
+Workspace-global by design: `AUDIT_TRAIL.jsonl` (one append-only chain),
+vault/secrets, git checkpoints (`.signalos/wave-checkpoints/`),
+`sessions/`, `missing-deps.json`. Commands without a project flag
+(release-readiness, ship, serve.py, ceremonies, handoff) operate on
+`"default"` via the resolvers' defaults.
 
 ## Skill validators
 

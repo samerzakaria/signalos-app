@@ -8,6 +8,7 @@ advances without signing and marks the delivery not-"ready" (INV-1).
 """
 from __future__ import annotations
 
+import functools
 import json
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -107,15 +108,19 @@ def _artifact_placeholder_violations(path: Path) -> list[str]:
 
 
 def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
-                  verdict: str, conditions: str) -> list:
+                  verdict: str, conditions: str,
+                  project_id: str = "default") -> list:
     """Production signing path - INV-3: sign.py is the ONLY signer.
 
     Writes the audit trail (T38) and co-signs gates whose artifacts require
-    different roles (e.g. G3) by signing each artifact with an authorised role."""
+    different roles (e.g. G3) by signing each artifact with an authorised role.
+    *project_id* routes artifact paths through the shared §3.2 governance
+    resolver so the signature lands where this delivery's inspect()/status
+    reads (default: workspace root, byte-identical)."""
     from .. import artifacts
     audit_log = repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
-    wave = _current_wave_id(repo_root)
-    expected = artifacts.resolve_gate_artifacts(repo_root, gate)
+    wave = _current_wave_id(repo_root, project_id)
+    expected = artifacts.resolve_gate_artifacts(repo_root, gate, project_id=project_id)
     present = [a for a in expected if a.path.is_file()]
     # Fail-closed (0.1): a gate that declares required artifacts cannot be
     # signed until at least one of them exists on disk. Previously an empty
@@ -140,7 +145,8 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
             )
     if present and all(role in a.required_roles for a in present):
         return sign.sign_gate(repo_root, gate, signer, role, verdict,
-                              conditions, audit_log=audit_log, wave=wave)
+                              conditions, audit_log=audit_log, wave=wave,
+                              project_id=project_id)
     signed = []
     for a in present:
         r = role if role in a.required_roles else a.required_roles[0]
@@ -161,11 +167,13 @@ class _CriticChat:
         return self._adapter.chat(messages=messages, model=getattr(self._adapter, "model", ""))
 
 
-def _current_wave_id(repo_root: Path) -> str | None:
+def _current_wave_id(repo_root: Path, project_id: str = "default") -> str | None:
     try:
         from ..status import get_wave_status
 
-        wave = str(get_wave_status(repo_root).get("wave_id") or "").strip()
+        wave = str(
+            get_wave_status(repo_root, project_id=project_id).get("wave_id") or ""
+        ).strip()
     except Exception:
         return None
     return None if not wave or wave == "\u2014" else wave
@@ -200,8 +208,15 @@ class GateOrchestrator:
         self.emit = emit
         self.enforcement_provider = enforcement_provider
         self.signer = signer
-        self._sign = sign_fn or _default_sign
         self.project_id = project_id
+        # §3.2: bind the delivery's project namespace into the default sign
+        # path so signatures land under the SAME governance dir inspect()
+        # reads. Custom sign_fn callables (tests, IPC overrides) keep their
+        # historical 6-arg signature untouched.
+        if sign_fn is not None:
+            self._sign = sign_fn
+        else:
+            self._sign = functools.partial(_default_sign, project_id=project_id)
         self.max_rework = resolve_gate_rework_budget(max_rework)
         self.max_rejections = max_rejections
         self.max_reopens = resolve_gate_reopen_budget(max_reopens)
@@ -326,7 +341,8 @@ class GateOrchestrator:
             from ..model_router import route
             from .briefs import author_brief, validate_brief
 
-            resolved = [a for a in artifacts_mod.resolve_gate_artifacts(self.repo_root, gate)
+            resolved = [a for a in artifacts_mod.resolve_gate_artifacts(
+                            self.repo_root, gate, project_id=self.project_id)
                         if a.path.is_file()]
             if not resolved:
                 return
@@ -370,7 +386,8 @@ class GateOrchestrator:
         try:
             from .. import artifacts
             from .completeness import completeness_findings
-            for a in artifacts.resolve_gate_artifacts(self.repo_root, gate):
+            for a in artifacts.resolve_gate_artifacts(
+                    self.repo_root, gate, project_id=self.project_id):
                 if not a.path.is_file():
                     continue
                 findings = completeness_findings(

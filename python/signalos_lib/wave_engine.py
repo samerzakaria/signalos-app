@@ -193,11 +193,13 @@ def inspect(
     decide whether to fire a gate-agent or fast-forward past gates whose
     artifact already exists and is signed.
 
-    With project_id == "default" (today's only value) the paths are
-    workspace-root, matching `status._detect_gates`. When a future M
-    exposes per-project scoping via the UI, the project_id will namespace
-    artifacts under `core/governance/projects/<project_id>/...` (per §3.2).
-    The plumbing is here so that switch doesn't require an engine rewrite.
+    Artifact paths resolve through projects.project_governance_dir — the
+    single §3.2 resolver shared with `status._detect_gates`, sign.py and
+    the orchestrator's gate router. project_id == "default" keeps the
+    workspace-root layout byte-identical; any other id reads the same
+    canonical `core/...` rel_paths under
+    `.signalos/projects/<project_id>/governance/`, so a gate signed as
+    project X is seen signed by X's inspect/status and by nothing else.
 
     Returns:
         {
@@ -216,18 +218,20 @@ def inspect(
             "all_signed": bool,         # True iff every G0..G5 is signed
         }
     """
+    from .projects import project_governance_dir
     from .status import get_wave_status
 
     status = get_wave_status(repo_root, project_id=project_id)
     gates = status.get("gates") or {}
 
+    governance_base = project_governance_dir(repo_root, project_id)
     artifacts: dict[str, dict[str, Any]] = {}
     for gate in GATE_ORDER:
         signed = bool(gates.get(gate))
         path_obj: Path | None = None
         snippet = ""
         for parts in _GATE_ARTIFACT_PATHS.get(gate, []):
-            candidate = repo_root.joinpath(*parts)
+            candidate = governance_base.joinpath(*parts)
             if candidate.is_file():
                 path_obj = candidate
                 snippet = _read_snippet(candidate)

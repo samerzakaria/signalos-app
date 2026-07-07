@@ -249,10 +249,11 @@ class RunWaveRoutingTests(unittest.TestCase):
 class ProjectIdPlumbingTests(unittest.TestCase):
     """M-W1 step 2: project_id threads through run_wave, status, IPC.
 
-    Per WAVE-ENGINE-DESIGN §3.2 the parameter is plumbing for future
-    multi-project UI exposure; today only 'default' flows from callers,
-    but each state-touching surface must accept and round-trip it so
-    that future UI changes don't need an engine refactor.
+    Per WAVE-ENGINE-DESIGN §3.2 project ids are real: they come from the
+    .signalos/projects.json registry (Sidebar project picker / project:*
+    IPC), dispatch_cli appends --project-id to project-aware commands, and
+    the id namespaces worktree/plan state and the gate artifacts. Each
+    state-touching surface must accept and round-trip it.
     """
 
     def test_run_wave_threads_project_id_into_router_audit_entries(self):

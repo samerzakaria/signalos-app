@@ -56,6 +56,17 @@ def main(argv: list[str]) -> int:  # noqa: C901
     parser.add_argument("--repo-root", default=None, help="Repository root path.")
     parser.add_argument("--wave", default=None, help="Optional wave id to stamp into AUDIT_TRAIL.jsonl.")
     parser.add_argument(
+        "--project-id",
+        default="default",
+        dest="project_id",
+        metavar="ID",
+        help=(
+            "Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). Default "
+            "'default' signs the workspace-root gate artifacts (unchanged); "
+            "any other id signs .signalos/projects/<id>/governance/."
+        ),
+    )
+    parser.add_argument(
         "--oidc",
         action="store_true",
         help=(
@@ -86,7 +97,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
         except Exception:
             root = Path.cwd()
 
-    statuses = sign_lib.check_gate(root, gate)
+    statuses = sign_lib.check_gate(root, gate, project_id=args.project_id)
 
     # ------------------------------------------------------------------
     # --check: read-only status report
@@ -187,6 +198,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
             wave=args.wave,
             oidc_sub_hash=oidc_sub_hash,
             oidc_issuer=oidc_issuer,
+            project_id=args.project_id,
         )
     except ValueError as exc:
         # Unauthorised role (or unknown gate): refuse without writing anything.

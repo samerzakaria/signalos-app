@@ -28,12 +28,14 @@ the per-project state layout (mirrors `wave_engine._state_file_path`):
 "default" keeps today's workspace-root `.signalos/` layout; any other id
 namespaces under `.signalos/projects/<project_id>/`.
 
-Shared-vs-per-project: only per-project *state* lives in the namespace
-(wave-engine-state.json, worktree-state.json). Workspace-global things —
+Shared-vs-per-project: per-project *state* lives in the namespace
+(wave-engine-state.json, worktree-state.json, PLAN.tasks.yaml via
+`project_plan_path`) and so do the signed gate artifacts (§3.2 shipped —
+`project_governance_dir` is the base root under which the canonical
+`core/...` gate-artifact rel_paths resolve). Workspace-global things —
 AUDIT_TRAIL.jsonl (one append-only chain per workspace), the vault,
-git checkpoints, sessions/, missing-deps.json, and the signed gate
-artifacts under core/governance (their namespacing is a future
-milestone per §3.2) — intentionally do NOT move.
+git checkpoints, sessions/, missing-deps.json — intentionally do NOT
+move.
 """
 
 from __future__ import annotations
@@ -51,6 +53,8 @@ __all__ = [
     "DEFAULT_PROJECT_ID",
     "registry_path",
     "project_state_dir",
+    "project_plan_path",
+    "project_governance_dir",
     "list_projects",
     "create_project",
     "set_active_project",
@@ -77,6 +81,56 @@ def project_state_dir(root: Path | str, project_id: str = DEFAULT_PROJECT_ID) ->
     if project_id == DEFAULT_PROJECT_ID:
         return base
     return base / "projects" / project_id
+
+
+def project_plan_path(root: Path | str, project_id: str = DEFAULT_PROJECT_ID) -> Path:
+    """Resolve the per-project PLAN.tasks.yaml location.
+
+    "default" → workspace-root `PLAN.tasks.yaml` (today's layout, byte-
+    identical); any other id → `.signalos/projects/<project_id>/PLAN.tasks.yaml`
+    (inside the project's state dir, next to its worktree-state.json).
+    A missing per-project plan behaves exactly like a missing root plan —
+    callers treat the path uniformly.
+    """
+    if project_id == DEFAULT_PROJECT_ID:
+        return Path(root) / "PLAN.tasks.yaml"
+    return project_state_dir(root, project_id) / "PLAN.tasks.yaml"
+
+
+def project_governance_dir(root: Path | str, project_id: str = DEFAULT_PROJECT_ID) -> Path:
+    """Resolve the base root under which the signed gate artifacts live
+    (WAVE-ENGINE-DESIGN §3.2 — shipped).
+
+    The gate manifest (gate_artifacts.json) addresses artifacts with
+    rel_paths spanning THREE canonical subtrees — `core/governance/...`,
+    `core/strategy/...`, `core/execution/...` — so the resolver returns a
+    *base root*, not a single directory, and every rel_path stays
+    byte-identical under it:
+
+      "default" → the workspace root itself (today's layout, unchanged:
+                  `<root>/core/governance/...` etc.);
+      any other id → `.signalos/projects/<project_id>/governance/`
+                  (so `<base>/core/governance/...`, `<base>/core/strategy/...`).
+
+    Layout choice: `.signalos/projects/<id>/governance/` was picked over
+    `core/governance/projects/<id>/` because (a) the artifact set is not
+    confined to core/governance — nesting core/strategy under
+    core/governance would break the relative structure, while a base-dir
+    swap keeps it identical; (b) it keeps ALL per-project state under the
+    one `.signalos/projects/<id>/` home that project_state_dir already
+    owns; and (c) `.signalos/**` is already excluded from workspace
+    snapshots/scans, so per-project gate artifacts never leak into
+    evidence-freshness or scope-card scans.
+
+    Every gate-artifact reader/writer (sign.py, wave_engine.inspect,
+    status gate detection, orchestrator gating, validate-wave-status,
+    product.gate_orchestrator) MUST resolve through this function so the
+    engine and the status board can never disagree about where a
+    project's gates live.
+    """
+    if project_id == DEFAULT_PROJECT_ID:
+        return Path(root)
+    return project_state_dir(root, project_id) / "governance"
 
 
 def _now_iso() -> str:

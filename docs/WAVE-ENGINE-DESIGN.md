@@ -77,6 +77,23 @@ Today only `"default"` is used; the UI does not expose a project picker. When (a
 
 **Migration**: existing workspaces (gate state at `.signalos/gates/`) are read as project_id `"default"` via a backwards-compat shim. No file moves required.
 
+**Status (shipped)**: the §3.2 gate-artifact namespacing milestone is implemented.
+The single resolver is `projects.project_governance_dir(root, project_id)`:
+`"default"` → the workspace root itself (byte-identical to today's layout);
+any other id → `.signalos/projects/<id>/governance/` as the base under which the
+canonical `core/governance/...` / `core/strategy/...` / `core/execution/...`
+rel_paths resolve unchanged. (`.signalos/projects/<id>/governance/` was chosen
+over the `core/governance/projects/<id>/` sketch above because the gate manifest
+spans three `core/` subtrees — a base-dir swap keeps every rel_path identical.)
+All gate readers/writers route through it: `sign.check_gate`/`sign_gate`,
+`wave_engine.inspect`, `status` gate detection + belief/soul reads,
+`orchestrator._route_next_gate_action` (via status), `validate-gate` /
+`validate-wave-status`, and `product.gate_orchestrator`. Per-project
+`PLAN.tasks.yaml` resolves via `projects.project_plan_path`
+(`.signalos/projects/<id>/PLAN.tasks.yaml`). The audit trail deliberately stays
+one workspace-global chain at `.signalos/AUDIT_TRAIL.jsonl` (rows record
+`project_id` context where relevant).
+
 ---
 
 ## 4. Per-gate agent contract

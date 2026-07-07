@@ -27,6 +27,7 @@ __all__ = [
     "snapshot_workspace",
     "verify_workspace_snapshot",
     "workspace_snapshot_files",
+    "workspace_scan_files",
     "write_freshness_report",
     "load_freshness_report",
 ]
@@ -59,6 +60,49 @@ _DEFAULT_EXTRA_FILES = (
     "requirements.txt",
     "index.html",
 )
+
+# The generated source roots swept by the added-file scan (added-detection
+# blind-spot fix): an arbitrary file written after proof OUTSIDE the
+# manifest-derived candidate set must still be visible. Scoped to the roots
+# the generators actually emit into -- never the whole workspace -- to keep
+# the false-positive discipline.
+_SCAN_ROOTS = ("src", "tests", "test", "public")
+
+# Directory names excluded from the added-file scan. Each entry exists for a
+# specific false-positive it would otherwise cause:
+#   node_modules  -- installed dependencies, not product bytes; `npm install`
+#                    during proof would flag thousands of "added" files.
+#   dist / build  -- build outputs; the proof run itself legitimately
+#                    (re)generates them after the snapshot.
+#   coverage      -- test-run byproduct written by the validation/proof runs.
+#   .signalos     -- the evidence store; later evidence writes must never
+#                    invalidate the snapshot (self-invalidation guard).
+#   .git          -- VCS internals, never part of the delivered product.
+#   __pycache__ / .pytest_cache -- Python bytecode/test caches written by the
+#                    validation runs themselves.
+#   .cache / .turbo / .next / .vite / .parcel-cache -- bundler/toolchain
+#                    caches written as a side effect of building/serving.
+_SCAN_EXCLUDED_DIRS = frozenset({
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    ".signalos",
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".cache",
+    ".turbo",
+    ".next",
+    ".vite",
+    ".parcel-cache",
+})
+
+# File suffixes excluded from the added-file scan:
+#   .map -- sourcemaps emitted next to build outputs by the proof build; they
+#           appear/refresh whenever the bundler runs, not when a human or
+#           agent writes product source.
+_SCAN_EXCLUDED_SUFFIXES = (".map",)
 
 
 def _utc_now() -> str:
@@ -115,15 +159,72 @@ def workspace_snapshot_files(
     return sorted(out)
 
 
+def workspace_scan_files(repo_root: Path) -> list[str]:
+    """Scoped sweep of the generated source roots for added-file detection.
+
+    Returns every file under ``src/``, ``tests/``, ``test/``, ``public/``
+    plus the root config files in ``_DEFAULT_EXTRA_FILES``, as sorted
+    POSIX-style rel paths -- minus the documented exclusions
+    (``_SCAN_EXCLUDED_DIRS`` / ``_SCAN_EXCLUDED_SUFFIXES``).
+
+    This closes the added-file blind spot: an arbitrary file written after
+    proof used to be invisible unless it happened to appear in the
+    manifest-derived candidate set. The scan runs at BOTH capture and
+    verification time (capture records it as the presence baseline), so
+    pre-existing non-manifest files never false-positive as "added".
+    """
+    root = Path(repo_root)
+    out: set[str] = set()
+    for scan_root in _SCAN_ROOTS:
+        base = root / scan_root
+        if not base.is_dir():
+            continue
+        stack = [base]
+        while stack:
+            current = stack.pop()
+            try:
+                entries = list(current.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                name = entry.name
+                try:
+                    if entry.is_dir():
+                        if name in _SCAN_EXCLUDED_DIRS:
+                            continue
+                        stack.append(entry)
+                        continue
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                if name.lower().endswith(_SCAN_EXCLUDED_SUFFIXES):
+                    continue
+                rel = _normalize(entry.relative_to(root).as_posix())
+                if _is_snapshot_candidate(rel):
+                    out.add(rel)
+    for rel in _DEFAULT_EXTRA_FILES:
+        if (root / rel).is_file():
+            out.add(rel)
+    return sorted(out)
+
+
 def snapshot_workspace(
     repo_root: Path,
     files: list[str],
 ) -> dict[str, Any]:
     """Hash *files* under *repo_root* into a workspace snapshot.
 
-    Returns ``{"algo": "sha256", "captured_at": ..., "files": {rel: hash}}``.
-    Missing/unreadable files are skipped (the snapshot records what could be
-    verified, honestly); ``.signalos/**`` is never hashed.
+    Returns ``{"algo": "sha256", "captured_at": ..., "files": {rel: hash},
+    "scanned": [rel, ...]}``. Missing/unreadable files are skipped (the
+    snapshot records what could be verified, honestly); ``.signalos/**`` is
+    never hashed.
+
+    ``scanned`` is the presence baseline for the added-file scan (additive
+    key, same schema version): the files that existed under the generated
+    source roots at capture time. Verification treats anything the scan
+    finds beyond this baseline (and beyond the hashed set) as post-proof
+    "added" drift.
     """
     repo_root = Path(repo_root)
     hashes: dict[str, str] = {}
@@ -143,6 +244,7 @@ def snapshot_workspace(
         "algo": SNAPSHOT_ALGO,
         "captured_at": _utc_now(),
         "files": hashes,
+        "scanned": workspace_scan_files(repo_root),
     }
 
 
@@ -156,7 +258,14 @@ def verify_workspace_snapshot(
     - ``changed``: in the snapshot, still on disk, hash differs.
     - ``removed``: in the snapshot, no longer on disk (or unreadable).
     - ``added``:   in *current_files* (same derivation as capture time) and
-                   on disk, but absent from the snapshot.
+                   on disk, but absent from the snapshot; PLUS anything the
+                   scoped source-root scan (``workspace_scan_files``) finds
+                   beyond both the snapshot's hashed set and its ``scanned``
+                   presence baseline. The scan-widened check only runs when
+                   the snapshot carries a baseline -- an old snapshot without
+                   one cannot distinguish pre-existing files from post-proof
+                   writes, so it keeps the original (narrower) semantics
+                   rather than false-positive.
 
     ``fresh`` is True only when all three lists are empty.
     """
@@ -176,13 +285,22 @@ def verify_workspace_snapshot(
             continue
         if actual != expected:
             changed.append(rel)
-    added = sorted({
+    added_set = {
         rel_n
         for rel_n in (_normalize(str(rel)) for rel in current_files or [])
         if _is_snapshot_candidate(rel_n)
         and rel_n not in snap_files
         and (repo_root / rel_n).is_file()
-    })
+    }
+    scan_baseline = (snapshot or {}).get("scanned")
+    if isinstance(scan_baseline, list):
+        baseline = {_normalize(str(rel)) for rel in scan_baseline}
+        added_set.update(
+            rel
+            for rel in workspace_scan_files(repo_root)
+            if rel not in snap_files and rel not in baseline
+        )
+    added = sorted(added_set)
     fresh = not (changed or added or removed)
     return {
         "schema_version": FRESHNESS_SCHEMA_VERSION,

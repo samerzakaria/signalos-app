@@ -56,12 +56,31 @@ def main(argv: list[str]) -> int:
         dest="as_json",
         help="list/validate: emit JSON instead of human-readable output.",
     )
+    parser.add_argument(
+        "--project-id",
+        default="default",
+        dest="project_id",
+        metavar="ID",
+        help=(
+            "Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). Default "
+            "'default' reads PLAN.tasks.yaml in cwd (unchanged); any other "
+            "id reads .signalos/projects/<id>/PLAN.tasks.yaml. Ignored when "
+            "--input is given."
+        ),
+    )
 
     args = parser.parse_args(argv)
     action = args.action
 
-    # Resolve input path
-    input_path = Path(args.input) if args.input else Path.cwd() / "PLAN.tasks.yaml"
+    # Resolve input path: explicit --input wins; otherwise the project's
+    # plan via the shared resolver (default project → cwd/PLAN.tasks.yaml,
+    # byte-identical to the historical behavior).
+    if args.input:
+        input_path = Path(args.input)
+    else:
+        from signalos_lib.projects import project_plan_path
+
+        input_path = project_plan_path(Path.cwd(), args.project_id)
 
     # ── render ────────────────────────────────────────────────────────────
     if action == "render":

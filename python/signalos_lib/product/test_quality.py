@@ -18,8 +18,18 @@ acceptance traceability (`gate-compliance`: strict blocks, warn records);
 this module only produces the deterministic report.
 
 Scope note: analysis is manifest-driven (generated files + agent extras via
-the trace manifest) and limited to ``*.test.*`` files using expect-style
-assertions -- only CLEAR vacuity is flagged, never style.
+the trace manifest). Two analyzers share the report shape and blocking
+semantics:
+
+- JS/TS ``*.test.*`` files -- regex-level expect-style assertion detection;
+- Python ``test_*.py`` / ``*_test.py`` files -- a precise stdlib ``ast``
+  pass (fastapi-api products generate pytest suites): a test function with
+  no ``assert``, no ``pytest.raises``/``warns`` context, no
+  ``self.assert*``/``self.fail`` call and no ``pytest.fail/skip/xfail`` is
+  vacuous; fixtures are never tests; a syntax-error file is reported as
+  unanalyzable, never crashed on.
+
+Only CLEAR vacuity is flagged, never style.
 """
 
 from __future__ import annotations
@@ -30,6 +40,7 @@ __all__ = [
     "load_test_quality_report",
 ]
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -74,6 +85,129 @@ def _is_test_file(rel_path: str) -> bool:
     return ".test." in name
 
 
+def _is_python_test_file(rel_path: str) -> bool:
+    """pytest discovery conventions: ``test_*.py`` or ``*_test.py``."""
+    name = rel_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.endswith(".py") and (
+        name.startswith("test_") or name.endswith("_test.py")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Python analyzer (stdlib ast -- precise, not regex)
+# ---------------------------------------------------------------------------
+
+# Fixture decorators: a function carrying one of these is pytest plumbing,
+# never a test -- even when its name starts with test_ (rare but legal).
+_FIXTURE_DECORATOR_NAMES = {"fixture"}
+
+# pytest module-level calls that make a test non-vacuous: raises/warns
+# (assertion contexts) and fail/skip/xfail/deprecated_call (explicit
+# outcomes -- a test that calls pytest.fail() is claiming something).
+_PYTEST_ASSERTION_FUNCS = {
+    "raises", "warns", "deprecated_call", "fail", "skip", "xfail",
+}
+
+
+def _dotted_name(node: ast.AST) -> str:
+    """Best-effort dotted name of a decorator/call target ('pytest.fixture')."""
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
+
+
+def _is_fixture(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for deco in func.decorator_list:
+        target = deco.func if isinstance(deco, ast.Call) else deco
+        name = _dotted_name(target)
+        if name.rsplit(".", 1)[-1] in _FIXTURE_DECORATOR_NAMES:
+            return True
+    return False
+
+
+def _py_call_asserts(node: ast.Call) -> bool:
+    """True when a Call node is itself an assertion-ish claim."""
+    name = _dotted_name(node.func)
+    if not name:
+        return False
+    head, _, tail = name.rpartition(".")
+    # pytest.raises(...) / pytest.warns(...) / pytest.fail(...) etc. --
+    # including the legacy non-context call form pytest.raises(Err, fn).
+    if head == "pytest" and tail in _PYTEST_ASSERTION_FUNCS:
+        return True
+    # unittest-style: self.assertEqual(...), self.assertTrue(...), self.fail().
+    if head == "self" and (tail.startswith("assert") or tail == "fail"):
+        return True
+    return False
+
+
+def _py_test_is_vacuous(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A test function is vacuous when its whole subtree contains no assert
+    statement and no assertion-ish call (see _py_call_asserts). Assertions in
+    nested helpers/withs/loops count -- precision over recall."""
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assert):
+            return False
+        if isinstance(node, ast.Call) and _py_call_asserts(node):
+            return False
+    return True
+
+
+def _iter_python_tests(
+    tree: ast.Module,
+) -> Iterator[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Yield test functions: module-level ``test_*`` plus ``test_*`` methods
+    of ``Test*`` classes (pytest collection rules). Fixtures are skipped --
+    they are plumbing, not tests. Parametrized tests are plain tests (the
+    parametrize decorator changes invocation count, not test-ness)."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test_") and not _is_fixture(node):
+                yield node
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if item.name.startswith("test_") and not _is_fixture(item):
+                        yield item
+
+
+def _analyze_python_test_file(
+    rel: str,
+    text: str,
+    report: dict[str, Any],
+) -> bool:
+    """Analyze one Python test file into *report*.
+
+    Returns True when the file was analyzed, False when it was unanalyzable
+    (recorded under ``unanalyzable_files`` -- a file the gate cannot see
+    through is reported honestly, never crashed on and never guessed at).
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError) as exc:
+        report["unanalyzable_files"].append({
+            "file": rel,
+            "reason": f"{type(exc).__name__}: {getattr(exc, 'msg', exc)}",
+        })
+        return False
+
+    tests = list(_iter_python_tests(tree))
+    vacuous = [t for t in tests if _py_test_is_vacuous(t)]
+    for t in vacuous:
+        report["vacuous_tests"].append({"file": rel, "test_name": t.name})
+    # Assertion-free: every collected test in the file is vacuous. A file
+    # with no collected tests (conftest-style helpers) is NOT flagged --
+    # it claims no coverage, so it cannot claim it falsely.
+    if tests and len(vacuous) == len(tests):
+        report["assertion_free_files"].append(rel)
+    return True
+
+
 def _criterion_words(criterion: dict[str, Any]) -> set[str]:
     """Entity/operation words for the weak-link check (entity + workflow)."""
     words: set[str] = set()
@@ -102,12 +236,14 @@ def analyze_test_quality(
     *,
     acceptance_matrix: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Analyze every generated ``*.test.*`` file on disk for clear vacuity.
+    """Analyze every generated test file on disk for clear vacuity.
 
-    *manifest* is the generation/trace manifest whose ``files`` records name
-    the generated files (the trace manifest also includes agent-written
-    extras); analysis is manifest-driven so pre-existing/scaffold tests are
-    never judged as generated evidence.
+    Covers JS/TS ``*.test.*`` files (regex expect-style analyzer) and Python
+    ``test_*.py`` / ``*_test.py`` files (ast analyzer). *manifest* is the
+    generation/trace manifest whose ``files`` records name the generated
+    files (the trace manifest also includes agent-written extras); analysis
+    is manifest-driven so pre-existing/scaffold tests are never judged as
+    generated evidence.
 
     Returns::
 
@@ -116,6 +252,7 @@ def analyze_test_quality(
           "files_analyzed": n,
           "vacuous_tests": [{"file": ..., "test_name": ...}],
           "assertion_free_files": [...],
+          "unanalyzable_files": [{"file": ..., "reason": ...}],
           "weak_criterion_links": [
               {"file": ..., "acceptance_id": ..., "missing_words": [...]}
           ],   # advisory only, in every mode
@@ -133,6 +270,7 @@ def analyze_test_quality(
         "files_analyzed": 0,
         "vacuous_tests": [],
         "assertion_free_files": [],
+        "unanalyzable_files": [],
         "weak_criterion_links": [],
     }
 
@@ -141,7 +279,11 @@ def analyze_test_quality(
         if not isinstance(record, dict):
             continue
         rel = str(record.get("path") or "").replace("\\", "/").lstrip("/")
-        if not rel or rel in seen or not _is_test_file(rel):
+        if not rel or rel in seen:
+            continue
+        is_js_test = _is_test_file(rel)
+        is_py_test = _is_python_test_file(rel)
+        if not is_js_test and not is_py_test:
             continue
         seen.add(rel)
         target = repo_root / rel
@@ -152,21 +294,30 @@ def analyze_test_quality(
         except (OSError, UnicodeDecodeError):
             continue
 
-        report["files_analyzed"] += 1
-        has_any_assertion = bool(_ASSERTION_RE.search(text))
-        if not has_any_assertion:
-            report["assertion_free_files"].append(rel)
+        if is_py_test:
+            if _analyze_python_test_file(rel, text, report):
+                report["files_analyzed"] += 1
+                # Weak-link matching below needs "does this file assert at
+                # all"; for Python that is "not listed assertion-free".
+                has_any_assertion = rel not in report["assertion_free_files"]
+            else:
+                continue  # unanalyzable: recorded, no further judgement
+        else:
+            report["files_analyzed"] += 1
+            has_any_assertion = bool(_ASSERTION_RE.search(text))
+            if not has_any_assertion:
+                report["assertion_free_files"].append(rel)
 
-        for test_name, modifiers, body in _iter_test_blocks(text):
-            # .todo has no body by design; .skip is intentionally disabled --
-            # neither is a CLEAR false claim of coverage (first cut: only
-            # flag unambiguous vacuity).
-            if ".todo" in modifiers or ".skip" in modifiers:
-                continue
-            if not _ASSERTION_RE.search(body):
-                report["vacuous_tests"].append(
-                    {"file": rel, "test_name": test_name},
-                )
+            for test_name, modifiers, body in _iter_test_blocks(text):
+                # .todo has no body by design; .skip is intentionally
+                # disabled -- neither is a CLEAR false claim of coverage
+                # (first cut: only flag unambiguous vacuity).
+                if ".todo" in modifiers or ".skip" in modifiers:
+                    continue
+                if not _ASSERTION_RE.search(body):
+                    report["vacuous_tests"].append(
+                        {"file": rel, "test_name": test_name},
+                    )
 
         # Weak criterion link (advisory): the file traces to a criterion but
         # never mentions its entity/operation words. Only meaningful when the

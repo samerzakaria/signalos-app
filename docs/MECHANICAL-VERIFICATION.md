@@ -35,13 +35,39 @@ nothing later may rewrite generated files). At closeout, before
 `write_closeout`, `verify_workspace_snapshot` re-hashes and reports
 changed/added/removed files.
 
+Added-file detection is scan-widened (`workspace_scan_files`): the snapshot
+also records a presence baseline of everything under the generated source
+roots (`src/`, `tests/`, `test/`, `public/` + the root config files), and
+verification flags any file the scan finds beyond both the hashed set and
+that baseline — so an arbitrary post-proof file OUTSIDE the manifest-derived
+candidate set is no longer invisible. Exclusions are documented inline
+(`node_modules`, `dist`/`build`, `coverage`, `.signalos`, `.git`, tool
+caches, `*.map`) — each exists to prevent a specific false positive from
+the proof run's own side effects. Changed/removed semantics are unchanged
+(hash set = manifest-derived candidates only); snapshots without a baseline
+(pre-widening) keep the original narrower added semantics rather than
+false-positive on pre-existing files.
+
 ## Layer 3 — Deterministic test-quality gate (first cut)
 
-`test_quality.analyze_test_quality` scans every generated `*.test.*` file on
-disk (manifest/trace-driven) and flags only CLEAR vacuity, never style:
-vacuous `it(`/`test(` blocks with no assertion, assertion-free test files,
-and (advisory) criterion-linked test files that never mention the traced
-entity/operation words. `it.todo`/`it.skip` are never flagged.
+`test_quality.analyze_test_quality` scans every generated test file on disk
+(manifest/trace-driven) and flags only CLEAR vacuity, never style. Two
+analyzers share the report shape and blocking semantics:
+
+- JS/TS `*.test.*` (regex, expect-style): vacuous `it(`/`test(` blocks with
+  no assertion, assertion-free test files. `it.todo`/`it.skip` are never
+  flagged.
+- Python `test_*.py` / `*_test.py` (stdlib `ast`, precise — fastapi-api
+  products generate pytest suites): a test function (module-level `test_*`
+  or a `test_*` method of a `Test*` class) with no `assert` statement, no
+  `pytest.raises`/`warns` usage, no `self.assert*`/`self.fail` call and no
+  `pytest.fail/skip/xfail` is vacuous; a file whose collected tests are ALL
+  vacuous is assertion-free. `@pytest.fixture` functions are never tests;
+  parametrized tests are plain tests. A syntax-error file is reported under
+  `unanalyzable_files` (never a crash, never a guess).
+
+The (advisory) weak-criterion-link check applies to both: a criterion-linked
+test file that never mentions the traced entity/operation words.
 
 ## Artifact locations
 
