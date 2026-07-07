@@ -50,8 +50,10 @@ from .design_decisions import (
 )
 from .generation import (
     compute_sha256_lf,
+    link_generation_to_acceptance,
     prepare_generation,
     validate_generation_output,
+    verify_trace_completeness,
     write_generation_manifest,
 )
 from .agent_packets import build_agent_packet, write_agent_packet
@@ -703,6 +705,10 @@ def run_delivery(
     # 4b. AGENT DISPATCH (invoke LLM to write product code)
     # ------------------------------------------------------------------
     agent_result = None
+    # #6: per-file acceptance traceability. Populated after a completed build
+    # from what actually landed on disk; consumed at acceptance reconciliation
+    # by verify_trace_completeness and folded into the Review gate verdict.
+    trace_manifest: dict | None = None
     # #23 fake-green hard block: a generation that produced no real files is a
     # FAILURE, full stop. This flag/blocker force delivery to fail-closed --
     # build_status can never be reported "passed" off the trivially-building
@@ -794,6 +800,12 @@ def run_delivery(
             if agent_result.get("status") == "completed":
                 if manifest:
                     _refresh_manifest_hashes(repo_root, manifest)
+                    # #6: attach generation -> acceptance traces after the
+                    # build completes, so the persisted manifest carries the
+                    # per-file acceptance linkage.
+                    trace_manifest = _link_acceptance_traces(
+                        repo_root, manifest, acceptance, agent_result,
+                    )
                     write_generation_manifest(manifest, signalos_dir)
                 if route == "agent-loop":
                     real_files = _agent_loop_produced_real_files(
@@ -1060,6 +1072,7 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 6b. ACCEPTANCE RECONCILIATION phase
     # ------------------------------------------------------------------
+    trace_report: dict | None = None
     if acceptance is not None:
         _emit_progress("acceptance", "reconcile", "running", "Reconciling acceptance evidence")
         try:
@@ -1071,6 +1084,14 @@ def run_delivery(
                 ux_proof=ux_proof,
                 security_result=security_result if "security_result" in locals() else None,
             )
+            # #6: verify per-file acceptance traceability alongside evidence
+            # reconciliation. The report is persisted in the matrix and folded
+            # into the Review gate verdict below (strict blocks, warn records).
+            if trace_manifest is not None:
+                trace_report = verify_trace_completeness(
+                    trace_manifest, acceptance,
+                )
+                acceptance["traceability"] = trace_report
             write_acceptance_matrix(acceptance, signalos_dir)
             readiness = acceptance.get("reconciliation", {})
             update_delivery_phase(
@@ -1104,6 +1125,10 @@ def run_delivery(
         review_result = run_review_gate(
             repo_root, intent, manifest if isinstance(manifest, dict) else {}, val_result,
         )
+        # #6: acceptance traceability flows through the SAME review channel --
+        # under strict gate-compliance an uncovered criterion blocks; under
+        # warn it is recorded. Advisory file->criteria findings never block.
+        review_result = _apply_traceability_review(review_result, trace_report)
         write_review_result(review_result, signalos_dir)
         review_blocking = bool(review_result.get("blocking"))
         # Findings surface in REVIEW_RESULT.json (always) and, when the verdict
@@ -1200,8 +1225,11 @@ def run_delivery(
                 closeout["closure_level"] = "partial"
         if errors:
             closeout.setdefault("known_limitations", []).extend(errors)
-        write_closeout(closeout, signalos_dir)
+        # #11: handoff files run FIRST -- GTM generation records its outcome
+        # (written / skipped / failed) on the closeout dict, so the persisted
+        # CLOSEOUT.json carries that evidence honestly.
         write_handoff_files(closeout, signalos_dir)
+        write_closeout(closeout, signalos_dir)
         update_delivery_phase(
             repo_root, "closed", closeout.get("closure_level", "partial"),
         )
@@ -1265,6 +1293,119 @@ def run_delivery(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _link_acceptance_traces(
+    repo_root: Path,
+    manifest: dict | None,
+    acceptance: dict | None,
+    agent_result: dict | None,
+) -> dict | None:
+    """#6: attach generation -> acceptance traces after a completed build.
+
+    Returns the "trace manifest" later consumed by verify_trace_completeness,
+    or ``None`` when there is nothing to trace (no acceptance matrix / no
+    manifest). The trace view is built HONESTLY from what actually landed on
+    disk:
+
+    - manifest file records that exist on disk (``link_generation_to_
+      acceptance`` mutates these in place, so the traces persist into
+      GENERATION_MANIFEST.json when the caller re-writes it);
+    - plus files the agent reported writing that are not in the manifest.
+      The AgentLoop path is acceptance-matrix-first and the agent owns
+      implementation shape, so such extras (helpers, hooks, shared UI) are
+      legitimate; they participate in the trace report only and are NOT
+      added to the persisted manifest.
+    """
+    if not acceptance or not isinstance(manifest, dict):
+        return None
+
+    on_disk = [
+        rec
+        for rec in manifest.get("files", [])
+        if isinstance(rec, dict)
+        and rec.get("path")
+        and (repo_root / str(rec["path"])).is_file()
+    ]
+    known = {str(rec["path"]).replace("\\", "/") for rec in on_disk}
+    extras: list[dict] = []
+    for rel in (agent_result or {}).get("files_written") or []:
+        rel_str = str(rel).replace("\\", "/").lstrip("/")
+        if (
+            not rel_str
+            or rel_str in known
+            or not _is_real_product_file(rel_str)
+            or not (repo_root / rel_str).is_file()
+        ):
+            continue
+        known.add(rel_str)
+        name = rel_str.rsplit("/", 1)[-1].lower()
+        is_test = (
+            ".test." in name
+            or ".spec." in name
+            or name.startswith("test_")
+            or name.endswith(("_test.py", "_test.go"))
+        )
+        extras.append({
+            "path": rel_str,
+            "kind": "test" if is_test else "source",
+            "acceptance_id": None,
+        })
+
+    trace_manifest = {"files": on_disk + extras}
+    link_generation_to_acceptance(trace_manifest, acceptance)
+    return trace_manifest
+
+
+def _apply_traceability_review(
+    review_result: dict | None,
+    trace_report: dict | None,
+) -> dict | None:
+    """#6: fold acceptance traceability into the Review gate verdict.
+
+    Chosen semantics (deliberately asymmetric so the check cannot
+    false-positive on helper files):
+
+    - criteria -> file coverage is STRICT: an acceptance criterion that no
+      generated file traces to is a concrete gap. Under strict
+      gate-compliance it becomes a BLOCKING review finding; under warn it is
+      recorded as a finding without failing closed (the exact same contract
+      as the other review checks -- no new enforcement mechanism).
+    - file -> criteria linkage is ADVISORY ONLY: the AgentLoop path is
+      acceptance-matrix-first and the agent owns implementation shape, so
+      helper files (utils, hooks, shared UI) serving a traced component are
+      legitimate. Unlinked files are recorded as advisory findings and NEVER
+      block, in any mode.
+    """
+    if not review_result or not trace_report:
+        return review_result
+
+    uncovered = list(trace_report.get("uncovered_criteria") or [])
+    unlinked = list(trace_report.get("unlinked_paths") or [])
+
+    checks = review_result.setdefault("checks", {})
+    checks["acceptance_traceability"] = not uncovered
+
+    findings = review_result.setdefault("findings", [])
+    findings.extend(
+        f"traceability: acceptance criterion {cid} has no generated file "
+        f"tracing to it"
+        for cid in uncovered
+    )
+    findings.extend(
+        f"traceability (advisory): {path} does not trace to an acceptance "
+        f"criterion (helper files serving traced components are legitimate)"
+        for path in unlinked
+    )
+
+    if uncovered:
+        if review_result.get("mode") == "warn":
+            if review_result.get("status") == "pass":
+                review_result["status"] = "warn"
+        else:  # strict (and the default-safe fallback)
+            review_result["status"] = "blocked"
+            review_result["blocking"] = True
+    return review_result
+
 
 def _dispatch_agent_loop_build(
     *,

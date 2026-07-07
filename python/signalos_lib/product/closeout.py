@@ -520,11 +520,17 @@ def write_handoff_files(
     - ``.signalos/handoffs/product-summary.md``
     - ``.signalos/handoffs/test-evidence.md``
     - ``.signalos/handoffs/operator-runbook.md``
+    - ``.signalos/handoffs/gtm/launch-assets.md`` (#11, LLM-gated)
 
+    GTM generation runs FIRST so its outcome (written / skipped / failed) is
+    recorded on the closeout before the summary docs render limitations.
     Returns list of created file paths.
     """
     handoff_dir = signalos_dir / "handoffs"
     handoff_dir.mkdir(parents=True, exist_ok=True)
+
+    # 0. GTM launch assets (#11) -- LLM-gated, best-effort, never fails handoff
+    gtm_paths = _write_gtm_assets(closeout, signalos_dir, handoff_dir)
 
     paths: list[Path] = []
 
@@ -549,7 +555,75 @@ def write_handoff_files(
     )
     paths.append(runbook_path)
 
+    paths.extend(gtm_paths)
     return paths
+
+
+def _write_gtm_assets(
+    closeout: dict[str, Any],
+    signalos_dir: Path,
+    handoff_dir: Path,
+) -> list[Path]:
+    """#11: generate go-to-market assets into the handoff bundle.
+
+    LLM-gated: with a configured provider (``is_llm_available``, same pattern
+    as the other LLM-gated stages) the GTM copy is generated from the product
+    intent and written to ``handoffs/gtm/launch-assets.md``.  Without one the
+    step is SKIPPED and the skip is recorded honestly in the closeout evidence
+    (``closeout["gtm"]`` + known_limitations) -- the handoff never claims
+    assets that were not written.  A GTM failure NEVER fails the closeout:
+    it is captured and recorded the same way.
+    """
+    record: dict[str, Any] = {
+        "status": "skipped",
+        "files": [],
+        "llm_authored": False,
+    }
+    written: list[Path] = []
+    try:
+        from .llm_provider import is_llm_available
+
+        repo_root = signalos_dir.parent
+        if not is_llm_available(repo_root):
+            record["reason"] = "no LLM provider configured"
+        else:
+            from .gtm import generate_gtm, generate_gtm_markdown
+            from .intent import load_intent
+
+            intent = load_intent(signalos_dir) or {
+                "product_name": closeout.get("product_name", ""),
+            }
+            gtm = generate_gtm(intent, root=repo_root)
+            gtm_dir = handoff_dir / "gtm"
+            gtm_dir.mkdir(parents=True, exist_ok=True)
+            asset_path = gtm_dir / "launch-assets.md"
+            asset_path.write_text(generate_gtm_markdown(gtm), encoding="utf-8")
+            written.append(asset_path)
+            record = {
+                "status": "written",
+                "files": ["gtm/launch-assets.md"],
+                "llm_authored": bool(gtm.get("llm_authored", False)),
+            }
+    except Exception as exc:  # GTM must never fail the delivery closeout
+        record = {
+            "status": "failed",
+            "files": [],
+            "llm_authored": False,
+            "reason": str(exc),
+        }
+
+    closeout["gtm"] = record
+    if record["status"] == "skipped":
+        closeout.setdefault("known_limitations", []).append(
+            "GTM assets were not generated: "
+            + record.get("reason", "unavailable")
+        )
+    elif record["status"] == "failed":
+        closeout.setdefault("known_limitations", []).append(
+            "GTM asset generation failed (closeout proceeded): "
+            + record.get("reason", "unknown error")
+        )
+    return written
 
 
 def _generate_product_summary(closeout: dict[str, Any]) -> str:
