@@ -16,6 +16,7 @@ import {
   isGateSigned,
 } from '../GateTimeline';
 import { VelocityPanel } from './VelocityPanel';
+import { ProjectHealthCard } from '../ProjectHealthCard';
 import { viewClass } from '../viewShell';
 
 export function DashboardView() {
@@ -162,6 +163,8 @@ export function DashboardView() {
               </div>
             ) : null}
           </div>
+
+          <ProjectHealthCard />
 
           <VelocityPanel />
 

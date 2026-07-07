@@ -173,6 +173,46 @@ describe('BuildView chat bubbles', () => {
     expect(screen.getByRole('button', { name: /copy code/i })).toBeInTheDocument();
   });
 
+  it('renders the UX friction card before the gate review card (#12)', () => {
+    chatBubbles.value = [
+      makeBubble({
+        id: 'fr-1',
+        kind: 'friction',
+        uxFriction: {
+          gate: 'design',
+          personas: [
+            {
+              persona: 'impatient',
+              label: 'Impatient User',
+              findings: [{ severity: 'high', issue: 'No loading state shown.' }],
+            },
+          ],
+        },
+      }),
+      makeBubble({
+        id: 'g-1',
+        kind: 'gate',
+        gateReview: {
+          gate: 'design',
+          title: 'Design review',
+          question: 'Approve this direction?',
+          resolvedVerdict: null,
+        },
+      }),
+    ];
+    const { container } = render(<BuildView />);
+    const friction = screen.getByTestId('ux-friction-card');
+    const gate = screen.getByTestId('gate-review-card');
+    expect(friction).toBeInTheDocument();
+    expect(gate).toBeInTheDocument();
+    expect(screen.getByText('No loading state shown.')).toBeInTheDocument();
+    // The friction report precedes the gate card so the human sees it
+    // before signing.
+    const all = Array.from(container.querySelectorAll('[data-testid="ux-friction-card"],[data-testid="gate-review-card"]'));
+    expect(all[0]).toBe(friction);
+    expect(all[1]).toBe(gate);
+  });
+
   it('shows the command palette when slash mode is open', () => {
     cmdPaletteOpen.value = true;
 

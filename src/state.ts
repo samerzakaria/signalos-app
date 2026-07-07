@@ -70,6 +70,11 @@ export interface EnfRule {
   description?: string;
   desc?: string;
   status?: string;
+  /** Current enforcement mode: "strict" | "warn" | "off". */
+  mode?: string;
+  /** Core invariant — the backend refuses to disable it (enforcement.rs
+   *  CORE_INVARIANTS); the UI renders a lock instead of a toggle. */
+  core?: boolean;
 }
 export const enforcementRules = signal<EnfRule[]>([]);
 
@@ -140,9 +145,24 @@ export interface PlanTask {
   previous_failure?: string;
 }
 
+// ── UX-friction gate review (#12) ───────────────────────────────────────
+// The Python gate orchestrator (gate_orchestrator._emit_preview) runs the
+// 5-persona heuristic UX-QA pass at the design gate and emits
+// {"type":"ux_friction","gate":...,"findings":[{persona,label,findings}]}.
+export interface UxFrictionFinding {
+  severity: string; // "high" | "medium" | "low"
+  issue: string;
+  suggestion?: string;
+}
+export interface UxFrictionPersona {
+  persona: string;
+  label: string;
+  findings: UxFrictionFinding[];
+}
+
 export interface ChatBubble {
   id: string;
-  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview' | 'file';
+  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview' | 'file' | 'friction';
   text: string;
   ts?: string;
   historical?: boolean;
@@ -229,6 +249,12 @@ export interface ChatBubble {
     srcDoc?: string;
     url?: string;
     caption?: string;
+  };
+  /** kind === 'friction': the 5-persona UX friction report (UxFrictionCard).
+   *  Informational — shown before/alongside the design-gate review card. */
+  uxFriction?: {
+    gate: string;
+    personas: UxFrictionPersona[];
   };
 }
 export const chatBubbles = signal<ChatBubble[]>([]);

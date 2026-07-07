@@ -1,4 +1,4 @@
-import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble } from '../state';
+import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble, type UxFrictionPersona, type UxFrictionFinding } from '../state';
 import * as ipc from '../js/ipc.js';
 
 // Phase 3 Stream C - frontend subscription for the agent loop.
@@ -49,7 +49,41 @@ export interface AgentEvent {
   srcDoc?: string;
   url?: string;
   caption?: string;
+  // ux_friction event fields (#12) — per-persona findings from ux_friction.py
+  findings?: unknown;
+  count?: number;
   [key: string]: unknown;
+}
+
+// Coerce the ux_friction payload (heuristic_findings() output) into the typed
+// shape the UxFrictionCard renders. Tolerant of malformed entries — a bad
+// persona entry is dropped rather than crashing the event handler.
+function parseUxFrictionPersonas(raw: unknown): UxFrictionPersona[] {
+  if (!Array.isArray(raw)) return [];
+  const personas: UxFrictionPersona[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const p = item as Record<string, unknown>;
+    const findingsRaw = Array.isArray(p.findings) ? p.findings : [];
+    const findings: UxFrictionFinding[] = [];
+    for (const f of findingsRaw) {
+      if (!f || typeof f !== 'object') continue;
+      const fr = f as Record<string, unknown>;
+      const issue = typeof fr.issue === 'string' ? fr.issue : '';
+      if (!issue) continue;
+      findings.push({
+        severity: typeof fr.severity === 'string' ? fr.severity : 'medium',
+        issue,
+        suggestion: typeof fr.suggestion === 'string' ? fr.suggestion : undefined,
+      });
+    }
+    personas.push({
+      persona: typeof p.persona === 'string' ? p.persona : '',
+      label: typeof p.label === 'string' ? p.label : (typeof p.persona === 'string' ? p.persona : 'Persona'),
+      findings,
+    });
+  }
+  return personas;
 }
 
 // The agent loop runs one active run at a time, but some events (text,
@@ -306,6 +340,23 @@ export function handle(evt: AgentEvent): void {
         },
       });
       busy.value = false;
+      break;
+    }
+
+    case 'ux_friction': {
+      // 5-persona UX friction report (#12), emitted by the gate orchestrator
+      // right before the design-gate `gate` checkpoint. Informational — no
+      // verdict; the bubble lands ahead of the gate review card so the human
+      // sees the friction findings when signing.
+      const gate = typeof evt.gate === 'string' ? evt.gate : '';
+      const personas = parseUxFrictionPersonas(evt.findings);
+      if (personas.length === 0) break;
+      upsertBubble({
+        id: `agent-friction-${runId}-${gate || 'g'}`,
+        kind: 'friction',
+        text: '',
+        uxFriction: { gate: gate || 'design', personas },
+      });
       break;
     }
 

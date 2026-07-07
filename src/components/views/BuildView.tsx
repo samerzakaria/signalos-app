@@ -10,6 +10,7 @@ import { Markdown, CodeBlock } from '../markdown';
 import { ToolCallBubble } from '../ToolCallBubble';
 import { FileDiffBubble } from '../FileDiffBubble';
 import { GateReviewCard, type GateReviewSubmission } from '../GateReviewCard';
+import { UxFrictionCard } from '../UxFrictionCard';
 import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
 import { BUSINESS_STAGES } from '../../services/deliveryFlow';
@@ -189,6 +190,17 @@ export function BuildView() {
                     path={b.diff.path}
                     before={b.diff.before}
                     after={b.diff.after}
+                  />
+                );
+              }
+              // #12 UX-friction gate review card — informational, lands before
+              // the design-gate review card (event order from the orchestrator).
+              if (b.kind === 'friction' && b.uxFriction) {
+                return (
+                  <UxFrictionCard
+                    key={b.id}
+                    gate={b.uxFriction.gate}
+                    personas={b.uxFriction.personas}
                   />
                 );
               }
