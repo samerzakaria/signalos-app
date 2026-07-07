@@ -1,5 +1,6 @@
 import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, govGatesList, type ChatBubble, type UxFrictionPersona, type UxFrictionFinding } from '../state';
 import * as ipc from '../js/ipc.js';
+import { notifyFromAgentEvent } from './notifications';
 
 // Phase 3 Stream C - frontend subscription for the agent loop.
 //
@@ -196,6 +197,10 @@ export function handle(evt: AgentEvent): void {
   // missing kind for resilience but require a recognizable type.
   const type = typeof evt.type === 'string' ? evt.type : '';
   if (!type) return;
+
+  // #22 — incident/gate/reopen events also feed the notification bell.
+  // Chatty types (text, tool_done, …) are filtered inside the service.
+  try { notifyFromAgentEvent(evt); } catch { /* feed must never break chat */ }
 
   const runId = runIdOf(evt);
 

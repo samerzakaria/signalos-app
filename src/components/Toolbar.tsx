@@ -4,6 +4,8 @@ import { statusForMode } from '../enforcementView';
 import * as ipc from '../js/ipc.js';
 import { topTabClass } from './viewShell';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { NotificationsPopover } from './NotificationsPopover';
+import { unreadCount, toggleNotifications } from '../services/notifications';
 
 // #13 per-rule strict/warn/off toggles. Mode changes go through
 // enforcement.setMode (Rust set_rule_mode). The update is optimistic; if the
@@ -184,9 +186,25 @@ export function Toolbar() {
           </div>
         </div>
 
-        <div className="ico" style={{ 'position': 'relative' }} onClick={() => window.showNotifications()} aria-label="Notifications">
+        <div
+          className="ico"
+          id="notifBell"
+          style={{ 'position': 'relative' }}
+          onClick={() => {
+            // The legacy global (app-v2.js) reconciles the feed against the
+            // audit trail on open; fall back to the service directly when it
+            // isn't registered (tests / early boot).
+            if (typeof window.showNotifications === 'function') window.showNotifications();
+            else void toggleNotifications();
+          }}
+          aria-label="Notifications"
+          data-testid="notif-bell"
+        >
           <i className="ti ti-bell"></i>
-          <span className="badge"></span>
+          {unreadCount.value > 0 ? (
+            <span className="badge" data-testid="notif-badge" title={`${unreadCount.value} unread`}></span>
+          ) : null}
+          <NotificationsPopover />
         </div>
 
         <div className="ico" onClick={() => window.shareProject()} aria-label="Share"><i className="ti ti-share-3"></i></div>

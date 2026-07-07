@@ -223,6 +223,16 @@ a{color:inherit}
 .nav.accent:hover{background:var(--accent-soft)}
 .sb-empty{padding:8px 9px;color:var(--ink-3);font-size:12px}
 
+/* Project-namespace picker (#19) */
+.sb-projects-note{padding:2px 9px 7px;font-size:11px;color:var(--ink-3);line-height:1.45}
+.nav-tag.active-tag{color:var(--accent);background:var(--accent-soft)}
+.sb-project-new{display:flex;align-items:center;gap:6px;padding:5px 4px 2px}
+.sb-project-new input{flex:1;min-width:0;font-size:12px;padding:7px 9px;background:var(--surface);border:0.5px solid var(--line-2);border-radius:var(--r-sm);outline:none;color:var(--ink)}
+.sb-project-new input:focus{border-color:var(--accent)}
+.sb-project-new .btn{padding:6px 9px;font-size:12px;flex-shrink:0}
+.sb-project-error{margin:6px 4px 0;padding:7px 9px;font-size:11.5px;line-height:1.45;color:var(--danger-deep);background:var(--danger-soft);border-radius:var(--r-sm);display:flex;align-items:flex-start;gap:6px}
+.sb-project-error i{flex-shrink:0;margin-top:1px}
+
 .sb-user{margin-top:auto;flex-shrink:0;display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:var(--r);background:var(--surface);border:0.5px solid var(--line);margin:8px 0 0;}
 .sb-av{width:32px;height:32px;border-radius:9px;flex-shrink:0;background:var(--clay);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;}
 .sb-ui{flex:1;min-width:0}
@@ -336,6 +346,21 @@ a{color:inherit}
 .cost-pill i{font-size:13px;color:var(--ink-3)}
 .live-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;background:var(--success-soft);color:var(--success-deep);font-size:11.5px;font-weight:600;}
 .live-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--success);animation:blink 2.2s infinite}
+/* #22 notifications popover — reuses the enf-popover shell */
+.notif-popover{width:320px;cursor:default}
+.notif-list{max-height:320px;overflow-y:auto}
+.notif-row{display:flex;align-items:flex-start;gap:10px;padding:10px 16px;border-bottom:0.5px solid var(--line)}
+.notif-row:last-child{border-bottom:none}
+.notif-row.unread{background:var(--accent-soft)}
+.notif-ic{width:26px;height:26px;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;background:var(--surface-warm);color:var(--ink-2)}
+.notif-ic.error,.notif-ic.override{background:var(--danger-soft);color:var(--danger-deep)}
+.notif-ic.gate,.notif-ic.delivery{background:var(--success-soft, var(--surface-warm));color:var(--success)}
+.notif-ic.reopen{background:var(--amber-soft, var(--surface-warm));color:var(--amber-deep, var(--ink-2))}
+.notif-tx{flex:1;min-width:0}
+.notif-text{font-size:12.5px;line-height:1.45;color:var(--ink);overflow-wrap:anywhere}
+.notif-meta{font-size:10.5px;color:var(--ink-3);margin-top:2px}
+.notif-dot{width:7px;height:7px;border-radius:50%;background:var(--clay);flex-shrink:0;margin-top:5px}
+
 .ico{width:32px;height:32px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);transition:all 0.14s var(--ease);cursor:pointer;}
 .ico:hover{background:var(--surface-warm);color:var(--ink)}
 .ico i{font-size:17px}
@@ -523,6 +548,11 @@ a{color:inherit}
 .composer input::placeholder{color:var(--ink-3)}
 .cmp-btn{width:32px;height:32px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);cursor:pointer;}
 .cmp-btn:hover{background:var(--surface-warm);color:var(--ink)}
+/* #21 voice input — visible recording / transcribing states on the mic button */
+.cmp-btn.cmp-rec{color:#fff;background:var(--danger);position:relative}
+.cmp-btn.cmp-rec:hover{background:var(--danger);color:#fff}
+.cmp-btn.cmp-rec::after{content:"";position:absolute;inset:-4px;border-radius:11px;border:1.5px solid var(--danger);animation:pulse 1.4s infinite var(--ease)}
+.cmp-btn.cmp-transcribing i{animation:spin 1s linear infinite}
 .cmp-send{background:var(--ink);color:#FCFBF8}
 .cmp-send:hover{background:var(--accent);color:#fff}
 .cmp-btn i{font-size:16px}

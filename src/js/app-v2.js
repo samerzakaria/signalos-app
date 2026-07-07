@@ -26,6 +26,8 @@ import { state } from "./state.js";
 import { esc, errorMessage, isProviderAuthFailure, providerConnectionMessage, showError, showWarning } from "./util.js";
 import { mapEnforcementRules } from "../enforcementView.js";
 import { runShareExport } from "../services/shareExport.js";
+import { toggleVoiceInput } from "../services/voiceInput.js";
+import { toggleNotifications, closeNotifications, notifyLocal } from "../services/notifications.js";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -185,6 +187,8 @@ function bootListeners() {
 function showSidecarError(payload) {
   const msg = typeof payload === "string" ? payload : (payload?.error || "Sidecar error");
   showError("Engine error: " + msg);
+  // #22 — sidecar errors are notification-feed events too.
+  notifyLocal("error", "Engine error: " + msg);
 }
 
 // ─── Cost display ──────────────────────────────────────────────────────────────
@@ -318,10 +322,14 @@ function toggleEnfPopover() {
 }
 window.toggleEnfPopover = toggleEnfPopover;
 
-// Close popover when clicking outside
+// Close popovers when clicking outside
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".enf-pill")) {
     state.enfOpen = false;
+  }
+  // #22 — notifications popover follows the same outside-click contract.
+  if (!e.target.closest("#notifBell")) {
+    closeNotifications();
   }
 });
 
@@ -1422,9 +1430,11 @@ function openSearch() {
 }
 window.openSearch = openSearch;
 
+// #22 — real notifications. The feed, unread watermark, and popover state
+// live in services/notifications.ts; the Toolbar bell renders the popover
+// and the unread badge. Opening reconciles against the audit trail.
 function showNotifications() {
-  addAIBubble("No unread notifications right now.");
-  switchTab("build");
+  toggleNotifications().catch(() => {});
 }
 window.showNotifications = showNotifications;
 
@@ -1441,9 +1451,12 @@ window.shareProject = shareProject;
 // (WAVE-ENGINE-DESIGN §7 translator-mode). The old stub here just emitted a
 // canned chat message; the engine wiring is the right home for it.
 
+// #21 — real voice input. Capture (getUserMedia + MediaRecorder) and the
+// voice:transcribe IPC round-trip live in services/voiceInput.ts; the mic
+// button in BuildView reflects voiceState (recording pulse / transcribing
+// spinner). Click to record, click again to stop, Esc cancels.
 function voiceInput() {
-  addUserBubble("[Voice input]");
-  showError("Voice input requires microphone access — not available in this version.");
+  toggleVoiceInput().catch((e) => showError("Voice input failed: " + errorMessage(e)));
 }
 window.voiceInput = voiceInput;
 

@@ -16,6 +16,8 @@ import {
 } from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
 import { TestDebtPanel } from './TestDebtPanel';
+import { ProjectPicker } from './ProjectPicker';
+import { ensureProjectsLoaded } from '../services/projectPicker';
 import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
 import { project, testAutomation } from '../js/ipc.js';
 import { FoundryMark } from './FoundryMark';
@@ -73,6 +75,8 @@ export function Sidebar() {
 
   // Probe test-debt availability whenever workspace changes
   ensureTestDebtProbed(ws);
+  // Load the project-namespace registry (#19) whenever workspace changes
+  ensureProjectsLoaded(ws);
 
   const switchPanel = (id: string) => {
     sbTab.value = id;
@@ -160,6 +164,7 @@ export function Sidebar() {
       ) : (
         <div className="sb-empty">No projects yet.</div>
       )}
+      {ws ? <ProjectPicker /> : null}
       <div className="sb-label">Tools</div>
       <button type="button" className={sidebarNavClass('vault')} data-tab="vault" onClick={() => navigate('vault')}><i className="ti ti-shield-lock"></i> Vault</button>
       <button type="button" className={sidebarNavClass('brain')} data-tab="brain" onClick={() => navigate('brain')}><i className="ti ti-brain"></i> Brain</button>

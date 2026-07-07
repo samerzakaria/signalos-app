@@ -164,7 +164,12 @@ def handle(req: dict) -> dict:
     command = req.get("command", "")
     raw_args = req.get("args", [])
     raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
-    args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
+    # voice:transcribe carries megabytes of opaque base64 audio — running the
+    # secret-shape regex fleet over it is pointless (audio bytes are not text
+    # that can leak an env assignment) and expensive. attachment:analyze does
+    # its own scanning downstream.
+    _redaction_exempt = command in ("attachment:analyze", "voice:transcribe")
+    args = raw_arg_list if _redaction_exempt else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
 
     if cwd and os.path.isdir(cwd):
@@ -487,6 +492,9 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
 
     if command == "competitor:analyze":
         return competitor_analyze(req_id, args)
+
+    if command == "voice:transcribe":
+        return voice_transcribe(req_id, args)
 
     return err(req_id, f"Unknown command: {command}")
 
@@ -1464,6 +1472,28 @@ def competitor_analyze(req_id: str, args: list) -> dict:
         "errors": errors,
         "path": str(Path(".signalos") / "product" / "COMPETITORS.json"),
     })
+
+
+def voice_transcribe(req_id: str, args: list) -> dict:
+    """voice:transcribe {"audio_b64": ..., "mime": ...} -> transcript text.
+
+    Thin pass-through to signalos_lib.voice_transcribe.transcribe. Domain
+    outcomes (no-capable-provider / too-large / invalid-audio /
+    provider-error) come back as data.status per the capability-wiring
+    contract; only a malformed request envelope is a transport error.
+    The audio payload is never logged, persisted, or echoed back."""
+    try:
+        payload = _parse_object_arg(args, "voice:transcribe")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"voice:transcribe args invalid: {exc}")
+    audio_b64 = payload.get("audio_b64")
+    if not isinstance(audio_b64, str) or not audio_b64.strip():
+        return err(req_id, 'voice:transcribe requires {"audio_b64": ...}')
+    mime = str(payload.get("mime") or "audio/webm")
+
+    from signalos_lib.voice_transcribe import transcribe
+
+    return ok(req_id, data=transcribe(audio_b64, mime))
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import { UxFrictionCard } from '../UxFrictionCard';
 import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
 import { BUSINESS_STAGES } from '../../services/deliveryFlow';
+import { voiceState } from '../../services/voiceInput';
 import { CompetitorPanel } from '../CompetitorPanel';
 import { viewClass } from '../viewShell';
 
@@ -548,7 +549,40 @@ export function BuildView() {
                 onKeyDown={(e) => window.composerKey(e)}
               />
               <button className="cmp-btn" onClick={() => window.attachFile()} aria-label="Attach file"><i className="ti ti-paperclip"></i></button>
-              <button className="cmp-btn" onClick={() => window.voiceInput()} aria-label="Voice input"><i className="ti ti-microphone"></i></button>
+              <button
+                className={
+                  'cmp-btn' +
+                  (voiceState.value === 'recording' ? ' cmp-rec' : '') +
+                  (voiceState.value === 'transcribing' ? ' cmp-transcribing' : '')
+                }
+                onClick={() => window.voiceInput()}
+                aria-label={
+                  voiceState.value === 'recording'
+                    ? 'Stop recording'
+                    : voiceState.value === 'transcribing'
+                      ? 'Transcribing…'
+                      : 'Voice input'
+                }
+                title={
+                  voiceState.value === 'recording'
+                    ? 'Recording — click again to stop, Esc to cancel'
+                    : voiceState.value === 'transcribing'
+                      ? 'Transcribing…'
+                      : 'Voice input'
+                }
+                data-testid="voice-input-btn"
+                data-voice-state={voiceState.value}
+              >
+                <i
+                  className={`ti ${
+                    voiceState.value === 'recording'
+                      ? 'ti-player-stop-filled'
+                      : voiceState.value === 'transcribing'
+                        ? 'ti-loader-2'
+                        : 'ti-microphone'
+                  }`}
+                ></i>
+              </button>
               <button className="cmp-btn cmp-send" onClick={() => window.sendMsg()} aria-label="Send"><i className="ti ti-arrow-up"></i></button>
             </div>
           </div>
