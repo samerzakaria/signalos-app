@@ -1,4 +1,4 @@
-﻿// Prevents additional console window on Windows in release
+// Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // All modules live in lib.rs - import them from the library crate
@@ -90,8 +90,8 @@ fn main() {
                     use webview2_com::PermissionRequestedEventHandler;
                     use windows_core::PWSTR;
 
-                    let handler = PermissionRequestedEventHandler::create(Box::new(
-                        |_sender, args| {
+                    let handler =
+                        PermissionRequestedEventHandler::create(Box::new(|_sender, args| {
                             let Some(args) = args else { return Ok(()) };
                             // SAFETY: WebView2 invokes this handler on the UI
                             // thread that owns the controller, which is the COM
@@ -111,8 +111,7 @@ fn main() {
                                 }
                                 Ok(())
                             }
-                        },
-                    ));
+                        }));
                     // SAFETY: called on the webview's UI thread (with_webview
                     // guarantees it). The registration token is intentionally
                     // dropped — the handler lives for the window's lifetime.
@@ -120,13 +119,17 @@ fn main() {
                         let core = match webview.controller().CoreWebView2() {
                             Ok(core) => core,
                             Err(e) => {
-                                eprintln!("[Foundry] mic PermissionRequested hook unavailable: {e}");
+                                eprintln!(
+                                    "[Foundry] mic PermissionRequested hook unavailable: {e}"
+                                );
                                 return;
                             }
                         };
                         let mut token = 0i64;
                         if let Err(e) = core.add_PermissionRequested(&handler, &mut token) {
-                            eprintln!("[Foundry] failed to attach PermissionRequested handler: {e}");
+                            eprintln!(
+                                "[Foundry] failed to attach PermissionRequested handler: {e}"
+                            );
                         }
                     }
                 });
