@@ -751,6 +751,23 @@ def _build_react_vite_file_specs(
         base_constraints.append(f"Use {state_name} for state management")
     if form_name and form_name != "native":
         base_constraints.append(f"Use {form_name} for form inputs")
+    # #10: provider wiring the new registry libraries need at runtime. Chakra
+    # components THROW without ChakraProvider; MUI merely falls back to its
+    # default Material theme (same prompt-level integration Mantine has for
+    # its MantineColorsTuple constraint below).
+    if ui_name == "@chakra-ui/react":
+        base_constraints.append(
+            "Chakra components require ChakraProvider: wrap the App root in "
+            "<ChakraProvider> and wrap every component test's render(...) in "
+            "<ChakraProvider> -- Chakra components throw without it"
+        )
+    elif ui_name == "@mui/material":
+        base_constraints.append(
+            "For @mui/material, wrap the App root in <ThemeProvider "
+            "theme={createTheme(...)}> with <CssBaseline /> so the design "
+            "tokens apply; components fall back to the default Material "
+            "theme when rendered unwrapped in tests"
+        )
     base_constraints.append("Follow PascalCase naming")
     base_constraints.append("Co-locate test file as <Component>.test.tsx")
 

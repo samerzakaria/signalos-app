@@ -592,3 +592,78 @@ class TestDeclaredUILibraryDetection:
 
     def test_empty_intent_template_carries_the_field(self):
         assert "declared_ui_library" in EMPTY_INTENT
+
+
+# ---------------------------------------------------------------------------
+# #9(design) -- optional founder brand brief
+# ---------------------------------------------------------------------------
+
+class TestBrandBriefExtraction:
+    def test_premium_dark_fintech_with_hex_yields_full_brief(self):
+        intent = extract_product_intent(
+            "Build a premium dark fintech app, brand color #0f766e, to "
+            "track revenue and churn."
+        )
+        assert intent["brand"] == {
+            "primary_color": "#0f766e",
+            "mood": "premium",
+            "color_scheme": "dark",
+        }
+
+    def test_no_brand_signal_omits_the_key_entirely(self):
+        intent = extract_product_intent(
+            "Build a task manager for a small team with tasks and projects."
+        )
+        assert "brand" not in intent
+
+    def test_named_color_needs_an_explicit_cue(self):
+        intent = extract_product_intent(
+            "Build a garden planner. Primary color: teal."
+        )
+        assert intent["brand"]["primary_color"] == "#0d9488"
+        # a bare color word is NOT a brand declaration
+        intent = extract_product_intent("Build a green energy dashboard.")
+        assert "primary_color" not in intent.get("brand", {})
+
+    def test_mood_vocabulary_is_detected(self):
+        cases = {
+            "Build a playful sticker app for kids": "playful",
+            "A minimalist notes tool": "minimal",
+            "A clinical intake tracker": "clinical",
+            "An elegant, high-end booking service": "premium",
+        }
+        for prompt, mood in cases.items():
+            intent = extract_product_intent(prompt)
+            assert intent.get("brand", {}).get("mood") == mood, prompt
+
+    def test_font_hint_detection(self):
+        intent = extract_product_intent(
+            "Build a snippet manager with a monospace font."
+        )
+        assert intent["brand"]["font_hint"] == "mono"
+        intent = extract_product_intent("Use a serif typeface for the blog.")
+        assert intent["brand"]["font_hint"] == "serif"
+        # sans-serif must not be mistaken for serif
+        intent = extract_product_intent("Use a sans-serif typeface please.")
+        assert intent["brand"]["font_hint"] == "sans"
+
+    def test_light_scheme_requires_a_mode_cue(self):
+        intent = extract_product_intent("Build a lightweight budgeting app.")
+        assert "color_scheme" not in intent.get("brand", {})
+        intent = extract_product_intent("Build it in light mode only.")
+        assert intent["brand"]["color_scheme"] == "light"
+
+    def test_llm_brand_validation_drops_junk_values(self):
+        from signalos_lib.product.intent import _validate_brand
+        assert _validate_brand({
+            "primary_color": "#0F766E",
+            "mood": "PREMIUM",
+            "color_scheme": "dark",
+            "font_hint": "comic-sans",
+        }) == {
+            "primary_color": "#0f766e",
+            "mood": "premium",
+            "color_scheme": "dark",
+        }
+        assert _validate_brand("not-a-dict") == {}
+        assert _validate_brand({"mood": "brutalist"}) == {}
