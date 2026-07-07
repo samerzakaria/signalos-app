@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 __all__ = [
+    "apply_verifiability_tiers",
     "build_acceptance_matrix",
     "check_closure_readiness",
+    "classify_criterion_verifiability",
     "load_acceptance_matrix",
     "reconcile_acceptance_evidence",
     "update_criterion_status",
@@ -16,6 +18,7 @@ __all__ = [
 ]
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -248,7 +251,7 @@ def build_acceptance_matrix(
     if blueprint is not None:
         bp_id = blueprint.get("id")
 
-    return {
+    matrix = {
         "schema_version": "signalos.acceptance_matrix.v1",
         "product_name": product_name,
         "profile": profile,
@@ -262,6 +265,126 @@ def build_acceptance_matrix(
             "from_blueprint": from_blueprint,
         },
     }
+    # Layer 1 (mechanical verification): every criterion carries its
+    # verifiability tier from birth -- the contract states up front how much
+    # of it is machine-provable.
+    return apply_verifiability_tiers(matrix)
+
+
+# ---------------------------------------------------------------------------
+# Verifiability tiers (mechanical-verification Layer 1)
+# ---------------------------------------------------------------------------
+#
+# SignalOS's promise is constant quality per contract, and constancy comes
+# only from mechanical verification. These tiers state, per criterion, HOW
+# a criterion can be proven:
+#
+#   "mechanical" -- a concrete executable test target exists and the wording
+#                   is objective: build/test evidence alone proves it.
+#   "partial"    -- a test target exists but the wording carries subjective
+#                   language (the test proves behaviour; a human confirms the
+#                   judgment), OR the wording is objective but no executable
+#                   test target exists yet (provable in principle, not yet
+#                   machine-checked).
+#   "human"      -- pure judgment (look / feel / tone) with no executable
+#                   test target: only a human can verify it.
+#
+# Classification is fully deterministic from the criterion's own fields
+# (test_scenario profile_target + wording heuristics); no LLM, no ambiguity.
+
+_SUBJECTIVE_PHRASES = (
+    "should look",
+    "looks like",
+    "looks good",
+    "look and feel",
+    "easy to use",
+    "user friendly",
+    "user-friendly",
+    "on brand",
+    "on-brand",
+)
+
+_SUBJECTIVE_WORDS = frozenset({
+    "feel",
+    "feels",
+    "intuitive",
+    "beautiful",
+    "elegant",
+    "delightful",
+    "polished",
+    "pleasing",
+    "aesthetic",
+    "aesthetics",
+    "tasteful",
+    "sleek",
+    "stylish",
+    "tone",
+})
+
+
+def _has_subjective_wording(text: str) -> bool:
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in _SUBJECTIVE_PHRASES):
+        return True
+    words = set(re.findall(r"[a-z]+", lowered))
+    return bool(words & _SUBJECTIVE_WORDS)
+
+
+def classify_criterion_verifiability(
+    criterion: dict[str, Any],
+    scenarios: list[dict[str, Any]],
+) -> str:
+    """Deterministically classify a criterion into a verifiability tier.
+
+    Returns ``"mechanical"``, ``"partial"``, or ``"human"`` (see the module
+    section comment for exact semantics).
+    """
+    text = _criterion_text(criterion, scenarios)
+    subjective = _has_subjective_wording(text)
+    has_executable_target = any(
+        _is_executable_test_target(
+            str(scenario.get("profile_target", "")).replace("\\", "/")
+        )
+        for scenario in scenarios
+        if scenario.get("profile_target")
+    )
+    if has_executable_target:
+        return "partial" if subjective else "mechanical"
+    return "human" if subjective else "partial"
+
+
+def apply_verifiability_tiers(matrix: dict[str, Any]) -> dict[str, Any]:
+    """Set ``verifiability`` on every criterion + a matrix-level summary.
+
+    Persists ``verifiability_summary`` =
+    ``{"mechanical": n, "partial": n, "human": n, "mechanical_pct": float}``
+    -- ``mechanical_pct`` is the fraction of the contract that is
+    machine-proven. Idempotent and purely additive (no blocking semantics).
+    """
+    criteria = matrix.get("criteria", [])
+    scenario_by_id = {
+        str(scenario.get("id")): scenario
+        for scenario in matrix.get("test_scenarios", [])
+        if scenario.get("id") is not None
+    }
+    counts = {"mechanical": 0, "partial": 0, "human": 0}
+    for criterion in criteria:
+        scenarios = [
+            scenario_by_id[test_id]
+            for test_id in criterion.get("test_ids", [])
+            if test_id in scenario_by_id
+        ]
+        tier = classify_criterion_verifiability(criterion, scenarios)
+        criterion["verifiability"] = tier
+        counts[tier] += 1
+    total = len(criteria)
+    matrix["verifiability_summary"] = {
+        **counts,
+        "mechanical_pct": (
+            round(100.0 * counts["mechanical"] / total, 1) if total else 0.0
+        ),
+    }
+    return matrix
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +567,9 @@ def reconcile_acceptance_evidence(
         "failed": failed,
         "skipped": skipped,
     }
-    return matrix
+    # Layer 1: re-apply verifiability tiers (idempotent) so matrices built
+    # before the tier feature existed still gain tiers at reconciliation.
+    return apply_verifiability_tiers(matrix)
 
 
 def _criterion_reconciliation_result(

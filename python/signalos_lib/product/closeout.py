@@ -126,9 +126,15 @@ def build_closeout(
         "skipped": 0,
     }
     acceptance_ready = False
+    # Layer 1 (mechanical verification): the contract-verification metric --
+    # how much of the acceptance contract is machine-proven. Purely additive.
+    verifiability_summary: dict[str, Any] | None = None
     if acceptance_matrix is not None:
         readiness = check_closure_readiness(acceptance_matrix)
         acceptance_ready = bool(readiness.get("ready"))
+        vs = acceptance_matrix.get("verifiability_summary")
+        if isinstance(vs, dict):
+            verifiability_summary = vs
         acceptance_summary = {
             "total": (
                 readiness.get("passed", 0)
@@ -184,6 +190,7 @@ def build_closeout(
         "deploy_status": deploy_status,
         "delivery_ownership": delivery_ownership,
         "acceptance_summary": acceptance_summary,
+        "verifiability_summary": verifiability_summary,
         "known_limitations": known_limitations,
         "how_to_run": how_to_run,
         "what_next": what_next,
@@ -461,6 +468,12 @@ def generate_closeout_markdown(closeout: dict[str, Any]) -> str:
             f"Failed: {acc['failed']}, Pending: {acc['pending']}, "
             f"Skipped: {acc['skipped']}"
         )
+        verifiability = closeout.get("verifiability_summary") or {}
+        if verifiability.get("mechanical_pct") is not None:
+            lines.append(
+                f"- {verifiability['mechanical_pct']}% of acceptance criteria "
+                f"are mechanically verified"
+            )
         lines.append("")
 
     ownership = closeout.get("delivery_ownership") or {}
@@ -662,6 +675,15 @@ def _generate_product_summary(closeout: dict[str, Any]) -> str:
             f"Passed {acc['passed']} of {acc['total']} criteria "
             f"({acc['failed']} failed, {acc['pending']} pending, "
             f"{acc['skipped']} skipped)."
+        )
+        lines.append("")
+
+    # Layer 1: the contract-verification metric
+    verifiability = closeout.get("verifiability_summary") or {}
+    if verifiability.get("mechanical_pct") is not None:
+        lines.append(
+            f"{verifiability['mechanical_pct']}% of acceptance criteria "
+            f"are mechanically verified."
         )
         lines.append("")
 

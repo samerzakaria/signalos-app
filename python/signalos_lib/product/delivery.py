@@ -58,6 +58,13 @@ from .generation import (
 )
 from .agent_packets import build_agent_packet, write_agent_packet
 from .assumptions import record_assumptions, write_assumptions
+from .evidence_freshness import (
+    snapshot_workspace,
+    verify_workspace_snapshot,
+    workspace_snapshot_files,
+    write_freshness_report,
+)
+from .test_quality import analyze_test_quality, write_test_quality_report
 from .capabilities import apply_capability_choices, build_capability_profile
 from .intent import extract_product_intent, refine_intent_with_llm, write_intent
 from .lifecycle import (
@@ -494,7 +501,10 @@ def run_delivery(
     design_deps: dict[str, str] = {}
     _emit_progress("design", "select_system", "running", "Selecting product design system")
     try:
-        design = build_design_system(intent, actual_profile, bp)
+        # root threads product-level key availability AND the competitive-
+        # context block (.signalos/product/COMPETITORS.json) into the design
+        # architect prompt; absent file keeps the prompt byte-identical.
+        design = build_design_system(intent, actual_profile, bp, root=repo_root)
         write_design(design, signalos_dir)
         design_deps = get_design_dependencies(design)
         _merge_design_deps(repo_root, design_deps)
@@ -952,6 +962,32 @@ def run_delivery(
                 val_result = final_val
                 write_validation_result(val_result, signalos_dir)
 
+            # Repair cycles regenerate/add files AFTER the initial trace
+            # linking (4b), so files written during repair would otherwise
+            # show as neither covered nor unlinked in the trace report.
+            # Re-link from the final on-disk state (same helper, merged
+            # files_written) so the traceability view at reconciliation
+            # reflects what is actually being delivered.
+            repair_written = sorted({
+                str(path)
+                for record in repair_result.get("repairs", []) or []
+                for path in record.get("files_written", []) or []
+            })
+            if repair_written and isinstance(manifest, dict) and acceptance:
+                _refresh_manifest_hashes(repo_root, manifest)
+                merged_written = sorted(
+                    set(
+                        str(p)
+                        for p in (agent_result or {}).get("files_written") or []
+                    )
+                    | set(repair_written)
+                )
+                trace_manifest = _link_acceptance_traces(
+                    repo_root, manifest, acceptance,
+                    {"files_written": merged_written},
+                )
+                write_generation_manifest(manifest, signalos_dir)
+
         # #23 fake-green hard block: if generation produced no real files, the
         # trivially-building scaffold stub must NOT be allowed to report a green
         # build. Override the persisted validation result so build_status is
@@ -960,6 +996,30 @@ def run_delivery(
         if generation_blocked and isinstance(val_result, dict):
             val_result = _mark_generation_failed(val_result, generation_blocker)
             write_validation_result(val_result, signalos_dir)
+
+        # Layer 2 snapshot point 1/2 (validation). This sits HERE -- after
+        # the repair loop has fully finished and the FINAL validation verdict
+        # is adopted -- because the repair loop legitimately rewrites product
+        # files between its internal validation cycles; hashing any earlier
+        # would false-positive at closeout on a normal repair flow. The
+        # snapshot binds VALIDATION_RESULT.json to the exact bytes validated.
+        if isinstance(val_result, dict):
+            try:
+                # The trace manifest (manifest records + agent/repair extras)
+                # is the widest honest "generated files" view, so it defines
+                # the freshness scope when available.
+                val_result["workspace_snapshot"] = snapshot_workspace(
+                    repo_root,
+                    workspace_snapshot_files(
+                        repo_root,
+                        trace_manifest
+                        if trace_manifest is not None
+                        else (manifest if isinstance(manifest, dict) else None),
+                    ),
+                )
+                write_validation_result(val_result, signalos_dir)
+            except Exception as exc:
+                warnings.append(f"validation workspace snapshot failed: {exc}")
 
         closure = check_product_closure(val_result)
         if generation_blocked and generation_blocker not in closure.get("blockers", []):
@@ -1041,6 +1101,27 @@ def run_delivery(
     else:
         ux_proof = run_ux_proof(repo_root, actual_profile, port=None)
         _emit_progress("proof", "ux", "skipped", ux_proof.get("skip_reason", "UX proof skipped"))
+
+    # Layer 2 snapshot point 2/2 (proof). This sits HERE -- after runtime AND
+    # UX proof have both finished -- because proof is the LAST pipeline
+    # activity that observes the product files as evidence; every later phase
+    # (reconciliation, review, deploy decision, closeout) only reads/writes
+    # .signalos/** evidence, which the snapshot excludes. This is therefore
+    # the LATEST snapshot and the one the closeout freshness check verifies
+    # against: any generated-file drift after this point means the proven
+    # artifact is not the delivered one.
+    try:
+        runtime_proof["workspace_snapshot"] = snapshot_workspace(
+            repo_root,
+            workspace_snapshot_files(
+                repo_root,
+                trace_manifest
+                if trace_manifest is not None
+                else (manifest if isinstance(manifest, dict) else None),
+            ),
+        )
+    except Exception as exc:
+        warnings.append(f"proof workspace snapshot failed: {exc}")
 
     try:
         write_proof_artifacts(runtime_proof, ux_proof, repo_root)
@@ -1129,6 +1210,34 @@ def run_delivery(
         # under strict gate-compliance an uncovered criterion blocks; under
         # warn it is recorded. Advisory file->criteria findings never block.
         review_result = _apply_traceability_review(review_result, trace_report)
+        # Layer 3: deterministic test-quality report, folded through the SAME
+        # review channel as traceability (strict blocks, warn records; weak
+        # criterion links are advisory-only in every mode). The trace manifest
+        # (manifest records + agent extras) is preferred so agent-written
+        # tests outside the manifest are analyzed too.
+        try:
+            test_quality_report = analyze_test_quality(
+                repo_root,
+                (
+                    trace_manifest
+                    if trace_manifest is not None
+                    else (manifest if isinstance(manifest, dict) else None)
+                ),
+                acceptance_matrix=acceptance,
+            )
+            write_test_quality_report(test_quality_report, signalos_dir)
+            review_result = _apply_test_quality_review(
+                review_result, test_quality_report,
+            )
+        except Exception as exc:
+            errors.append(f"test quality analysis failed: {exc}")
+        # Layer 1: surface the contract-verification metric ("fraction of the
+        # contract that is machine-proven") on the review verdict. Purely
+        # informational -- never affects the verdict.
+        if acceptance and isinstance(
+            acceptance.get("verifiability_summary"), dict,
+        ):
+            review_result["verifiability"] = acceptance["verifiability_summary"]
         write_review_result(review_result, signalos_dir)
         review_blocking = bool(review_result.get("blocking"))
         # Findings surface in REVIEW_RESULT.json (always) and, when the verdict
@@ -1194,6 +1303,39 @@ def run_delivery(
         errors.append(f"review readiness artifact failed: {exc}")
 
     # ------------------------------------------------------------------
+    # 7c. EVIDENCE FRESHNESS verification (Layer 2) -- before write_closeout:
+    # the evidence must still be TRUE at delivery. Re-hash the generated
+    # files and compare against the LATEST snapshot (proof if captured,
+    # else validation). Drift after proof means the proven artifact is not
+    # the artifact being delivered. Uses the SAME gate-compliance rule-mode
+    # resolution as the review gate: strict blocks, warn records.
+    # ------------------------------------------------------------------
+    freshness_report: dict | None = None
+    try:
+        latest_snapshot = None
+        if isinstance(runtime_proof, dict):
+            latest_snapshot = runtime_proof.get("workspace_snapshot")
+        if latest_snapshot is None and isinstance(val_result, dict):
+            latest_snapshot = val_result.get("workspace_snapshot")
+        if latest_snapshot:
+            from .review_gate import _resolve_gate_mode
+
+            freshness_report = verify_workspace_snapshot(
+                repo_root,
+                latest_snapshot,
+                workspace_snapshot_files(
+                    repo_root,
+                    trace_manifest
+                    if trace_manifest is not None
+                    else (manifest if isinstance(manifest, dict) else None),
+                ),
+            )
+            freshness_report["mode"] = _resolve_gate_mode(repo_root, None)
+            write_freshness_report(freshness_report, signalos_dir)
+    except Exception as exc:
+        errors.append(f"evidence freshness verification failed: {exc}")
+
+    # ------------------------------------------------------------------
     # 8. CLOSEOUT phase
     # ------------------------------------------------------------------
     _emit_progress("closeout", "handoff", "running", "Writing closeout and handoff")
@@ -1201,6 +1343,10 @@ def run_delivery(
         closeout = build_closeout(
             repo_root, product_name, actual_profile, blueprint_id,
         )
+        # Layer 2: stale evidence fails the closeout CLOSED under strict
+        # gate-compliance (drifted files listed); under warn it is recorded
+        # in known_limitations without failing closed.
+        closeout = _apply_evidence_freshness(closeout, freshness_report)
         if "readiness_result" in locals() and not readiness_result.get("ready", False):
             closeout.setdefault("known_limitations", []).extend(
                 readiness_result.get("errors", [])
@@ -1405,6 +1551,93 @@ def _apply_traceability_review(
             review_result["status"] = "blocked"
             review_result["blocking"] = True
     return review_result
+
+
+def _apply_test_quality_review(
+    review_result: dict | None,
+    quality_report: dict | None,
+) -> dict | None:
+    """Layer 3: fold the deterministic test-quality report into the Review
+    gate verdict -- the exact same asymmetric contract as traceability (#6):
+
+    - vacuous tests / assertion-free files are CONCRETE evidence that the
+      test suite does not test what it claims: BLOCKING under strict
+      gate-compliance, recorded as findings under warn.
+    - weak criterion links are ADVISORY ONLY in every mode: the check is a
+      coarse string-level heuristic (first cut) that can under-detect
+      legitimate indirect coverage, so it must never block.
+    """
+    if not review_result or not quality_report:
+        return review_result
+
+    vacuous = list(quality_report.get("vacuous_tests") or [])
+    assertion_free = list(quality_report.get("assertion_free_files") or [])
+    weak = list(quality_report.get("weak_criterion_links") or [])
+
+    checks = review_result.setdefault("checks", {})
+    checks["test_quality"] = not (vacuous or assertion_free)
+
+    findings = review_result.setdefault("findings", [])
+    findings.extend(
+        f"test-quality: vacuous test '{item.get('test_name')}' in "
+        f"{item.get('file')} contains no assertion"
+        for item in vacuous
+    )
+    findings.extend(
+        f"test-quality: {path} is a test file with no assertions"
+        for path in assertion_free
+    )
+    findings.extend(
+        f"test-quality (advisory): {item.get('file')} traces to "
+        f"{item.get('acceptance_id')} but never references the criterion's "
+        f"entity/operation words ({', '.join(item.get('missing_words') or [])})"
+        for item in weak
+    )
+
+    if vacuous or assertion_free:
+        if review_result.get("mode") == "warn":
+            if review_result.get("status") == "pass":
+                review_result["status"] = "warn"
+        else:  # strict (and the default-safe fallback)
+            review_result["status"] = "blocked"
+            review_result["blocking"] = True
+    return review_result
+
+
+def _apply_evidence_freshness(
+    closeout: dict,
+    freshness_report: dict | None,
+) -> dict:
+    """Layer 2: fold the closeout-time freshness verdict into the closeout.
+
+    The report (always attached as ``closeout["evidence_freshness"]`` for
+    honest evidence, ``None`` when no snapshot existed) is consequential only
+    when NOT fresh:
+
+    - strict gate-compliance: BLOCKING review-gate-style finding -- the
+      drifted files are listed in known_limitations and closure_level is
+      downgraded to "partial" (same downgrade contract as the review gate).
+    - warn: the same finding is recorded in known_limitations only.
+    """
+    closeout["evidence_freshness"] = freshness_report
+    if not freshness_report or freshness_report.get("fresh", True):
+        return closeout
+
+    drifted = (
+        [f"changed: {p}" for p in freshness_report.get("changed", [])]
+        + [f"added: {p}" for p in freshness_report.get("added", [])]
+        + [f"removed: {p}" for p in freshness_report.get("removed", [])]
+    )
+    closeout.setdefault("known_limitations", []).append(
+        "evidence is stale: files changed after proof ("
+        + "; ".join(drifted)
+        + ")"
+    )
+    if freshness_report.get("mode") != "warn" and closeout.get(
+        "closure_level",
+    ) in ("ready", "closeable", None):
+        closeout["closure_level"] = "partial"
+    return closeout
 
 
 def _dispatch_agent_loop_build(
