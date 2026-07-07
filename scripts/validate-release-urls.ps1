@@ -11,6 +11,16 @@ $ExpectedWindowsAsset = "Foundry_${ExpectedVersion}_x64-setup.exe"
 $Evidence = New-Object System.Collections.Generic.List[object]
 $Failures = New-Object System.Collections.Generic.List[string]
 
+function Get-ReleaseManifestNameForVersion {
+  param([string]$Version)
+  if ($Version -like "0.*" -or $Version -match "-[A-Za-z]") {
+    return "beta.json"
+  }
+  return "latest.json"
+}
+
+$ExpectedManifestName = Get-ReleaseManifestNameForVersion $ExpectedVersion
+
 function Add-Evidence {
   param([string]$Check, [string]$Result, [string]$Status = "pass")
   $Evidence.Add([pscustomobject]@{
@@ -50,10 +60,15 @@ function Test-RemoteUrl {
       return
     }
     if ($Url -match "/update-manifest/(beta|latest)\.json$") {
+      $manifestName = "$($Matches[1]).json"
       try {
         $manifest = $response.Content | ConvertFrom-Json
-        if ([string]$manifest.version -ne $ExpectedVersion) {
+        if ($manifestName -eq $ExpectedManifestName -and [string]$manifest.version -ne $ExpectedVersion) {
           Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url, but remote version '$($manifest.version)' does not match package.json '$ExpectedVersion'." "fail"
+          return
+        }
+        if ($manifestName -ne $ExpectedManifestName) {
+          Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url; remote version $($manifest.version) for non-active release channel $manifestName."
           return
         }
         Add-Evidence $Kind "HTTP $($response.StatusCode) from $Url; remote version $($manifest.version)."

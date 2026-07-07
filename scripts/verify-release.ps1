@@ -31,15 +31,24 @@ function Invoke-Step {
   param(
     [string]$Name,
     [string]$WorkingDirectory,
-    [string]$Command,
-    [string[]]$Arguments = @()
+    [string]$Executable,
+    [string[]]$StepArguments = @()
   )
   Write-Host "[RUN ] $Name"
+  $resolvedExecutable = $Executable
+  if ($Executable -eq "npm") {
+    $npmCmd = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if ($npmCmd) { $resolvedExecutable = $npmCmd.Source }
+  }
   Push-Location $WorkingDirectory
   try {
-    & $Command @Arguments
+    if ($StepArguments.Count -gt 0) {
+      & $resolvedExecutable @StepArguments
+    } else {
+      & $resolvedExecutable
+    }
     if ($LASTEXITCODE -ne 0) {
-      throw "$Command exited with code $LASTEXITCODE"
+      throw "$Executable exited with code $LASTEXITCODE"
     }
   } finally {
     Pop-Location
@@ -168,7 +177,7 @@ Invoke-Check "Release workflows expose non-signing proof gates" {
   if ($release -notmatch "github\.event\.inputs\.version") {
     throw "Release workflow must honor manual dispatch version input."
   }
-  if ($release -notmatch "tag_name:\s*\$\{\{\s*steps\.channel\.outputs\.tag\s*\}\}") {
+  if ($release -notmatch 'gh release create "\$TAG"' -or $release -notmatch 'gh release upload "\$TAG"') {
     throw "Release uploads must use the resolved release tag."
   }
   $pages = Get-Content $pagesPath -Raw
@@ -177,14 +186,14 @@ Invoke-Check "Release workflows expose non-signing proof gates" {
   }
 }
 
-Invoke-Step "Frontend build" $Root "npm" @("run", "build")
-Invoke-Step "Frontend tests" $Root "npm" @("run", "test", "--", "--run")
-Invoke-Step "Python safety tests" $Root "python" @("-m", "pytest", "python")
-Invoke-Step "Rust compile check" (Join-Path $Root "src-tauri") "cargo" @("check")
-Invoke-Step "Rust tests" (Join-Path $Root "src-tauri") "cargo" @("test")
+Invoke-Step -Name "Frontend build" -WorkingDirectory $Root -Executable "npm" -StepArguments @("run", "build")
+Invoke-Step -Name "Frontend tests" -WorkingDirectory $Root -Executable "npm" -StepArguments @("run", "test", "--", "--run")
+Invoke-Step -Name "Python safety tests" -WorkingDirectory $Root -Executable "python" -StepArguments @("-m", "pytest", "python")
+Invoke-Step -Name "Rust compile check" -WorkingDirectory (Join-Path $Root "src-tauri") -Executable "cargo" -StepArguments @("check")
+Invoke-Step -Name "Rust tests" -WorkingDirectory (Join-Path $Root "src-tauri") -Executable "cargo" -StepArguments @("test")
 
 if ($BuildInstaller) {
-  Invoke-Step "Build Tauri installer bundle" $Root "cargo" @("tauri", "build")
+  Invoke-Step -Name "Build Tauri installer bundle" -WorkingDirectory $Root -Executable "cargo" -StepArguments @("tauri", "build")
   Invoke-Check "Installer artifact exists" {
     $bundle = Join-Path $Root "src-tauri\target\release\bundle"
     if (-not (Test-Path $bundle)) { throw "Missing bundle directory $bundle" }
@@ -203,11 +212,11 @@ if ($SmokeInstalledBuild) {
     "scripts\smoke-installed-build.ps1"
   )
   if ($InstallNsisSmoke) { $smokeArgs += "-InstallNsis" }
-  Invoke-Step "Unsigned installed-build smoke" $Root "powershell" $smokeArgs
+  Invoke-Step -Name "Unsigned installed-build smoke" -WorkingDirectory $Root -Executable "powershell" -StepArguments $smokeArgs
 }
 
 if ($InstalledRuntimeSmoke) {
-  Invoke-Step "Installer-only runtime smoke" $Root "powershell" @(
+  Invoke-Step -Name "Installer-only runtime smoke" -WorkingDirectory $Root -Executable "powershell" -StepArguments @(
     "-NoProfile",
     "-ExecutionPolicy",
     "Bypass",
@@ -225,7 +234,7 @@ if ($LiveProviderValidation) {
     "scripts\validate-live-providers.ps1"
   )
   if ($RequireCloudProviderKeys) { $providerArgs += "-RequireCloudKeys" }
-  Invoke-Step "Live provider validation" $Root "powershell" $providerArgs
+  Invoke-Step -Name "Live provider validation" -WorkingDirectory $Root -Executable "powershell" -StepArguments $providerArgs
 }
 
 if ($ValidateRemoteReleaseUrls) {
@@ -237,7 +246,7 @@ if ($ValidateRemoteReleaseUrls) {
     "scripts\validate-release-urls.ps1"
   )
   if ($RequireRemoteReleaseUrls) { $urlArgs += "-RequireRemote" }
-  Invoke-Step "Release URL validation" $Root "powershell" $urlArgs
+  Invoke-Step -Name "Release URL validation" -WorkingDirectory $Root -Executable "powershell" -StepArguments $urlArgs
 }
 
 if ($Failures.Count -gt 0) {

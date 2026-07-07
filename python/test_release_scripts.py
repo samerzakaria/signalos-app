@@ -97,12 +97,20 @@ class ReleaseScriptTests(unittest.TestCase):
 
     def test_verify_release_manifest_channel_matches_release_workflow(self) -> None:
         script = (ROOT / "scripts" / "verify-release.ps1").read_text(encoding="utf-8")
+        validator = (ROOT / "scripts" / "validate-release-urls.ps1").read_text(encoding="utf-8")
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
         self.assertIn("Get-ReleaseManifestNameForVersion", script)
         self.assertIn('return "beta.json"', script)
         self.assertIn('return "latest.json"', script)
         self.assertNotIn('$manifestNames = @("beta.json", "latest.json")', script)
+        self.assertIn('gh release create "\\$TAG"', script)
+        self.assertIn('gh release upload "\\$TAG"', script)
+        self.assertNotIn('tag_name:\\s*\\$\\{\\{\\s*steps\\.channel\\.outputs\\.tag\\s*\\}\\}', script)
+        self.assertNotIn('Invoke-Step "Frontend build"', script)
+        self.assertIn('Invoke-Step -Name "Frontend build"', script)
+        self.assertIn("$ExpectedManifestName = Get-ReleaseManifestNameForVersion $ExpectedVersion", validator)
+        self.assertIn("non-active release channel", validator)
         self.assertIn('echo "channel=beta"', release)
         self.assertIn('echo "channel=stable"', release)
 
