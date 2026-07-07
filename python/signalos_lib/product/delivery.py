@@ -29,6 +29,7 @@ from .blueprints.registry import (
     match_blueprint,
 )
 from .closeout import build_closeout, write_closeout, write_handoff_files
+from .budgets import build_execution_budget_policy, resolve_repair_cycle_budget
 from datetime import datetime, timezone
 from .deploy import (
     make_deploy_decision,
@@ -125,6 +126,86 @@ def _emit_progress(
 # Profiles the deterministic local renderer can build with no API key.
 _LOCAL_RENDERABLE_PROFILES = {"react-vite", "generic", "fastapi-api"}
 
+_AGENT_LOOP_ALLOWED_PATHS: dict[str, list[str]] = {
+    "react-vite": [
+        "src/**",
+        "public/**",
+        "tests/**",
+        "index.html",
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "vite.config.*",
+        "tsconfig*.json",
+        "core/execution/BUILD_EVIDENCE.md",
+    ],
+    "fastapi-api": [
+        "src/**",
+        "tests/**",
+        "pyproject.toml",
+        "requirements*.txt",
+        "pytest.ini",
+        "README.md",
+        "core/execution/BUILD_EVIDENCE.md",
+    ],
+}
+
+_DEFAULT_AGENT_LOOP_ALLOWED_PATHS = [
+    "src/**",
+    "app/**",
+    "pages/**",
+    "components/**",
+    "lib/**",
+    "server/**",
+    "api/**",
+    "public/**",
+    "tests/**",
+    "test/**",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "pyproject.toml",
+    "requirements*.txt",
+    "pytest.ini",
+    "README.md",
+    "core/execution/BUILD_EVIDENCE.md",
+]
+
+
+def _agent_loop_allowed_paths(profile: str) -> list[str]:
+    return list(
+        _AGENT_LOOP_ALLOWED_PATHS.get(profile, _DEFAULT_AGENT_LOOP_ALLOWED_PATHS)
+    )
+
+
+def _legacy_generation_dispatch_packet(
+    agent_packet: dict | None,
+    generation_packet: dict | None,
+) -> dict:
+    """Wrap legacy file-spec generation in the current agent run id.
+
+    The production scope artifact stays acceptance-first, but deterministic
+    local fallback and explicit chunked mode still require ``generation``. This
+    wrapper keeps RESULT.json in the same agent-run directory instead of
+    creating a second run keyed by the raw generation packet.
+    """
+
+    if agent_packet:
+        packet = dict(agent_packet)
+    else:
+        packet = {}
+    if generation_packet:
+        packet["generation"] = generation_packet
+    if not packet and generation_packet:
+        packet = dict(generation_packet)
+    if agent_packet and generation_packet:
+        packet["run_id"] = str(
+            agent_packet.get("run_id") or generation_packet.get("run_id")
+        )
+    return packet
+
 
 def _choose_dispatch_route(
     agent_mode: str,
@@ -173,7 +254,7 @@ def run_delivery(
     deploy: str = "none",
     yes: bool = False,
     dry_run: bool = False,
-    max_repair_cycles: int = 3,
+    max_repair_cycles: int | None = None,
     agent_mode: str = "auto",
     json_output: bool = False,
     technologies: list[str] | None = None,
@@ -524,6 +605,7 @@ def run_delivery(
     manifest = None
     generation_packet = None
     agent_packet = None
+    execution_budget: dict[str, Any] | None = None
     _emit_progress("generation", "manifest", "running", "Preparing generation manifest")
     try:
         if feature_gate_blocker:
@@ -559,6 +641,9 @@ def run_delivery(
         manifest = load_generation_manifest(repo_root / ".signalos")
 
         tasks = _build_agent_tasks_from_acceptance(acceptance)
+        execution_budget = build_execution_budget_policy(
+            repair_cycle_budget=max_repair_cycles,
+        )
         agent_packet = build_agent_packet(
             repo_root=repo_root,
             intent=intent,
@@ -567,10 +652,12 @@ def run_delivery(
             profile=actual_profile,
             wave="1",
             tasks=tasks,
-            allowed_paths=generation_packet.get("allowed_paths", []),
+            allowed_paths=_agent_loop_allowed_paths(actual_profile),
             forbidden_actions=None,
             generation_packet=generation_packet,
             ownership_map=ownership_map,
+            include_generation=False,
+            execution_budget=execution_budget,
         )
         write_agent_packet(agent_packet, repo_root)
 
@@ -598,7 +685,11 @@ def run_delivery(
                     "blueprint": blueprint_id,
                 },
                 "cycle": 0,
-                "max_cycles": 3,
+                "max_cycles": (
+                    execution_budget["repair_cycle_budget"]
+                    if execution_budget
+                    else resolve_repair_cycle_budget(max_repair_cycles)
+                ),
             }
             review_state_path = signalos_dir / "product" / "REVIEW_STATE.json"
             review_state_path.write_text(
@@ -632,7 +723,6 @@ def run_delivery(
                     ["security"] if intent.get("security_constraints") else None
                 ),
             )
-            packet_for_agent = agent_packet or generation_packet
             # A founder WITH a key gets the governed AgentLoop path. Without a
             # key we stay on the deterministic, git-free local parallel path
             # for renderable profiles. The legacy per-file splitter is only
@@ -641,6 +731,11 @@ def run_delivery(
                 agent_mode,
                 actual_profile,
                 llm_available=is_llm_available(repo_root),
+            )
+            packet_for_agent = (
+                agent_packet
+                if route == "agent-loop" and agent_packet is not None
+                else _legacy_generation_dispatch_packet(agent_packet, generation_packet)
             )
 
             def _dispatch_once(_task: Any) -> dict:
@@ -700,25 +795,33 @@ def run_delivery(
                 if manifest:
                     _refresh_manifest_hashes(repo_root, manifest)
                     write_generation_manifest(manifest, signalos_dir)
-                generation_validation = validate_generation_output(
-                    repo_root, generation_packet,
-                )
-                if not generation_validation.get("valid", False):
-                    errors.extend(generation_validation.get("violations", []))
-                    errors.extend(
-                        f"missing generated file: {path}"
-                        for path in generation_validation.get("files_missing", [])
+                if route == "agent-loop":
+                    real_files = _agent_loop_produced_real_files(
+                        repo_root,
+                        agent_result,
                     )
-                # Even a "completed" status is fake-green if the expected files
-                # never landed on disk (empty files_written / everything missing).
-                if not _generation_produced_real_files(
-                    repo_root, generation_packet, agent_result,
-                ):
+                else:
+                    generation_validation = validate_generation_output(
+                        repo_root, generation_packet,
+                    )
+                    if not generation_validation.get("valid", False):
+                        errors.extend(generation_validation.get("violations", []))
+                        errors.extend(
+                            f"missing generated file: {path}"
+                            for path in generation_validation.get("files_missing", [])
+                        )
+                    # Legacy/local paths still promise the generated file specs.
+                    real_files = _generation_produced_real_files(
+                        repo_root, generation_packet, agent_result,
+                    )
+                # Even a "completed" status is fake-green if no real product
+                # source/test files landed on disk.
+                if not real_files:
                     generation_blocked = True
                     generation_blocker = (
                         "generation produced no real files: the build agent "
-                        "reported completion but the expected source files are "
-                        "absent on disk"
+                        "reported completion but no product source or test files "
+                        "were written"
                     )
                     errors.append(generation_blocker)
                 update_delivery_phase(repo_root, "generated", "complete")
@@ -821,7 +924,7 @@ def run_delivery(
                 repo_root=repo_root,
                 validation_result=val_result,
                 profile=actual_profile,
-                max_cycles=max_repair_cycles,
+                max_cycles=resolve_repair_cycle_budget(max_repair_cycles),
                 agent_mode=agent_mode,
                 governance=repair_governance,
                 validate_fn=_repair_validate,
@@ -1219,6 +1322,7 @@ def _dispatch_agent_loop_build(
         }
 
     events: list[dict[str, Any]] = []
+    tool_call_budget = _agent_loop_tool_budget_from_packet(packet)
 
     def _capture(ev: dict[str, Any]) -> None:
         events.append(dict(ev))
@@ -1241,6 +1345,7 @@ def _dispatch_agent_loop_build(
                 repo_root=repo_root,
                 enforcement_provider=FileEnforcementProvider(),
                 run_id=run_id,
+                tool_call_limit=tool_call_budget,
                 emit=_capture,
                 execution_context="delivery",
                 active_gate="G4",
@@ -1259,6 +1364,7 @@ def _dispatch_agent_loop_build(
             files_written=[],
             events=events,
             errors=[str(exc)],
+            tool_call_budget=tool_call_budget,
         )
         return {
             "status": "failed",
@@ -1277,14 +1383,13 @@ def _dispatch_agent_loop_build(
     if result.status != "completed":
         status = "failed"
         errors.append(result.error or f"AgentLoop ended with status {result.status}")
-    elif not _generation_produced_real_files(
+    elif not _agent_loop_produced_real_files(
         repo_root,
-        _generation_packet_from_agent_packet(packet),
         {"files_written": files_written},
     ):
         status = "failed"
         errors.append(
-            "AgentLoop completed without producing expected product source, registration, or test files."
+            "AgentLoop completed without producing real product source or test files."
         )
 
     _write_build_evidence(
@@ -1296,6 +1401,7 @@ def _dispatch_agent_loop_build(
         events=events,
         errors=errors,
         tool_calls_made=result.tool_calls_made,
+        tool_call_budget=tool_call_budget,
     )
     return {
         "status": status,
@@ -1303,6 +1409,7 @@ def _dispatch_agent_loop_build(
         "files_written": files_written,
         "errors": errors,
         "tool_calls_made": result.tool_calls_made,
+        "tool_call_budget": tool_call_budget,
     }
 
 
@@ -1329,7 +1436,11 @@ def _signed_prior_gates_for_g4(repo_root: Path) -> tuple[list[int], list[str]]:
                 for item in result.get("blockers", [])
                 if item.get("message")
             ]
-            detail = "; ".join(messages) if messages else "gate is not signed and audit-linked"
+            detail = (
+                "; ".join(messages)
+                if messages
+                else "gate is not signed and audit-linked"
+            )
             blockers.append(f"{gate} must be signed before AgentLoop build: {detail}")
     return signed, blockers
 
@@ -1343,7 +1454,84 @@ def _generation_packet_from_agent_packet(packet: dict | None) -> dict | None:
     generation = packet.get("generation")
     if isinstance(generation, dict):
         return generation
-    return packet
+    return packet if packet.get("file_specs") else None
+
+
+def _agent_loop_tool_budget_from_packet(packet: dict | None) -> int:
+    if isinstance(packet, dict):
+        budget = packet.get("execution_budget")
+        if isinstance(budget, dict):
+            raw = budget.get("tool_call_budget")
+            if raw is not None:
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    pass
+    from .budgets import resolve_agent_loop_tool_budget
+
+    return resolve_agent_loop_tool_budget()
+
+
+def _agent_loop_produced_real_files(
+    repo_root: Path,
+    agent_result: dict | None,
+) -> bool:
+    written = (agent_result or {}).get("files_written") or []
+    for rel in written:
+        rel_str = str(rel).replace("\\", "/").lstrip("/")
+        if _is_real_product_file(rel_str) and (repo_root / rel_str).is_file():
+            return True
+    return False
+
+
+def _is_real_product_file(rel_path: str) -> bool:
+    normalized = rel_path.replace("\\", "/").lstrip("/")
+    if not normalized or normalized.startswith(
+        (".signalos/", ".git/", "node_modules/")
+    ):
+        return False
+    if normalized in {
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "pyproject.toml",
+        "requirements.txt",
+        "README.md",
+    }:
+        return False
+    if normalized.startswith(
+        (
+            "src/",
+            "tests/",
+            "test/",
+            "app/",
+            "pages/",
+            "components/",
+            "lib/",
+            "server/",
+            "api/",
+            "public/",
+        )
+    ):
+        return True
+    return normalized.endswith(
+        (
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".vue",
+            ".svelte",
+            ".go",
+            ".rs",
+            ".java",
+            ".cs",
+            ".css",
+            ".html",
+        )
+    )
 
 
 def _build_agent_loop_message(
@@ -1352,21 +1540,45 @@ def _build_agent_loop_message(
     prompt: str,
     profile: str,
 ) -> str:
-    packet_json = json.dumps(packet, indent=2, ensure_ascii=False)
+    prompt_packet = _agent_loop_prompt_packet(packet)
+    packet_json = json.dumps(prompt_packet, indent=2, ensure_ascii=False)
     governance_json = json.dumps(governance, indent=2, ensure_ascii=False)
     return (
         "Execute the approved G4 build through governed tools only.\n\n"
         f"Original product request:\n{prompt}\n\n"
         f"Profile: {profile}\n\n"
+        "Output contract:\n"
+        "- Treat the acceptance_matrix as the required product outcome.\n"
+        "- Choose the file structure, component model, data model, and styling "
+        "needed to satisfy the acceptance matrix.\n"
+        "- Do not wait for a file-by-file template. The packet intentionally "
+        "does not prescribe implementation files for production AgentLoop runs.\n"
+        "- Use signed architecture, design, scope, and governance context as "
+        "constraints, not as a CRUD scaffold.\n\n"
         "Rules:\n"
         "- Read the repo and signed artifacts before writing.\n"
         "- Write or update matching tests before implementation files.\n"
         "- Stay inside allowed paths and trust-tier policy.\n"
+        "- Run the validation commands and iterate until they pass or the "
+        "execution budget is exhausted.\n"
         "- Record exact blockers instead of guessing or fabricating evidence.\n"
         "- Update core/execution/BUILD_EVIDENCE.md before ending the turn.\n\n"
         f"Governance instructions:\n```json\n{governance_json}\n```\n\n"
-        f"Agent packet:\n```json\n{packet_json}\n```\n"
+        f"Acceptance-first agent packet:\n```json\n{packet_json}\n```\n"
     )
+
+
+def _agent_loop_prompt_packet(packet: dict) -> dict:
+    """Remove legacy per-file generation specs from AgentLoop prompt context."""
+
+    sanitized = json.loads(json.dumps(packet, ensure_ascii=False))
+    generation = sanitized.get("generation")
+    if isinstance(generation, dict):
+        for key in ("file_specs", "component_manifest", "allowed_paths"):
+            generation.pop(key, None)
+        if not generation:
+            sanitized.pop("generation", None)
+    return sanitized
 
 
 def _write_agent_loop_handoff(
@@ -1410,6 +1622,7 @@ def _write_build_evidence(
     events: list[dict[str, Any]],
     errors: list[str],
     tool_calls_made: int | None = None,
+    tool_call_budget: int | None = None,
 ) -> None:
     path = repo_root / "core" / "execution" / "BUILD_EVIDENCE.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1423,6 +1636,8 @@ def _write_build_evidence(
     ]
     if tool_calls_made is not None:
         lines.append(f"- tool_calls_made: {tool_calls_made}")
+    if tool_call_budget is not None:
+        lines.append(f"- tool_call_budget: {tool_call_budget}")
     lines.extend(["", "## Files Written", ""])
     if files_written:
         lines.extend(f"- `{path}`" for path in files_written)

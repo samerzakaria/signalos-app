@@ -59,7 +59,7 @@ _GOOD_BRIEF_JSON = (
 )
 
 
-def _orch(root, events, signed):
+def _orch(root, events, signed, *, max_rework=None):
     def fake_sign(repo_root, gate, signer, role, verdict, conditions):
         signed.append((gate, role, verdict))
         return [f"{gate}.md"]
@@ -67,6 +67,7 @@ def _orch(root, events, signed):
         Path(root), _EndAdapter(), events.append,
         enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
         sign_fn=fake_sign, prompt="build task management",
+        max_rework=max_rework,
     )
 
 
@@ -160,12 +161,12 @@ class TestGateWalk(unittest.TestCase):
     def test_request_changes_reworks_bounded(self):
         with tempfile.TemporaryDirectory() as d:
             events, signed = [], []
-            orch = _orch(d, events, signed)
+            orch = _orch(d, events, signed, max_rework=3)
             orch.start()
             r1 = orch.apply_verdict("request-changes", "tighten scope")
             self.assertEqual(r1["status"], "reworked")
             self.assertEqual(r1["cycle"], 1)
-            # exceed max_rework (default 3): cycles 2,3 ok, 4th stops
+            # exceed explicit max_rework=3: cycles 2,3 ok, 4th stops
             orch.apply_verdict("request-changes", "again")
             orch.apply_verdict("request-changes", "again")
             r4 = orch.apply_verdict("request-changes", "again")

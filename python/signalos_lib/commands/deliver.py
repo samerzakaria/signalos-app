@@ -31,7 +31,15 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser:
     )
     p.add_argument("--yes", action="store_true")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--max-repair-cycles", type=int, default=3)
+    p.add_argument(
+        "--max-repair-cycles",
+        type=int,
+        default=None,
+        help=(
+            "Override the governed repair-cycle budget. Defaults to "
+            "SIGNALOS_AGENT_REPAIR_CYCLE_BUDGET or the production budget."
+        ),
+    )
     p.add_argument(
         "--agent",
         choices=[

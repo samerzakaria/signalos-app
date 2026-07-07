@@ -95,6 +95,17 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertIn("l6-nightly", nightly)
         self.assertIn("schedule:", nightly)
 
+    def test_verify_release_manifest_channel_matches_release_workflow(self) -> None:
+        script = (ROOT / "scripts" / "verify-release.ps1").read_text(encoding="utf-8")
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Get-ReleaseManifestNameForVersion", script)
+        self.assertIn('return "beta.json"', script)
+        self.assertIn('return "latest.json"', script)
+        self.assertNotIn('$manifestNames = @("beta.json", "latest.json")', script)
+        self.assertIn('echo "channel=beta"', release)
+        self.assertIn('echo "channel=stable"', release)
+
     def test_sidecar_ready_means_ipc_loop_is_live(self) -> None:
         server = (ROOT / "python" / "signalos_ipc_server.py").read_text(encoding="utf-8")
         main_start = server.index("def main() -> None:")

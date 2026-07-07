@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import build_capability_profile
+from .budgets import build_execution_budget_policy
 from .lessons import build_lesson_context, validate_lesson_accounting
 from .validation import build_validation_plan
 
@@ -53,7 +54,7 @@ _DEFAULT_FORBIDDEN_ACTIONS: list[str] = [
 _DEFAULT_SUCCESS_CRITERIA: list[str] = [
     "All assigned tasks are completed inside the approved scope.",
     "Every generated or modified file is non-empty, syntactically valid, and "
-    "listed in the packet file specs or allowed paths.",
+    "inside the governed trust-tier and packet allowed paths.",
     "Relevant tests are written before implementation for new behavior, or "
     "the packet records the exact blocker that prevented TDD.",
     "Validation commands pass, or the result records an exact tooling, "
@@ -236,6 +237,8 @@ def build_agent_packet(
     forbidden_actions: list[str] | None = None,
     generation_packet: dict | None = None,
     ownership_map: dict | None = None,
+    include_generation: bool = True,
+    execution_budget: dict | None = None,
 ) -> dict:
     """Build a scoped agent execution packet.
 
@@ -244,10 +247,11 @@ def build_agent_packet(
     and forbidden file paths, validation commands, and the expected
     result schema.
 
-    When *generation_packet* is provided, it is included under the
-    ``generation`` key -- this gives the agent the full file specs,
-    design constraints, and entity definitions needed to build the
-    product.
+    When *generation_packet* is provided and *include_generation* is true, it
+    is included under the ``generation`` key for legacy/local build paths that
+    still need exact file specs. Production AgentLoop packets should pass
+    ``include_generation=False`` so acceptance criteria define the "what" and
+    the agent owns the implementation shape.
 
     Forbidden paths always include ``.signalos/``, ``node_modules/``,
     ``.git/``, ``.env``, ``.env.local``, ``*.pem``, and ``*.key``.
@@ -323,6 +327,7 @@ def build_agent_packet(
         "profile": profile,
         "wave": wave,
         "tasks": tasks,
+        "acceptance_matrix": acceptance_matrix,
         "acceptance_criteria": acceptance_criteria,
         "allowed_paths": allowed_paths,
         "forbidden_paths": list(_DEFAULT_FORBIDDEN_PATHS),
@@ -331,16 +336,72 @@ def build_agent_packet(
         "skills_catalog": skills_catalog,
         "applicable_skills": applicable_skills,
         "lesson_context": lesson_context,
+        "execution_budget": execution_budget or build_execution_budget_policy(),
         "result_schema": _RESULT_SCHEMA,
     }
 
-    # Include generation packet data when available
+    if blueprint:
+        packet["blueprint_summary"] = _build_blueprint_summary(blueprint)
     if generation_packet:
+        contracts = generation_packet.get("generation_contracts")
+        if contracts:
+            packet["signed_generation_contracts"] = contracts
+        product_context = _build_generation_context_summary(generation_packet)
+        if product_context:
+            packet["product_context"] = product_context
+
+    # Include generation packet data only for legacy/local paths that need it.
+    if generation_packet and include_generation:
         packet["generation"] = generation_packet
     if ownership_map:
         packet["delivery_ownership"] = ownership_map
 
     return packet
+
+
+def _build_blueprint_summary(blueprint: dict) -> dict[str, Any]:
+    """Summarize blueprint facts without prescribing implementation files."""
+
+    keys = (
+        "id",
+        "name",
+        "description",
+        "domain",
+        "entities",
+        "workflows",
+        "acceptance_detail",
+        "capabilities",
+    )
+    return {
+        key: blueprint.get(key)
+        for key in keys
+        if blueprint.get(key) is not None
+    }
+
+
+def _build_generation_context_summary(packet: dict) -> dict[str, Any]:
+    """Lift non-template context out of a generation packet for AgentLoop."""
+
+    allowed_keys = (
+        "profile",
+        "product",
+        "entities",
+        "design_system",
+        "design_constraints",
+        "capability_profile",
+        "architecture",
+        "scope_decisions",
+    )
+    summary = {
+        key: packet.get(key)
+        for key in allowed_keys
+        if packet.get(key) is not None
+    }
+    if packet.get("generation_contracts"):
+        summary["source_artifacts"] = packet["generation_contracts"].get(
+            "source_artifacts"
+        )
+    return summary
 
 
 def _build_quality_bar(profile: str) -> dict[str, Any]:

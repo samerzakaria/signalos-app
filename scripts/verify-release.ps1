@@ -46,6 +46,14 @@ function Invoke-Step {
   }
 }
 
+function Get-ReleaseManifestNameForVersion {
+  param([string]$Version)
+  if ($Version -like "0.*" -or $Version -match "-[A-Za-z]") {
+    return "beta.json"
+  }
+  return "latest.json"
+}
+
 function Get-HostTriple {
   $hostLine = rustc -Vv | Select-String "^host:"
   if (-not $hostLine) {
@@ -105,7 +113,6 @@ Invoke-Check "Desktop package versions are in sync" {
   $lockPath = Join-Path $Root "package-lock.json"
   $tauriPath = Join-Path $Root "src-tauri\tauri.conf.json"
   $cargoPath = Join-Path $Root "src-tauri\Cargo.toml"
-  $manifestNames = @("beta.json", "latest.json")
 
   $package = Get-Content $packagePath -Raw | ConvertFrom-Json
   $tauri = Get-Content $tauriPath -Raw | ConvertFrom-Json
@@ -122,17 +129,16 @@ Invoke-Check "Desktop package versions are in sync" {
   if ($cargoText -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw "src-tauri\Cargo.toml missing package version." }
   if ($Matches[1] -ne $expected) { throw "src-tauri\Cargo.toml version '$($Matches[1])' must match package.json '$expected'." }
 
-  foreach ($manifestName in $manifestNames) {
-    $manifestPath = Join-Path $Root "distribution\update-manifest\$manifestName"
-    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
-    if ([string]$manifest.version -ne $expected) {
-      throw "$manifestName update manifest version '$($manifest.version)' must match package.json '$expected'."
-    }
-    foreach ($platform in @("darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64")) {
-      $entry = $manifest.platforms.PSObject.Properties[$platform].Value
-      if ($entry.url -notlike "*v$expected/*") {
-        throw "$manifestName $platform URL must point at release tag v$expected."
-      }
+  $manifestName = Get-ReleaseManifestNameForVersion $expected
+  $manifestPath = Join-Path $Root "distribution\update-manifest\$manifestName"
+  $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+  if ([string]$manifest.version -ne $expected) {
+    throw "$manifestName update manifest version '$($manifest.version)' must match package.json '$expected'."
+  }
+  foreach ($platform in @("darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64")) {
+    $entry = $manifest.platforms.PSObject.Properties[$platform].Value
+    if ($entry.url -notlike "*v$expected/*") {
+      throw "$manifestName $platform URL must point at release tag v$expected."
     }
   }
 }

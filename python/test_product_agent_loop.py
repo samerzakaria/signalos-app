@@ -928,7 +928,7 @@ class TestContentSecretBlock(unittest.TestCase):
 
 
 class TestToolLimit(unittest.TestCase):
-    def test_tool_limit_returns_control(self):
+    def test_budget_exhaustion_returns_control(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             # Provider always asks for a search (never ends) -> hit the limit.
@@ -939,7 +939,35 @@ class TestToolLimit(unittest.TestCase):
             provider = AgentTestProvider(script=script)
             loop = _loop(root, provider, tool_call_limit=3)
             result = loop.run("sys", "loop forever")
-            self.assertEqual(result.status, "tool_limit")
+            self.assertEqual(result.status, "budget_exhausted")
+            self.assertEqual(result.tool_calls_made, 3)
+
+    def test_budget_exhausted_resume_does_not_call_provider(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = _RaisingProvider(AssertionError("provider must not be called"))
+            loop = _loop(root, provider, tool_call_limit=3)
+            loop.run_dir.mkdir(parents=True, exist_ok=True)
+            loop.state_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": loop.run_id,
+                        "status": "running",
+                        "tool_calls_made": 3,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            loop.conversation_path.write_text(
+                json.dumps({"role": "system", "content": "sys"}) + "\n"
+                + json.dumps({"role": "user", "content": "resume"}) + "\n",
+                encoding="utf-8",
+            )
+
+            result = loop.resume()
+
+            self.assertEqual(result.status, "budget_exhausted")
             self.assertEqual(result.tool_calls_made, 3)
 
 

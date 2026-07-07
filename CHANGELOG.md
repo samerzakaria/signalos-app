@@ -2,6 +2,15 @@
 
 ## [Unreleased] - 2026-05-17
 
+## [3.2.4-internal.4] - 2026-07-07
+
+### Governed AgentLoop becomes the production generation path
+
+- Route keyed product delivery through governed AgentLoop by default, with the legacy chunked per-file dispatcher retained only for explicit regression/debug opt-in.
+- Make production AgentLoop packets acceptance-matrix-first instead of file-spec-first, so the agent owns implementation shape while SignalOS still enforces allowed paths, gates, test-first, trust-tier, audit, and secret policy.
+- Replace fixed tool/rework caps with an explicit execution-budget policy and truthful `budget_exhausted` evidence.
+- Clean retired governance artifact paths and keep release/gate documentation aligned with the budgeted AgentLoop model.
+
 ## [3.2.4-internal.3] - 2026-07-06
 
 ### Fresh install no longer dead-ends at "No workspace selected"

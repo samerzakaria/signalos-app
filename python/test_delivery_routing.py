@@ -16,6 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.product.delivery import (
+    _build_agent_loop_message,
     _choose_dispatch_route,
     _dispatch_agent_loop_build,
 )
@@ -181,3 +182,30 @@ def test_agent_loop_build_success_writes_build_evidence(tmp_path):
     text = evidence.read_text(encoding="utf-8")
     assert "- status: completed" in text
     assert "`src/App.tsx`" in text
+
+
+def test_agent_loop_prompt_strips_legacy_file_specs():
+    packet = {
+        "run_id": "acceptance-first",
+        "acceptance_matrix": {
+            "criteria": [{"id": "AC-001", "description": "Dashboard works"}],
+        },
+        "generation": {
+            "file_specs": [{"path": "src/OldTemplate.tsx"}],
+            "component_manifest": [{"componentName": "OldTemplate"}],
+            "allowed_paths": ["src/OldTemplate.tsx"],
+            "entities": [{"name": "Dashboard"}],
+        },
+    }
+
+    message = _build_agent_loop_message(
+        packet,
+        governance={},
+        prompt="Build a production dashboard",
+        profile=SUPPORTED,
+    )
+
+    assert "acceptance_matrix" in message
+    assert "OldTemplate" not in message
+    assert "file_specs" not in message
+    assert "does not prescribe implementation files" in message

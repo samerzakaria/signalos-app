@@ -1,8 +1,8 @@
 # signalos_lib/product/gate_review.py
 # Gate Review: classify user replies, handle REQUEST-CHANGES and REJECTED verdicts.
 #
-# Bounded loops: max 3 rework cycles (request-changes), max 2 rejections,
-# then escalate to human decision-maker.
+# Budgeted loops: request-changes uses the shared gate rework budget, rejections
+# stay capped separately, then escalate to a human decision-maker.
 
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .budgets import resolve_gate_rework_budget
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +251,7 @@ def handle_request_changes(
     feedback: str,
     specific_items: list[str],
     current_artifact: dict | None = None,
-    max_cycles: int = 3,
+    max_cycles: int | None = None,
     cycle: int = 0,
 ) -> dict[str, Any]:
     """Handle a REQUEST-CHANGES verdict.
@@ -265,9 +267,10 @@ def handle_request_changes(
         "packet_path": str | None,
     }
     """
+    cycle_budget = resolve_gate_rework_budget(max_cycles)
     next_cycle = cycle + 1
 
-    if next_cycle > max_cycles:
+    if next_cycle > cycle_budget:
         record_review_event(repo_root, gate_id, "REQUEST-CHANGES", feedback, next_cycle)
         return {
             "status": "max_cycles_reached",

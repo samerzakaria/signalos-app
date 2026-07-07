@@ -1,9 +1,9 @@
 """Gate orchestration (Phase 5 / T26-T44) - the gate-aware supervisor.
 
-Per architecture decision Q4 the AgentLoop is gate-UNAWARE: it runs a bounded
+Per architecture decision Q4 the AgentLoop is gate-UNAWARE: it runs a budgeted
 conversation and returns. This module is the supervisor that walks G0->G5:
 run the gate agent, pause for review (gate event), and on the user's verdict
-sign via sign.py (INV-3) and advance. Bounded rework (3) / reject (2); waive
+sign via sign.py (INV-3) and advance. Budgeted rework / reject (2); waive
 advances without signing and marks the delivery not-"ready" (INV-1).
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from .. import agent_loader, wave_engine, sign
 from .agent_loop import AgentLoop
+from .budgets import resolve_gate_rework_budget
 from .enforcement_state import EnforcementProvider
 
 __all__ = ["GateOrchestrator", "GATE_SPECIALISTS", "GATE_QUESTIONS", "GATE_ROLES",
@@ -167,7 +168,7 @@ class GateOrchestrator:
         signer: str = "foundry-agent",
         sign_fn: Optional[Callable[..., list]] = None,
         project_id: str = "default",
-        max_rework: int = 3,
+        max_rework: int | None = None,
         max_rejections: int = 2,
         run_id: Optional[str] = None,
         prompt: str = "",
@@ -186,7 +187,7 @@ class GateOrchestrator:
         self.signer = signer
         self._sign = sign_fn or _default_sign
         self.project_id = project_id
-        self.max_rework = max_rework
+        self.max_rework = resolve_gate_rework_budget(max_rework)
         self.max_rejections = max_rejections
         # run_id must be unique per delivery - it keys the persisted state dir
         # (.signalos/agent-runs/<run_id>/delivery.json). An explicit run_id is

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agent_packets import validate_agent_result
+from .budgets import resolve_repair_cycle_budget
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ def run_repair_loop(
     repo_root: Path,
     validation_result: dict,
     profile: str,
-    max_cycles: int = 3,
+    max_cycles: int | None = None,
     agent_mode: str = "packet-only",
     dispatch_fn: Callable[..., dict] | None = None,
     validate_fn: Callable[..., dict] | None = None,
@@ -109,7 +110,8 @@ def run_repair_loop(
          through the caller's governed executor, then RE-VALIDATE.
        * ``"chunked"`` / ``"legacy-chunked"`` -- explicit legacy opt-in to the
          #12 chunked dispatcher, then RE-VALIDATE.
-    4. Track cycle count; stop at *max_cycles* with truthful evidence.
+    4. Track cycle count; stop when the repair budget is exhausted with
+       truthful evidence.
 
     Parameters
     ----------
@@ -122,7 +124,8 @@ def run_repair_loop(
     profile:
         Stack profile name (e.g. ``"react-vite"``).
     max_cycles:
-        Upper bound on repair attempts. 0 means return immediately.
+        Explicit repair budget override. 0 means return immediately. When
+        omitted, the shared SignalOS repair-cycle budget is used.
     agent_mode:
         See above.
     dispatch_fn:
@@ -142,12 +145,13 @@ def run_repair_loop(
     """
     repairs: list[dict[str, Any]] = []
     normalized_agent_mode = (agent_mode or "packet-only").strip().lower()
+    cycle_budget = resolve_repair_cycle_budget(max_cycles)
 
-    if max_cycles <= 0:
+    if cycle_budget <= 0:
         return {
             "status": "max_cycles_reached",
             "cycles_used": 0,
-            "max_cycles": max_cycles,
+            "max_cycles": cycle_budget,
             "repairs": [],
             "final_validation": validation_result,
         }
@@ -156,13 +160,14 @@ def run_repair_loop(
         return {
             "status": "repaired",
             "cycles_used": 0,
-            "max_cycles": max_cycles,
+            "max_cycles": cycle_budget,
             "repairs": [],
             "final_validation": validation_result,
         }
 
-    # Locate the run directory + load the original scope for repair context
-    # (the #12 generation packet with file_specs / manifest / entities).
+    # Locate the run directory + load original scope. Production scope is
+    # acceptance-first; legacy generation context is loaded from
+    # GENERATION_PACKET.json only when repair needs file-level diagnostics.
     run_dir = _find_run_dir(repo_root, validation_result)
     original_packet: dict = {}
     if run_dir is not None:
@@ -174,16 +179,21 @@ def run_repair_loop(
                 )
             except (json.JSONDecodeError, OSError):
                 pass
+    if not original_packet.get("generation"):
+        generation_packet = _load_generation_packet(repo_root)
+        if generation_packet:
+            original_packet = dict(original_packet)
+            original_packet["generation"] = generation_packet
 
     current_validation = validation_result
 
-    for cycle in range(1, max_cycles + 1):
+    for cycle in range(1, cycle_budget + 1):
         failures = _failures_from(current_validation)
         if not failures:
             return {
                 "status": "repaired",
                 "cycles_used": cycle - 1,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
@@ -204,7 +214,7 @@ def run_repair_loop(
             return {
                 "status": "manual_repair_needed",
                 "cycles_used": cycle,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
@@ -238,7 +248,7 @@ def run_repair_loop(
             return {
                 "status": "awaiting_agent",
                 "cycles_used": cycle,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
@@ -261,7 +271,7 @@ def run_repair_loop(
             return {
                 "status": "awaiting_agent_loop",
                 "cycles_used": cycle,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
@@ -295,7 +305,7 @@ def run_repair_loop(
                 return {
                     "status": "repaired",
                     "cycles_used": cycle,
-                    "max_cycles": max_cycles,
+                    "max_cycles": cycle_budget,
                     "repairs": repairs,
                     "final_validation": current_validation,
                 }
@@ -321,7 +331,7 @@ def run_repair_loop(
             return {
                 "status": "dispatch_failed",
                 "cycles_used": cycle,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
@@ -342,16 +352,16 @@ def run_repair_loop(
             return {
                 "status": "repaired",
                 "cycles_used": cycle,
-                "max_cycles": max_cycles,
+                "max_cycles": cycle_budget,
                 "repairs": repairs,
                 "final_validation": current_validation,
             }
 
-    # Exhausted max_cycles without the build going green.
+    # Exhausted the repair budget without the build going green.
     return {
         "status": "max_cycles_reached",
-        "cycles_used": max_cycles,
-        "max_cycles": max_cycles,
+        "cycles_used": cycle_budget,
+        "max_cycles": cycle_budget,
         "repairs": repairs,
         "final_validation": current_validation,
     }
@@ -366,6 +376,17 @@ def _default_dispatch(
     return dispatch_build_agent_chunked(
         repo_root=repo_root, packet=packet, governance=governance,
     )
+
+
+def _load_generation_packet(repo_root: Path) -> dict[str, Any] | None:
+    path = repo_root / ".signalos" / "product" / "GENERATION_PACKET.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 # ---------------------------------------------------------------------------

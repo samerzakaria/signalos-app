@@ -2,7 +2,7 @@
 # v4 Phase 2.4-2.11 — The governed agent loop.
 #
 # messages -> adapter.chat() -> tool_calls -> governance check -> execute
-#          -> append tool results -> loop until end_turn or tool-call limit.
+#          -> append tool results -> loop until end_turn or budget exhaustion.
 #
 # Architecture Decisions implemented here:
 #   Q1  — uses harness.AgentProvider via ProviderAdapter.
@@ -10,9 +10,9 @@
 #         EnforcementProvider (Rust is the authority; CI uses a test double).
 #         Per-call checks hit the cached rules (fast, no IPC round-trip).
 #         File writes ALSO go through a validate_workspace_write hook.
-#   Q4  — the loop is stateless re: gates. It runs until end_turn or the
-#         tool-call limit, then returns control to the orchestrator. It does
-#         NOT detect gate boundaries.
+#   Q4  — the loop is stateless re: gates. It runs until end_turn or explicit
+#         execution budget exhaustion, then returns control to the orchestrator.
+#         It does NOT detect gate boundaries.
 #   Q5a — idempotent tool execution via content_sha256.
 #   INV-1 no silent skips; INV-4 no silent failures / no except: pass;
 #   INV-5 persisted run state; INV-6 deterministic via AgentTestProvider;
@@ -57,6 +57,10 @@ from .enforcement_state import (
     EnforcementState,
     StaticEnforcementProvider,
 )
+from .budgets import (
+    DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET,
+    resolve_agent_loop_tool_budget,
+)
 from .provider_adapter import ProviderAdapter
 
 # ---------------------------------------------------------------------------
@@ -65,7 +69,7 @@ from .provider_adapter import ProviderAdapter
 
 READ_TIMEOUT_S = 30
 COMMAND_TIMEOUT_S = 120
-DEFAULT_TOOL_CALL_LIMIT = 50
+DEFAULT_TOOL_CALL_BUDGET = DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET
 MAX_READ_BYTES = 2_000_000  # guard against reading huge binaries into context
 
 # Secret-redaction patterns applied to command stdout/stderr (2.5/2.9).
@@ -441,7 +445,7 @@ class LoopResult:
     """Outcome of one agent-loop run, returned to the orchestrator (Q4)."""
 
     run_id: str
-    status: str  # "completed" | "tool_limit" | "text_only" | "cancelled" | "error"
+    status: str  # "completed" | "budget_exhausted" | "text_only" | "cancelled" | "error"
     final_text: str | None
     tool_calls_made: int
     messages: list[dict[str, Any]]
@@ -481,7 +485,7 @@ class AgentLoop:
         repo_root: Path,
         enforcement_provider: EnforcementProvider | None = None,
         run_id: str | None = None,
-        tool_call_limit: int = DEFAULT_TOOL_CALL_LIMIT,
+        tool_call_limit: int | None = None,
         cancel_check: Callable[[], bool] | None = None,
         emit: Callable[[dict[str, Any]], None] | None = None,
         execution_context: str = "delivery",
@@ -492,7 +496,7 @@ class AgentLoop:
         self.repo_root = Path(repo_root)
         self.enforcement_provider = enforcement_provider or StaticEnforcementProvider()
         self.run_id = run_id or f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
-        self.tool_call_limit = tool_call_limit
+        self.tool_call_limit = resolve_agent_loop_tool_budget(tool_call_limit)
         self._cancel_check = cancel_check or (lambda: False)
         self._emit = emit or (lambda _e: None)
         self._enforcement: EnforcementState | None = None
@@ -580,8 +584,8 @@ class AgentLoop:
     ) -> LoopResult:
         """Run one bounded agent conversation and return control (Q4).
 
-        The loop does NOT detect gates. It runs until end_turn or the
-        tool-call limit, then hands back to the orchestrator.
+        The loop does NOT detect gates. It runs until end_turn or the explicit
+        execution budget is exhausted, then hands back to the orchestrator.
         """
         self._ensure_run_dir()
         # Q2: read governance rules ONCE, cache for this run.
@@ -684,6 +688,13 @@ class AgentLoop:
                     error="cancelled by user",
                 )
 
+            if tool_calls_made >= self.tool_call_limit:
+                return self._budget_exhausted_result(
+                    messages,
+                    tool_calls_made,
+                    final_text,
+                )
+
             try:
                 resp: AgentResponse = self.adapter.chat(
                     messages=[dict(m) for m in messages],
@@ -735,17 +746,10 @@ class AgentLoop:
 
             for tc in resp.tool_calls:
                 if tool_calls_made >= self.tool_call_limit:
-                    self._persist_state(messages, tool_calls_made, status="tool_limit")
-                    self._emit(
-                        {"type": "tool_limit", "limit": self.tool_call_limit}
-                    )
-                    return LoopResult(
-                        run_id=self.run_id,
-                        status="tool_limit",
+                    return self._budget_exhausted_result(
+                        messages,
+                        tool_calls_made,
                         final_text=final_text,
-                        tool_calls_made=tool_calls_made,
-                        messages=messages,
-                        error=f"tool-call limit ({self.tool_call_limit}) reached",
                     )
 
                 tool_calls_made += 1
@@ -760,6 +764,35 @@ class AgentLoop:
                 )
 
             self._persist_state(messages, tool_calls_made, status="running")
+
+    def _budget_exhausted_result(
+        self,
+        messages: list[dict[str, Any]],
+        tool_calls_made: int,
+        final_text: str | None,
+    ) -> LoopResult:
+        self._persist_state(
+            messages,
+            tool_calls_made,
+            status="budget_exhausted",
+        )
+        self._emit(
+            {
+                "type": "budget_exhausted",
+                "tool_call_budget": self.tool_call_limit,
+            }
+        )
+        return LoopResult(
+            run_id=self.run_id,
+            status="budget_exhausted",
+            final_text=final_text,
+            tool_calls_made=tool_calls_made,
+            messages=messages,
+            error=(
+                "agent loop tool-call budget "
+                f"({self.tool_call_limit}) exhausted"
+            ),
+        )
 
     # --- text-only mode (INV-7 / 2.11) --------------------------------------
 

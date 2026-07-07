@@ -283,7 +283,7 @@ class TestDeliveryE2E(unittest.TestCase):
         self.assertEqual(args.deploy, "none")
         self.assertFalse(args.yes)
         self.assertFalse(args.dry_run)
-        self.assertEqual(args.max_repair_cycles, 3)
+        self.assertIsNone(args.max_repair_cycles)
         self.assertEqual(args.agent, "auto")
         self.assertFalse(args.as_json)
 
@@ -504,6 +504,10 @@ class TestDeliveryE2E(unittest.TestCase):
             self.assertEqual(scope["schema_version"], "signalos.agent_packet.v1")
             self.assertEqual(len(scope["skills_catalog"]), len(_SKILL_KEY_TO_PATH))
             self.assertGreaterEqual(len(scope["applicable_skills"]), 3)
+            self.assertIn("acceptance_matrix", scope)
+            self.assertIn("execution_budget", scope)
+            self.assertNotIn("generation", scope)
+            self.assertNotIn("file_specs", json.dumps(scope))
             self.assertTrue((run_dirs[0] / "skills-catalog.json").exists())
             self.assertTrue((run_dirs[0] / "applicable-skills.md").exists())
 
@@ -609,7 +613,9 @@ class TestDeliveryRepairAndWiring(unittest.TestCase):
                 mock_repair.assert_called_once()
                 call_kwargs = mock_repair.call_args[1]
                 self.assertEqual(call_kwargs["agent_mode"], "packet-only")
-                self.assertEqual(call_kwargs["max_cycles"], 3)
+            from signalos_lib.product.budgets import resolve_repair_cycle_budget
+
+            self.assertEqual(call_kwargs["max_cycles"], resolve_repair_cycle_budget())
 
     def test_repair_loop_not_invoked_when_agent_mode_none(self):
         """Repair loop is NOT called when agent_mode is 'none'."""

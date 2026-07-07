@@ -285,7 +285,7 @@ Concretely:
 
 There is NOT one long-lived loop that changes persona. Each gate gets a fresh loop with a fresh system prompt. Conversation history from the previous gate is summarized and included as context (not the full transcript -- context compression applies).
 
-**Gate boundary detection**: the orchestrator checks `wave_engine.inspect()` AFTER each agent-loop run completes. The agent loop does NOT detect gates internally -- it runs until the LLM signals completion (`stop_reason: "end_turn"`) or the tool-call limit is reached. Then the orchestrator checks if the gate artifact was produced. If not, the orchestrator can re-run the loop with additional guidance.
+**Gate boundary detection**: the orchestrator checks `wave_engine.inspect()` AFTER each agent-loop run completes. The agent loop does NOT detect gates internally -- it runs until the LLM signals completion (`stop_reason: "end_turn"`) or the execution budget is exhausted. Then the orchestrator checks if the gate artifact was produced. If not, the orchestrator can re-run the loop with additional guidance.
 
 This means the agent loop is stateless regarding gates. It runs a bounded conversation. The orchestrator is the gate-aware supervisor.
 
@@ -411,14 +411,14 @@ Agent Loop (the governed runtime)
     |    |--- No direct governance file edits (.signalos/, gate frontmatter)
     |    |--- Audit ledger entry for every tool call (allowed or denied)
     |--- Execute allowed tool calls
-    |--- Loop until LLM signals completion or tool-call limit reached
+    |--- Loop until LLM signals completion or execution budget exhausted
     |--- Emit WorkComplete event to orchestrator
     |
     v
 Orchestrator checks wave_engine.inspect() --> gate boundary? --> user reviews --> 5 verdicts:
     |--- APPROVE --> call sign.py:sign_artifact(), advance
     |--- APPROVE-WITH-CONDITIONS --> sign with conditions logged, advance
-    |--- REQUEST-CHANGES --> bounded rework (max 3), agent re-works
+    |--- REQUEST-CHANGES --> budgeted rework, agent re-works
     |--- REJECT --> bounded rejection (max 2), agent restarts from scratch
     |--- WAIVE --> skip with documented justification, audit logged
     |
@@ -550,8 +550,8 @@ DeliverView and TerminalView are removed from navigation immediately. Useful log
 | 2.4 | Agent loop core -- `agent_loop.py`: message --> adapter --> tool calls --> governance --> execute --> loop. Persisted run state (INV-5). | agent_loop.py (new) | The runtime |
 | 2.5 | Tool definitions with strict execution rules: typed path allowlists (not globs), command policy (allowlist + denylist), timeouts (default 30s read, 120s command), cancellation support, secret redaction on stdout/stderr, no direct governance file edits | agent_loop.py | Governed tool execution |
 | 2.6 | Audit ledger: every tool call (allowed or denied) logged to `.signalos/agent-runs/<run-id>/tool-calls.jsonl` with timestamp, tool name, args, result, governance decision, duration | agent_loop.py | Full traceability |
-| 2.7 | Loop completion: agent loop runs until LLM end_turn or tool-call limit. Returns control to orchestrator. No gate awareness in the loop. | agent_loop.py | Orchestrator owns gates |
-| 2.8 | Verdict handling: all 5 verdicts with policy. Approve --> sign + advance. Conditions --> sign + log conditions. Changes --> bounded rework (max 3). Reject --> bounded restart (max 2). Waive --> explicit justification required, audit logged, cannot satisfy mandatory proof (INV-1). | agent_loop.py + gate_review.py | Full verdict model |
+| 2.7 | Loop completion: agent loop runs until LLM end_turn or execution budget exhaustion. Returns control to orchestrator. No gate awareness in the loop. | agent_loop.py | Orchestrator owns gates |
+| 2.8 | Verdict handling: all 5 verdicts with policy. Approve --> sign + advance. Conditions --> sign + log conditions. Changes --> budgeted rework. Reject --> bounded restart (max 2). Waive --> explicit justification required, audit logged, cannot satisfy mandatory proof (INV-1). | agent_loop.py + gate_review.py | Full verdict model |
 | 2.9 | Security scan: injection scan on every write_file content, secret redaction on run_command output, PII detection on generated content | agent_loop.py + security_gate.py | Safe output |
 | 2.10 | Run state persistence: `.signalos/agent-runs/<run-id>/state.json` with conversation history, current gate, tool-call count, resume checkpoint. Idempotent tool execution (re-running a completed write is a no-op). | agent_loop.py | Crash recovery (INV-5) |
 | 2.11 | Graceful degradation: if provider doesn't support tool calling, fall back to text-only mode (agent describes what to do, user executes manually). No fake tool calls. | provider_adapter.py, agent_loop.py | Works with all providers |
@@ -682,7 +682,7 @@ Live-provider validation reported on 2026-06-02: 9 pass, 0 fail, 1 skip. Passing
 | T31 | G5 pause shows closeout | Gate checkpoint | After G4, verify closeout card | Required CI (mock) |
 | T32 | APPROVE advances to next gate via sign.py API | INV-3 | Click Approve on G0, verify sign_artifact called, G1 starts | Required CI |
 | T33 | APPROVE-WITH-CONDITIONS signs + logs conditions | Verdict policy | Click Conditions, enter text, verify signed + conditions in audit | Required CI |
-| T34 | REQUEST CHANGES triggers bounded rework | Verdict policy | Click Changes with feedback, verify agent reworks, max 3 | Required CI |
+| T34 | REQUEST CHANGES triggers budgeted rework | Verdict policy | Click Changes with feedback, verify agent reworks until approved or budget exhausted | Required CI |
 | T35 | REJECT stops delivery | Verdict policy | Click Reject, verify agent stops, max 2 | Required CI |
 | T36 | WAIVE requires justification | Verdict policy | Click Waive, verify justification required, audit logged | Required CI |
 | T37 | WAIVE cannot satisfy mandatory proof (INV-1) | No-skip policy | Waive G5, verify delivery cannot close as "ready" | Required CI |
