@@ -447,6 +447,23 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             wave_id=args[0], summary=summary, project_id=project_id,
         ))
 
+    # Capability wiring: audit replay, share export, brownfield governance,
+    # competitor analysis. Contract shapes live in `data` (the frontend reads
+    # data.status / data.frames / ...); domain failures the founder can act on
+    # are reported as {"status": "error", "error": ...} inside data.
+
+    if command == "audit:replay-timeline":
+        return audit_replay_timeline(req_id, args)
+
+    if command == "share:export":
+        return share_export(req_id)
+
+    if command == "brownfield:audit":
+        return brownfield_audit(req_id, args)
+
+    if command == "competitor:analyze":
+        return competitor_analyze(req_id, args)
+
     return err(req_id, f"Unknown command: {command}")
 
 
@@ -633,6 +650,10 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         _agent_emit(run_id)({"type": "error", "error": str(exc)})
         return err(req_id, str(exc))
     repo_root = Path(os.getcwd())
+    # Brownfield auto-detect: pre-existing code with no governance state gets
+    # a system event + audit entry BEFORE the orchestrator starts. Best-effort;
+    # never blocks or fails the delivery.
+    _maybe_emit_brownfield_notice(repo_root, _agent_emit(run_id))
     try:
         adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface
@@ -1097,6 +1118,330 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
             "data": redact_response(summary),
         }
     return ok(req_id, output=json.dumps(summary), data=summary)
+
+
+# ---------------------------------------------------------------------------
+# Capability wiring: audit replay / share export / brownfield / competitor
+# ---------------------------------------------------------------------------
+
+
+def _parse_object_arg(args: list, command: str) -> dict:
+    """Parse an optional single JSON-object argument for a route() command.
+
+    Empty args -> {}. A one-element list holding a JSON string (the legacy
+    transport) or an already-parsed dict both normalize to a dict; anything
+    else raises ValueError."""
+    if not args:
+        return {}
+    raw = args[0]
+    if isinstance(raw, dict):
+        return raw
+    raw = str(raw).strip()
+    if not raw:
+        return {}
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{command} payload must be a JSON object")
+    return payload
+
+
+# Hard cap on the number of replay frames returned over IPC (the response is
+# a single stdout line; an unbounded trail would be a payload bomb).
+_REPLAY_TIMELINE_CAP = 1000
+
+
+def audit_replay_timeline(req_id: str, args: list) -> dict:
+    """audit:replay-timeline -> read-only pass-through over audit_replay.
+
+    Args: {} or {"limit": int} (a bare integer argument is accepted too).
+    Returns the LAST ``limit`` frames (default: all), hard-capped at
+    ``_REPLAY_TIMELINE_CAP``; ``truncated`` reports whether frames were
+    dropped by the limit or the cap. Never writes."""
+    limit: int | None = None
+    if args and str(args[0]).strip():
+        raw = str(args[0]).strip()
+        try:
+            parsed: Any = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = raw
+        if isinstance(parsed, dict):
+            parsed = parsed.get("limit")
+        if parsed is not None:
+            try:
+                limit = int(parsed)
+            except (TypeError, ValueError):
+                return err(req_id, "audit:replay-timeline 'limit' must be an integer")
+            if limit < 0:
+                return err(req_id, "audit:replay-timeline 'limit' must be >= 0")
+
+    from signalos_lib.audit_replay import build_timeline
+
+    frames = build_timeline(os.getcwd())
+    total = len(frames)
+    effective = _REPLAY_TIMELINE_CAP if limit is None else min(limit, _REPLAY_TIMELINE_CAP)
+    out_frames = frames[-effective:] if effective > 0 else []
+    return ok(req_id, data={
+        "status": "ok",
+        "frames": out_frames,
+        "truncated": total > len(out_frames),
+    })
+
+
+def share_export(req_id: str) -> dict:
+    """share:export -> write the read-only share bundle (share.html + share.json).
+
+    The bundle is redacted by construction: collect_share_data reads ONLY
+    .signalos governance artifacts (profile.json, the audit-trail timeline
+    summaries, closeout level) -- never product source, .env* files, or vault
+    material -- and the IPC envelope additionally passes through
+    redact_response. Failure is reported as data.status == "error"."""
+    root = Path(os.getcwd())
+    try:
+        from signalos_lib.product.share_export import write_share_bundle
+
+        rel_paths = write_share_bundle(root)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        })
+    bundle_dir = (root / ".signalos" / "share").resolve()
+    files = sorted({Path(p).name for p in rel_paths.values()})
+    return ok(req_id, data={
+        "status": "ok",
+        "path": str(bundle_dir),
+        "files": files,
+    })
+
+
+def brownfield_audit(req_id: str, args: list) -> dict:
+    """brownfield:audit -> audit an existing repo; optionally apply governance.
+
+    Args: {} or {"apply": bool}. Always runs the deterministic
+    audit_existing_repo; apply_governance (scaffold + baseline + audit-trail
+    record) only when apply is true. A failed apply keeps the report and
+    reports data.status == "error" honestly."""
+    try:
+        payload = _parse_object_arg(args, "brownfield:audit")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"brownfield:audit args invalid: {exc}")
+    apply_requested = bool(payload.get("apply"))
+    root = Path(os.getcwd())
+
+    from signalos_lib.product.brownfield import apply_governance, audit_existing_repo
+
+    try:
+        report = audit_existing_repo(root)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "applied": False,
+        })
+
+    data: dict[str, Any] = {"status": "ok", "report": report, "applied": False}
+    if apply_requested:
+        try:
+            applied = apply_governance(root)
+            data["applied"] = True
+            data["report"] = applied.get("audit", report)
+            data["governance"] = {
+                "created": applied.get("created", []),
+                "baseline_path": applied.get("baseline_path"),
+            }
+        except Exception as exc:
+            data["status"] = "error"
+            data["error"] = f"apply_governance failed: {type(exc).__name__}: {exc}"
+    return ok(req_id, data=data)
+
+
+# Test seam: (url, timeout=...) -> html | None. Production uses the polite
+# stdlib fetch_page helper from competitor.py (UA header, per-URL timeout,
+# never raises).
+_COMPETITOR_FETCH_FN = None
+_COMPETITOR_FETCH_TIMEOUT = 10.0
+
+
+def competitor_analyze(req_id: str, args: list) -> dict:
+    """competitor:analyze -> Competitive UX Matrix from competitor URLs.
+
+    LLM-gated: without a configured provider returns
+    {"status": "llm-unavailable"} without fetching anything. Per-URL fetch
+    failures are collected into data.errors without failing the call. The
+    matrix is persisted to .signalos/product/COMPETITORS.json where the
+    design phase picks it up as competitive context."""
+    try:
+        payload = _parse_object_arg(args, "competitor:analyze")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"competitor:analyze args invalid: {exc}")
+    urls = payload.get("urls")
+    if (
+        not isinstance(urls, list)
+        or not urls
+        or not all(isinstance(u, str) and u.strip() for u in urls)
+    ):
+        return err(
+            req_id,
+            "competitor:analyze requires 'urls': a non-empty array of URL strings",
+        )
+    urls = [u.strip() for u in urls]
+
+    root = Path(os.getcwd())
+    from signalos_lib.product import competitor as competitor_mod
+    from signalos_lib.product.llm_provider import is_llm_available
+
+    if not is_llm_available(root):
+        return ok(req_id, data={"status": "llm-unavailable"})
+
+    fetch = _COMPETITOR_FETCH_FN or competitor_mod.fetch_page
+    pages: list[dict] = []
+    errors: list[dict] = []
+    for url in urls:
+        try:
+            html = fetch(url, timeout=_COMPETITOR_FETCH_TIMEOUT)
+        except Exception as exc:  # fetch_page never raises; a seam might
+            errors.append({"url": url, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if html is None:
+            errors.append({
+                "url": url,
+                "error": "fetch failed (unreachable, timed out, or not http/https)",
+            })
+        else:
+            pages.append({"url": url, "html": html})
+
+    try:
+        matrix = competitor_mod.build_matrix(pages, root=root, use_llm=True)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "errors": errors,
+        })
+
+    record = {
+        "schema_version": "signalos.competitors.v1",
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "urls": urls,
+        **matrix,
+    }
+    out_path = root / ".signalos" / "product" / "COMPETITORS.json"
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"failed to persist COMPETITORS.json: {exc}",
+            "matrix": matrix,
+            "errors": errors,
+        })
+
+    return ok(req_id, data={
+        "status": "ok",
+        "matrix": matrix,
+        "errors": errors,
+        "path": str(Path(".signalos") / "product" / "COMPETITORS.json"),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Brownfield auto-detect for agent:deliver
+# ---------------------------------------------------------------------------
+
+_BROWNFIELD_SOURCE_EXTS = frozenset({
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".java", ".rb",
+    ".cs", ".php", ".swift", ".kt", ".vue", ".svelte",
+})
+_BROWNFIELD_SKIP_DIRS = frozenset({
+    "node_modules", ".git", "dist", "build", "target", ".venv", "venv",
+    "__pycache__", ".signalos",
+})
+# Governance markers under .signalos/ that mean the workspace is already
+# governed (or was already noticed): profile/product state, an applied
+# baseline, gate state, or ANY audit trail (the notice itself appends one,
+# so a brownfield workspace is only notified once).
+_BROWNFIELD_GOVERNANCE_MARKERS = (
+    "profile.json",
+    "GOVERNANCE_BASELINE.md",
+    "product",
+    "gates",
+    "AUDIT_TRAIL.jsonl",
+)
+
+
+def _has_governance_state(repo_root: Path) -> bool:
+    signalos = repo_root / ".signalos"
+    if not signalos.is_dir():
+        return False
+    return any((signalos / marker).exists() for marker in _BROWNFIELD_GOVERNANCE_MARKERS)
+
+
+def _has_preexisting_code(repo_root: Path, scan_limit: int = 2000) -> bool:
+    """Conservative: True only when a real source file exists outside
+    vendored/build dirs. Bounded walk; any OS error -> False (silence)."""
+    seen = 0
+    try:
+        for path in repo_root.rglob("*"):
+            if seen >= scan_limit:
+                return False
+            try:
+                rel_parts = path.relative_to(repo_root).parts
+            except ValueError:
+                continue
+            if any(part in _BROWNFIELD_SKIP_DIRS for part in rel_parts):
+                continue
+            if path.is_file():
+                seen += 1
+                if path.suffix.lower() in _BROWNFIELD_SOURCE_EXTS:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _maybe_emit_brownfield_notice(repo_root: Path, emit) -> None:
+    """agent:deliver pre-flight: pre-existing product code + no .signalos
+    governance state -> run the deterministic brownfield audit and surface a
+    system agent-event plus an audit-trail entry so the founder sees
+    "existing code detected, N findings" in chat. NEVER raises and NEVER
+    blocks delivery -- errors are recorded honestly and delivery continues."""
+    try:
+        if _has_governance_state(repo_root) or not _has_preexisting_code(repo_root):
+            return
+        from signalos_lib.product.brownfield import audit_existing_repo
+
+        report = audit_existing_repo(repo_root)
+        summary = report.get("summary", {}) or {}
+        total = summary.get("total", 0)
+        message = (
+            f"Existing code detected in this workspace - brownfield audit found "
+            f"{total} governance finding(s) (high {summary.get('high', 0)}, "
+            f"medium {summary.get('medium', 0)}, low {summary.get('low', 0)}). "
+            f"Delivery continues; run brownfield:audit with apply=true to "
+            f"record a governance baseline."
+        )
+        emit({"type": "system", "message": message, "brownfield": summary})
+        _append_audit(str(repo_root), {
+            "action": "brownfield.audit-detected",
+            "findings": total,
+            "high": summary.get("high", 0),
+            "medium": summary.get("medium", 0),
+            "low": summary.get("low", 0),
+        })
+    except Exception as exc:
+        try:
+            _append_audit(str(repo_root), {
+                "action": "brownfield.audit-error",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+        except Exception:
+            pass
 
 
 def terminal_help_text() -> str:

@@ -553,12 +553,56 @@ _ARCHITECT_SYSTEM_PROMPT = _ARCHITECT_SYSTEM_PROMPT.replace(
 )
 
 
+def _competitive_context_block(root) -> str | None:
+    """Compact competitive-context block for the architect prompt, read from
+    ``.signalos/product/COMPETITORS.json`` (written by competitor:analyze).
+
+    Absent, unreadable, or empty file -> None (the prompt is EXACTLY what it
+    was before the competitor feature existed)."""
+    if root is None:
+        return None
+    path = Path(root) / ".signalos" / "product" / "COMPETITORS.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    lines: list[str] = []
+    rows = data.get("matrix")
+    if isinstance(rows, list):
+        for row in rows[:6]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                f"- {row.get('url', '?')}: headline={row.get('headline') or '-'!r}; "
+                f"primary CTA={row.get('primary_cta') or '-'!r}; "
+                f"pricing shown={row.get('has_pricing', '?')}"
+            )
+    insights = data.get("insights")
+    if isinstance(insights, str) and insights.strip():
+        lines.append("Positioning opportunities:\n" + insights.strip()[:800])
+    if not lines:
+        return None
+    return (
+        "## Competitive Context\n\n"
+        "The founder analysed these competitor pages (Competitive UX Matrix). "
+        "Use this ONLY to inform design-system choices (differentiation, "
+        "density, tone); do not add features because of it.\n\n"
+        + "\n".join(lines)
+    )
+
+
 def select_design_with_llm(
     intent: dict,
     profile: str,
     blueprint: dict | None = None,
     provider_name: str | None = None,
     model: str | None = None,
+    root=None,
 ) -> dict | None:
     """Use an LLM architect agent to select the best design system.
 
@@ -599,6 +643,12 @@ def select_design_with_llm(
     if blueprint:
         parts.append("## Blueprint Context\n")
         parts.append(json.dumps(blueprint, indent=2, default=str))
+
+    # Competitive context (competitor:analyze output), when the founder ran
+    # a competitor analysis for this workspace. Absent file -> no change.
+    competitive = _competitive_context_block(root)
+    if competitive:
+        parts.append(competitive)
 
     parts.append(
         "\nSelect the best design system composition for this product. "
@@ -720,6 +770,7 @@ def build_design_system(
     intent: dict,
     profile: str,
     blueprint: dict | None = None,
+    root=None,
 ) -> dict:
     """Select design system, UX library, and tech composition for this product.
 
@@ -747,9 +798,11 @@ def build_design_system(
     if str(intent.get("declared_ui_library") or "").strip():
         return _deterministic_design(intent, profile, blueprint)
 
-    # Try LLM architect agent first
-    if is_llm_available():
-        llm_result = select_design_with_llm(intent, profile, blueprint)
+    # Try LLM architect agent first. ``root`` (the product workspace, when the
+    # caller has one) lets availability honor product-level keys and threads
+    # the competitive-context block into the architect prompt.
+    if is_llm_available(root):
+        llm_result = select_design_with_llm(intent, profile, blueprint, root=root)
         if llm_result:
             # #9: explicit brand values are founder-declared -- they win over
             # the architect's proposal. Mood only guides deterministic
