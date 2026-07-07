@@ -466,3 +466,196 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             self.assertIn("G0", res["waived"])
             done = [e for e in events if e.get("type") == "delivery_complete"]
             self.assertTrue(done and done[-1]["ready"] is False)
+
+
+class _RecordingAdapter:
+    """Adapter stub that captures every user-role message it is given, so
+    tests can assert the exact rework message the gate agent receives."""
+    supports_tool_calls = True
+
+    def __init__(self):
+        self.user_messages: list[str] = []
+
+    def chat(self, messages, model="test", tools=None, stream=False):
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "user":
+                content = m.get("content")
+                if isinstance(content, str):
+                    self.user_messages.append(content)
+        return AgentResponse(content="(gate work done)", tool_calls=None,
+                             stop_reason="end_turn", usage=TokenUsage())
+
+
+def _audit_reviews(root, gate="G0"):
+    audit = Path(root) / ".signalos" / "AUDIT_TRAIL.jsonl"
+    if not audit.is_file():
+        return []
+    rows = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines()
+            if l.strip()]
+    return [r for r in rows
+            if r.get("event") == "gate_review" and r.get("gate_id") == gate]
+
+
+class TestReworkFeedbackThreading(unittest.TestCase):
+    """P0 regression: apply_verdict('request-changes', feedback) must carry
+    the reviewer's actual feedback into (a) the rework message the gate agent
+    receives, (b) the persisted DeliveryState, and (c) the audit trail --
+    previously the text was silently dropped on this path."""
+
+    def _orch(self, root, events, **kw):
+        adapter = _RecordingAdapter()
+        orch = GateOrchestrator(
+            Path(root), adapter, events.append,
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: ["x"], prompt="build task management",
+            **kw,
+        )
+        return orch, adapter
+
+    def test_feedback_reaches_agent_verbatim_and_is_audited(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch, adapter = self._orch(d, events)
+            orch.start()
+            adapter.user_messages.clear()
+            res = orch.apply_verdict("request-changes", "make the nav horizontal")
+            self.assertEqual(res["status"], "reworked")
+            joined = "\n---\n".join(adapter.user_messages)
+            self.assertIn("make the nav horizontal", joined)   # verbatim
+            self.assertIn("Rework cycle 1", joined)
+            # audit trail: same gate_review event format as the standalone path
+            reviews = _audit_reviews(d)
+            self.assertTrue(reviews, "no gate_review audit event written")
+            self.assertEqual(reviews[-1]["verdict"], "REQUEST-CHANGES")
+            self.assertEqual(reviews[-1]["feedback"], "make the nav horizontal")
+            self.assertEqual(reviews[-1]["cycle"], 1)
+            # persisted in delivery.json (INV-5: survives resume)
+            sf = Path(d) / ".signalos" / "agent-runs" / orch.state.run_id / "delivery.json"
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            self.assertEqual(data["feedback"]["G0"][0]["feedback"],
+                             "make the nav horizontal")
+
+    def test_multiple_cycles_keep_latest_and_prior_feedback(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch, adapter = self._orch(d, events)
+            orch.start()
+            orch.apply_verdict("request-changes", "first: fix the header")
+            adapter.user_messages.clear()
+            res = orch.apply_verdict("request-changes", "second: fix the footer")
+            self.assertEqual(res["cycle"], 2)
+            joined = "\n---\n".join(adapter.user_messages)
+            self.assertIn("Rework cycle 2", joined)
+            self.assertIn("second: fix the footer", joined)   # latest, verbatim
+            self.assertIn("first: fix the header", joined)    # prior cycle kept
+            self.assertEqual(len(orch.state.feedback["G0"]), 2)
+
+    def test_reject_threads_feedback_and_is_audited(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch, adapter = self._orch(d, events)
+            orch.start()
+            adapter.user_messages.clear()
+            res = orch.apply_verdict("reject", "wrong direction entirely")
+            self.assertEqual(res["status"], "rejected")
+            joined = "\n---\n".join(adapter.user_messages)
+            self.assertIn("wrong direction entirely", joined)  # verbatim
+            reviews = _audit_reviews(d)
+            self.assertTrue(reviews)
+            self.assertEqual(reviews[-1]["verdict"], "REJECTED")
+            self.assertEqual(reviews[-1]["feedback"], "wrong direction entirely")
+
+    def test_max_rework_still_audits_the_refused_verdict(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch, adapter = self._orch(d, events, max_rework=1)
+            orch.start()
+            orch.apply_verdict("request-changes", "cycle one feedback")
+            res = orch.apply_verdict("request-changes", "over budget feedback")
+            self.assertEqual(res["status"], "max-rework")
+            reviews = _audit_reviews(d)
+            self.assertEqual(reviews[-1]["feedback"], "over budget feedback")
+            self.assertEqual(reviews[-1]["cycle"], 2)
+            # refused feedback is NOT stored as actionable state
+            self.assertEqual(len(orch.state.feedback["G0"]), 1)
+
+    def test_resume_restores_feedback_and_tolerates_legacy_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch, _adapter = self._orch(d, events)
+            orch.start()
+            orch.apply_verdict("request-changes", "tighten the scope")
+            sf = Path(d) / ".signalos" / "agent-runs" / orch.state.run_id / "delivery.json"
+
+            # resume restores the feedback field
+            loaded = resume_delivery(
+                Path(d), orch.state.run_id, _RecordingAdapter(), events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                sign_fn=lambda *a, **k: [],
+            )
+            self.assertEqual(loaded.state.feedback["G0"][0]["feedback"],
+                             "tighten the scope")
+            self.assertIn("tighten the scope", loaded._gate_message("G0"))
+
+            # legacy persisted state (no feedback field) still resumes and the
+            # rework message falls back to the generic nudge
+            data = json.loads(sf.read_text(encoding="utf-8"))
+            del data["feedback"]
+            sf.write_text(json.dumps(data), encoding="utf-8")
+            legacy = resume_delivery(
+                Path(d), orch.state.run_id, _RecordingAdapter(), events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                sign_fn=lambda *a, **k: [],
+            )
+            self.assertEqual(legacy.state.feedback, {})
+            msg = legacy._gate_message("G0")
+            self.assertIn("address the prior feedback", msg)
+
+
+class TestBudgetParity(unittest.TestCase):
+    """P1: the orchestrator path and the standalone gate_review path must
+    honor the SAME rework budget source (budgets.resolve_gate_rework_budget)."""
+
+    def test_default_budgets_match(self):
+        import os
+        from signalos_lib.product.budgets import (
+            DEFAULT_GATE_REWORK_BUDGET,
+            resolve_gate_rework_budget,
+        )
+        self.assertIsNone(os.environ.get("SIGNALOS_GATE_REWORK_BUDGET"))
+        with tempfile.TemporaryDirectory() as d:
+            events, signed = [], []
+            orch = _orch(d, events, signed)   # max_rework=None -> resolved default
+            self.assertEqual(orch.max_rework, DEFAULT_GATE_REWORK_BUDGET)
+            self.assertEqual(resolve_gate_rework_budget(None),
+                             DEFAULT_GATE_REWORK_BUDGET)
+
+    def test_env_override_drives_both_paths(self):
+        import os
+        from signalos_lib.product.gate_review import handle_request_changes
+        os.environ["SIGNALOS_GATE_REWORK_BUDGET"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                events, signed = [], []
+                orch = _orch(d, events, signed)
+                self.assertEqual(orch.max_rework, 1)
+                orch.start()
+                self.assertEqual(
+                    orch.apply_verdict("request-changes", "fix it")["status"],
+                    "reworked")
+                self.assertEqual(
+                    orch.apply_verdict("request-changes", "again")["status"],
+                    "max-rework")
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / ".signalos").mkdir(parents=True)
+                r1 = handle_request_changes(
+                    repo_root=root, gate_id="run-1", feedback="fix it",
+                    specific_items=["fix it"], cycle=0)
+                self.assertEqual(r1["status"], "rework_dispatched")
+                r2 = handle_request_changes(
+                    repo_root=root, gate_id="run-1", feedback="again",
+                    specific_items=["again"], cycle=r1["cycle"])
+                self.assertEqual(r2["status"], "max_cycles_reached")
+        finally:
+            os.environ.pop("SIGNALOS_GATE_REWORK_BUDGET", None)

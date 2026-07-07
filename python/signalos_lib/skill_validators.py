@@ -202,8 +202,13 @@ def _validate_writing_plans(_task: dict, root: Path, _written: list[str], _resp:
     # A wave-writing task must produce PLAN.tasks.yaml. The chat flow
     # already writes this from JS; this validator catches the rare case
     # where the planner skill is invoked from an orchestrate task and
-    # forgets to.
-    if not (root / "PLAN.tasks.yaml").is_file():
+    # forgets to. The plan location is project-scoped (§3.2): the
+    # orchestrator stamps project_id on each task; the resolver keeps the
+    # default project at the workspace-root path (byte-identical).
+    from signalos_lib.projects import project_plan_path
+
+    project_id = str(_task.get("project_id") or "default")
+    if not project_plan_path(root, project_id).is_file():
         return [SkillViolation(
             skill="writing-plans",
             message="PLAN.tasks.yaml is missing -- a writing-plans task must produce it.",

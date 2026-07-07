@@ -9,6 +9,8 @@ govern this codebase. Read these before changing protocol-related code.
 |---|---|
 | [docs/WAVE-ENGINE-DESIGN.md](docs/WAVE-ENGINE-DESIGN.md) | The wave-engine state machine + per-gate agents + scope-drift + refusal taxonomy. §12 lists implementation milestones M-W1 through M-W7 (all shipped — see commit log). |
 | [docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md](docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md) | The v0.2 audit. §6.7 defines the G3 design three-shape contract (`doc + prototype/` / `doc + external-design-ref` / `doc + no-UI-attestation`). §2.5.2 + §6.6.1 define the enforcement universality + override-with-audit pattern that the M-W7 refusal taxonomy implements. |
+| [docs/GATE-REOPEN-DESIGN.md](docs/GATE-REOPEN-DESIGN.md) | The gate-reopen state machine: cascade invalidation of later signed/waived gates, reopen budget (`SIGNALOS_GATE_REOPEN_BUDGET`, default 3), audit event kinds (reopen/invalidate/unwaive + replay reverse markers), `agent:reopen-gate` IPC + UI contract, and the scope-drift extension that detects conflicts with signed G2/G3 (resolution option e = reopen). |
+| [docs/MECHANICAL-VERIFICATION.md](docs/MECHANICAL-VERIFICATION.md) | The three mechanical-verification layers of the delivery bridge: verifiability tiers + the `mechanical_pct` contract metric (acceptance.py), evidence-freshness snapshot binding (evidence_freshness.py — snapshot after final validation and after proof, verified at closeout), and the deterministic test-quality gate (test_quality.py). Artifact locations + blocking-semantics table (strict blocks / warn records / advisory never blocks). |
 
 ### Wave-engine modules (Python)
 
@@ -43,18 +45,69 @@ from `inspect()` each turn — design §3.1 v1 persistence model):
 
 ## Multi-project plumbing
 
-Per WAVE-ENGINE-DESIGN §3.2, every state-touching function takes a
-`project_id: str = "default"` parameter. Today only `"default"` is used
-and the layout is workspace-root (matching the pre-engine layout
-exactly). When a future M exposes a project picker in the UI, the
-namespace shifts to `.signalos/projects/<project_id>/...` without an
-engine refactor — the parameter already threads through:
+Real since Task #19. `signalos_lib/projects.py` owns the registry at
+`.signalos/projects.json` (schema `signalos.projects.v1`, atomic
+tmp+`os.replace` writes): `list_projects` / `create_project` (id =
+slugified name, collision-suffixed, `"default"` reserved; creating
+switches to the new project) / `set_active_project` /
+`get_active_project` (returns `"default"` when the file is absent —
+full backward compat).
 
-- `signalos_lib/status.py` — `get_wave_status` / `build_status_json` / `print_status_card`
-- `signalos_lib/orchestrator.py` — `_route_next_gate_action` / `run_wave`
-- `signalos_lib/commands/status.py` and `commands/orchestrate.py` — `--project-id` CLI flag
-- `signalos_ipc_server.py` — `handle()` reads `req["project_id"]` and threads to handlers
-- `signalos_ipc_server.get_status_json` — passes `--project-id` to the CLI
+Resolution order in `signalos_ipc_server.handle()`: explicit
+`req["project_id"]` wins → else the workspace's active project from the
+registry → `"default"`. `dispatch_cli` appends `--project-id` to the
+project-aware CLI subcommands (`status`, `orchestrate`). IPC commands
+`project:list` / `project:create` / `project:switch` manage the
+registry; create/switch refuse with `{"status": "delivery-active"}`
+while `_ACTIVE_DELIVERIES` is non-empty.
+
+Namespacing — three resolvers in `projects.py`, all defaulting to the
+byte-identical single-project layout:
+
+- `project_state_dir` (`"default"` → workspace-root `.signalos/`, any
+  other id → `.signalos/projects/<id>/`): `wave-engine-state.json`
+  (wave_engine) and `worktree-state.json`. `worktree-manager.sh` accepts
+  `--project-id` (or `SIGNALOS_PROJECT_ID` env) and writes the state
+  file to the SAME path; `orchestrator._run_wm` / `signalos worktree`
+  append the flag only for non-default ids (older deployed scripts keep
+  working for default workspaces).
+- `project_plan_path` (`"default"` → `<root>/PLAN.tasks.yaml`, else
+  `.signalos/projects/<id>/PLAN.tasks.yaml`): `orchestrator.run_wave`
+  (plan_path=None now resolves per-project — the no-worktree fallback
+  reads the project's own plan), `status._load_plan_doc`, `signalos
+  plan`, `preamble._wave_id_from_plan`, and the `writing-plans` skill
+  validator (run_wave stamps `project_id` on each task).
+- `project_governance_dir` (WAVE-ENGINE-DESIGN §3.2 milestone SHIPPED —
+  `"default"` → the workspace root itself, else
+  `.signalos/projects/<id>/governance/` as the base for the canonical
+  `core/...` gate-artifact rel_paths): routed through
+  `artifacts.resolve_workspace_path`/`resolve_gate_artifacts` and
+  threaded into `sign.check_gate`/`sign_gate` (+ `signalos sign
+  --project-id`), `wave_engine.inspect`, `status` gate detection and
+  belief/soul/delivery-mode reads, orchestrator gating (via status),
+  `validate-gate`, `validate-wave-status`, and
+  `product.gate_orchestrator`. Invariant (pinned in
+  test_project_governance_namespacing.py): a gate signed as project X is
+  seen signed by X's inspect/status/check_gate and NOT by default.
+  Creation side is namespaced too: `AgentLoop` physically rebases file
+  writes/reads/edits addressed to the three canonical gate-artifact
+  subtrees (`core/governance/**`, `core/strategy/**`, `core/execution/**`
+  — `_artifact_base` in `product/agent_loop.py`) under the same resolver
+  for non-default projects, so a non-default delivery's gate agent creates
+  its artifact exactly where sign/inspect/status read it. Policy checks
+  still run on the canonical rel_path (already in the trust-tier write
+  allowlist; direct `.signalos/**` writes stay forbidden, `..` segments
+  never rebase). Product-source writes (`src/**`, `tests/**`, …) are NOT
+  gate artifacts and never rebase; the default project is byte-identical.
+  `GateOrchestrator` threads its `project_id` into every gate's AgentLoop,
+  persists it in delivery.json, and `resume_delivery` / `agent:deliver`
+  restore/bind it.
+
+Workspace-global by design: `AUDIT_TRAIL.jsonl` (one append-only chain),
+vault/secrets, git checkpoints (`.signalos/wave-checkpoints/`),
+`sessions/`, `missing-deps.json`. Commands without a project flag
+(release-readiness, ship, serve.py, ceremonies, handoff) operate on
+`"default"` via the resolvers' defaults.
 
 ## Skill validators
 

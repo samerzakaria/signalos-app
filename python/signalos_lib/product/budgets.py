@@ -13,10 +13,12 @@ from typing import Any
 DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET = 250
 DEFAULT_REPAIR_CYCLE_BUDGET = 8
 DEFAULT_GATE_REWORK_BUDGET = 8
+DEFAULT_GATE_REOPEN_BUDGET = 3
 
 AGENT_LOOP_TOOL_BUDGET_ENV = "SIGNALOS_AGENT_LOOP_TOOL_BUDGET"
 REPAIR_CYCLE_BUDGET_ENV = "SIGNALOS_AGENT_REPAIR_CYCLE_BUDGET"
 GATE_REWORK_BUDGET_ENV = "SIGNALOS_GATE_REWORK_BUDGET"
+GATE_REOPEN_BUDGET_ENV = "SIGNALOS_GATE_REOPEN_BUDGET"
 
 
 def resolve_agent_loop_tool_budget(value: int | None = None) -> int:
@@ -44,6 +46,19 @@ def resolve_gate_rework_budget(value: int | None = None) -> int:
         env_name=GATE_REWORK_BUDGET_ENV,
         default=DEFAULT_GATE_REWORK_BUDGET,
         label="gate rework budget",
+    )
+
+
+def resolve_gate_reopen_budget(value: int | None = None) -> int:
+    """Per-gate budget for reopening an already-signed gate (#4).
+
+    Bounds the reopen loop the same way rework/rejections are bounded, so a
+    delivery cannot oscillate forever between sign and reopen."""
+    return _resolve_budget(
+        value,
+        env_name=GATE_REOPEN_BUDGET_ENV,
+        default=DEFAULT_GATE_REOPEN_BUDGET,
+        label="gate reopen budget",
     )
 
 

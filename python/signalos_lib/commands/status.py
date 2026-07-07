@@ -78,7 +78,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). "
             "Default 'default' preserves today's workspace-root layout. "
-            "Future UI exposes a project picker that drives this."
+            "Driven by the Sidebar project picker / the active project in "
+            ".signalos/projects.json (dispatch_cli appends this flag)."
         ),
     )
     return parser

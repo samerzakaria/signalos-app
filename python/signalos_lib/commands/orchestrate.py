@@ -41,8 +41,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--plan",
         dest="plan_path",
-        required=True,
-        help="Path to the PLAN.md file for the Wave.",
+        default=None,
+        help=(
+            "Path to the PLAN file for the Wave. Default: resolved through "
+            "projects.project_plan_path — <root>/PLAN.tasks.yaml for the "
+            "default project, .signalos/projects/<id>/PLAN.tasks.yaml for "
+            "any other --project-id (WAVE-ENGINE-DESIGN §3.2)."
+        ),
     )
     parser.add_argument(
         "--provider",

@@ -525,6 +525,155 @@ class TestWriteHandoffFiles:
 
 
 # ------------------------------------------------------------------
+# GTM handoff assets (#11)
+# ------------------------------------------------------------------
+
+_GTM_LLM_PAYLOAD = {
+    "landing_page": {
+        "headline": "TestProduct: ship tasks fast",
+        "subheadline": "Built for teams.",
+        "sections": [{"title": "Plan", "body": "Plan the work."}],
+        "cta": "Start with TestProduct",
+    },
+    "app_store": {
+        "title": "TestProduct",
+        "subtitle": "For teams",
+        "description": "Manage tasks.",
+        "keywords": ["tasks", "teams"],
+    },
+    "product_hunt": {
+        "tagline": "TestProduct - tasks done",
+        "first_comment": "Hey hunters!",
+        "topics": ["productivity"],
+    },
+}
+
+
+def _write_intent(repo_root: Path) -> None:
+    _write_json(
+        repo_root / ".signalos" / "product" / "INTENT.json",
+        {
+            "product_name": "TestProduct",
+            "target_users": ["team managers"],
+            "primary_workflows": ["manage tasks"],
+        },
+    )
+
+
+class TestGtmHandoffAssets:
+    """#11: GTM assets are generated into the handoff bundle at closeout.
+
+    LLM-gated: written with a provider, honestly skipped without one, and a
+    GTM failure never fails the handoff/closeout.
+    """
+
+    def test_gtm_written_with_mock_llm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import signalos_lib.product.llm_provider as llm_provider
+
+        monkeypatch.delenv("SIGNALOS_DISABLE_LLM", raising=False)
+        monkeypatch.setattr(
+            llm_provider, "is_llm_available", lambda root=None: True,
+        )
+        monkeypatch.setattr(
+            llm_provider,
+            "call_llm",
+            lambda prompt, provider_name=None, model=None, root=None: (
+                llm_provider.LLMCallResult(
+                    success=True, text=json.dumps(_GTM_LLM_PAYLOAD),
+                )
+            ),
+        )
+
+        _populate_full_evidence(tmp_path)
+        _write_intent(tmp_path)
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+        signalos_dir = tmp_path / ".signalos"
+
+        paths = write_handoff_files(closeout, signalos_dir)
+
+        gtm_path = signalos_dir / "handoffs" / "gtm" / "launch-assets.md"
+        assert gtm_path.is_file()
+        assert gtm_path in paths
+        assert len(paths) == 4
+
+        content = gtm_path.read_text(encoding="utf-8")
+        assert "# Go-to-market assets" in content
+        assert "## Landing page" in content
+        assert "TestProduct: ship tasks fast" in content
+
+        assert closeout["gtm"]["status"] == "written"
+        assert closeout["gtm"]["llm_authored"] is True
+        assert closeout["gtm"]["files"] == ["gtm/launch-assets.md"]
+        # No skip/failure limitation was recorded for GTM
+        assert not any(
+            "GTM" in lim for lim in closeout.get("known_limitations", [])
+        )
+
+    def test_gtm_skipped_without_llm_and_recorded_honestly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setenv("SIGNALOS_DISABLE_LLM", "1")
+
+        _populate_full_evidence(tmp_path)
+        _write_intent(tmp_path)
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+        signalos_dir = tmp_path / ".signalos"
+
+        paths = write_handoff_files(closeout, signalos_dir)
+
+        # No GTM files written, no GTM files claimed
+        assert len(paths) == 3
+        assert not (signalos_dir / "handoffs" / "gtm").exists()
+        assert closeout["gtm"]["status"] == "skipped"
+        assert closeout["gtm"]["files"] == []
+        assert any(
+            "GTM assets were not generated" in lim
+            for lim in closeout["known_limitations"]
+        )
+        # The skip is visible in the handoff summary too (runs before the
+        # summary docs render limitations)
+        summary = (signalos_dir / "handoffs" / "product-summary.md").read_text(
+            encoding="utf-8"
+        )
+        assert "GTM assets were not generated" in summary
+
+    def test_gtm_failure_never_fails_handoff(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ):
+        import signalos_lib.product.gtm as gtm_mod
+        import signalos_lib.product.llm_provider as llm_provider
+
+        monkeypatch.delenv("SIGNALOS_DISABLE_LLM", raising=False)
+        monkeypatch.setattr(
+            llm_provider, "is_llm_available", lambda root=None: True,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("provider exploded")
+
+        monkeypatch.setattr(gtm_mod, "generate_gtm", _boom)
+
+        _populate_full_evidence(tmp_path)
+        _write_intent(tmp_path)
+        closeout = build_closeout(tmp_path, "TestProduct", "react-vite", None)
+        signalos_dir = tmp_path / ".signalos"
+
+        # Must not raise -- GTM failure never fails the closeout/handoff
+        paths = write_handoff_files(closeout, signalos_dir)
+
+        assert len(paths) == 3
+        assert all(p.is_file() for p in paths)
+        assert closeout["gtm"]["status"] == "failed"
+        assert "provider exploded" in closeout["gtm"]["reason"]
+        assert any(
+            "GTM asset generation failed" in lim
+            for lim in closeout["known_limitations"]
+        )
+
+
+# ------------------------------------------------------------------
 # check_closeout_honesty tests
 # ------------------------------------------------------------------
 

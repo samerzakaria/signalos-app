@@ -120,6 +120,57 @@ describe('agentEvents', () => {
     expect(state.busy.value).toBe(false);
   });
 
+  it('renders ux_friction events as a friction bubble ahead of the gate card (#12)', async () => {
+    const { state } = await loadHarness();
+
+    // The orchestrator's _emit_preview emits ux_friction BEFORE the gate
+    // checkpoint — the friction card must land before the review card.
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-ux',
+      type: 'ux_friction',
+      gate: 'design',
+      count: 2,
+      findings: [
+        {
+          persona: 'impatient',
+          label: 'Impatient User',
+          findings: [
+            { severity: 'high', issue: 'No loading state.', suggestion: 'Add a spinner.' },
+          ],
+        },
+        { persona: 'keyboard', label: 'Keyboard-only User', findings: [] },
+      ],
+    });
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-ux',
+      type: 'gate',
+      gate: 'design',
+      title: 'Design review',
+      question: 'Approve this direction?',
+    });
+
+    expect(state.chatBubbles.value.map((b) => b.kind)).toEqual(['friction', 'gate']);
+    const friction = state.chatBubbles.value[0];
+    expect(friction.uxFriction?.gate).toBe('design');
+    expect(friction.uxFriction?.personas).toHaveLength(2);
+    expect(friction.uxFriction?.personas[0]).toMatchObject({
+      persona: 'impatient',
+      label: 'Impatient User',
+      findings: [{ severity: 'high', issue: 'No loading state.', suggestion: 'Add a spinner.' }],
+    });
+  });
+
+  it('ignores malformed ux_friction payloads instead of crashing', async () => {
+    const { state } = await loadHarness();
+
+    emit({ kind: 'agent-event', run_id: 'run-ux2', type: 'ux_friction', gate: 'design', findings: 'not-a-list' });
+    emit({ kind: 'agent-event', run_id: 'run-ux2', type: 'ux_friction', gate: 'design' });
+
+    expect(state.chatBubbles.value).toEqual([]);
+  });
+
   it('sends gate verdicts to the agent verdict IPC command', async () => {
     const { mod } = await loadHarness();
 
@@ -174,5 +225,30 @@ describe('agentEvents', () => {
       kind: 'error',
       text: 'Error: Anthropic account credit is too low. Add credits with that provider or choose another provider/model in Settings.',
     });
+  });
+
+  it('final G5 sign feeds the notification bell live, deduped on re-delivery', async () => {
+    const { state } = await loadHarness();
+    const notif = await import('./notifications');
+    notif.__resetNotificationsForTests();
+
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'gate_signed', gate: 'G5', verdict: 'approve' });
+
+    expect(notif.unreadCount.value).toBe(1);
+    expect(notif.notifications.value[0]).toMatchObject({
+      kind: 'delivery',
+      text: 'Delivery complete — G5 signed',
+    });
+    // gate_signed has no bubble rendering — the chat stays untouched.
+    expect(state.chatBubbles.value).toEqual([]);
+
+    // Re-delivered event (sidecar replay) must not double-notify…
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'gate_signed', gate: 'G5', verdict: 'approve' });
+    expect(notif.unreadCount.value).toBe(1);
+
+    // …and the orchestrator's follow-up delivery_complete for the same run
+    // is folded into the same single completion notification.
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'delivery_complete', ready: true });
+    expect(notif.unreadCount.value).toBe(1);
   });
 });

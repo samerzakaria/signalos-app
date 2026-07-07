@@ -73,6 +73,7 @@ def validate_wave_status(
     api_url: str | None = None,
     token: str | None = None,
     write_evidence: bool = True,
+    project_id: str = "default",
 ) -> dict[str, Any]:
     """Validate the current Wave status from local app files.
 
@@ -80,10 +81,15 @@ def validate_wave_status(
     SignalOS.NET validator, but the app does not trust an external runtime API
     as proof yet. Passing ``api_url`` produces a blocker instead of silently
     downgrading remote validation to local files.
+
+    ``project_id`` namespaces the gate artifacts (§3.2) — status read,
+    per-gate validation, and role checks all resolve through the same
+    projects.project_governance_dir; "default" is byte-identical to the
+    historical workspace-root layout.
     """
 
     root = _resolve_root(repo_root)
-    status_data = build_status_json(root)
+    status_data = build_status_json(root, project_id=project_id)
     normalized_wave = _resolve_wave(wave, status_data.get("wave_id"))
     audit_status = _audit_status(root)
     scaffold_status = _scaffold_status(root)
@@ -139,8 +145,9 @@ def validate_wave_status(
             gate,
             wave=normalized_wave,
             write_evidence=False,
+            project_id=project_id,
         )
-        role_blockers = _role_blockers(root, gate)
+        role_blockers = _role_blockers(root, gate, project_id=project_id)
         gate_ok = bool(result.get("ok")) and not role_blockers
         gate_blockers = _gate_blockers(gate, result, role_blockers)
         blockers.extend(gate_blockers)
@@ -293,9 +300,11 @@ def _gate_blockers(
     return blockers
 
 
-def _role_blockers(root: Path, gate: str) -> list[WaveBlocker]:
+def _role_blockers(
+    root: Path, gate: str, project_id: str = "default",
+) -> list[WaveBlocker]:
     blockers: list[WaveBlocker] = []
-    for artifact in resolve_gate_artifacts(root, gate):
+    for artifact in resolve_gate_artifacts(root, gate, project_id=project_id):
         if not artifact.path.is_file():
             continue
         roles = _signature_roles(artifact.path)
@@ -413,6 +422,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--token", default=None, help="Reserved bearer token for --api-url")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--no-evidence", action="store_true")
+    parser.add_argument(
+        "--project-id", default="default", dest="project_id", metavar="ID",
+        help="Multi-project namespace (§3.2); default keeps workspace-root paths.",
+    )
     args = parser.parse_args(argv)
 
     payload = validate_wave_status(
@@ -421,6 +434,7 @@ def main(argv: list[str]) -> int:
         api_url=args.api_url,
         token=args.token,
         write_evidence=not args.no_evidence,
+        project_id=args.project_id,
     )
     if args.as_json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))

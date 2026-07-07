@@ -34,6 +34,9 @@ COMMAND=""
 WAVE_ID=""
 PLAN_PATH=""
 SESSION_ID=""         # optional, passed via --session-id
+# Multi-project namespace (WAVE-ENGINE-DESIGN §3.2). Flag wins over env;
+# empty/"default" keeps today's workspace-root state path byte-identical.
+PROJECT_ID="${SIGNALOS_PROJECT_ID:-default}"
 WORKTREE_BASE=""      # deferred — set in resolve_paths()
 HANDOFFS_FILE=""      # deferred — set in resolve_paths()
 STATE_FILE=""         # deferred — set in resolve_paths()
@@ -61,6 +64,9 @@ Options:
   --max-concurrent <n>  Max parallel worktrees (default: 5)
   --repo-root <path>    Repository root
   --session-id <id>     Session id for journal routing (default: auto)
+  --project-id <id>     Multi-project namespace (default: default, or
+                        SIGNALOS_PROJECT_ID). Non-default ids write state to
+                        .signalos/projects/<id>/worktree-state.json
   --help                Show this help
 
 EOF
@@ -82,6 +88,7 @@ parse_args() {
       --max-concurrent) MAX_CONCURRENT="$2"; shift 2 ;;
       --repo-root)      REPO_ROOT="$2"; shift 2 ;;
       --session-id)     SESSION_ID="$2"; shift 2 ;;
+      --project-id)     PROJECT_ID="$2"; shift 2 ;;
       --help|-h)        usage 0 ;;
       *)                echo "Error: Unknown argument: $1" >&2; usage 1 ;;
     esac
@@ -89,10 +96,19 @@ parse_args() {
 }
 
 resolve_paths() {
-  # Must run AFTER parse_args so --repo-root is honoured.
+  # Must run AFTER parse_args so --repo-root / --project-id are honoured.
   WORKTREE_BASE="${REPO_ROOT}/.signalos/worktrees"
   HANDOFFS_FILE="${REPO_ROOT}/core/governance/Worktree-sync/HANDOFFS.md"
-  STATE_FILE="${REPO_ROOT}/.signalos/worktree-state.json"
+  # Project-scoped state file. MUST mirror the Python reader's resolver
+  # (signalos_lib.projects.project_state_dir): "default"/empty keeps the
+  # workspace-root layout byte-identical; any other id namespaces under
+  # .signalos/projects/<id>/. status.py and orchestrator.py READ through
+  # that resolver, so writing anywhere else makes their task list empty.
+  if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "default" ]]; then
+    STATE_FILE="${REPO_ROOT}/.signalos/worktree-state.json"
+  else
+    STATE_FILE="${REPO_ROOT}/.signalos/projects/${PROJECT_ID}/worktree-state.json"
+  fi
   AUDIT_LOG="${REPO_ROOT}/.signalos/AUDIT_TRAIL.jsonl"
   # Default SESSION_ID if not provided
   if [[ -z "$SESSION_ID" ]]; then

@@ -290,6 +290,37 @@ def _is_governance_path(path: str) -> bool:
     return normed == ".signalos" or normed.startswith(".signalos/")
 
 
+# WAVE-ENGINE-DESIGN §3.2 — the three canonical subtrees the gate-artifact
+# manifest (gate_artifacts.json) addresses. For a NON-default project these
+# rel_paths physically rebase under projects.project_governance_dir(...) at
+# resolution time so artifact GENERATION lands exactly where the readers
+# (sign.py / wave_engine.inspect / status) resolve them. Everything else —
+# product source (src/**, tests/**, ...) and the whole default project — keeps
+# the historical repo-root resolution byte-identical.
+_GATE_ARTIFACT_SUBTREES: tuple[str, ...] = (
+    "core/governance",
+    "core/strategy",
+    "core/execution",
+)
+
+
+def _is_gate_artifact_rel_path(path: str) -> bool:
+    """True when *path* addresses a canonical gate-artifact subtree (§3.2).
+
+    Only clean relative paths qualify: anything containing a ``..`` segment is
+    NOT rebased and falls through to the ordinary workspace resolution, whose
+    containment guard already handles escapes — the rebase can never be
+    steered by traversal tricks.
+    """
+    normed = _norm(path)
+    if any(part == ".." for part in normed.split("/")):
+        return False
+    return any(
+        normed == subtree or normed.startswith(subtree + "/")
+        for subtree in _GATE_ARTIFACT_SUBTREES
+    )
+
+
 def _is_test_path(path: str) -> bool:
     normed = _norm(path)
     name = normed.rsplit("/", 1)[-1].lower()
@@ -491,6 +522,7 @@ class AgentLoop:
         execution_context: str = "delivery",
         active_gate: str | None = None,
         signed_gates: list[int] | None = None,
+        project_id: str = "default",
     ) -> None:
         self.adapter = adapter
         self.repo_root = Path(repo_root)
@@ -502,6 +534,10 @@ class AgentLoop:
         self._enforcement: EnforcementState | None = None
         self.execution_context = execution_context
         self.active_gate = active_gate
+        # §3.2: the delivery's project namespace. Rebases the PHYSICAL target
+        # of gate-artifact rel_paths (see _artifact_base); governance/policy
+        # checks keep operating on the canonical rel_path the model addressed.
+        self.project_id = project_id
         self._context_signed_gates = set(signed_gates or [])
         self._test_written_this_run = False
         self._seq = 0
@@ -1062,11 +1098,34 @@ class AgentLoop:
 
     # --- execution (2.5) -----------------------------------------------------
 
+    def _artifact_base(self, rel_path: str) -> Path:
+        """Base dir under which *rel_path* physically resolves (§3.2).
+
+        Gate-artifact rel_paths (core/governance/**, core/strategy/**,
+        core/execution/**) of a NON-default project rebase under the
+        project's governance base — projects.project_governance_dir — the
+        SAME single resolver sign.py / wave_engine.inspect / status read
+        through, so a gate agent's generated artifact is signable where it
+        was written. Product-source paths and the default project resolve
+        under the repo root, byte-identical to the historical behaviour.
+
+        Enforcement note: governance checks (_check_governance) run BEFORE
+        resolution, on the canonical rel_path — which the trust-tier write
+        allowlist already covers (core/** entries) — and direct `.signalos/…`
+        paths remain forbidden regardless of project, so this rebase neither
+        needs nor grants any allowlist loosening.
+        """
+        if self.project_id != "default" and _is_gate_artifact_rel_path(rel_path):
+            from ..projects import project_governance_dir
+
+            return project_governance_dir(self.repo_root, self.project_id)
+        return self.repo_root
+
     def _resolve_in_workspace(self, rel_path: str) -> Path | None:
         """Resolve *rel_path* under the workspace; None if it escapes (guard)."""
         if not rel_path:
             return None
-        candidate = (self.repo_root / rel_path).resolve()
+        candidate = (self._artifact_base(rel_path) / rel_path).resolve()
         root = self.repo_root.resolve()
         try:
             candidate.relative_to(root)
@@ -1207,15 +1266,40 @@ class AgentLoop:
             return "ERROR: empty pattern"
         root = self.repo_root.resolve()
         matches: list[str] = []
+        seen: set[str] = set()
         for p in root.glob(pattern):
             if ".signalos" in p.parts or "node_modules" in p.parts or ".git" in p.parts:
                 continue
             try:
-                matches.append(str(p.relative_to(root)).replace("\\", "/"))
+                rel = str(p.relative_to(root)).replace("\\", "/")
             except ValueError:
                 continue
+            if rel not in seen:
+                seen.add(rel)
+                matches.append(rel)
             if len(matches) >= 500:
                 break
+        # A non-default project's gate artifacts physically live under the
+        # governance base (see _artifact_base), which the .signalos skip above
+        # would hide — glob that base too and report canonical rel_paths, so
+        # search_files agrees with read_file/list_directory about what exists.
+        if self.project_id != "default" and len(matches) < 500:
+            from ..projects import project_governance_dir
+
+            gov = project_governance_dir(self.repo_root, self.project_id).resolve()
+            if gov != root and gov.is_dir():
+                for p in gov.glob(pattern):
+                    if "node_modules" in p.parts or ".git" in p.parts:
+                        continue
+                    try:
+                        rel = str(p.relative_to(gov)).replace("\\", "/")
+                    except ValueError:
+                        continue
+                    if _is_gate_artifact_rel_path(rel) and rel not in seen:
+                        seen.add(rel)
+                        matches.append(rel)
+                    if len(matches) >= 500:
+                        break
         if not matches:
             return f"No files match: {pattern}"
         return "\n".join(sorted(matches))

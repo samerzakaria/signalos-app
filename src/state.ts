@@ -70,6 +70,11 @@ export interface EnfRule {
   description?: string;
   desc?: string;
   status?: string;
+  /** Current enforcement mode: "strict" | "warn" | "off". */
+  mode?: string;
+  /** Core invariant — the backend refuses to disable it (enforcement.rs
+   *  CORE_INVARIANTS); the UI renders a lock instead of a toggle. */
+  core?: boolean;
 }
 export const enforcementRules = signal<EnfRule[]>([]);
 
@@ -140,9 +145,24 @@ export interface PlanTask {
   previous_failure?: string;
 }
 
+// ── UX-friction gate review (#12) ───────────────────────────────────────
+// The Python gate orchestrator (gate_orchestrator._emit_preview) runs the
+// 5-persona heuristic UX-QA pass at the design gate and emits
+// {"type":"ux_friction","gate":...,"findings":[{persona,label,findings}]}.
+export interface UxFrictionFinding {
+  severity: string; // "high" | "medium" | "low"
+  issue: string;
+  suggestion?: string;
+}
+export interface UxFrictionPersona {
+  persona: string;
+  label: string;
+  findings: UxFrictionFinding[];
+}
+
 export interface ChatBubble {
   id: string;
-  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview' | 'file';
+  kind: 'user' | 'ai' | 'streaming' | 'error' | 'plan' | 'progress' | 'system' | 'tool' | 'diff' | 'gate' | 'preview' | 'file' | 'friction';
   text: string;
   ts?: string;
   historical?: boolean;
@@ -182,6 +202,14 @@ export interface ChatBubble {
   waveAction?: string;
   /** Original user request — needed to re-fire wave:scope-drift-resolve. */
   waveUserRequest?: string;
+  /** Drift-verdict extras (GATE-REOPEN-DESIGN #5): when the drift conflicts
+   *  with a later signed gate (G2/G3), the prompt grows a 5th option (e)
+   *  "Reopen <gate> and rework from there". */
+  waveDrift?: {
+    recommended_action?: string;
+    conflicting_gate?: 'G0' | 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | string | null;
+    conflicting_summary?: string;
+  };
   /** Violation prompt payload — needed to re-fire wave:violation-confirm. */
   waveViolation?: {
     violation_kind: string;
@@ -229,6 +257,12 @@ export interface ChatBubble {
     srcDoc?: string;
     url?: string;
     caption?: string;
+  };
+  /** kind === 'friction': the 5-persona UX friction report (UxFrictionCard).
+   *  Informational — shown before/alongside the design-gate review card. */
+  uxFriction?: {
+    gate: string;
+    personas: UxFrictionPersona[];
   };
 }
 export const chatBubbles = signal<ChatBubble[]>([]);

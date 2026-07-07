@@ -191,9 +191,19 @@ def _read_soul_field(repo_root: Path, field: str) -> str:
     return ""
 
 
-def _wave_id_from_plan(repo_root: Path) -> str:
-    """Read `wave: <id>` from PLAN.tasks.yaml (top-level YAML scalar)."""
-    plan = repo_root / "core/execution/PLAN.tasks.yaml"
+def _wave_id_from_plan(repo_root: Path, project_id: str = "default") -> str:
+    """Read `wave: <id>` from PLAN.tasks.yaml (top-level YAML scalar).
+
+    Default project keeps the historical core/execution/PLAN.tasks.yaml
+    location; any other id resolves through projects.project_plan_path
+    (.signalos/projects/<id>/PLAN.tasks.yaml) per §3.2.
+    """
+    if project_id == "default":
+        plan = repo_root / "core/execution/PLAN.tasks.yaml"
+    else:
+        from signalos_lib.projects import project_plan_path
+
+        plan = project_plan_path(repo_root, project_id)
     if not plan.is_file():
         return "(no current wave)"
     try:

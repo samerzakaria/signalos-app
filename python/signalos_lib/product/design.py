@@ -21,6 +21,7 @@ __all__ = [
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 from .llm_provider import is_llm_available
@@ -116,6 +117,47 @@ def _shadcn_fit(intent: dict, blueprint: dict | None) -> str | None:
     return None
 
 
+def _intent_keyword_text(intent: dict) -> str:
+    """Lower-cased text blob of the intent's descriptive fields, for keyword
+    fit checks. Deterministic; no raw-prompt access needed."""
+    parts: list[str] = [
+        str(intent.get("product_name") or ""),
+        str(intent.get("product_type") or ""),
+    ]
+    for key in ("target_users", "primary_workflows", "entities",
+                "ux_surfaces", "stack_preferences"):
+        parts.extend(str(v) for v in intent.get(key, []) or [])
+    return " ".join(parts).lower()
+
+
+def _mui_fit(intent: dict, blueprint: dict | None) -> str | None:
+    text = _intent_keyword_text(intent)
+    if intent.get("product_type") in {"crm", "erp"} or any(
+        kw in text
+        for kw in ("enterprise", "admin", "back-office", "back office",
+                   "internal tool", "erp", "data-heavy")
+    ):
+        return (
+            "Enterprise/admin data-heavy product suits Material Design's "
+            "dense, information-rich components"
+        )
+    return None
+
+
+def _chakra_fit(intent: dict, blueprint: dict | None) -> str | None:
+    text = _intent_keyword_text(intent)
+    if intent.get("product_type") in {"social-platform", "e-commerce"} or any(
+        kw in text
+        for kw in ("consumer", "marketing", "landing", "storefront",
+                   "community", "waitlist")
+    ):
+        return (
+            "Consumer/marketing product suits Chakra's approachable, "
+            "brand-themable components"
+        )
+    return None
+
+
 _UI_LIBRARY_REGISTRY: tuple[UILibraryAdapter, ...] = (
     UILibraryAdapter(
         id="shadcn",
@@ -167,6 +209,63 @@ _UI_LIBRARY_REGISTRY: tuple[UILibraryAdapter, ...] = (
         selection_priority=10,
         fit=_mantine_fit,
     ),
+    # #10(design): MUI. Deterministic scaffold files (theme.ts / product.css /
+    # layouts / local components) are library-agnostic plain HTML+CSS, so no
+    # per-library template is needed; MUI components also render without a
+    # ThemeProvider (built-in default Material theme). LLM-generated code gets
+    # a ThemeProvider+CssBaseline instruction via generation.py's constraints.
+    UILibraryAdapter(
+        id="mui",
+        name="@mui/material",
+        version="^5.16.7",
+        prompt_desc=(
+            "Material Design components, dense data display; good for "
+            "enterprise/admin and data-heavy internal apps"
+        ),
+        dependencies={
+            # v5 line: built for React 18 (matching the react-vite scaffold's
+            # react/react-dom ^18.3.1). Emotion is MUI's required styling peer.
+            "@mui/material": "^5.16.7",
+            "@mui/icons-material": "^5.16.7",
+            "@emotion/react": "^11.11.4",
+            "@emotion/styled": "^11.11.5",
+        },
+        import_packages=(
+            "@mui/material", "@mui/icons-material",
+            "@emotion/react", "@emotion/styled",
+        ),
+        # Below mantine (10): enterprise fit only wins when neither the
+        # dashboard fit nor the entity-rich forms fit matched.
+        selection_priority=6,
+        fit=_mui_fit,
+    ),
+    # #10(design): Chakra v2 (v3 is a breaking API + newer React). NOTE:
+    # unlike MUI, Chakra components REQUIRE ChakraProvider at runtime -- the
+    # deterministic local build never imports Chakra (plain HTML), and the
+    # LLM path is instructed to wrap App + tests in ChakraProvider (same
+    # prompt-level integration Mantine has for MantineProvider).
+    UILibraryAdapter(
+        id="chakra",
+        name="@chakra-ui/react",
+        version="^2.8.2",
+        prompt_desc=(
+            "accessible, brand-themable components; good for consumer, "
+            "marketing, and landing experiences"
+        ),
+        dependencies={
+            "@chakra-ui/react": "^2.8.2",
+            "@chakra-ui/icons": "^2.1.1",
+            "@emotion/react": "^11.11.4",
+            "@emotion/styled": "^11.11.5",
+            "framer-motion": "^11.2.0",
+        },
+        import_packages=(
+            "@chakra-ui/react", "@chakra-ui/icons",
+            "@emotion/react", "@emotion/styled", "framer-motion",
+        ),
+        selection_priority=5,
+        fit=_chakra_fit,
+    ),
 )
 
 
@@ -195,6 +294,165 @@ def _ui_library_options_block() -> str:
     return "\n".join(
         f'- "{lib.name}" — {lib.prompt_desc}' for lib in _UI_LIBRARY_REGISTRY
     )
+
+
+# ---------------------------------------------------------------------------
+# #8(design): SAFE design-token ranges -- the single source of truth for the
+# values the architect LLM may pick, the validator accepts, and the
+# deterministic fallback derives. Everything outside these sets falls back
+# (fail-safe: invalid LLM output -> None -> deterministic path).
+# ---------------------------------------------------------------------------
+
+VALID_COLOR_SCHEMES: tuple[str, ...] = ("light", "dark")
+VALID_BORDER_RADII: tuple[str, ...] = (
+    "0px", "4px", "8px", "12px", "16px", "9999px",
+)
+VALID_SPACING_UNITS: tuple[int, ...] = (4, 8)
+VALID_TYPE_SCALES: tuple[str, ...] = ("compact", "regular", "spacious")
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+_DEFAULT_DESIGN_TOKENS: dict[str, Any] = {
+    "color_scheme": "light",
+    "primary_color": "#3b82f6",
+    "border_radius": "8px",
+    "font_family": "Inter, sans-serif",
+    "spacing_unit": 8,
+    "type_scale": "regular",
+}
+
+# Intent keywords -> dark developer aesthetic (terminal-adjacent products).
+_DEV_TOOL_KEYWORD_RE = re.compile(
+    r"\b(developers?|devops|terminals?|cli|command[- ]line|code|coding|"
+    r"debug(?:ger|ging)?|logs?|observability|monitoring|infra(?:structure)?|"
+    r"kubernetes|ci/?cd)\b"
+)
+# Intent keywords -> softer consumer/playful aesthetic.
+_PLAYFUL_KEYWORD_RE = re.compile(
+    r"\b(playful|fun|games?|gaming|kids?|children|social|communit(?:y|ies)|"
+    r"hobb(?:y|ies)|part(?:y|ies))\b"
+)
+
+# #9(design): founder mood -> deterministic token defaults. Explicit brand
+# fields (primary_color / color_scheme / font_hint) still override these.
+_MOOD_TOKEN_MAP: dict[str, dict[str, Any]] = {
+    "playful": {"border_radius": "16px", "type_scale": "spacious"},
+    "premium": {"color_scheme": "dark", "border_radius": "4px"},
+    "clinical": {
+        "color_scheme": "light", "border_radius": "4px",
+        "type_scale": "compact",
+    },
+    "minimal": {"border_radius": "0px", "type_scale": "compact"},
+}
+
+_FONT_HINT_MAP: dict[str, str] = {
+    "mono": "JetBrains Mono, monospace",
+    "serif": "Georgia, serif",
+    "sans": "Inter, sans-serif",
+    "system": "system-ui, sans-serif",
+}
+
+
+def _derive_design_tokens(intent: dict) -> dict[str, Any]:
+    """Deterministic (no LLM, no randomness) token derivation from intent
+    signals. Developer/terminal products get a dark monospace treatment;
+    playful/consumer products get a rounder, more generous scale."""
+    tokens = dict(_DEFAULT_DESIGN_TOKENS)
+    tokens["primary_color"] = _derive_color_scheme(intent)
+    text = _intent_keyword_text(intent)
+    if _DEV_TOOL_KEYWORD_RE.search(text):
+        tokens.update({
+            "color_scheme": "dark",
+            "font_family": "JetBrains Mono, monospace",
+            "border_radius": "4px",
+            "type_scale": "compact",
+        })
+    elif _PLAYFUL_KEYWORD_RE.search(text):
+        tokens.update({"border_radius": "16px", "type_scale": "spacious"})
+    return tokens
+
+
+def _apply_brand_brief(
+    tokens: dict[str, Any],
+    brand: Any,
+    include_mood_defaults: bool = True,
+) -> dict[str, Any]:
+    """Overlay the founder's brand brief (intent['brand']) onto *tokens*.
+
+    Precedence (documented contract): founder-DECLARED choices > brand brief
+    > heuristic/LLM proposal. Mood supplies deterministic token DEFAULTS;
+    explicit brand fields (primary_color, color_scheme, font_hint) override
+    even those. Invalid values are ignored, never guessed."""
+    if not isinstance(brand, dict) or not brand:
+        return tokens
+    out = dict(tokens)
+    if include_mood_defaults:
+        mood = str(brand.get("mood") or "").strip().lower()
+        out.update(_MOOD_TOKEN_MAP.get(mood, {}))
+    scheme = str(brand.get("color_scheme") or "").strip().lower()
+    if scheme in VALID_COLOR_SCHEMES:
+        out["color_scheme"] = scheme
+    color = str(brand.get("primary_color") or "").strip()
+    if _HEX_COLOR_RE.match(color):
+        out["primary_color"] = color.lower()
+    hint = str(brand.get("font_hint") or "").strip().lower()
+    if hint in _FONT_HINT_MAP:
+        out["font_family"] = _FONT_HINT_MAP[hint]
+    return out
+
+
+def _validate_design_tokens(tokens: Any) -> dict[str, Any] | None:
+    """Validate LLM-proposed design tokens against the safe ranges.
+
+    A token that is PRESENT but outside its range -> None (the caller falls
+    back to the deterministic path -- fail-safe). A token that is absent is
+    filled with the deterministic default (older provider responses stay
+    parseable). Extra keys are preserved."""
+    if not isinstance(tokens, dict):
+        return None
+    out = dict(tokens)
+
+    scheme = out.get("color_scheme")
+    if scheme is None:
+        out["color_scheme"] = _DEFAULT_DESIGN_TOKENS["color_scheme"]
+    elif str(scheme) not in VALID_COLOR_SCHEMES:
+        return None
+
+    color = out.get("primary_color")
+    if color is None:
+        out["primary_color"] = _DEFAULT_DESIGN_TOKENS["primary_color"]
+    elif not (isinstance(color, str) and _HEX_COLOR_RE.match(color)):
+        return None
+
+    radius = out.get("border_radius")
+    if radius is None:
+        out["border_radius"] = _DEFAULT_DESIGN_TOKENS["border_radius"]
+    elif str(radius) not in VALID_BORDER_RADII:
+        return None
+
+    spacing = out.get("spacing_unit")
+    if spacing is None:
+        out["spacing_unit"] = _DEFAULT_DESIGN_TOKENS["spacing_unit"]
+    else:
+        try:
+            spacing_int = int(spacing)
+        except (TypeError, ValueError):
+            return None
+        if spacing_int not in VALID_SPACING_UNITS:
+            return None
+        out["spacing_unit"] = spacing_int
+
+    scale = out.get("type_scale")
+    if scale is None:
+        out["type_scale"] = _DEFAULT_DESIGN_TOKENS["type_scale"]
+    elif str(scale) not in VALID_TYPE_SCALES:
+        return None
+
+    font = out.get("font_family")
+    if not isinstance(font, str) or not font.strip():
+        out["font_family"] = _DEFAULT_DESIGN_TOKENS["font_family"]
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -253,17 +511,33 @@ Font (pick one):
 - "JetBrains Mono" — monospace, good for developer tools
 - "system" — system font stack
 
+Color scheme (pick one):
+- "light" — default; clinical, productivity, and general business products
+- "dark" — developer tools, terminals, media/monitoring products
+
+Border radius (pick one): "0px", "4px", "8px", "12px", "16px", "9999px"
+— sharper for premium/minimal/enterprise, rounder for playful/consumer.
+
+Spacing unit (pick one): 4 or 8 — 4 for dense data-heavy UIs, 8 otherwise.
+
+Type scale (pick one): "compact", "regular", "spacious".
+
+If the product intent contains a `brand` object it is the founder's declared
+brand brief: honor `brand.primary_color` verbatim and respect its
+`color_scheme`, `mood`, and `font_hint` in your token choices.
+
 ## Output Format
 
 Return ONLY valid JSON (no markdown fencing, no explanation outside the JSON):
 {
   "ui_library": {"name": "<choice>", "version": "<semver or latest>", "reason": "<why>"},
   "design_tokens": {
-    "color_scheme": "light",
+    "color_scheme": "<light|dark>",
     "primary_color": "<hex>",
-    "border_radius": "8px",
+    "border_radius": "<one of the supported radius values>",
     "font_family": "<choice>, sans-serif",
-    "spacing_unit": 8
+    "spacing_unit": 4 or 8,
+    "type_scale": "<compact|regular|spacious>"
   },
   "state_management": {"name": "<choice>", "version": "<semver>", "reason": "<why>"},
   "data_layer": {"name": "<choice>", "version": "<semver or null>", "reason": "<why>"},
@@ -279,12 +553,56 @@ _ARCHITECT_SYSTEM_PROMPT = _ARCHITECT_SYSTEM_PROMPT.replace(
 )
 
 
+def _competitive_context_block(root) -> str | None:
+    """Compact competitive-context block for the architect prompt, read from
+    ``.signalos/product/COMPETITORS.json`` (written by competitor:analyze).
+
+    Absent, unreadable, or empty file -> None (the prompt is EXACTLY what it
+    was before the competitor feature existed)."""
+    if root is None:
+        return None
+    path = Path(root) / ".signalos" / "product" / "COMPETITORS.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    lines: list[str] = []
+    rows = data.get("matrix")
+    if isinstance(rows, list):
+        for row in rows[:6]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                f"- {row.get('url', '?')}: headline={row.get('headline') or '-'!r}; "
+                f"primary CTA={row.get('primary_cta') or '-'!r}; "
+                f"pricing shown={row.get('has_pricing', '?')}"
+            )
+    insights = data.get("insights")
+    if isinstance(insights, str) and insights.strip():
+        lines.append("Positioning opportunities:\n" + insights.strip()[:800])
+    if not lines:
+        return None
+    return (
+        "## Competitive Context\n\n"
+        "The founder analysed these competitor pages (Competitive UX Matrix). "
+        "Use this ONLY to inform design-system choices (differentiation, "
+        "density, tone); do not add features because of it.\n\n"
+        + "\n".join(lines)
+    )
+
+
 def select_design_with_llm(
     intent: dict,
     profile: str,
     blueprint: dict | None = None,
     provider_name: str | None = None,
     model: str | None = None,
+    root=None,
 ) -> dict | None:
     """Use an LLM architect agent to select the best design system.
 
@@ -325,6 +643,12 @@ def select_design_with_llm(
     if blueprint:
         parts.append("## Blueprint Context\n")
         parts.append(json.dumps(blueprint, indent=2, default=str))
+
+    # Competitive context (competitor:analyze output), when the founder ran
+    # a competitor analysis for this workspace. Absent file -> no change.
+    competitive = _competitive_context_block(root)
+    if competitive:
+        parts.append(competitive)
 
     parts.append(
         "\nSelect the best design system composition for this product. "
@@ -405,11 +729,19 @@ def _parse_design_response(response: str) -> dict | None:
     if form_name not in valid_form:
         return None
 
+    # #8: validate the freed design tokens against the safe ranges. A token
+    # outside its range invalidates the whole response (None -> the caller
+    # uses the deterministic fallback -- fail-safe); an absent token is
+    # filled with the deterministic default.
+    validated_tokens = _validate_design_tokens(data["design_tokens"])
+    if validated_tokens is None:
+        return None
+
     # Build the full design system dict with standard envelope
     return {
         "schema_version": "signalos.design_system.v1",
         "ui_library": data["ui_library"],
-        "design_tokens": data["design_tokens"],
+        "design_tokens": validated_tokens,
         "state_management": data["state_management"],
         "data_layer": data["data_layer"],
         "form_handling": data["form_handling"],
@@ -438,6 +770,7 @@ def build_design_system(
     intent: dict,
     profile: str,
     blueprint: dict | None = None,
+    root=None,
 ) -> dict:
     """Select design system, UX library, and tech composition for this product.
 
@@ -455,16 +788,30 @@ def build_design_system(
     if profile == "agent-selected":
         return _portable_design(intent, profile)
 
-    # #44: a founder-DECLARED design system is a signed decision. Honor it
-    # verbatim via the deterministic path (which validates + applies it) and do
-    # NOT let the LLM architect re-propose over the founder's choice.
+    # Precedence contract (#44 + #9): declared > brand > heuristic.
+    #   - A founder-DECLARED ui library is a signed decision -- honored
+    #     verbatim via the deterministic path; the LLM never re-proposes it.
+    #   - The founder's BRAND BRIEF (intent['brand']) overrides heuristic
+    #     token defaults -- and its EXPLICIT fields (primary_color,
+    #     color_scheme, font_hint) override the LLM's token proposal too.
+    #   - Heuristics fill everything the founder left open.
     if str(intent.get("declared_ui_library") or "").strip():
         return _deterministic_design(intent, profile, blueprint)
 
-    # Try LLM architect agent first
-    if is_llm_available():
-        llm_result = select_design_with_llm(intent, profile, blueprint)
+    # Try LLM architect agent first. ``root`` (the product workspace, when the
+    # caller has one) lets availability honor product-level keys and threads
+    # the competitive-context block into the architect prompt.
+    if is_llm_available(root):
+        llm_result = select_design_with_llm(intent, profile, blueprint, root=root)
         if llm_result:
+            # #9: explicit brand values are founder-declared -- they win over
+            # the architect's proposal. Mood only guides deterministic
+            # defaults (the architect already saw it in the intent JSON).
+            llm_result["design_tokens"] = _apply_brand_brief(
+                llm_result.get("design_tokens", {}),
+                intent.get("brand"),
+                include_mood_defaults=False,
+            )
             return llm_result
 
     # Fallback: deterministic selection (existing logic)
@@ -477,7 +824,11 @@ def _deterministic_design(intent: dict, profile: str, blueprint: dict | None = N
     state = _select_state_management(intent)
     data = _select_data_layer(intent)
     form = _select_form_handling(intent)
-    primary_color = _derive_color_scheme(intent)
+    # #8: tokens derived from intent signals; #9: the founder's brand brief
+    # overrides those heuristics (precedence: declared > brand > heuristic).
+    tokens = _apply_brand_brief(
+        _derive_design_tokens(intent), intent.get("brand"),
+    )
 
     additional_deps: dict[str, str] = {}
     # recharts for dashboard/chart products
@@ -490,13 +841,7 @@ def _deterministic_design(intent: dict, profile: str, blueprint: dict | None = N
     return {
         "schema_version": "signalos.design_system.v1",
         "ui_library": ui,
-        "design_tokens": {
-            "color_scheme": "light",
-            "primary_color": primary_color,
-            "border_radius": "8px",
-            "font_family": "Inter, sans-serif",
-            "spacing_unit": 8,
-        },
+        "design_tokens": tokens,
         "state_management": state,
         "data_layer": data,
         "form_handling": form,
@@ -644,13 +989,10 @@ def _portable_design(intent: dict, profile: str) -> dict:
                 "choices belong to the selected product technology."
             ),
         },
-        "design_tokens": {
-            "color_scheme": "light",
-            "primary_color": _derive_color_scheme(intent),
-            "border_radius": "8px",
-            "font_family": "Inter, sans-serif",
-            "spacing_unit": 8,
-        },
+        # #8/#9: portable tokens still honor intent signals + brand brief.
+        "design_tokens": _apply_brand_brief(
+            _derive_design_tokens(intent), intent.get("brand"),
+        ),
         "state_management": {
             "name": "",
             "version": None,
@@ -686,13 +1028,7 @@ def _empty_design(reason: str = "Non-UI profile") -> dict:
     return {
         "schema_version": "signalos.design_system.v1",
         "ui_library": {"name": "", "version": None, "reason": reason},
-        "design_tokens": {
-            "color_scheme": "light",
-            "primary_color": "#3b82f6",
-            "border_radius": "8px",
-            "font_family": "Inter, sans-serif",
-            "spacing_unit": 8,
-        },
+        "design_tokens": dict(_DEFAULT_DESIGN_TOKENS),
         "state_management": {"name": "", "version": None, "reason": reason},
         "data_layer": {"name": "", "version": None, "reason": reason},
         "form_handling": {"name": "", "version": None, "reason": reason},
@@ -775,6 +1111,7 @@ def get_design_instructions(design: dict) -> dict:
                 "spacing_unit": tokens.get("spacing_unit", 8),
                 "border_radius": tokens.get("border_radius", "8px"),
                 "color_scheme": tokens.get("color_scheme", "light"),
+                "type_scale": tokens.get("type_scale", "regular"),
             },
         },
         "src/ui/index.ts": {

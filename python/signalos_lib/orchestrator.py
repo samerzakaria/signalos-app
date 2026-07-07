@@ -100,8 +100,15 @@ def _worktree_manager(root: Path) -> Path:
     return root / _WORKTREE_MANAGER
 
 
-def _state_file(root: Path) -> Path:
-    return root / REPO_ROOT_MARKER / "worktree-state.json"
+def _state_file(root: Path, project_id: str = "default") -> Path:
+    """Project-scoped worktree-state.json (Task #19 / design §3.2).
+
+    "default" keeps the workspace-root layout; any other id namespaces
+    under .signalos/projects/<project_id>/ via projects.project_state_dir.
+    """
+    from signalos_lib.projects import project_state_dir
+
+    return project_state_dir(root, project_id) / "worktree-state.json"
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +201,12 @@ def _tasks_from_plan(plan_path: Path, wave_id: str) -> list[dict[str, Any]]:
     return ensure_design_skill_tagged(out)
 
 
-def _run_wm(root: Path, *args: str, check: bool = False) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+def _run_wm(
+    root: Path,
+    *args: str,
+    check: bool = False,
+    project_id: str = "default",
+) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
     wm = _worktree_manager(root)
     if not wm.is_file():
         raise RuntimeError(
@@ -209,6 +221,14 @@ def _run_wm(root: Path, *args: str, check: bool = False) -> subprocess.Completed
     # and git-bash because Python translates cwd correctly when
     # launching the child process.
     cmd = ["bash", wm.relative_to(root).as_posix()] + list(args)
+    # Project-aware state routing (§3.2): the script must write
+    # worktree-state.json to the SAME path projects.project_state_dir
+    # resolves for readers (status.py / orchestrator._read_tasks). The
+    # flag is only appended for non-default projects so a workspace whose
+    # deployed script predates --project-id keeps working unchanged for
+    # the default project (byte-identical invocation).
+    if project_id and project_id != "default":
+        cmd += ["--project-id", project_id]
     return subprocess.run(cmd, cwd=str(root), check=check)
 
 
@@ -216,8 +236,8 @@ def _run_wm(root: Path, *args: str, check: bool = False) -> subprocess.Completed
 # Task list from state file
 # ---------------------------------------------------------------------------
 
-def _read_tasks(root: Path) -> list[dict[str, Any]]:
-    sf = _state_file(root)
+def _read_tasks(root: Path, project_id: str = "default") -> list[dict[str, Any]]:
+    sf = _state_file(root, project_id)
     if not sf.is_file():
         return []
     try:
@@ -1610,9 +1630,9 @@ def _route_next_gate_action(
     auto-fires before build. Once G3-agent machinery exists, the router
     naturally re-routes through it.
 
-    The `project_id` parameter is plumbing for future multi-project support
-    per design §3.2. Today only "default" is used; future milestones expose
-    a Sidebar picker that drives this.
+    The `project_id` parameter namespaces the status read (Task #19 /
+    design §3.2): the router checks the gates as seen from that
+    project's state namespace.
     """
     try:
         from .status import get_wave_status
@@ -1633,7 +1653,7 @@ def _route_next_gate_action(
         }
 
     try:
-        status = get_wave_status(root)
+        status = get_wave_status(root, project_id=project_id)
     except Exception as exc:
         _append_audit_entry(root, {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -1850,7 +1870,7 @@ def _dispatch_gate_agent(
 
 def run_wave(
     wave_id: str,
-    plan_path: str,
+    plan_path: str | None = None,
     *,
     session_id: str | None = None,
     max_concurrent: int = 5,
@@ -1861,6 +1881,12 @@ def run_wave(
 ) -> dict[str, Any]:
     """Orchestrate parallel execution of all tasks in a Wave.
 
+    *plan_path* None resolves through projects.project_plan_path — the
+    workspace-root PLAN.tasks.yaml for the default project (unchanged),
+    `.signalos/projects/<id>/PLAN.tasks.yaml` for any other id — so the
+    no-worktree fallback loads the PROJECT's plan, not the global one.
+    An explicit path always wins (existing callers are unaffected).
+
     1. Calls worktree-manager.sh create --wave <id> --plan <path>
     2. Reads .signalos/worktree-state.json for the task list
     3. Dispatches run_step() calls concurrently (up to max_concurrent)
@@ -1868,10 +1894,11 @@ def run_wave(
     5. Calls worktree-manager.sh reconcile then retire after all tasks
     6. Returns a summary dict with per-task results
 
-    The *project_id* parameter is plumbing for future multi-project support
-    per WAVE-ENGINE-DESIGN §3.2. Today only "default" flows from callers;
-    the router and audit entries record it so future UI exposure doesn't
-    require an engine refactor.
+    Per WAVE-ENGINE-DESIGN §3.2 (Task #19), *project_id* namespaces the
+    wave's task state: the router's status read and the worktree-state
+    task list resolve through projects.project_state_dir, so a
+    non-default project reads/reports its own namespace. AUDIT_TRAIL
+    entries stay workspace-global and record the project_id.
 
     Returns dict keys:
         wave_id, session_id, tasks, completed, failed, paused,
@@ -1879,6 +1906,14 @@ def run_wave(
         project_id
     """
     root = _repo_root(cwd)
+
+    # Per-project plan resolution (§3.2): only when the caller did not name
+    # a plan explicitly. Default project → <root>/PLAN.tasks.yaml, exactly
+    # the path callers passed historically.
+    if plan_path is None:
+        from signalos_lib.projects import project_plan_path
+
+        plan_path = str(project_plan_path(root, project_id))
 
     # AMD-CORE-110 Layer 3 — wave-engine router (per WAVE-ENGINE-DESIGN §10).
     # Replaces the earlier refuse-by-default check. Decides whether to:
@@ -1980,7 +2015,8 @@ def run_wave(
     tasks: list[dict[str, Any]] = []
     if use_worktrees:
         sys.stdout.write(f"[orchestrate] Creating worktrees...\n")
-        proc = _run_wm(root, "create", "--wave", wave_id, "--plan", plan_path)
+        proc = _run_wm(root, "create", "--wave", wave_id, "--plan", str(plan_path),
+                       project_id=project_id)
         if proc.returncode != 0:
             return {
                 "wave_id": wave_id,
@@ -1993,11 +2029,11 @@ def run_wave(
                 "paused": 0,
                 "elapsed_ms": 0,
             }
-        # Step 2: Read task list from worktree-state.json
-        tasks = _read_tasks(root)
+        # Step 2: Read task list from worktree-state.json (project-scoped)
+        tasks = _read_tasks(root, project_id=project_id)
         if not tasks:
             sys.stdout.write("[orchestrate] No tasks found in worktree-state.json\n")
-            print_status_card(root)
+            print_status_card(root, project_id=project_id)
             return {
                 "wave_id": wave_id,
                 "session_id": session_id,
@@ -2040,8 +2076,15 @@ def run_wave(
     if not wave_tasks:
         wave_tasks = tasks  # use all if no wave filter matches
 
+    # Stamp the namespace on each task (additive) so downstream consumers
+    # with no other project context — skill validators resolving the
+    # project's PLAN.tasks.yaml, result JSON readers — see which project
+    # this wave ran under.
+    for t in wave_tasks:
+        t.setdefault("project_id", project_id)
+
     sys.stdout.write(f"[orchestrate] Dispatching {len(wave_tasks)} task(s)...\n")
-    print_status_card(root)
+    print_status_card(root, project_id=project_id)
 
     # Step 3: Dispatch concurrently with DAG ordering + timeout (AMD-CORE-012 T1/T2/T3)
     task_timeout = float(os.environ.get("SIGNALOS_TASK_TIMEOUT_SECS", _DEFAULT_TASK_TIMEOUT))
@@ -2108,7 +2151,7 @@ def run_wave(
                 pool.submit(
                     _execute_task,
                     task, root, session_id, provider, model,
-                    lambda r: print_status_card(r),
+                    lambda r: print_status_card(r, project_id=project_id),
                 ): task
                 for task in runnable
             }
@@ -2179,16 +2222,16 @@ def run_wave(
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
     # Step 4: Print final status card
-    print_status_card(root)
+    print_status_card(root, project_id=project_id)
 
     # Step 5: Reconcile + retire (only when worktrees were used; the
     # no-bash fallback path leaves files in workspace root and has nothing
     # to merge or retire).
     if use_worktrees:
         sys.stdout.write("[orchestrate] Reconciling worktrees...\n")
-        _run_wm(root, "reconcile", "--wave", wave_id)
+        _run_wm(root, "reconcile", "--wave", wave_id, project_id=project_id)
         sys.stdout.write("[orchestrate] Retiring merged worktrees...\n")
-        _run_wm(root, "retire", "--wave", wave_id)
+        _run_wm(root, "retire", "--wave", wave_id, project_id=project_id)
     else:
         sys.stdout.write("[orchestrate] No-worktree mode: skipping reconcile/retire.\n")
 

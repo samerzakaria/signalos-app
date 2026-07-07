@@ -109,10 +109,19 @@ def _parse_signers(path: Path) -> tuple[list[str], bool, bool | None]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def check_gate(root: Path, gate: str) -> list[ArtifactStatus]:
-    """Return signature status of every artifact required for *gate*."""
+def check_gate(
+    root: Path,
+    gate: str,
+    project_id: str = "default",
+) -> list[ArtifactStatus]:
+    """Return signature status of every artifact required for *gate*.
+
+    *project_id* namespaces the artifact paths (§3.2) via
+    ``artifacts.resolve_gate_artifacts``; "default" is byte-identical to
+    the historical workspace-root layout.
+    """
     result: list[ArtifactStatus] = []
-    for artifact in resolve_gate_artifacts(root, gate):
+    for artifact in resolve_gate_artifacts(root, gate, project_id=project_id):
         p = artifact.path
         status = ArtifactStatus(
             path=p,
@@ -235,6 +244,7 @@ def sign_gate(
     wave: str | None = None,
     oidc_sub_hash: str = "",
     oidc_issuer: str = "",
+    project_id: str = "default",
 ) -> list[str]:
     """
     Sign every present artifact in *gate*.  Returns rel-paths of signed files.
@@ -247,11 +257,17 @@ def sign_gate(
     #17 Edit 3.4: `oidc_sub_hash`/`oidc_issuer` are threaded through so the CLI
     sign path (commands/sign.py) can route through this single role-enforcing
     function while preserving W6.3 OIDC evidence in the signature block.
+
+    §3.2: *project_id* namespaces the artifact paths through the same
+    resolver every gate reader uses (projects.project_governance_dir), so a
+    signature written here is visible to wave_engine.inspect / status /
+    orchestrator gating for the SAME project — and only that project.
+    AUDIT_TRAIL stays workspace-global by design.
     """
     if role not in VALID_ROLES:
         raise ValueError(f"role must be one of {VALID_ROLES}, got {role!r}")
 
-    gate_entries = resolve_gate_artifacts(root, gate)
+    gate_entries = resolve_gate_artifacts(root, gate, project_id=project_id)
     if not gate_entries:
         raise ValueError(f"unknown gate {gate!r} -- must be one of {list_gates()}")
 

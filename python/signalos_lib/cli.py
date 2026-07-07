@@ -194,6 +194,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_wt.add_argument("--plan", default=None)
     p_wt.add_argument("--repo-root", default=None)
     p_wt.add_argument("--max-concurrent", type=int, default=5)
+    p_wt.add_argument(
+        "--project-id", default="default", dest="project_id",
+        help="Multi-project namespace (WAVE-ENGINE-DESIGN §3.2); non-default "
+             "ids route worktree-state.json to .signalos/projects/<id>/.",
+    )
 
     p_health = sub.add_parser("health", help="System health check (W3.5)")
     p_health.add_argument("--repo-root", default=None)
@@ -715,6 +720,11 @@ def _dispatch_worktree(args: argparse.Namespace) -> int:
     if args.plan:
         cmd += ["--plan", args.plan]
     cmd += ["--repo-root", str(root), "--max-concurrent", str(args.max_concurrent)]
+    # §3.2: only append for non-default projects so a deployed script that
+    # predates --project-id keeps working unchanged for default workspaces.
+    project_id = getattr(args, "project_id", "default")
+    if project_id and project_id != "default":
+        cmd += ["--project-id", project_id]
     return subprocess.run(cmd, cwd=str(root)).returncode
 
 

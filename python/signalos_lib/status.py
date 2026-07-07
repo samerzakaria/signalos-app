@@ -100,16 +100,31 @@ def _is_non_template(path: Path) -> bool:
     return True
 
 
-def _detect_gates(root: Path) -> dict[str, bool]:
+def _governance_base(root: Path, project_id: str = "default") -> Path:
+    """Base root for the canonical `core/...` gate-artifact rel_paths.
+
+    Delegates to projects.project_governance_dir (§3.2 — the single
+    resolver every gate reader/writer shares): "default" → the workspace
+    root itself (byte-identical), any other id →
+    .signalos/projects/<project_id>/governance/.
+    """
+    from signalos_lib.projects import project_governance_dir
+
+    return project_governance_dir(root, project_id)
+
+
+def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
     """Return dict with G0..G5 as bool (True = gate passed).
 
     Paths come from the canonical gate manifest (gate_artifacts.json) so this
     board can never drift from what the gate validator enforces. G0 keeps its
     content check: a template-only Soul Document does not count as onboarded.
+    *project_id* namespaces the artifact base per §3.2.
     """
+    base = _governance_base(root, project_id)
     g = {}
     for gate, rel_paths in gate_detection_paths().items():
-        candidates = [root.joinpath(*rel.split("/")) for rel in rel_paths]
+        candidates = [base.joinpath(*rel.split("/")) for rel in rel_paths]
         if gate == "G0":
             g[gate] = any(_is_non_template(path) for path in candidates)
         else:
@@ -138,11 +153,12 @@ def _detect_phase(gates: dict[str, bool]) -> str:
 # Belief text extraction
 # ---------------------------------------------------------------------------
 
-def _read_belief_line(root: Path) -> str:
+def _read_belief_line(root: Path, project_id: str = "default") -> str:
     """Read first non-empty line after '## Problem' in BELIEF.md."""
+    base = _governance_base(root, project_id)
     for belief_path in [
-        root / "core" / "strategy" / "BELIEF.md",
-        root / "core" / "strategy" / "BELIEF_LITE.md",
+        base / "core" / "strategy" / "BELIEF.md",
+        base / "core" / "strategy" / "BELIEF_LITE.md",
     ]:
         if not belief_path.is_file():
             continue
@@ -162,11 +178,12 @@ def _read_belief_line(root: Path) -> str:
     return "No belief statement found"
 
 
-def _read_scale_track(root: Path) -> str:
+def _read_scale_track(root: Path, project_id: str = "default") -> str:
     """Read scale_track from BELIEF.md front-matter."""
+    base = _governance_base(root, project_id)
     for belief_path in [
-        root / "core" / "strategy" / "BELIEF_LITE.md",
-        root / "core" / "strategy" / "BELIEF.md",
+        base / "core" / "strategy" / "BELIEF_LITE.md",
+        base / "core" / "strategy" / "BELIEF.md",
     ]:
         if not belief_path.is_file():
             continue
@@ -177,11 +194,12 @@ def _read_scale_track(root: Path) -> str:
     return "wave"
 
 
-def _read_delivery_mode(root: Path) -> str:
+def _read_delivery_mode(root: Path, project_id: str = "default") -> str:
     """Read delivery_mode from SOUL-DOCUMENT.md or CONSTITUTION.md."""
+    base = _governance_base(root, project_id)
     for path in [
-        root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md",
-        root / "core" / "governance" / "Governance" / "CONSTITUTION.md",
+        base / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md",
+        base / "core" / "governance" / "Governance" / "CONSTITUTION.md",
     ]:
         if not path.is_file():
             continue
@@ -196,18 +214,25 @@ def _read_delivery_mode(root: Path) -> str:
 # Task data from worktree-state.json
 # ---------------------------------------------------------------------------
 
-def _read_tasks(root: Path, product_id: str | None = None) -> list[dict[str, Any]]:
+def _read_tasks(
+    root: Path,
+    product_id: str | None = None,
+    project_id: str = "default",
+) -> list[dict[str, Any]]:
     """Read task list from worktree-state.json.
 
     When *product_id* is provided the product-scoped path is used:
       .signalos/products/<id>/worktree-state.json
-    Otherwise falls back to the repo-level:
-      .signalos/worktree-state.json
+    Otherwise the project-scoped path (Task #19 — projects.project_state_dir):
+      .signalos/worktree-state.json                       (project "default")
+      .signalos/projects/<project_id>/worktree-state.json (any other id)
     """
     if product_id:
         state_file = root / REPO_ROOT_MARKER / "products" / product_id / "worktree-state.json"
     else:
-        state_file = root / REPO_ROOT_MARKER / "worktree-state.json"
+        from signalos_lib.projects import project_state_dir
+
+        state_file = project_state_dir(root, project_id) / "worktree-state.json"
     if not state_file.is_file():
         return []
     try:
@@ -280,15 +305,21 @@ def _next_action(gates: dict[str, bool], tasks: list[dict[str, Any]]) -> tuple[s
 # State aggregation
 # ---------------------------------------------------------------------------
 
-def _detect_wave_id(root: Path, tasks: list[dict[str, Any]]) -> str:
+def _detect_wave_id(
+    root: Path,
+    tasks: list[dict[str, Any]],
+    project_id: str = "default",
+) -> str:
     """Try to determine current wave ID."""
     # From tasks
     for t in tasks:
         wave = t.get("wave", "")
         if wave:
             return str(wave)
-    # From worktree-state.json top-level field
-    state_file = root / REPO_ROOT_MARKER / "worktree-state.json"
+    # From worktree-state.json top-level field (project-scoped, Task #19)
+    from signalos_lib.projects import project_state_dir
+
+    state_file = project_state_dir(root, project_id) / "worktree-state.json"
     if state_file.is_file():
         try:
             data = json.loads(state_file.read_text(encoding="utf-8"))
@@ -422,23 +453,36 @@ def _criterion_gate(skill: str) -> int:
     return _SKILL_TO_GATE.get(skill, 3)
 
 
-def _load_plan_doc(repo_root: Path) -> tuple[list[dict[str, Any]], str]:
+def _load_plan_doc(
+    repo_root: Path,
+    project_id: str = "default",
+) -> tuple[list[dict[str, Any]], str]:
     """Load PLAN.tasks.yaml and return (tasks, wave_id).
 
-    Tries the canonical locations in order:
+    For the default project, tries the canonical locations in order
+    (byte-identical to the historical behavior):
       1. <root>/PLAN.tasks.yaml
       2. <root>/core/execution/PLAN.tasks.yaml
       3. <root>/core/execution/plan/PLAN.tasks.yaml
+
+    Any other *project_id* reads ONLY the project's own plan via
+    projects.project_plan_path (.signalos/projects/<id>/PLAN.tasks.yaml);
+    a missing per-project plan behaves like a missing root plan.
 
     Returns ([], "") on any failure (parse error, file missing,
     yaml not installed). This is best-effort — status output must never
     crash because the plan file is malformed.
     """
-    candidates = [
-        repo_root / "PLAN.tasks.yaml",
-        repo_root / "core" / "execution" / "PLAN.tasks.yaml",
-        repo_root / "core" / "execution" / "plan" / "PLAN.tasks.yaml",
-    ]
+    from signalos_lib.projects import project_plan_path
+
+    if project_id == "default":
+        candidates = [
+            repo_root / "PLAN.tasks.yaml",
+            repo_root / "core" / "execution" / "PLAN.tasks.yaml",
+            repo_root / "core" / "execution" / "plan" / "PLAN.tasks.yaml",
+        ]
+    else:
+        candidates = [project_plan_path(repo_root, project_id)]
     plan_path: Path | None = None
     for c in candidates:
         if c.is_file():
@@ -454,9 +498,12 @@ def _load_plan_doc(repo_root: Path) -> tuple[list[dict[str, Any]], str]:
         return ([], "")
 
 
-def _load_plan_tasks(repo_root: Path) -> list[dict[str, Any]]:
+def _load_plan_tasks(
+    repo_root: Path,
+    project_id: str = "default",
+) -> list[dict[str, Any]]:
     """Backwards-compat wrapper returning only the task list."""
-    tasks, _wave = _load_plan_doc(repo_root)
+    tasks, _wave = _load_plan_doc(repo_root, project_id=project_id)
     return tasks
 
 
@@ -568,6 +615,7 @@ def _enrich_gates_with_details(
     repo_root: Path,
     gates: dict[str, bool],
     wave_id: str,
+    project_id: str = "default",
 ) -> list[dict[str, Any]]:
     """Return a list of gate detail dicts, one per gate G0..G5.
 
@@ -575,7 +623,7 @@ def _enrich_gates_with_details(
     criteria (list). The top-level `gates` dict (G<n> → bool) is preserved
     separately for backwards compatibility.
     """
-    plan_tasks, plan_wave = _load_plan_doc(repo_root)
+    plan_tasks, plan_wave = _load_plan_doc(repo_root, project_id=project_id)
     # Prefer the wave id declared in PLAN.tasks.yaml; fall back to the
     # caller-supplied id (from worktree-state.json). This matters for
     # locating persisted validator evidence under
@@ -610,15 +658,19 @@ def build_status_json(
         python -c "from signalos_lib.status import build_status_json; \\
                    import json; print(json.dumps(build_status_json('.')))"
 
-    The *project_id* parameter is plumbing for future multi-project support
-    per WAVE-ENGINE-DESIGN §3.2. Today only "default" is used; the value
-    flows through to the returned payload so callers (IPC, CLI, tests) can
-    round-trip it without losing the namespace.
+    The *project_id* parameter namespaces the whole payload per
+    WAVE-ENGINE-DESIGN §3.2: ids come from the `.signalos/projects.json`
+    registry (Sidebar project picker / `signalos status --project-id`,
+    appended by dispatch_cli); "default" remains the workspace-root
+    namespace. Gate detection, plan activities and task state all resolve
+    through the projects.py resolvers, and the value flows through to the
+    returned payload so callers (IPC, CLI, tests) round-trip it.
     """
     root = Path(repo_root).resolve() if not isinstance(repo_root, Path) else repo_root.resolve()
     data = get_wave_status(root, product_id=product_id, project_id=project_id)
     data["gate_details"] = _enrich_gates_with_details(
         root, data.get("gates", {}), str(data.get("wave_id") or "-"),
+        project_id=project_id,
     )
     return data
 
@@ -634,20 +686,22 @@ def get_wave_status(
     worktree-state.json (.signalos/products/<id>/worktree-state.json).
     Gate and belief state are always repo-level.
 
-    The *project_id* parameter is plumbing for future multi-project support
-    per WAVE-ENGINE-DESIGN §3.2. With project_id == "default" (the only
-    value used today) the layout matches today's workspace-root layout
-    — no path changes. Future milestones that expose a project picker in
-    the UI will use project_id != "default" to namespace state under
-    `.signalos/projects/<project_id>/...`.
+    Per WAVE-ENGINE-DESIGN §3.2 (Task #19), *project_id* namespaces the
+    per-project wave state: with "default" the layout is the workspace
+    root (unchanged); any other id reads worktree-state.json from
+    `.signalos/projects/<project_id>/`, PLAN.tasks.yaml via
+    projects.project_plan_path, and the gate/belief/governance artifacts
+    via projects.project_governance_dir
+    (`.signalos/projects/<project_id>/governance/` — §3.2 shipped).
+    AUDIT_TRAIL.jsonl and the vault stay workspace-global.
     """
-    gates = _detect_gates(repo_root)
+    gates = _detect_gates(repo_root, project_id=project_id)
     phase = _detect_phase(gates)
-    belief_line = _read_belief_line(repo_root)
-    scale_track = _read_scale_track(repo_root)
-    delivery_mode = _read_delivery_mode(repo_root)
-    tasks = _read_tasks(repo_root, product_id=product_id)
-    wave_id = _detect_wave_id(repo_root, tasks)
+    belief_line = _read_belief_line(repo_root, project_id=project_id)
+    scale_track = _read_scale_track(repo_root, project_id=project_id)
+    delivery_mode = _read_delivery_mode(repo_root, project_id=project_id)
+    tasks = _read_tasks(repo_root, product_id=product_id, project_id=project_id)
+    wave_id = _detect_wave_id(repo_root, tasks, project_id=project_id)
     role, action_cmd = _next_action(gates, tasks)
     return {
         "wave_id": wave_id,
@@ -936,8 +990,9 @@ def print_status_card(
     namespace. When None and products exist the multi-product dashboard
     is printed instead of the single-product card.
 
-    *project_id* is plumbing for multi-project support per
-    WAVE-ENGINE-DESIGN §3.2; today only "default" is used.
+    *project_id* namespaces the card per WAVE-ENGINE-DESIGN §3.2 — ids
+    come from the `.signalos/projects.json` registry (Sidebar picker /
+    `--project-id`); "default" remains the workspace-root namespace.
     """
     root = repo_root or _repo_root()
 

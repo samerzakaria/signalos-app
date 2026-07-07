@@ -1,5 +1,6 @@
-import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, type ChatBubble } from '../state';
+import { ai, aiModel, chatBubbles, busy, resumableRunId, tab, previewUrl, govGatesList, type ChatBubble, type UxFrictionPersona, type UxFrictionFinding } from '../state';
 import * as ipc from '../js/ipc.js';
+import { notifyFromAgentEvent } from './notifications';
 
 // Phase 3 Stream C - frontend subscription for the agent loop.
 //
@@ -49,7 +50,41 @@ export interface AgentEvent {
   srcDoc?: string;
   url?: string;
   caption?: string;
+  // ux_friction event fields (#12) — per-persona findings from ux_friction.py
+  findings?: unknown;
+  count?: number;
   [key: string]: unknown;
+}
+
+// Coerce the ux_friction payload (heuristic_findings() output) into the typed
+// shape the UxFrictionCard renders. Tolerant of malformed entries — a bad
+// persona entry is dropped rather than crashing the event handler.
+function parseUxFrictionPersonas(raw: unknown): UxFrictionPersona[] {
+  if (!Array.isArray(raw)) return [];
+  const personas: UxFrictionPersona[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const p = item as Record<string, unknown>;
+    const findingsRaw = Array.isArray(p.findings) ? p.findings : [];
+    const findings: UxFrictionFinding[] = [];
+    for (const f of findingsRaw) {
+      if (!f || typeof f !== 'object') continue;
+      const fr = f as Record<string, unknown>;
+      const issue = typeof fr.issue === 'string' ? fr.issue : '';
+      if (!issue) continue;
+      findings.push({
+        severity: typeof fr.severity === 'string' ? fr.severity : 'medium',
+        issue,
+        suggestion: typeof fr.suggestion === 'string' ? fr.suggestion : undefined,
+      });
+    }
+    personas.push({
+      persona: typeof p.persona === 'string' ? p.persona : '',
+      label: typeof p.label === 'string' ? p.label : (typeof p.persona === 'string' ? p.persona : 'Persona'),
+      findings,
+    });
+  }
+  return personas;
 }
 
 // The agent loop runs one active run at a time, but some events (text,
@@ -162,6 +197,12 @@ export function handle(evt: AgentEvent): void {
   // missing kind for resilience but require a recognizable type.
   const type = typeof evt.type === 'string' ? evt.type : '';
   if (!type) return;
+
+  // #22 — incident/gate/reopen/completion events also feed the notification
+  // bell (incl. gate_signed for the final G5 sign and delivery_complete, which
+  // have no bubble rendering below). Chatty types (text, tool_done, …) are
+  // filtered inside the service.
+  try { notifyFromAgentEvent(evt); } catch { /* feed must never break chat */ }
 
   const runId = runIdOf(evt);
 
@@ -309,6 +350,65 @@ export function handle(evt: AgentEvent): void {
       break;
     }
 
+    case 'ux_friction': {
+      // 5-persona UX friction report (#12), emitted by the gate orchestrator
+      // right before the design-gate `gate` checkpoint. Informational — no
+      // verdict; the bubble lands ahead of the gate review card so the human
+      // sees the friction findings when signing.
+      const gate = typeof evt.gate === 'string' ? evt.gate : '';
+      const personas = parseUxFrictionPersonas(evt.findings);
+      if (personas.length === 0) break;
+      upsertBubble({
+        id: `agent-friction-${runId}-${gate || 'g'}`,
+        kind: 'friction',
+        text: '',
+        uxFriction: { gate: gate || 'design', personas },
+      });
+      break;
+    }
+
+    case 'gate_reopened': {
+      // GATE-REOPEN-DESIGN: a signed gate was reopened; every later signed
+      // gate lost its signature (cascade). The backend also emits a plain
+      // `system` event with the same fact — that event type is NOT rendered
+      // by this handler (unknown types are ignored below), so rendering the
+      // structured event here cannot double-bubble. The bubble id is
+      // deterministic per (run, gate, reopen_count) so a re-delivery upserts
+      // instead of duplicating.
+      const gate = typeof evt.gate === 'string' && evt.gate ? evt.gate : 'Gate';
+      const invalidated = Array.isArray(evt.invalidated)
+        ? (evt.invalidated as unknown[]).filter((g): g is string => typeof g === 'string' && !!g)
+        : [];
+      const by = typeof evt.by === 'string' && evt.by ? evt.by : 'user';
+      const reason = typeof evt.reason === 'string' && evt.reason ? evt.reason : '';
+      let text = `${gate} reopened by ${by}${reason ? ': ' + reason : ''}.`;
+      if (invalidated.length > 0) {
+        text += ` Also invalidated: ${invalidated.join(', ')}.`;
+      }
+      const count = typeof evt.reopen_count === 'number' ? evt.reopen_count : 0;
+      upsertBubble({
+        id: `agent-reopened-${runId}-${gate}-${count}`,
+        kind: 'system',
+        text,
+      });
+      // Mirror the cascade into the gate rail immediately: the reopened gate
+      // becomes current, invalidated gates drop their signature.
+      const affected = new Set<string>([gate, ...invalidated]);
+      govGatesList.value = govGatesList.value.map((g) => {
+        const code = String(g.gate_id ?? g.id ?? '');
+        if (!affected.has(code)) return g;
+        const isTarget = code === gate;
+        return {
+          ...g,
+          signed: false,
+          status: isTarget ? 'current' : 'locked',
+          is_current: isTarget,
+        };
+      });
+      busy.value = false;
+      break;
+    }
+
     case 'preview': {
       // An inline design preview (G3) - iframe bubble (ChatPreviewBubble).
       const srcDoc = typeof evt.srcDoc === 'string' ? evt.srcDoc : undefined;
@@ -365,6 +465,72 @@ export function submitGateVerdict(_bubbleId: string, verdict: string, feedback: 
     return;
   }
   sendAgentCommand('agent:verdict', { run_id: lastRunId, verdict, feedback: feedback || '' });
+}
+
+/** The run id a reopen would target: the active run if one has been seen,
+ *  else the resumable (cancelled/parked) run. Null when no run exists. */
+export function getAgentRunId(): string | null {
+  return lastRunId || resumableRunId.value || null;
+}
+
+// User-facing fallbacks for the reopen refusal statuses the backend can
+// return (GATE-REOPEN-DESIGN §IPC). The backend's own message wins when set.
+const REOPEN_REFUSAL_TEXT: Record<string, string> = {
+  'not-signed': 'That gate is not signed, so there is nothing to reopen.',
+  'role-not-authorized': 'Your role is not authorized to reopen this gate.',
+  'max-reopens': 'This gate has hit its reopen budget — it cannot be reopened again.',
+  'delivery-busy': 'The delivery is busy right now. Wait for the current gate agent to finish, then retry.',
+  'unknown-gate': 'Unknown gate.',
+};
+
+export interface ReopenGateResult {
+  status: string;
+  message?: string;
+  error?: string;
+  gate?: string;
+  invalidated?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * Reopen a signed gate (agent:reopen-gate). Uses the awaited variant of the
+ * agent:verdict transport so refusal statuses (not-signed /
+ * role-not-authorized / max-reopens / delivery-busy) come back to the caller
+ * for inline display. Success also arrives as a `gate_reopened` agent event,
+ * which handle() renders as the system bubble + gate-rail update.
+ */
+export async function reopenGate(
+  gate: string,
+  reason: string,
+  runId?: string,
+): Promise<ReopenGateResult> {
+  const rid = runId || getAgentRunId();
+  if (!rid) {
+    return { status: 'no-run', error: 'No agent run to reopen a gate for.' };
+  }
+  const sig = (ipc as unknown as {
+    signal?: {
+      run?: (c: string, a: string[]) => Promise<unknown>;
+      runAndWait?: (c: string, a: string[], t?: number) => Promise<unknown>;
+    };
+  }).signal;
+  const call = sig?.runAndWait || sig?.run;
+  if (typeof call !== 'function') {
+    return { status: 'error', error: 'Engine transport unavailable.' };
+  }
+  const payload = JSON.stringify({ run_id: rid, gate, reason });
+  const raw = await call.call(sig, 'agent:reopen-gate', [payload], 15000);
+  const res: ReopenGateResult = raw && typeof raw === 'object'
+    ? (raw as ReopenGateResult)
+    : { status: 'ok' };
+  if (typeof res.status !== 'string' || !res.status) res.status = 'ok';
+  if (res.status !== 'ok') {
+    res.error = res.error
+      || res.message
+      || REOPEN_REFUSAL_TEXT[res.status]
+      || `Reopen refused (${res.status}).`;
+  }
+  return res;
 }
 
 /** Cancel the in-flight agent run (agent:cancel). */

@@ -50,6 +50,8 @@ def _generate_with_llm(design: dict, intent: dict) -> str | None:
     tokens = design.get("design_tokens", {})
     primary_color = tokens.get("primary_color", "#3b82f6")
     font = tokens.get("font_family", "Inter, sans-serif")
+    color_scheme = tokens.get("color_scheme", "light")
+    border_radius = tokens.get("border_radius", "8px")
     entities = intent.get("entities", [])
     product_name = intent.get("product_name", "Product")
     workflows = intent.get("primary_workflows", [])
@@ -62,6 +64,8 @@ Design system:
 - UI library style: {ui_name}
 - Primary color: {primary_color}
 - Font: {font}
+- Color scheme: {color_scheme} (use a {color_scheme} background palette throughout)
+- Border radius: {border_radius}
 - Entities: {json.dumps(entities)}
 - Workflows: {json.dumps(workflows)}
 - UX surfaces: {json.dumps(surfaces)}

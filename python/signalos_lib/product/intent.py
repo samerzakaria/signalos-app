@@ -812,6 +812,113 @@ def _merge_repo_context(intent: dict[str, Any], repo_context: dict[str, Any]) ->
 
 
 # ---------------------------------------------------------------------------
+# #9(design): founder BRAND BRIEF -- optional `brand` object recovered from the
+# prompt. Populated by BOTH the deterministic extractor and the LLM refine
+# pass; when nothing brand-shaped is present the field is OMITTED entirely
+# (backward compatible -- consumers must .get("brand")).
+#
+# Shape (all keys optional):
+#   {"primary_color": "#0f766e", "mood": "premium", "color_scheme": "dark",
+#    "font_hint": "mono"}
+# ---------------------------------------------------------------------------
+
+BRAND_MOODS = ("playful", "premium", "clinical", "minimal")
+BRAND_COLOR_SCHEMES = ("light", "dark")
+BRAND_FONT_HINTS = ("mono", "serif", "sans", "system")
+
+_BRAND_HEX_RE = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
+
+# Named colors are only honored behind an explicit cue ("brand color teal"),
+# never from a bare mention ("green energy"). Hex values are unambiguous.
+_NAMED_COLOR_HEX: dict[str, str] = {
+    "red": "#dc2626", "orange": "#ea580c", "amber": "#d97706",
+    "yellow": "#ca8a04", "green": "#16a34a", "emerald": "#059669",
+    "teal": "#0d9488", "cyan": "#0891b2", "blue": "#2563eb",
+    "indigo": "#4f46e5", "violet": "#7c3aed", "purple": "#9333ea",
+    "pink": "#db2777", "navy": "#1e3a8a", "black": "#111827",
+}
+_NAMED_COLOR_CUE = re.compile(
+    r"\b(?:brand|primary|accent|theme)\s+colou?r\s*(?:is|of|:)?\s*([a-z]+)",
+    re.I,
+)
+
+_MOOD_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("playful", re.compile(r"\b(playful|whimsical|lighthearted)\b|\bfun\b", re.I)),
+    ("premium", re.compile(r"\b(premium|luxur(?:y|ious)|high-end|upscale|elegant)\b", re.I)),
+    ("clinical", re.compile(r"\b(clinical|sterile|medical-grade)\b", re.I)),
+    ("minimal", re.compile(r"\bminimal(?:ist|istic)?\b|\bno-frills\b", re.I)),
+]
+
+# "dark" is a distinctive stylistic word in a product prompt; "light" is not
+# (lightweight, light on features), so light requires an explicit mode cue.
+_DARK_SCHEME_RE = re.compile(r"\bdark\b", re.I)
+_LIGHT_SCHEME_RE = re.compile(r"\blight[- ](?:mode|theme|scheme|ui)\b", re.I)
+
+_FONT_HINT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("mono", re.compile(r"\bmonospaced?\b|\bjetbrains\s+mono\b|\bmono\s+font\b", re.I)),
+    ("sans", re.compile(r"\bsans[- ]serif\b|\binter\b", re.I)),
+    ("serif", re.compile(r"(?<![-\w])serif\b", re.I)),
+    ("system", re.compile(r"\bsystem\s+font\b", re.I)),
+]
+
+
+def _extract_brand(text: str) -> dict[str, str]:
+    """Recover an optional brand brief from the founder's prompt.
+
+    Deterministic. Returns {} when the prompt carries no brand signal --
+    the caller then omits the ``brand`` key entirely."""
+    brand: dict[str, str] = {}
+
+    hex_match = _BRAND_HEX_RE.search(text)
+    if hex_match:
+        brand["primary_color"] = hex_match.group(0).lower()
+    else:
+        cue = _NAMED_COLOR_CUE.search(text)
+        if cue:
+            named = _NAMED_COLOR_HEX.get(cue.group(1).lower())
+            if named:
+                brand["primary_color"] = named
+
+    for mood, pattern in _MOOD_PATTERNS:
+        if pattern.search(text):
+            brand["mood"] = mood
+            break
+
+    if _DARK_SCHEME_RE.search(text):
+        brand["color_scheme"] = "dark"
+    elif _LIGHT_SCHEME_RE.search(text):
+        brand["color_scheme"] = "light"
+
+    for hint, pattern in _FONT_HINT_PATTERNS:
+        if pattern.search(text):
+            brand["font_hint"] = hint
+            break
+
+    return brand
+
+
+def _validate_brand(raw: Any) -> dict[str, str]:
+    """Validate an untrusted (LLM-supplied) brand object against the small
+    vocabularies. Invalid values are dropped, never guessed."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    color = str(raw.get("primary_color") or "").strip().lower()
+    if re.fullmatch(r"#(?:[0-9a-f]{6}|[0-9a-f]{3})", color):
+        out["primary_color"] = color
+    mood = str(raw.get("mood") or "").strip().lower()
+    if mood in BRAND_MOODS:
+        out["mood"] = mood
+    scheme = str(raw.get("color_scheme") or "").strip().lower()
+    if scheme in BRAND_COLOR_SCHEMES:
+        out["color_scheme"] = scheme
+    hint = str(raw.get("font_hint") or "").strip().lower()
+    if hint in BRAND_FONT_HINTS:
+        out["font_hint"] = hint
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Founder-declared design system (#44)
 # ---------------------------------------------------------------------------
 
@@ -932,6 +1039,12 @@ def extract_product_intent(
     # signs") -- when present it overrides the design phase's own proposal.
     intent["declared_ui_library"] = _detect_declared_ui_library(text)
 
+    # #9(design): optional brand brief. Absent -> the key is omitted entirely
+    # so older consumers see the exact pre-brand intent shape.
+    brand = _extract_brand(text)
+    if brand:
+        intent["brand"] = brand
+
     if repo_context is not None:
         _merge_repo_context(intent, repo_context)
 
@@ -1011,6 +1124,12 @@ Rules:
   encryption-at-rest, mfa) -- only if explicitly stated or strongly implied.
 - audit_requirements: audit needs (audit-trail, audit-log, change-history).
 - pii_entities: which entities contain personally identifiable information.
+- brand: OPTIONAL brand brief -- populate a field ONLY when the prompt states \
+  it. primary_color: a hex color the user named (e.g. "#0f766e"); mood: one of \
+  "playful", "premium", "clinical", "minimal"; color_scheme: "light" or "dark"; \
+  font_hint: one of "mono", "serif", "sans", "system". Use null for anything \
+  the prompt does not state; use null for the whole object when no brand \
+  signal exists.
 - Do NOT invent features not implied by the prompt.
 
 Prompt: {prompt}
@@ -1027,7 +1146,9 @@ Current extraction:
 Return ONLY valid JSON (no markdown, no explanation):
 {{"entities": [...], "target_users": [...], "workflows": [...], \
 "product_type": "...", "ux_surfaces": [...], "security_constraints": [...], \
-"audit_requirements": [...], "pii_entities": [...]}}
+"audit_requirements": [...], "pii_entities": [...], \
+"brand": {{"primary_color": null, "mood": null, "color_scheme": null, \
+"font_hint": null}}}}
 """
 
 
@@ -1109,6 +1230,16 @@ def refine_intent_with_llm(
         val = refined.get(llm_key)
         if isinstance(val, list) and val:
             updated[intent_key] = val
+
+    # #9(design): merge the LLM's brand brief. Only VALIDATED values land
+    # (small vocabularies + hex check); deterministic findings are kept for
+    # any field the LLM did not (validly) supply. Empty -> key stays omitted.
+    llm_brand = _validate_brand(refined.get("brand"))
+    if llm_brand or updated.get("brand"):
+        merged_brand = dict(updated.get("brand") or {})
+        merged_brand.update(llm_brand)
+        if merged_brand:
+            updated["brand"] = merged_brand
 
     if refined.get("product_type") and isinstance(refined["product_type"], str):
         refined_type = refined["product_type"]

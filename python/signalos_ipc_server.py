@@ -164,20 +164,36 @@ def handle(req: dict) -> dict:
     command = req.get("command", "")
     raw_args = req.get("args", [])
     raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
-    args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
+    # voice:transcribe carries megabytes of opaque base64 audio — running the
+    # secret-shape regex fleet over it is pointless (audio bytes are not text
+    # that can leak an env assignment) and expensive. attachment:analyze does
+    # its own scanning downstream.
+    _redaction_exempt = command in ("attachment:analyze", "voice:transcribe")
+    args = raw_arg_list if _redaction_exempt else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
-    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. UI does not yet
-    # expose a project picker, so callers omit `project_id` and we default
-    # to "default" (today's workspace-root layout).
-    project_id = str(req.get("project_id") or "default")
 
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
 
+    # WAVE-ENGINE-DESIGN section3.2 / Task #19 - multi-project resolution.
+    # Precedence: an explicit `project_id` in the request always wins;
+    # otherwise the workspace's active project (from .signalos/projects.json
+    # via project:create / project:switch) applies; a workspace without a
+    # registry resolves to "default" (today's workspace-root layout).
+    # Resolved AFTER the chdir so the registry of the request's workspace
+    # (not the previous request's) decides.
+    explicit_project = req.get("project_id")
+    if explicit_project:
+        project_id = str(explicit_project)
+    else:
+        from signalos_lib.projects import get_active_project
+
+        project_id = get_active_project(Path(os.getcwd()))
+
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
     # the structured object (prompt, run_id, etc.) survives intact.
-    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume"):
+    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume", "agent:reopen-gate"):
         try:
             return route_agent(req_id, command, raw_args, project_id=project_id)
         except Exception as exc:
@@ -447,6 +463,39 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
             wave_id=args[0], summary=summary, project_id=project_id,
         ))
 
+    # Capability wiring: audit replay, share export, brownfield governance,
+    # competitor analysis. Contract shapes live in `data` (the frontend reads
+    # data.status / data.frames / ...); domain failures the founder can act on
+    # are reported as {"status": "error", "error": ...} inside data.
+
+    # Multi-project registry (Task #19). list/create/switch operate on
+    # .signalos/projects.json in the current workspace; create switches to
+    # the new project; create/switch refuse while a delivery is running.
+
+    if command == "project:list":
+        return project_list(req_id)
+
+    if command == "project:create":
+        return project_create(req_id, args)
+
+    if command == "project:switch":
+        return project_switch(req_id, args)
+
+    if command == "audit:replay-timeline":
+        return audit_replay_timeline(req_id, args)
+
+    if command == "share:export":
+        return share_export(req_id)
+
+    if command == "brownfield:audit":
+        return brownfield_audit(req_id, args)
+
+    if command == "competitor:analyze":
+        return competitor_analyze(req_id, args)
+
+    if command == "voice:transcribe":
+        return voice_transcribe(req_id, args)
+
     return err(req_id, f"Unknown command: {command}")
 
 
@@ -471,6 +520,8 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
         return agent_cancel(req_id, raw_args, project_id=project_id)
     if command == "agent:resume":
         return agent_resume(req_id, raw_args, project_id=project_id)
+    if command == "agent:reopen-gate":
+        return agent_reopen_gate(req_id, raw_args, project_id=project_id)
     return err(req_id, f"Unknown command: {command}")
 
 
@@ -631,6 +682,10 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         _agent_emit(run_id)({"type": "error", "error": str(exc)})
         return err(req_id, str(exc))
     repo_root = Path(os.getcwd())
+    # Brownfield auto-detect: pre-existing code with no governance state gets
+    # a system event + audit entry BEFORE the orchestrator starts. Best-effort;
+    # never blocks or fails the delivery.
+    _maybe_emit_brownfield_notice(repo_root, _agent_emit(run_id))
     try:
         adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface
@@ -644,6 +699,10 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
         prompt=prompt, run_id=run_id,
         signer=format_signer(load_identity(repo_root)),
+        # §3.2: bind the request's project namespace into the delivery so
+        # gate-artifact generation AND signing land under
+        # projects.project_governance_dir(root, project_id).
+        project_id=project_id,
     )
     _ACTIVE_DELIVERIES[run_id] = orch
     try:
@@ -824,18 +883,31 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
     }
     try:
         if verdict in ("request-changes",):
+            # The rework cycle must survive across IPC calls: the review
+            # packets on disk are the persisted counter (latest_review_cycle),
+            # so repeated request-changes verdicts increment toward the shared
+            # gate rework budget instead of restarting at cycle 1 every call.
+            # When the budget is exhausted handle_request_changes refuses with
+            # status "max_cycles_reached" (the standalone mirror of the
+            # orchestrator's "max-rework").
             handled = gate_review.handle_request_changes(
                 repo_root=repo_root,
                 gate_id=gate_id,
                 feedback=feedback or classification.get("feedback", ""),
                 specific_items=classification.get("specific_items", []),
+                cycle=gate_review.latest_review_cycle(
+                    repo_root, gate_id, packet_type="rework"),
             )
             outcome["handled"] = handled
         elif verdict == "reject":
+            # Same persistence for rejections: bounded by max_rejections
+            # across IPC calls via the regenerate packets already on disk.
             handled = gate_review.handle_rejection(
                 repo_root=repo_root,
                 gate_id=gate_id,
                 reason=feedback or classification.get("feedback", ""),
+                rejection_count=gate_review.latest_review_cycle(
+                    repo_root, gate_id, packet_type="regenerate"),
             )
             outcome["handled"] = handled
         else:
@@ -852,6 +924,74 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
         return err(req_id, f"agent:verdict failed: {type(exc).__name__}: {exc}")
 
     return ok(req_id, output=json.dumps({"verdict": verdict}), data=outcome)
+
+
+def agent_reopen_gate(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:reopen-gate -> reopen a previously signed gate of a delivery.
+
+    Args (single JSON object): {run_id, gate, reason, name?, role?}.
+
+    Routed like agent:verdict: an active delivery in _ACTIVE_DELIVERIES is
+    mutated in place. A delivery that is no longer in memory (sidecar restart,
+    or it completed and was evicted) is loaded one-shot from its persisted
+    delivery.json - reopening never runs the gate agent, so no provider/model
+    is needed - and the mutated state is persisted back to disk. If neither an
+    active nor a persisted delivery exists, this returns a clear error.
+
+    A successful reopen removes the target gate's signature plus every later
+    signed gate (and un-waives later waived gates), all audited; threads the
+    reason into the gate's feedback; sets current_gate back to the reopened
+    gate; and persists status="reopened". It emits `gate_reopened` +
+    `system` agent-events but does NOT re-run the gate agent.
+
+    What the frontend should do next (mirrors how apply_verdict's flow
+    continues after a rework):
+      - send agent:resume {run_id, provider, model} to re-emit the reopened
+        gate's checkpoint card and wait for a verdict (same path as a
+        sidecar-restart resume); or
+      - send agent:verdict {run_id, verdict: "request-changes", feedback}
+        to immediately re-run the reopened gate's agent - the reopen reason
+        (and any new feedback) is threaded into the rework message.
+    """
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:reopen-gate args invalid: {exc}")
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return err(req_id, "agent:reopen-gate requires 'run_id'")
+    gate = str(payload.get("gate") or "").strip()
+    if not gate:
+        return err(req_id, "agent:reopen-gate requires 'gate'")
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return err(req_id, "agent:reopen-gate requires a non-empty 'reason'")
+    name = str(payload.get("name") or "").strip()
+    role = str(payload.get("role") or "").strip()
+
+    repo_root = Path(os.getcwd())
+    orch = _ACTIVE_DELIVERIES.get(run_id)
+    if orch is None:
+        delivery_path = _agent_run_dir(repo_root, run_id) / "delivery.json"
+        if not delivery_path.is_file():
+            return err(req_id, f"agent:reopen-gate: no active or persisted "
+                               f"delivery for run {run_id}")
+        from signalos_lib.product.gate_orchestrator import resume_delivery
+        try:
+            # One-shot resume: adapter=None is safe because reopen_gate never
+            # invokes the model; the orchestrator is NOT registered in
+            # _ACTIVE_DELIVERIES (a later agent:resume rebuilds it properly
+            # with a real adapter from the persisted state).
+            orch = resume_delivery(repo_root, run_id, None, _agent_emit(run_id),
+                                   sign_fn=_DELIVERY_SIGN_FN)
+        except Exception as exc:
+            return err(req_id, f"agent:reopen-gate: delivery {run_id} is not "
+                               f"resumable: {type(exc).__name__}: {exc}")
+    try:
+        result = orch.reopen_gate(gate, reason, name=name, role=role)
+    except Exception as exc:  # INV-4: surface
+        return err(req_id, f"agent:reopen-gate failed: {type(exc).__name__}: {exc}")
+    return ok(req_id, output=json.dumps(result), data=result)
 
 
 def agent_cancel(req_id: str, args: Any, project_id: str = "default") -> dict:
@@ -1016,6 +1156,444 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
     return ok(req_id, output=json.dumps(summary), data=summary)
 
 
+# ---------------------------------------------------------------------------
+# Capability wiring: audit replay / share export / brownfield / competitor
+# ---------------------------------------------------------------------------
+
+
+def _parse_object_arg(args: list, command: str) -> dict:
+    """Parse an optional single JSON-object argument for a route() command.
+
+    Empty args -> {}. A one-element list holding a JSON string (the legacy
+    transport) or an already-parsed dict both normalize to a dict; anything
+    else raises ValueError."""
+    if not args:
+        return {}
+    raw = args[0]
+    if isinstance(raw, dict):
+        return raw
+    raw = str(raw).strip()
+    if not raw:
+        return {}
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{command} payload must be a JSON object")
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Multi-project registry (Task #19 — WAVE-ENGINE-DESIGN §3.2)
+# ---------------------------------------------------------------------------
+
+
+def _active_delivery_refusal(req_id: str) -> dict | None:
+    """Return the delivery-active refusal, or None when it is safe to
+    change the active project.
+
+    Switching the active project retargets where subsequent state reads
+    and writes land; doing that under a running gate walk would split a
+    delivery's state across two namespaces. _ACTIVE_DELIVERIES holds the
+    orchestrators of in-flight deliveries (agent:verdict / agent:cancel
+    pop them when the walk ends)."""
+    if _ACTIVE_DELIVERIES:
+        return ok(req_id, data={
+            "status": "delivery-active",
+            "error": (
+                "A delivery is still running. Finish or cancel it before "
+                "switching projects."
+            ),
+            "runs": sorted(_ACTIVE_DELIVERIES),
+        })
+    return None
+
+
+def project_list(req_id: str) -> dict:
+    """project:list -> the registry (implicit default-only when absent)."""
+    from signalos_lib.projects import list_projects
+
+    reg = list_projects(Path(os.getcwd()))
+    return ok(req_id, data={
+        "status": "ok",
+        "active": reg["active"],
+        "projects": reg["projects"],
+    })
+
+
+def project_create(req_id: str, args: list) -> dict:
+    """project:create {"name": ...} -> register + switch to the new project.
+
+    Domain failures the founder can act on (empty/reserved name, running
+    delivery) are reported as data.status, matching the capability-wiring
+    contract used by audit:replay-timeline and friends."""
+    try:
+        payload = _parse_object_arg(args, "project:create")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"project:create args invalid: {exc}")
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return err(req_id, 'project:create requires {"name": ...}')
+
+    refusal = _active_delivery_refusal(req_id)
+    if refusal is not None:
+        return refusal
+
+    from signalos_lib.projects import create_project
+
+    try:
+        project = create_project(Path(os.getcwd()), name)
+    except ValueError as exc:
+        return ok(req_id, data={"status": "error", "error": str(exc)})
+    return ok(req_id, data={
+        "status": "ok",
+        "project": project,
+        "active": project["id"],
+    })
+
+
+def project_switch(req_id: str, args: list) -> dict:
+    """project:switch {"project_id": ...} -> set the active project."""
+    try:
+        payload = _parse_object_arg(args, "project:switch")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"project:switch args invalid: {exc}")
+    target = str(payload.get("project_id") or "").strip()
+    if not target:
+        return err(req_id, 'project:switch requires {"project_id": ...}')
+
+    refusal = _active_delivery_refusal(req_id)
+    if refusal is not None:
+        return refusal
+
+    from signalos_lib.projects import set_active_project
+
+    try:
+        active = set_active_project(Path(os.getcwd()), target)
+    except ValueError as exc:
+        return ok(req_id, data={"status": "error", "error": str(exc)})
+    return ok(req_id, data={"status": "ok", "active": active})
+
+
+# Hard cap on the number of replay frames returned over IPC (the response is
+# a single stdout line; an unbounded trail would be a payload bomb).
+_REPLAY_TIMELINE_CAP = 1000
+
+
+def audit_replay_timeline(req_id: str, args: list) -> dict:
+    """audit:replay-timeline -> read-only pass-through over audit_replay.
+
+    Args: {} or {"limit": int} (a bare integer argument is accepted too).
+    Returns the LAST ``limit`` frames (default: all), hard-capped at
+    ``_REPLAY_TIMELINE_CAP``; ``truncated`` reports whether frames were
+    dropped by the limit or the cap. Never writes."""
+    limit: int | None = None
+    if args and str(args[0]).strip():
+        raw = str(args[0]).strip()
+        try:
+            parsed: Any = json.loads(raw)
+        except (TypeError, ValueError):
+            parsed = raw
+        if isinstance(parsed, dict):
+            parsed = parsed.get("limit")
+        if parsed is not None:
+            try:
+                limit = int(parsed)
+            except (TypeError, ValueError):
+                return err(req_id, "audit:replay-timeline 'limit' must be an integer")
+            if limit < 0:
+                return err(req_id, "audit:replay-timeline 'limit' must be >= 0")
+
+    from signalos_lib.audit_replay import build_timeline
+
+    frames = build_timeline(os.getcwd())
+    total = len(frames)
+    effective = _REPLAY_TIMELINE_CAP if limit is None else min(limit, _REPLAY_TIMELINE_CAP)
+    out_frames = frames[-effective:] if effective > 0 else []
+    return ok(req_id, data={
+        "status": "ok",
+        "frames": out_frames,
+        "truncated": total > len(out_frames),
+    })
+
+
+def share_export(req_id: str) -> dict:
+    """share:export -> write the read-only share bundle (share.html + share.json).
+
+    The bundle is redacted by construction: collect_share_data reads ONLY
+    .signalos governance artifacts (profile.json, the audit-trail timeline
+    summaries, closeout level) -- never product source, .env* files, or vault
+    material -- and the IPC envelope additionally passes through
+    redact_response. Failure is reported as data.status == "error"."""
+    root = Path(os.getcwd())
+    try:
+        from signalos_lib.product.share_export import write_share_bundle
+
+        rel_paths = write_share_bundle(root)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+        })
+    bundle_dir = (root / ".signalos" / "share").resolve()
+    files = sorted({Path(p).name for p in rel_paths.values()})
+    return ok(req_id, data={
+        "status": "ok",
+        "path": str(bundle_dir),
+        "files": files,
+    })
+
+
+def brownfield_audit(req_id: str, args: list) -> dict:
+    """brownfield:audit -> audit an existing repo; optionally apply governance.
+
+    Args: {} or {"apply": bool}. Always runs the deterministic
+    audit_existing_repo; apply_governance (scaffold + baseline + audit-trail
+    record) only when apply is true. A failed apply keeps the report and
+    reports data.status == "error" honestly."""
+    try:
+        payload = _parse_object_arg(args, "brownfield:audit")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"brownfield:audit args invalid: {exc}")
+    apply_requested = bool(payload.get("apply"))
+    root = Path(os.getcwd())
+
+    from signalos_lib.product.brownfield import apply_governance, audit_existing_repo
+
+    try:
+        report = audit_existing_repo(root)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "applied": False,
+        })
+
+    data: dict[str, Any] = {"status": "ok", "report": report, "applied": False}
+    if apply_requested:
+        try:
+            applied = apply_governance(root)
+            data["applied"] = True
+            data["report"] = applied.get("audit", report)
+            data["governance"] = {
+                "created": applied.get("created", []),
+                "baseline_path": applied.get("baseline_path"),
+            }
+        except Exception as exc:
+            data["status"] = "error"
+            data["error"] = f"apply_governance failed: {type(exc).__name__}: {exc}"
+    return ok(req_id, data=data)
+
+
+# Test seam: (url, timeout=...) -> html | None. Production uses the polite
+# stdlib fetch_page helper from competitor.py (UA header, per-URL timeout,
+# never raises).
+_COMPETITOR_FETCH_FN = None
+_COMPETITOR_FETCH_TIMEOUT = 10.0
+
+
+def competitor_analyze(req_id: str, args: list) -> dict:
+    """competitor:analyze -> Competitive UX Matrix from competitor URLs.
+
+    LLM-gated: without a configured provider returns
+    {"status": "llm-unavailable"} without fetching anything. Per-URL fetch
+    failures are collected into data.errors without failing the call. The
+    matrix is persisted to .signalos/product/COMPETITORS.json where the
+    design phase picks it up as competitive context."""
+    try:
+        payload = _parse_object_arg(args, "competitor:analyze")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"competitor:analyze args invalid: {exc}")
+    urls = payload.get("urls")
+    if (
+        not isinstance(urls, list)
+        or not urls
+        or not all(isinstance(u, str) and u.strip() for u in urls)
+    ):
+        return err(
+            req_id,
+            "competitor:analyze requires 'urls': a non-empty array of URL strings",
+        )
+    urls = [u.strip() for u in urls]
+
+    root = Path(os.getcwd())
+    from signalos_lib.product import competitor as competitor_mod
+    from signalos_lib.product.llm_provider import is_llm_available
+
+    if not is_llm_available(root):
+        return ok(req_id, data={"status": "llm-unavailable"})
+
+    fetch = _COMPETITOR_FETCH_FN or competitor_mod.fetch_page
+    pages: list[dict] = []
+    errors: list[dict] = []
+    for url in urls:
+        try:
+            html = fetch(url, timeout=_COMPETITOR_FETCH_TIMEOUT)
+        except Exception as exc:  # fetch_page never raises; a seam might
+            errors.append({"url": url, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if html is None:
+            errors.append({
+                "url": url,
+                "error": "fetch failed (unreachable, timed out, or not http/https)",
+            })
+        else:
+            pages.append({"url": url, "html": html})
+
+    try:
+        matrix = competitor_mod.build_matrix(pages, root=root, use_llm=True)
+    except Exception as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "errors": errors,
+        })
+
+    record = {
+        "schema_version": "signalos.competitors.v1",
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "urls": urls,
+        **matrix,
+    }
+    out_path = root / ".signalos" / "product" / "COMPETITORS.json"
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        return ok(req_id, data={
+            "status": "error",
+            "error": f"failed to persist COMPETITORS.json: {exc}",
+            "matrix": matrix,
+            "errors": errors,
+        })
+
+    return ok(req_id, data={
+        "status": "ok",
+        "matrix": matrix,
+        "errors": errors,
+        "path": str(Path(".signalos") / "product" / "COMPETITORS.json"),
+    })
+
+
+def voice_transcribe(req_id: str, args: list) -> dict:
+    """voice:transcribe {"audio_b64": ..., "mime": ...} -> transcript text.
+
+    Thin pass-through to signalos_lib.voice_transcribe.transcribe. Domain
+    outcomes (no-capable-provider / too-large / invalid-audio /
+    provider-error) come back as data.status per the capability-wiring
+    contract; only a malformed request envelope is a transport error.
+    The audio payload is never logged, persisted, or echoed back."""
+    try:
+        payload = _parse_object_arg(args, "voice:transcribe")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"voice:transcribe args invalid: {exc}")
+    audio_b64 = payload.get("audio_b64")
+    if not isinstance(audio_b64, str) or not audio_b64.strip():
+        return err(req_id, 'voice:transcribe requires {"audio_b64": ...}')
+    mime = str(payload.get("mime") or "audio/webm")
+
+    from signalos_lib.voice_transcribe import transcribe
+
+    return ok(req_id, data=transcribe(audio_b64, mime))
+
+
+# ---------------------------------------------------------------------------
+# Brownfield auto-detect for agent:deliver
+# ---------------------------------------------------------------------------
+
+_BROWNFIELD_SOURCE_EXTS = frozenset({
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".java", ".rb",
+    ".cs", ".php", ".swift", ".kt", ".vue", ".svelte",
+})
+_BROWNFIELD_SKIP_DIRS = frozenset({
+    "node_modules", ".git", "dist", "build", "target", ".venv", "venv",
+    "__pycache__", ".signalos",
+})
+# Governance markers under .signalos/ that mean the workspace is already
+# governed (or was already noticed): profile/product state, an applied
+# baseline, gate state, or ANY audit trail (the notice itself appends one,
+# so a brownfield workspace is only notified once).
+_BROWNFIELD_GOVERNANCE_MARKERS = (
+    "profile.json",
+    "GOVERNANCE_BASELINE.md",
+    "product",
+    "gates",
+    "AUDIT_TRAIL.jsonl",
+)
+
+
+def _has_governance_state(repo_root: Path) -> bool:
+    signalos = repo_root / ".signalos"
+    if not signalos.is_dir():
+        return False
+    return any((signalos / marker).exists() for marker in _BROWNFIELD_GOVERNANCE_MARKERS)
+
+
+def _has_preexisting_code(repo_root: Path, scan_limit: int = 2000) -> bool:
+    """Conservative: True only when a real source file exists outside
+    vendored/build dirs. Bounded walk; any OS error -> False (silence)."""
+    seen = 0
+    try:
+        for path in repo_root.rglob("*"):
+            if seen >= scan_limit:
+                return False
+            try:
+                rel_parts = path.relative_to(repo_root).parts
+            except ValueError:
+                continue
+            if any(part in _BROWNFIELD_SKIP_DIRS for part in rel_parts):
+                continue
+            if path.is_file():
+                seen += 1
+                if path.suffix.lower() in _BROWNFIELD_SOURCE_EXTS:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _maybe_emit_brownfield_notice(repo_root: Path, emit) -> None:
+    """agent:deliver pre-flight: pre-existing product code + no .signalos
+    governance state -> run the deterministic brownfield audit and surface a
+    system agent-event plus an audit-trail entry so the founder sees
+    "existing code detected, N findings" in chat. NEVER raises and NEVER
+    blocks delivery -- errors are recorded honestly and delivery continues."""
+    try:
+        if _has_governance_state(repo_root) or not _has_preexisting_code(repo_root):
+            return
+        from signalos_lib.product.brownfield import audit_existing_repo
+
+        report = audit_existing_repo(repo_root)
+        summary = report.get("summary", {}) or {}
+        total = summary.get("total", 0)
+        message = (
+            f"Existing code detected in this workspace - brownfield audit found "
+            f"{total} governance finding(s) (high {summary.get('high', 0)}, "
+            f"medium {summary.get('medium', 0)}, low {summary.get('low', 0)}). "
+            f"Delivery continues; run brownfield:audit with apply=true to "
+            f"record a governance baseline."
+        )
+        emit({"type": "system", "message": message, "brownfield": summary})
+        _append_audit(str(repo_root), {
+            "action": "brownfield.audit-detected",
+            "findings": total,
+            "high": summary.get("high", 0),
+            "medium": summary.get("medium", 0),
+            "low": summary.get("low", 0),
+        })
+    except Exception as exc:
+        try:
+            _append_audit(str(repo_root), {
+                "action": "brownfield.audit-error",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+        except Exception:
+            pass
+
+
 def terminal_help_text() -> str:
     return "\n".join([
         "Supported commands:",
@@ -1124,14 +1702,15 @@ def git_status_text(repo_root: Path) -> str:
     ])
 
 
+# CLI subcommands that accept --project-id (signalos_lib/commands/status.py
+# and commands/orchestrate.py). dispatch_cli appends the resolved project so
+# the wave state these commands read/report lands in the right namespace.
+_PROJECT_AWARE_CLI_SUBCOMMANDS = {"status", "orchestrate"}
+
+
 def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: str = "default") -> str:
     cwd = os.getcwd()
     redacted = redact_arg_list(args)
-    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. The UI does not yet
-    # expose a project picker, so the IPC layer accepts project_id but only
-    # forwards it to subcommands that have a --project-id flag wired. Future
-    # M-Wx milestones extend the list of commands that consume it.
-    _ = project_id  # plumbing - used by future M-W3+ command-wiring
 
     # Wave checkpoint: capture pre-wave HEAD SHA so "Undo Wave" can
     # restore the workspace to its pre-approval state.
@@ -1158,6 +1737,10 @@ def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: st
 
     argv = map_slash_command(command, redacted, cwd)
     if argv is not None:
+        # Task #19: thread the resolved project namespace to project-aware
+        # subcommands. An explicit --project-id in the user's args wins.
+        if argv[0] in _PROJECT_AWARE_CLI_SUBCOMMANDS and "--project-id" not in argv:
+            argv = [*argv, "--project-id", project_id]
         # Wave 2 / G1-7: emit phase substeps around wired commands so users
         # see real progress instead of a generic "Engine working" toast.
         emitter = ProgressEmitter(req_id) if req_id else None

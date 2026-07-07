@@ -281,9 +281,19 @@ async function sendMsg() {
         waveAction: wave.action,
       };
       // For scope-drift prompts, attach the user's original request so
-      // the ChatBubbleSystem 4-way buttons can fire wave:scope-drift-resolve.
+      // the ChatBubbleSystem buttons can fire wave:scope-drift-resolve.
       if (wave.action === 'scope-drift-prompt') {
         bubble.waveUserRequest = val;
+        // GATE-REOPEN-DESIGN #5: thread the drift verdict extras through so
+        // the prompt can grow option (e) "Reopen <gate>" when the request
+        // conflicts with a signed later gate (G2/G3).
+        if (wave.drift) {
+          bubble.waveDrift = {
+            recommended_action: wave.drift.recommended_action,
+            conflicting_gate: wave.drift.conflicting_gate || null,
+            conflicting_summary: wave.drift.conflicting_summary,
+          };
+        }
         scopeDriftFired = true;
       }
       state.chatBubbles = [...state.chatBubbles, bubble];

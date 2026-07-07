@@ -10,9 +10,12 @@ import { Markdown, CodeBlock } from '../markdown';
 import { ToolCallBubble } from '../ToolCallBubble';
 import { FileDiffBubble } from '../FileDiffBubble';
 import { GateReviewCard, type GateReviewSubmission } from '../GateReviewCard';
+import { UxFrictionCard } from '../UxFrictionCard';
 import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
 import { BUSINESS_STAGES } from '../../services/deliveryFlow';
+import { voiceState } from '../../services/voiceInput';
+import { CompetitorPanel } from '../CompetitorPanel';
 import { viewClass } from '../viewShell';
 
 function fileLanguage(path: string, fallback?: string): string {
@@ -128,6 +131,9 @@ export function BuildView() {
           ) : null;
         })()}
 
+        {/* #16 — competitor URLs for the brief step (analysis stored backend-side). */}
+        <CompetitorPanel />
+
         <div className="chat-scroll" id="chatScroll">
           <div className="chat-inner" id="chatInner">
             {bubbles.map((b) => {
@@ -189,6 +195,17 @@ export function BuildView() {
                     path={b.diff.path}
                     before={b.diff.before}
                     after={b.diff.after}
+                  />
+                );
+              }
+              // #12 UX-friction gate review card — informational, lands before
+              // the design-gate review card (event order from the orchestrator).
+              if (b.kind === 'friction' && b.uxFriction) {
+                return (
+                  <UxFrictionCard
+                    key={b.id}
+                    gate={b.uxFriction.gate}
+                    personas={b.uxFriction.personas}
                   />
                 );
               }
@@ -532,7 +549,40 @@ export function BuildView() {
                 onKeyDown={(e) => window.composerKey(e)}
               />
               <button className="cmp-btn" onClick={() => window.attachFile()} aria-label="Attach file"><i className="ti ti-paperclip"></i></button>
-              <button className="cmp-btn" onClick={() => window.voiceInput()} aria-label="Voice input"><i className="ti ti-microphone"></i></button>
+              <button
+                className={
+                  'cmp-btn' +
+                  (voiceState.value === 'recording' ? ' cmp-rec' : '') +
+                  (voiceState.value === 'transcribing' ? ' cmp-transcribing' : '')
+                }
+                onClick={() => window.voiceInput()}
+                aria-label={
+                  voiceState.value === 'recording'
+                    ? 'Stop recording'
+                    : voiceState.value === 'transcribing'
+                      ? 'Transcribing…'
+                      : 'Voice input'
+                }
+                title={
+                  voiceState.value === 'recording'
+                    ? 'Recording — click again to stop, Esc to cancel'
+                    : voiceState.value === 'transcribing'
+                      ? 'Transcribing…'
+                      : 'Voice input'
+                }
+                data-testid="voice-input-btn"
+                data-voice-state={voiceState.value}
+              >
+                <i
+                  className={`ti ${
+                    voiceState.value === 'recording'
+                      ? 'ti-player-stop-filled'
+                      : voiceState.value === 'transcribing'
+                        ? 'ti-loader-2'
+                        : 'ti-microphone'
+                  }`}
+                ></i>
+              </button>
               <button className="cmp-btn cmp-send" onClick={() => window.sendMsg()} aria-label="Send"><i className="ti ti-arrow-up"></i></button>
             </div>
           </div>

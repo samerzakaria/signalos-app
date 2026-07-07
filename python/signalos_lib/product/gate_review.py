@@ -13,6 +13,7 @@ __all__ = [
     "build_rework_packet",
     "build_rejection_packet",
     "record_review_event",
+    "latest_review_cycle",
 ]
 
 import json
@@ -239,6 +240,38 @@ def _extract_specific_items(text: str) -> list[str]:
     if text.strip():
         return [text.strip()]
     return []
+
+
+# ---------------------------------------------------------------------------
+# latest_review_cycle
+# ---------------------------------------------------------------------------
+
+def latest_review_cycle(
+    repo_root: Path,
+    gate_id: str,
+    packet_type: str = "rework",
+) -> int:
+    """Return the highest review cycle already dispatched for a gate.
+
+    The review packets ARE the persistence: each dispatched cycle writes
+    .signalos/product/reviews/<gate_id>/cycle-<n>/<packet_type>-packet.json,
+    so callers that span IPC requests (e.g. the standalone agent:verdict
+    path) recover the prior cycle by scanning those directories instead of
+    keeping in-memory counters. Returns 0 when no packet exists yet.
+
+    packet_type: "rework" (request-changes cycles) or "regenerate"
+    (rejection cycles) -- the two share the cycle-<n> directory namespace,
+    so each budget only counts its own packet kind.
+    """
+    review_dir = repo_root / ".signalos" / "product" / "reviews" / gate_id
+    latest = 0
+    if not review_dir.is_dir():
+        return latest
+    for child in review_dir.iterdir():
+        m = re.fullmatch(r"cycle-(\d+)", child.name)
+        if m and (child / f"{packet_type}-packet.json").is_file():
+            latest = max(latest, int(m.group(1)))
+    return latest
 
 
 # ---------------------------------------------------------------------------
