@@ -824,18 +824,31 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
     }
     try:
         if verdict in ("request-changes",):
+            # The rework cycle must survive across IPC calls: the review
+            # packets on disk are the persisted counter (latest_review_cycle),
+            # so repeated request-changes verdicts increment toward the shared
+            # gate rework budget instead of restarting at cycle 1 every call.
+            # When the budget is exhausted handle_request_changes refuses with
+            # status "max_cycles_reached" (the standalone mirror of the
+            # orchestrator's "max-rework").
             handled = gate_review.handle_request_changes(
                 repo_root=repo_root,
                 gate_id=gate_id,
                 feedback=feedback or classification.get("feedback", ""),
                 specific_items=classification.get("specific_items", []),
+                cycle=gate_review.latest_review_cycle(
+                    repo_root, gate_id, packet_type="rework"),
             )
             outcome["handled"] = handled
         elif verdict == "reject":
+            # Same persistence for rejections: bounded by max_rejections
+            # across IPC calls via the regenerate packets already on disk.
             handled = gate_review.handle_rejection(
                 repo_root=repo_root,
                 gate_id=gate_id,
                 reason=feedback or classification.get("feedback", ""),
+                rejection_count=gate_review.latest_review_cycle(
+                    repo_root, gate_id, packet_type="regenerate"),
             )
             outcome["handled"] = handled
         else:

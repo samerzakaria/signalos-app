@@ -364,6 +364,109 @@ class TestAgentVerdict(_AgentIpcBase):
         self.assertIn("run_id", resp["error"])
 
 
+class TestAgentVerdictReworkBudget(_AgentIpcBase):
+    """P0 regression: the standalone agent:verdict path must persist the
+    rework cycle across IPC calls (previously every call restarted at cycle 1,
+    making the rework budget unreachable) and refuse once the shared gate
+    rework budget is exhausted."""
+
+    def _verdict(self, req_id: str, feedback: str) -> dict:
+        resp, _ = self._run(
+            {
+                "command": "agent:verdict",
+                "id": req_id,
+                "args": [
+                    json.dumps(
+                        {
+                            "run_id": "run-B",
+                            "verdict": "request-changes",
+                            "feedback": feedback,
+                        }
+                    )
+                ],
+            }
+        )
+        self.assertTrue(resp["ok"], msg=resp)
+        return resp
+
+    def test_repeated_request_changes_increment_cycle_and_hit_budget(self):
+        os.environ["SIGNALOS_GATE_REWORK_BUDGET"] = "2"
+        try:
+            r1 = self._verdict("rb-1", "fix the header")
+            self.assertEqual(r1["data"]["handled"]["status"], "rework_dispatched")
+            self.assertEqual(r1["data"]["handled"]["cycle"], 1)
+
+            r2 = self._verdict("rb-2", "fix the footer")
+            self.assertEqual(r2["data"]["handled"]["status"], "rework_dispatched")
+            self.assertEqual(r2["data"]["handled"]["cycle"], 2)  # persisted, not reset
+
+            # Budget (2) exhausted -> standalone mirror of "max-rework".
+            r3 = self._verdict("rb-3", "still broken")
+            self.assertEqual(r3["data"]["handled"]["status"], "max_cycles_reached")
+            self.assertIsNone(r3["data"]["handled"]["rework_packet"])
+
+            # And it STAYS refused on further calls.
+            r4 = self._verdict("rb-4", "again")
+            self.assertEqual(r4["data"]["handled"]["status"], "max_cycles_reached")
+        finally:
+            os.environ.pop("SIGNALOS_GATE_REWORK_BUDGET", None)
+
+    def test_repeated_rejects_increment_count_and_hit_bound(self):
+        def reject(req_id: str) -> dict:
+            resp, _ = self._run(
+                {
+                    "command": "agent:verdict",
+                    "id": req_id,
+                    "args": [
+                        json.dumps(
+                            {
+                                "run_id": "run-C",
+                                "verdict": "reject",
+                                "feedback": "wrong direction",
+                            }
+                        )
+                    ],
+                }
+            )
+            self.assertTrue(resp["ok"], msg=resp)
+            return resp
+
+        r1 = reject("rj-1")
+        self.assertEqual(r1["data"]["handled"]["status"], "regenerate_dispatched")
+        self.assertEqual(r1["data"]["handled"]["rejection_count"], 1)
+        r2 = reject("rj-2")
+        self.assertEqual(r2["data"]["handled"]["rejection_count"], 2)
+        # max_rejections default is 2 (same bound as the orchestrator).
+        r3 = reject("rj-3")
+        self.assertEqual(r3["data"]["handled"]["status"], "max_rejections_reached")
+
+    def test_rework_and_reject_cycles_do_not_cross_count(self):
+        os.environ["SIGNALOS_GATE_REWORK_BUDGET"] = "2"
+        try:
+            # One rejection writes cycle-1/regenerate-packet.json; it must NOT
+            # advance the rework counter for the same gate.
+            resp, _ = self._run(
+                {
+                    "command": "agent:verdict",
+                    "id": "x-1",
+                    "args": [
+                        json.dumps(
+                            {
+                                "run_id": "run-B",
+                                "verdict": "reject",
+                                "feedback": "start over",
+                            }
+                        )
+                    ],
+                }
+            )
+            self.assertTrue(resp["ok"], msg=resp)
+            r1 = self._verdict("x-2", "fix the nav")
+            self.assertEqual(r1["data"]["handled"]["cycle"], 1)
+        finally:
+            os.environ.pop("SIGNALOS_GATE_REWORK_BUDGET", None)
+
+
 # ---------------------------------------------------------------------------
 # agent:cancel + agent:resume
 # ---------------------------------------------------------------------------

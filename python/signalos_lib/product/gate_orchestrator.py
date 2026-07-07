@@ -67,6 +67,12 @@ class DeliveryState:
     rejections: dict = field(default_factory=dict)
     signed: list = field(default_factory=list)
     waived: list = field(default_factory=list)
+    # Reviewer feedback per gate, in verdict order. Each entry is
+    # {"verdict": "request-changes"|"reject", "cycle": int, "feedback": str}.
+    # Persisted with the rest of the state so a resumed delivery still knows
+    # what the reviewer actually asked for. Older persisted states lack this
+    # field; resume_delivery tolerates its absence (defaults to {}).
+    feedback: dict = field(default_factory=dict)
 
 
 # High-confidence unfilled-template markers that block a gate signature (0.6).
@@ -214,9 +220,46 @@ class GateOrchestrator:
 
     def _gate_message(self, gate: str) -> str:
         base = self.state.prompt or "Proceed with the delivery."
-        if gate == self.state.current_gate and self.state.rework.get(gate):
-            return base + f"\n\n[Rework cycle {self.state.rework[gate]} - address the prior feedback.]"
-        return base
+        if gate != self.state.current_gate:
+            return base
+        cyc = self.state.rework.get(gate, 0)
+        rej = self.state.rejections.get(gate, 0)
+        if not cyc and not rej:
+            return base
+        entries = [e for e in self.state.feedback.get(gate, [])
+                   if str(e.get("feedback") or "").strip()]
+        if not entries:
+            # Legacy persisted state (pre-feedback field) or an empty feedback
+            # string: keep the old generic nudge rather than fabricating text.
+            return base + f"\n\n[Rework cycle {cyc or rej} - address the prior feedback.]"
+        latest = entries[-1]
+        if latest.get("verdict") == "reject":
+            header = (f"[Rejection {rej} - the reviewer rejected the previous "
+                      "output; regenerate it, addressing this feedback:]")
+        else:
+            header = f"[Rework cycle {cyc} - the reviewer requested these changes:]"
+        parts = [base, header + "\n" + str(latest.get("feedback"))]
+        prior = entries[:-1]
+        if prior:
+            parts.append("[Feedback from earlier review cycles:]\n"
+                         + "\n".join(f"- {e.get('feedback')}" for e in prior))
+        return "\n\n".join(parts)
+
+    def _record_review(self, gate: str, verdict: str, feedback: str, cycle: int,
+                       *, store: bool = True) -> None:
+        """Store reviewer feedback in the delivery state and append the same
+        gate_review audit event the standalone verdict path writes (one audit
+        format for both codepaths)."""
+        if store:
+            self.state.feedback.setdefault(gate, []).append(
+                {"verdict": verdict, "cycle": cycle, "feedback": feedback})
+        try:
+            from .gate_review import record_review_event
+            audit_verdict = {"request-changes": "REQUEST-CHANGES",
+                             "reject": "REJECTED"}.get(verdict, verdict.upper())
+            record_review_event(self.repo_root, gate, audit_verdict, feedback, cycle)
+        except OSError:
+            pass
 
     def _run_gate(self, gate: str) -> Any:
         self.state.current_gate = gate
@@ -383,6 +426,10 @@ class GateOrchestrator:
         if v == "request-changes":
             cyc = self.state.rework.get(gate, 0) + 1
             if cyc > self.max_rework:
+                # Audit the refused verdict too (mirrors handle_request_changes'
+                # max_cycles_reached path) but don't store it as actionable
+                # feedback -- the gate will not re-run.
+                self._record_review(gate, v, feedback, cyc, store=False)
                 self.emit({"type": "error",
                            "error": f"Max rework ({self.max_rework}) reached at {gate}."})
                 self._emit_incident("gate-deadlock",
@@ -391,12 +438,14 @@ class GateOrchestrator:
                 self._persist()
                 return {"status": "max-rework", "gate": gate}
             self.state.rework[gate] = cyc
+            self._record_review(gate, v, feedback, cyc)
             self._run_gate(gate)
             return {"status": "reworked", "gate": gate, "cycle": cyc}
 
         if v == "reject":
             cnt = self.state.rejections.get(gate, 0) + 1
             if cnt > self.max_rejections:
+                self._record_review(gate, v, feedback, cnt, store=False)
                 self.emit({"type": "error",
                            "error": f"Max rejections ({self.max_rejections}) reached at {gate}."})
                 self._emit_incident("gate-deadlock",
@@ -405,12 +454,14 @@ class GateOrchestrator:
                 self._persist()
                 return {"status": "max-rejections", "gate": gate}
             self.state.rejections[gate] = cnt
+            self._record_review(gate, v, feedback, cnt)
             self._run_gate(gate)
             return {"status": "rejected", "gate": gate, "count": cnt}
 
         if v == "waive":
             if gate not in self.state.waived:
                 self.state.waived.append(gate)
+            self._record_review(gate, v, feedback, 0, store=False)
             self.emit({"type": "system",
                        "text": f"{gate} waived (documented): {feedback or 'no reason given'}"})
             nxt = self._next_after(gate)
@@ -468,6 +519,8 @@ def resume_delivery(
     st.rejections = dict(data.get("rejections", {}))
     st.signed = list(data.get("signed", []))
     st.waived = list(data.get("waived", []))
+    # Older persisted states predate the feedback field -- tolerate absence.
+    st.feedback = dict(data.get("feedback", {}))
     return orch
 
 

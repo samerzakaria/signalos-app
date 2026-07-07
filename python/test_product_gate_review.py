@@ -18,6 +18,7 @@ from signalos_lib.product.gate_review import (
     classify_review,
     handle_rejection,
     handle_request_changes,
+    latest_review_cycle,
     record_review_event,
 )
 
@@ -147,6 +148,60 @@ class TestHandleRequestChanges(unittest.TestCase):
             cycle=1,
         )
         self.assertEqual(result["cycle"], 2)
+
+
+class TestLatestReviewCycle(unittest.TestCase):
+    """latest_review_cycle recovers the persisted cycle from the review
+    packets on disk -- the counter the standalone verdict path relies on."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.repo_root = Path(self.tmp)
+        (self.repo_root / ".signalos").mkdir(parents=True)
+
+    def test_zero_when_no_packets(self):
+        self.assertEqual(latest_review_cycle(self.repo_root, "run-1"), 0)
+
+    def test_tracks_dispatched_rework_cycles(self):
+        r1 = handle_request_changes(
+            repo_root=self.repo_root, gate_id="run-1",
+            feedback="fix nav", specific_items=["nav"], cycle=0)
+        self.assertEqual(r1["cycle"], 1)
+        self.assertEqual(latest_review_cycle(self.repo_root, "run-1"), 1)
+        r2 = handle_request_changes(
+            repo_root=self.repo_root, gate_id="run-1",
+            feedback="fix footer", specific_items=["footer"],
+            cycle=latest_review_cycle(self.repo_root, "run-1"))
+        self.assertEqual(r2["cycle"], 2)
+        self.assertEqual(latest_review_cycle(self.repo_root, "run-1"), 2)
+
+    def test_rework_and_regenerate_counted_separately(self):
+        handle_request_changes(
+            repo_root=self.repo_root, gate_id="run-1",
+            feedback="fix nav", specific_items=["nav"], cycle=0)
+        self.assertEqual(
+            latest_review_cycle(self.repo_root, "run-1", packet_type="regenerate"), 0)
+        handle_rejection(
+            repo_root=self.repo_root, gate_id="run-1",
+            reason="wrong", rejection_count=0)
+        self.assertEqual(
+            latest_review_cycle(self.repo_root, "run-1", packet_type="rework"), 1)
+        self.assertEqual(
+            latest_review_cycle(self.repo_root, "run-1", packet_type="regenerate"), 1)
+
+    def test_max_cycles_writes_no_packet_so_refusal_is_stable(self):
+        r1 = handle_request_changes(
+            repo_root=self.repo_root, gate_id="run-1",
+            feedback="fix", specific_items=["fix"], max_cycles=1, cycle=0)
+        self.assertEqual(r1["status"], "rework_dispatched")
+        r2 = handle_request_changes(
+            repo_root=self.repo_root, gate_id="run-1",
+            feedback="again", specific_items=["again"], max_cycles=1,
+            cycle=latest_review_cycle(self.repo_root, "run-1"))
+        self.assertEqual(r2["status"], "max_cycles_reached")
+        # No new packet dir -> the persisted counter stays at the budget and
+        # every further attempt keeps refusing.
+        self.assertEqual(latest_review_cycle(self.repo_root, "run-1"), 1)
 
 
 class TestHandleRejection(unittest.TestCase):
