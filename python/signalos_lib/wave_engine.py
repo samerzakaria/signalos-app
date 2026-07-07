@@ -275,6 +275,64 @@ def _summarise(text: str, max_chars: int = 80) -> str:
     return flat[:max_chars]
 
 
+# --- later-signed-gate conflict detection (#5) ------------------------------
+#
+# A request can stay perfectly true to the signed Soul yet contradict a LATER
+# signed gate - the G2 plan or the G3 design. The pre-#5 detector compared
+# only against G0, so such a request sailed through as "keep" and the walk
+# quietly diverged from its own signed artifacts. Detection here is
+# deliberately conservative (the same "clear conflict only" bar as the G0
+# heuristics): it fires only when the request contains explicit contradiction
+# language AND names the gate's subject matter, so plain refinements ("add a
+# field to the signup form") never trip it. Ambiguity falls through to the
+# existing G0 logic (conservative no-drift default).
+
+_CONTRADICTION_MARKERS: tuple[str, ...] = (
+    "instead of", "rather than", "scrap", "throw away", "start over",
+    "replace the", "redo the", "rewrite the", "abandon", "drop the",
+    "different approach", "change the", "rethink", "switch to",
+    "no longer", "completely different",
+)
+
+_LATER_GATE_SUBJECTS: dict[str, tuple[str, ...]] = {
+    "G2": ("plan", "roadmap", "milestone", "architecture", "approach",
+           "expectation", "stack"),
+    "G3": ("design", "ui", "ux", "layout", "screen", "wireframe",
+           "mockup", "prototype", "look and feel"),
+}
+
+
+def _detect_later_gate_conflict(
+    inspection: dict[str, Any],
+    user_request: str,
+) -> dict[str, Any] | None:
+    """Return conflict info when *user_request* clearly contradicts a signed
+    G2/G3 artifact, else None. Checked in gate order: reopening the earliest
+    conflicting gate cascades over the later ones anyway."""
+    request_lower = user_request.lower()
+    marker = next((m for m in _CONTRADICTION_MARKERS if m in request_lower), None)
+    if marker is None:
+        return None
+    for gate in ("G2", "G3"):
+        art = inspection["artifacts"].get(gate) or {}
+        if not art.get("signed") or not art.get("snippet"):
+            continue
+        subject = next(
+            (s for s in _LATER_GATE_SUBJECTS[gate] if s in request_lower), None)
+        if subject is None:
+            continue
+        return {
+            "gate": gate,
+            "summary": _summarise(art["snippet"]),
+            "signals": [
+                f"later-gate-conflict:{gate}",
+                f"contradiction-marker:{marker}",
+                f"gate-subject:{subject}",
+            ],
+        }
+    return None
+
+
 def detect_scope_drift(
     repo_root: Path,
     user_request: str,
@@ -315,7 +373,11 @@ def detect_scope_drift(
             "current_soul_summary": str,
             "new_request_summary": str,
             "signals": list[str],              # which heuristics fired
-            "recommended_action": "keep" | "amend" | "new-project" | "ambiguous",
+            "recommended_action": "keep" | "amend" | "new-project"
+                                  | "ambiguous" | "reopen-gate",
+            # Only when the request conflicts with a LATER signed gate (#5):
+            "conflicting_gate": "G2" | "G3",   # absent otherwise
+            "conflicting_summary": str,        # absent otherwise
         }
     """
     inspection = inspect(repo_root, project_id=project_id)
@@ -348,6 +410,23 @@ def detect_scope_drift(
             "method": "heuristic",
             "recommended_action": "keep",
             "signals": ["empty-request"],
+        }
+
+    # Later signed gates (#5): a request can stay true to the Soul yet
+    # clearly contradict the signed plan (G2) or design (G3). Checked before
+    # the G0 overlap heuristics because the interesting case is exactly the
+    # one those heuristics wave through as "keep" (high Soul overlap).
+    conflict = _detect_later_gate_conflict(inspection, user_request)
+    if conflict is not None:
+        return {
+            **base,
+            "drifted": True,
+            "confidence": 0.85,  # same bar as the G0 heuristic drift verdicts
+            "method": "heuristic",
+            "recommended_action": "reopen-gate",
+            "conflicting_gate": conflict["gate"],
+            "conflicting_summary": conflict["summary"],
+            "signals": conflict["signals"],
         }
 
     overlap = soul_tokens & request_tokens
@@ -744,13 +823,18 @@ class WaveEngine:
         }
 
     def resolve_scope_drift(self, choice: str) -> dict[str, Any]:
-        """User picked one of the 4 drift-prompt options. Re-enter accordingly.
+        """User picked one of the drift-prompt options. Re-enter accordingly.
 
         *choice* is one of:
           - "a" / "amend"       — re-fire G0 in amend-mode (same project)
           - "b" / "new-parallel"— create new project_id in same workspace
           - "c" / "new-folder"  — new workspace folder (caller handles path)
           - "d" / "keep"        — treat new request as refinement; no change
+          - "e" / "reopen"      — reopen the LATER signed gate the request
+                                  conflicts with (#5). Returns an action
+                                  instructing the caller to invoke the
+                                  gate-reopen path (agent:reopen-gate); the
+                                  engine itself never rewrites signatures.
         """
         if self.state is not WaveState.SCOPE_DRIFT:
             raise RuntimeError(
@@ -775,10 +859,18 @@ class WaveEngine:
             self.transition(WaveState.INSPECT)
             return {"action": "treat-as-refinement",
                     "current_gate": self.current_gate}
+        if norm in {"e", "reopen", "reopen-gate"}:
+            conflicting = (self.last_drift or {}).get("conflicting_gate")
+            self.transition(WaveState.INSPECT)
+            return {"action": "reopen-gate",
+                    "gate": conflicting,
+                    "current_gate": conflicting,
+                    "reason": self.last_user_request or ""}
 
         raise ValueError(
             f"Unknown scope-drift choice: {choice!r}. "
-            "Expected one of: a/b/c/d, amend/new-parallel/new-folder/keep."
+            "Expected one of: a/b/c/d/e, "
+            "amend/new-parallel/new-folder/keep/reopen."
         )
 
     # -- gate sign / advance ------------------------------------------------

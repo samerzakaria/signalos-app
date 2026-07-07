@@ -9,6 +9,7 @@ govern this codebase. Read these before changing protocol-related code.
 |---|---|
 | [docs/WAVE-ENGINE-DESIGN.md](docs/WAVE-ENGINE-DESIGN.md) | The wave-engine state machine + per-gate agents + scope-drift + refusal taxonomy. §12 lists implementation milestones M-W1 through M-W7 (all shipped — see commit log). |
 | [docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md](docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md) | The v0.2 audit. §6.7 defines the G3 design three-shape contract (`doc + prototype/` / `doc + external-design-ref` / `doc + no-UI-attestation`). §2.5.2 + §6.6.1 define the enforcement universality + override-with-audit pattern that the M-W7 refusal taxonomy implements. |
+| [docs/GATE-REOPEN-DESIGN.md](docs/GATE-REOPEN-DESIGN.md) | The gate-reopen state machine: cascade invalidation of later signed/waived gates, reopen budget (`SIGNALOS_GATE_REOPEN_BUDGET`, default 3), audit event kinds (reopen/invalidate/unwaive + replay reverse markers), `agent:reopen-gate` IPC + UI contract, and the scope-drift extension that detects conflicts with signed G2/G3 (resolution option e = reopen). |
 
 ### Wave-engine modules (Python)
 

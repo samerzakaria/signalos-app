@@ -177,7 +177,7 @@ def handle(req: dict) -> dict:
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
     # the structured object (prompt, run_id, etc.) survives intact.
-    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume"):
+    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume", "agent:reopen-gate"):
         try:
             return route_agent(req_id, command, raw_args, project_id=project_id)
         except Exception as exc:
@@ -471,6 +471,8 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
         return agent_cancel(req_id, raw_args, project_id=project_id)
     if command == "agent:resume":
         return agent_resume(req_id, raw_args, project_id=project_id)
+    if command == "agent:reopen-gate":
+        return agent_reopen_gate(req_id, raw_args, project_id=project_id)
     return err(req_id, f"Unknown command: {command}")
 
 
@@ -865,6 +867,74 @@ def agent_verdict(req_id: str, args: Any, project_id: str = "default") -> dict:
         return err(req_id, f"agent:verdict failed: {type(exc).__name__}: {exc}")
 
     return ok(req_id, output=json.dumps({"verdict": verdict}), data=outcome)
+
+
+def agent_reopen_gate(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """agent:reopen-gate -> reopen a previously signed gate of a delivery.
+
+    Args (single JSON object): {run_id, gate, reason, name?, role?}.
+
+    Routed like agent:verdict: an active delivery in _ACTIVE_DELIVERIES is
+    mutated in place. A delivery that is no longer in memory (sidecar restart,
+    or it completed and was evicted) is loaded one-shot from its persisted
+    delivery.json - reopening never runs the gate agent, so no provider/model
+    is needed - and the mutated state is persisted back to disk. If neither an
+    active nor a persisted delivery exists, this returns a clear error.
+
+    A successful reopen removes the target gate's signature plus every later
+    signed gate (and un-waives later waived gates), all audited; threads the
+    reason into the gate's feedback; sets current_gate back to the reopened
+    gate; and persists status="reopened". It emits `gate_reopened` +
+    `system` agent-events but does NOT re-run the gate agent.
+
+    What the frontend should do next (mirrors how apply_verdict's flow
+    continues after a rework):
+      - send agent:resume {run_id, provider, model} to re-emit the reopened
+        gate's checkpoint card and wait for a verdict (same path as a
+        sidecar-restart resume); or
+      - send agent:verdict {run_id, verdict: "request-changes", feedback}
+        to immediately re-run the reopened gate's agent - the reopen reason
+        (and any new feedback) is threaded into the rework message.
+    """
+    try:
+        payload = _coerce_agent_args(args)
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"agent:reopen-gate args invalid: {exc}")
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        return err(req_id, "agent:reopen-gate requires 'run_id'")
+    gate = str(payload.get("gate") or "").strip()
+    if not gate:
+        return err(req_id, "agent:reopen-gate requires 'gate'")
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return err(req_id, "agent:reopen-gate requires a non-empty 'reason'")
+    name = str(payload.get("name") or "").strip()
+    role = str(payload.get("role") or "").strip()
+
+    repo_root = Path(os.getcwd())
+    orch = _ACTIVE_DELIVERIES.get(run_id)
+    if orch is None:
+        delivery_path = _agent_run_dir(repo_root, run_id) / "delivery.json"
+        if not delivery_path.is_file():
+            return err(req_id, f"agent:reopen-gate: no active or persisted "
+                               f"delivery for run {run_id}")
+        from signalos_lib.product.gate_orchestrator import resume_delivery
+        try:
+            # One-shot resume: adapter=None is safe because reopen_gate never
+            # invokes the model; the orchestrator is NOT registered in
+            # _ACTIVE_DELIVERIES (a later agent:resume rebuilds it properly
+            # with a real adapter from the persisted state).
+            orch = resume_delivery(repo_root, run_id, None, _agent_emit(run_id),
+                                   sign_fn=_DELIVERY_SIGN_FN)
+        except Exception as exc:
+            return err(req_id, f"agent:reopen-gate: delivery {run_id} is not "
+                               f"resumable: {type(exc).__name__}: {exc}")
+    try:
+        result = orch.reopen_gate(gate, reason, name=name, role=role)
+    except Exception as exc:  # INV-4: surface
+        return err(req_id, f"agent:reopen-gate failed: {type(exc).__name__}: {exc}")
+    return ok(req_id, output=json.dumps(result), data=result)
 
 
 def agent_cancel(req_id: str, args: Any, project_id: str = "default") -> dict:

@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 
 from .. import agent_loader, wave_engine, sign
 from .agent_loop import AgentLoop
-from .budgets import resolve_gate_rework_budget
+from .budgets import resolve_gate_reopen_budget, resolve_gate_rework_budget
 from .enforcement_state import EnforcementProvider
 
 __all__ = ["GateOrchestrator", "GATE_SPECIALISTS", "GATE_QUESTIONS", "GATE_ROLES",
@@ -68,11 +68,19 @@ class DeliveryState:
     signed: list = field(default_factory=list)
     waived: list = field(default_factory=list)
     # Reviewer feedback per gate, in verdict order. Each entry is
-    # {"verdict": "request-changes"|"reject", "cycle": int, "feedback": str}.
-    # Persisted with the rest of the state so a resumed delivery still knows
-    # what the reviewer actually asked for. Older persisted states lack this
-    # field; resume_delivery tolerates its absence (defaults to {}).
+    # {"verdict": "request-changes"|"reject"|"reopen", "cycle": int,
+    # "feedback": str}. Persisted with the rest of the state so a resumed
+    # delivery still knows what the reviewer actually asked for. Older
+    # persisted states lack this field; resume_delivery tolerates its
+    # absence (defaults to {}).
     feedback: dict = field(default_factory=dict)
+    # Gate-reopen bookkeeping (#4). `reopens` counts reopen cycles per gate
+    # (budgeted like rework/rejections). `invalidated` is the append-only
+    # record of every signature/waiver removed by a reopen cascade:
+    # {"gate", "by", "reason", "cascade": bool[, "waived": True]}.
+    # Both are absent from older persisted states; resume_delivery defaults.
+    reopens: dict = field(default_factory=dict)
+    invalidated: list = field(default_factory=list)
 
 
 # High-confidence unfilled-template markers that block a gate signature (0.6).
@@ -176,6 +184,7 @@ class GateOrchestrator:
         project_id: str = "default",
         max_rework: int | None = None,
         max_rejections: int = 2,
+        max_reopens: int | None = None,
         run_id: Optional[str] = None,
         prompt: str = "",
         critic_adapter: Any = None,
@@ -195,6 +204,7 @@ class GateOrchestrator:
         self.project_id = project_id
         self.max_rework = resolve_gate_rework_budget(max_rework)
         self.max_rejections = max_rejections
+        self.max_reopens = resolve_gate_reopen_budget(max_reopens)
         # run_id must be unique per delivery - it keys the persisted state dir
         # (.signalos/agent-runs/<run_id>/delivery.json). An explicit run_id is
         # honored verbatim (resume path); the fallback adds a timestamp + uuid
@@ -224,18 +234,22 @@ class GateOrchestrator:
             return base
         cyc = self.state.rework.get(gate, 0)
         rej = self.state.rejections.get(gate, 0)
-        if not cyc and not rej:
+        reo = self.state.reopens.get(gate, 0)
+        if not cyc and not rej and not reo:
             return base
         entries = [e for e in self.state.feedback.get(gate, [])
                    if str(e.get("feedback") or "").strip()]
         if not entries:
             # Legacy persisted state (pre-feedback field) or an empty feedback
             # string: keep the old generic nudge rather than fabricating text.
-            return base + f"\n\n[Rework cycle {cyc or rej} - address the prior feedback.]"
+            return base + f"\n\n[Rework cycle {cyc or rej or reo} - address the prior feedback.]"
         latest = entries[-1]
         if latest.get("verdict") == "reject":
             header = (f"[Rejection {rej} - the reviewer rejected the previous "
                       "output; regenerate it, addressing this feedback:]")
+        elif latest.get("verdict") == "reopen":
+            header = (f"[Reopen {reo} - the reviewer reopened this previously "
+                      "signed gate; rework it, addressing this reason:]")
         else:
             header = f"[Rework cycle {cyc} - the reviewer requested these changes:]"
         parts = [base, header + "\n" + str(latest.get("feedback"))]
@@ -478,6 +492,146 @@ class GateOrchestrator:
         self.emit({"type": "error", "error": f"Unknown verdict: {verdict!r}"})
         return {"status": "unknown-verdict"}
 
+    # -- gate reopen (#4) ---------------------------------------------------
+
+    # Delivery statuses in which a reopen is safe: the walk is parked waiting
+    # on a human (awaiting-verdict), deadlocked (stopped), finished (complete)
+    # or already reopened. "active" means a gate agent is mid-run - reopening
+    # under it would race the run's own state writes, so it is refused.
+    _REOPEN_SAFE_STATUSES = frozenset(
+        {"awaiting-verdict", "stopped", "complete", "reopened"})
+
+    def _reopen_roles_for(self, gate: str) -> set:
+        """Roles authorised to reopen *gate* - the SAME authorisation set
+        sign.sign_gate enforces for signing it: the union of required_roles
+        across the gate's manifest artifacts (a reopen reverses a signature,
+        so it demands the authority that could have produced one)."""
+        try:
+            from .. import artifacts
+            required = {r for a in artifacts.expected_gate_artifacts(gate)
+                        for r in a.required_roles}
+        except Exception:
+            required = set()
+        return required or {self._role_for(gate)}
+
+    def _append_reopen_audit(self, entry: dict) -> None:
+        """Append one reopen/invalidate row to AUDIT_TRAIL.jsonl.
+
+        Rows that reverse a signature carry an `action` containing a reverse
+        marker audit_replay.py recognises ("reopen" / "unsign") plus the plain
+        gate id in `gate`, so time-travel replay folds the gate back to
+        unsigned. Refusal rows deliberately carry `gate_id` instead of `gate`
+        so replay does NOT treat the refused attempt as a reversal.
+        Silent on OSError, matching the other audit appenders."""
+        audit_path = self.repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
+        try:
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "run_id": self.state.run_id,
+                **entry,
+            }
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def reopen_gate(self, gate: str, reason: str, name: str = "",
+                    role: str = "") -> dict:
+        """Reopen an already-signed gate and invalidate everything after it.
+
+        The reopened gate and every LATER signed gate lose their signature
+        (recorded in state.invalidated + audited with replay-legible reverse
+        markers); later waived gates are un-waived. current_gate returns to
+        the reopened gate and the reason is threaded into the gate's feedback
+        so the re-run's _gate_message carries it. Bounded per gate by the
+        reopen budget (SIGNALOS_GATE_REOPEN_BUDGET, default 3). Does NOT
+        re-run the gate agent - the caller decides when to resume."""
+        gate = str(gate or "").strip().upper()
+        if gate not in GATE_ORDER:
+            self.emit({"type": "error", "error": f"Unknown gate {gate!r}"})
+            return {"status": "unknown-gate", "gate": gate}
+        if self.state.status not in self._REOPEN_SAFE_STATUSES:
+            self.emit({"type": "error",
+                       "error": f"Cannot reopen {gate}: delivery is "
+                                f"'{self.state.status}' (a gate run is in flight)."})
+            return {"status": "delivery-busy", "gate": gate,
+                    "delivery_status": self.state.status}
+        if gate not in self.state.signed:
+            self.emit({"type": "error",
+                       "error": f"Cannot reopen {gate}: it is not signed."})
+            return {"status": "not-signed", "gate": gate}
+
+        actor = str(name or "").strip() or self.signer
+        role = str(role or "").strip() or self._role_for(gate)
+        if role not in self._reopen_roles_for(gate):
+            self.emit({"type": "error",
+                       "error": f"Role {role!r} is not authorised to reopen "
+                                f"{gate} (required: "
+                                f"{sorted(self._reopen_roles_for(gate))})."})
+            return {"status": "role-not-authorized", "gate": gate, "role": role}
+
+        cnt = self.state.reopens.get(gate, 0) + 1
+        if cnt > self.max_reopens:
+            # Audited refusal (no `gate` key -> replay ignores it), no state change.
+            self._append_reopen_audit({
+                "action": "gate-reopen-refused", "kind": "reopen-refused",
+                "gate_id": gate, "actor": actor, "role": role,
+                "reason": reason, "attempt": cnt, "budget": self.max_reopens,
+            })
+            self.emit({"type": "error",
+                       "error": f"Max reopens ({self.max_reopens}) reached at {gate}."})
+            return {"status": "max-reopens", "gate": gate}
+
+        # Cascade: the target gate plus every later signed gate lose their
+        # signature; later waived gates lose their waiver. All audited.
+        idx = GATE_ORDER.index(gate)
+        invalidated: list[str] = []
+        for g in GATE_ORDER[idx:]:
+            cascade = g != gate
+            if g in self.state.signed:
+                self.state.signed = [s for s in self.state.signed if s != g]
+                self.state.invalidated.append(
+                    {"gate": g, "by": actor, "reason": reason, "cascade": cascade})
+                self._append_reopen_audit({
+                    # "reopen"/"unsign" are audit_replay reverse markers.
+                    "action": "gate.reopen" if not cascade else "gate.unsign",
+                    "kind": "reopen" if not cascade else "invalidate",
+                    "gate": g, "actor": actor, "role": role, "reason": reason,
+                    "cascade": cascade, "source_gate": gate,
+                })
+                if cascade:
+                    invalidated.append(g)
+            elif cascade and g in self.state.waived:
+                self.state.waived = [w for w in self.state.waived if w != g]
+                self.state.invalidated.append(
+                    {"gate": g, "by": actor, "reason": reason,
+                     "cascade": True, "waived": True})
+                self._append_reopen_audit({
+                    "action": "gate.unwaive", "kind": "unwaive",
+                    "gate": g, "actor": actor, "role": role, "reason": reason,
+                    "cascade": True, "source_gate": gate,
+                })
+                invalidated.append(g)
+
+        self.state.reopens[gate] = cnt
+        # Thread the reason through the same feedback mechanism rework uses,
+        # so _gate_message includes it when the gate re-runs. Also writes the
+        # gate_review audit event (verdict REOPEN).
+        self._record_review(gate, "reopen", reason, cnt)
+        self.state.current_gate = gate
+        self.state.status = "reopened"
+        self._persist()
+        self.emit({"type": "gate_reopened", "gate": gate,
+                   "invalidated": invalidated, "reason": reason,
+                   "by": actor, "role": role, "reopen_count": cnt})
+        self.emit({"type": "system",
+                   "text": f"{gate} reopened by {actor} ({role}): "
+                           f"{reason or 'no reason given'}."
+                           + (f" Also invalidated: {', '.join(invalidated)}."
+                              if invalidated else "")})
+        return {"status": "reopened", "gate": gate, "invalidated": invalidated}
+
     def _state_dir(self) -> Path:
         return self.repo_root / ".signalos" / "agent-runs" / self.state.run_id
 
@@ -521,6 +675,9 @@ def resume_delivery(
     st.waived = list(data.get("waived", []))
     # Older persisted states predate the feedback field -- tolerate absence.
     st.feedback = dict(data.get("feedback", {}))
+    # Reopen bookkeeping (#4) - also absent from older persisted states.
+    st.reopens = dict(data.get("reopens", {}))
+    st.invalidated = list(data.get("invalidated", []))
     return orch
 
 
