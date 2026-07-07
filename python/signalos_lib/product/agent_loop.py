@@ -1266,15 +1266,40 @@ class AgentLoop:
             return "ERROR: empty pattern"
         root = self.repo_root.resolve()
         matches: list[str] = []
+        seen: set[str] = set()
         for p in root.glob(pattern):
             if ".signalos" in p.parts or "node_modules" in p.parts or ".git" in p.parts:
                 continue
             try:
-                matches.append(str(p.relative_to(root)).replace("\\", "/"))
+                rel = str(p.relative_to(root)).replace("\\", "/")
             except ValueError:
                 continue
+            if rel not in seen:
+                seen.add(rel)
+                matches.append(rel)
             if len(matches) >= 500:
                 break
+        # A non-default project's gate artifacts physically live under the
+        # governance base (see _artifact_base), which the .signalos skip above
+        # would hide — glob that base too and report canonical rel_paths, so
+        # search_files agrees with read_file/list_directory about what exists.
+        if self.project_id != "default" and len(matches) < 500:
+            from ..projects import project_governance_dir
+
+            gov = project_governance_dir(self.repo_root, self.project_id).resolve()
+            if gov != root and gov.is_dir():
+                for p in gov.glob(pattern):
+                    if "node_modules" in p.parts or ".git" in p.parts:
+                        continue
+                    try:
+                        rel = str(p.relative_to(gov)).replace("\\", "/")
+                    except ValueError:
+                        continue
+                    if _is_gate_artifact_rel_path(rel) and rel not in seen:
+                        seen.add(rel)
+                        matches.append(rel)
+                    if len(matches) >= 500:
+                        break
         if not matches:
             return f"No files match: {pattern}"
         return "\n".join(sorted(matches))

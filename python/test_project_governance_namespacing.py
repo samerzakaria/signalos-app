@@ -562,6 +562,35 @@ class AgentLoopRebaseEnforcementTests(unittest.TestCase):
             # write_text translates newlines on Windows; compare normalized.
             self.assertEqual(read.replace("\r\n", "\n"), _REAL_CONTENT)
 
+    def test_search_files_finds_rebased_governance_artifacts(self) -> None:
+        """search_files must agree with read_file/list_directory: a
+        non-default project's gate artifacts are discoverable via glob and
+        reported as canonical rel_paths; default's root artifacts and
+        product-source matches are unaffected."""
+        with tempfile.TemporaryDirectory() as d:
+            root = _workspace(d)
+            loop = self._loop(root, "alpha")
+            rel = "core/governance/Governance/SOUL-DOCUMENT.md"
+            self._write(loop, rel)
+            self._write(loop, "src/App.css", "body {}\n")
+            out = loop._dispatch_tool(ToolCall(
+                id="t-search", name="search_files",
+                arguments={"pattern": "core/governance/**/*.md"}))
+            self.assertIn(rel, out.splitlines())
+            # Product-source glob still resolves from the workspace root.
+            out_src = loop._dispatch_tool(ToolCall(
+                id="t-search-src", name="search_files",
+                arguments={"pattern": "src/*.css"}))
+            self.assertIn("src/App.css", out_src.splitlines())
+            # Default project: same glob finds nothing (alpha's artifacts
+            # are invisible to default — the read-side invariant holds for
+            # search too).
+            default_loop = self._loop(root, "default")
+            out_default = default_loop._dispatch_tool(ToolCall(
+                id="t-search-def", name="search_files",
+                arguments={"pattern": "core/governance/**/*.md"}))
+            self.assertNotIn(rel, out_default.splitlines())
+
     def test_non_governance_write_is_untouched_by_rebasing(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             root = _workspace(d)
