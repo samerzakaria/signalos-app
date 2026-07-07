@@ -16,9 +16,9 @@
 // src/js/ui/chat.js) and re-runs the current tab's loader exactly the way tab
 // navigation does (window.switchTab).
 
-import { signal } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import * as ipc from '../js/ipc.js';
-import { chatBubbles, tab } from '../state';
+import { chatBubbles, sbTab, tab } from '../state';
 
 export interface ProjectEntry {
   id: string;
@@ -199,6 +199,33 @@ export function ensureProjectsLoaded(workspace: string): void {
   }
   void loadProjects();
 }
+
+// Panel-open freshness: the registry can change outside the app while it is
+// open (e.g. `signalos project create` from the CLI), so the once-per-
+// workspace load above goes stale. Re-fetch every time the sidebar's Projects
+// panel becomes the active panel.
+
+/** Refresh the registry because the Projects panel was (re)opened. No-op
+ *  until a workspace has been loaded — ensureProjectsLoaded owns the initial
+ *  load and the no-workspace reset. */
+export function refreshProjectsPanel(): void {
+  if (!lastLoadedWorkspace) return;
+  void loadProjects();
+}
+
+// Every panel-activation path writes the sbTab signal — the preact Sidebar's
+// switchPanel and the legacy app-v2.js switchSbTab (through the state.js
+// proxy) — so one signal effect covers all of them. Fires only on the
+// files/gov → projects transition, not on unrelated re-renders; a re-click on
+// the already-active Projects tab can't change the signal, so Sidebar calls
+// refreshProjectsPanel() directly for that case.
+let lastSbPanel: string | null = null;
+effect(() => {
+  const panel = sbTab.value;
+  const opened = panel === 'projects' && lastSbPanel !== 'projects';
+  lastSbPanel = panel;
+  if (opened) refreshProjectsPanel();
+});
 
 /** Test seam: reset module state between tests. */
 export function __resetProjectPickerForTests(): void {

@@ -131,6 +131,21 @@ function mergeIntoFeed(incoming: NotificationItem[]): void {
 
 let liveSeq = 0;
 
+// Delivery-completion dedupe (#issue: live completion notifications). The
+// backend can emit the completion fact more than once for the same run —
+// gate_signed(G5) is immediately followed by delivery_complete
+// (gate_orchestrator.apply_verdict), and events can be re-delivered after a
+// sidecar reconnect. One notification per run id.
+const notifiedDeliveryRuns = new Set<string>();
+
+/** True exactly once per run id; events without a run id always notify. */
+function firstDeliveryNotice(runId: unknown): boolean {
+  if (typeof runId !== 'string' || !runId) return true; // no id — can't dedupe
+  if (notifiedDeliveryRuns.has(runId)) return false;
+  notifiedDeliveryRuns.add(runId);
+  return true;
+}
+
 /** Push a locally-generated event (e.g. sidecar error) into the feed. */
 export function notifyLocal(kind: NotificationKind, text: string): void {
   const message = (text || '').trim();
@@ -152,6 +167,7 @@ export function notifyFromAgentEvent(evt: {
   error?: string;
   reason?: string;
   by?: string;
+  run_id?: string;
   [key: string]: unknown;
 }): void {
   if (!evt || typeof evt !== 'object') return;
@@ -181,8 +197,22 @@ export function notifyFromAgentEvent(evt: {
       notifyLocal('reopen', `${gate} reopened by ${by}`);
       break;
     }
+    case 'gate_signed': {
+      // Live completion: the FINAL gate (G5 — observability) signing means
+      // the delivery is done. Earlier gate signs stay quiet here (the gate
+      // checkpoint itself already notified via the 'gate' event above).
+      const gate = typeof evt.gate === 'string' ? evt.gate.trim().toUpperCase() : '';
+      if (gate !== 'G5') break;
+      if (!firstDeliveryNotice(evt.run_id)) break;
+      notifyLocal('delivery', 'Delivery complete — G5 signed');
+      break;
+    }
     case 'delivery_complete':
     case 'closeout':
+      // Shares the per-run dedupe with gate_signed(G5): the orchestrator
+      // emits delivery_complete right after the final sign, and one run must
+      // produce exactly one completion notification.
+      if (!firstDeliveryNotice(evt.run_id)) break;
       notifyLocal('delivery', 'Delivery completed.');
       break;
     default:
@@ -226,6 +256,7 @@ export function __resetNotificationsForTests(): void {
   notificationsOpen.value = false;
   lastSeenTs.value = 0;
   liveSeq = 0;
+  notifiedDeliveryRuns.clear();
   try {
     if (typeof localStorage !== 'undefined') localStorage.removeItem(LAST_SEEN_KEY);
   } catch { /* ignore */ }

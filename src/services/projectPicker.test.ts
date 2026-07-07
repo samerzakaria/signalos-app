@@ -18,11 +18,12 @@ const {
   switchProject,
   createProject,
   ensureProjectsLoaded,
+  refreshProjectsPanel,
   refreshAfterProjectChange,
   DELIVERY_ACTIVE_MESSAGE,
   __resetProjectPickerForTests,
 } = await import('./projectPicker');
-const { chatBubbles, tab } = await import('../state');
+const { chatBubbles, sbTab, tab } = await import('../state');
 
 const runAndWait = ipc.signal.runAndWait as ReturnType<typeof vi.fn>;
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   __resetProjectPickerForTests();
   chatBubbles.value = [];
   tab.value = 'dashboard';
+  sbTab.value = 'projects'; // the app's default sidebar panel
   delete (window as any).switchTab;
 });
 
@@ -194,6 +196,40 @@ describe('ensureProjectsLoaded', () => {
     ensureProjectsLoaded('');
     expect(projectList.value).toEqual([]);
     expect(activeProjectId.value).toBe('default');
+  });
+});
+
+describe('panel-open freshness', () => {
+  const listCalls = () =>
+    runAndWait.mock.calls.filter((c) => c[0] === 'project:list').length;
+
+  it('re-invokes project:list every time the Projects panel opens', async () => {
+    runAndWait.mockResolvedValue(REGISTRY);
+    sbTab.value = 'files'; // start away from the panel
+    ensureProjectsLoaded('C:/Products/One'); // workspace load (1)
+    await Promise.resolve();
+    expect(listCalls()).toBe(1);
+
+    sbTab.value = 'projects'; // panel opens (2)
+    sbTab.value = 'files'; // panel closes — no fetch
+    sbTab.value = 'projects'; // opens again (3)
+    await Promise.resolve();
+    expect(listCalls()).toBe(3);
+  });
+
+  it('re-clicking the active Projects tab refreshes via refreshProjectsPanel', async () => {
+    runAndWait.mockResolvedValue(REGISTRY);
+    ensureProjectsLoaded('C:/Products/One'); // (1)
+    refreshProjectsPanel(); // Sidebar's re-click path (2)
+    await Promise.resolve();
+    expect(listCalls()).toBe(2);
+  });
+
+  it('stays quiet while no workspace is open', () => {
+    sbTab.value = 'files';
+    sbTab.value = 'projects';
+    refreshProjectsPanel();
+    expect(runAndWait).not.toHaveBeenCalled();
   });
 });
 

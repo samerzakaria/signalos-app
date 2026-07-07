@@ -226,4 +226,29 @@ describe('agentEvents', () => {
       text: 'Error: Anthropic account credit is too low. Add credits with that provider or choose another provider/model in Settings.',
     });
   });
+
+  it('final G5 sign feeds the notification bell live, deduped on re-delivery', async () => {
+    const { state } = await loadHarness();
+    const notif = await import('./notifications');
+    notif.__resetNotificationsForTests();
+
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'gate_signed', gate: 'G5', verdict: 'approve' });
+
+    expect(notif.unreadCount.value).toBe(1);
+    expect(notif.notifications.value[0]).toMatchObject({
+      kind: 'delivery',
+      text: 'Delivery complete — G5 signed',
+    });
+    // gate_signed has no bubble rendering — the chat stays untouched.
+    expect(state.chatBubbles.value).toEqual([]);
+
+    // Re-delivered event (sidecar replay) must not double-notify…
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'gate_signed', gate: 'G5', verdict: 'approve' });
+    expect(notif.unreadCount.value).toBe(1);
+
+    // …and the orchestrator's follow-up delivery_complete for the same run
+    // is folded into the same single completion notification.
+    emit({ kind: 'agent-event', run_id: 'run-g5', type: 'delivery_complete', ready: true });
+    expect(notif.unreadCount.value).toBe(1);
+  });
 });

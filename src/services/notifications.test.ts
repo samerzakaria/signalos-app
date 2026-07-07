@@ -139,6 +139,42 @@ describe('live pushes', () => {
       'error:Agent run failed: provider exploded',
     ]);
   });
+
+  it('the final gate (G5) signing notifies delivery completion exactly once per run', () => {
+    // Earlier gate signs stay quiet — the gate checkpoint already notified.
+    notifyFromAgentEvent({ type: 'gate_signed', gate: 'G2', run_id: 'run-1', verdict: 'approve' });
+    expect(notifications.value).toHaveLength(0);
+
+    notifyFromAgentEvent({ type: 'gate_signed', gate: 'G5', run_id: 'run-1', verdict: 'approve' });
+    expect(notifications.value).toHaveLength(1);
+    expect(notifications.value[0]).toMatchObject({
+      kind: 'delivery',
+      text: 'Delivery complete — G5 signed',
+    });
+    expect(unreadCount.value).toBe(1);
+
+    // Re-delivery of the same run's event (e.g. sidecar replay) — no double.
+    notifyFromAgentEvent({ type: 'gate_signed', gate: 'G5', run_id: 'run-1', verdict: 'approve' });
+    expect(notifications.value).toHaveLength(1);
+    expect(unreadCount.value).toBe(1);
+
+    // The delivery_complete the orchestrator emits right after the final sign
+    // shares the per-run dedupe — still one completion notification.
+    notifyFromAgentEvent({ type: 'delivery_complete', run_id: 'run-1', ready: true });
+    expect(notifications.value).toHaveLength(1);
+
+    // A different run notifies again.
+    notifyFromAgentEvent({ type: 'gate_signed', gate: 'G5', run_id: 'run-2', verdict: 'approve' });
+    expect(notifications.value).toHaveLength(2);
+    expect(unreadCount.value).toBe(2);
+  });
+
+  it('delivery_complete without a G5 sign (waived path) still notifies, deduped per run', () => {
+    notifyFromAgentEvent({ type: 'delivery_complete', run_id: 'run-w', ready: false });
+    notifyFromAgentEvent({ type: 'delivery_complete', run_id: 'run-w', ready: false });
+    expect(notifications.value).toHaveLength(1);
+    expect(notifications.value[0]).toMatchObject({ kind: 'delivery', text: 'Delivery completed.' });
+  });
 });
 
 describe('popover open / reconcile', () => {

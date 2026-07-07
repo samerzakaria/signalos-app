@@ -198,8 +198,10 @@ export function handle(evt: AgentEvent): void {
   const type = typeof evt.type === 'string' ? evt.type : '';
   if (!type) return;
 
-  // #22 — incident/gate/reopen events also feed the notification bell.
-  // Chatty types (text, tool_done, …) are filtered inside the service.
+  // #22 — incident/gate/reopen/completion events also feed the notification
+  // bell (incl. gate_signed for the final G5 sign and delivery_complete, which
+  // have no bubble rendering below). Chatty types (text, tool_done, …) are
+  // filtered inside the service.
   try { notifyFromAgentEvent(evt); } catch { /* feed must never break chat */ }
 
   const runId = runIdOf(evt);

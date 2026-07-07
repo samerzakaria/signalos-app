@@ -41,6 +41,15 @@ regex       = "1"
 tokio-util  = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
 
+# Windows-only: WebView2 PermissionRequested handler (mic access for voice
+# input — see main.rs). Both crates are already in the dependency graph as
+# transitive deps of tauri/wry (Cargo.lock: webview2-com 0.38.2,
+# windows-core 0.61.2); these explicit entries only make them nameable from
+# our code and resolve to the already-locked versions.
+[target."cfg(windows)".dependencies]
+webview2-com = "0.38"
+windows-core = "0.61"
+
 [features]
 # Enable custom protocol for asset serving
 custom-protocol = ["tauri/custom-protocol"]

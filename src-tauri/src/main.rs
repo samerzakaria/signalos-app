@@ -70,6 +70,68 @@ fn main() {
                 let _ = win.set_min_size(Some(LogicalSize::new(900.0, 600.0)));
             }
 
+            // ── WebView2 microphone permission (Windows only) ──────────────────
+            // WebView2 DENIES navigator.mediaDevices.getUserMedia() whenever the
+            // host app leaves CoreWebView2's PermissionRequested event unhandled,
+            // so the voice-input feature (src/services/voiceInput.ts) can never
+            // acquire the mic on Windows without this hook. Allow
+            // PermissionKind::Microphone — and ONLY the microphone — for the
+            // app's own origin; every other permission kind, and any foreign
+            // origin (e.g. iframed preview content), stays at the WebView2
+            // default (deny/prompt).
+            #[cfg(windows)]
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.with_webview(|webview| {
+                    use webview2_com::Microsoft::Web::WebView2::Win32::{
+                        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+                        COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION,
+                        COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+                    };
+                    use webview2_com::PermissionRequestedEventHandler;
+                    use windows_core::PWSTR;
+
+                    let handler = PermissionRequestedEventHandler::create(Box::new(
+                        |_sender, args| {
+                            let Some(args) = args else { return Ok(()) };
+                            // SAFETY: WebView2 invokes this handler on the UI
+                            // thread that owns the controller, which is the COM
+                            // apartment these interface calls require.
+                            unsafe {
+                                let mut kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
+                                args.PermissionKind(&mut kind)?;
+                                if kind != COREWEBVIEW2_PERMISSION_KIND_MICROPHONE {
+                                    // Not the mic: leave the default behavior.
+                                    return Ok(());
+                                }
+                                let mut uri = PWSTR::null();
+                                args.Uri(&mut uri)?;
+                                let origin = webview2_com::take_pwstr(uri);
+                                if is_app_origin(&origin) {
+                                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                                }
+                                Ok(())
+                            }
+                        },
+                    ));
+                    // SAFETY: called on the webview's UI thread (with_webview
+                    // guarantees it). The registration token is intentionally
+                    // dropped — the handler lives for the window's lifetime.
+                    unsafe {
+                        let core = match webview.controller().CoreWebView2() {
+                            Ok(core) => core,
+                            Err(e) => {
+                                eprintln!("[Foundry] mic PermissionRequested hook unavailable: {e}");
+                                return;
+                            }
+                        };
+                        let mut token = 0i64;
+                        if let Err(e) = core.add_PermissionRequested(&handler, &mut token) {
+                            eprintln!("[Foundry] failed to attach PermissionRequested handler: {e}");
+                        }
+                    }
+                });
+            }
+
             // â”€â”€ Open devtools in debug builds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             #[cfg(debug_assertions)]
             if let Some(win) = app.get_webview_window("main") {
@@ -166,6 +228,32 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Foundry");
+}
+
+// ─── WEBVIEW2 PERMISSIONS (Windows) ──────────────────────────────────────────
+//
+// The origins the app's own UI is served from. Anything else that ever renders
+// inside the webview (preview iframes, docs links) is NOT ours and must not
+// inherit mic access.
+//
+//   release: tauri v2 on Windows maps the bundled frontendDist onto the
+//            custom-protocol host `http://tauri.localhost` (https variant
+//            covered in case `useHttpsScheme` is ever enabled).
+//   debug:   the Vite dev server from tauri.conf.json `build.devUrl`
+//            (http://localhost:1420).
+#[cfg(windows)]
+fn is_app_origin(origin: &str) -> bool {
+    let origin = origin.trim_end_matches('/').to_ascii_lowercase();
+    if origin == "http://tauri.localhost" || origin == "https://tauri.localhost" {
+        return true;
+    }
+    #[cfg(debug_assertions)]
+    {
+        if origin == "http://localhost:1420" {
+            return true;
+        }
+    }
+    false
 }
 
 // â”€â”€â”€ NATIVE MENU (T1-1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

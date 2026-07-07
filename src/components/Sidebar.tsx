@@ -17,7 +17,7 @@ import {
 import { gateCode, gateUiState } from './GateTimeline';
 import { TestDebtPanel } from './TestDebtPanel';
 import { ProjectPicker } from './ProjectPicker';
-import { ensureProjectsLoaded } from '../services/projectPicker';
+import { ensureProjectsLoaded, refreshProjectsPanel } from '../services/projectPicker';
 import { sidebarNavClass, sidebarPanelClass, sidebarTabClass } from './viewShell';
 import { project, testAutomation } from '../js/ipc.js';
 import { FoundryMark } from './FoundryMark';
@@ -79,8 +79,14 @@ export function Sidebar() {
   ensureProjectsLoaded(ws);
 
   const switchPanel = (id: string) => {
+    // Panel-open freshness: switching TO the projects panel is observed by
+    // the projectPicker service's sbTab effect, but re-clicking the already-
+    // active Projects tab doesn't change the signal — refresh explicitly so
+    // a project created outside the app (e.g. via the CLI) shows up.
+    const reClick = id === sbTab.value;
     sbTab.value = id;
     try { window.switchSbTab?.(id); } catch {}
+    if (id === 'projects' && reClick) refreshProjectsPanel();
   };
 
   const navigate = (id: string) => {

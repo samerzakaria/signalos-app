@@ -80,8 +80,15 @@ function removeCaptureMocks() {
 }
 
 async function settle() {
-  // FileReader + the IPC promise chain need a couple of macrotask turns.
-  await new Promise((r) => setTimeout(r, 0));
+  // FileReader + the IPC promise chain need macrotask turns. Under load
+  // jsdom's FileReader can take more than a fixed couple of turns; returning
+  // early leaks the pending chain into the NEXT test, where it inserts a
+  // stale transcript (observed as a flaky doubled composer text / extra
+  // runAndWait call). handleStop's finally block always returns voiceState
+  // to 'idle', so wait for that — bounded so a genuine hang still fails.
+  for (let i = 0; i < 200 && voiceState.value !== 'idle'; i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
   await new Promise((r) => setTimeout(r, 0));
 }
 
