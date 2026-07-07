@@ -196,18 +196,25 @@ def _read_delivery_mode(root: Path) -> str:
 # Task data from worktree-state.json
 # ---------------------------------------------------------------------------
 
-def _read_tasks(root: Path, product_id: str | None = None) -> list[dict[str, Any]]:
+def _read_tasks(
+    root: Path,
+    product_id: str | None = None,
+    project_id: str = "default",
+) -> list[dict[str, Any]]:
     """Read task list from worktree-state.json.
 
     When *product_id* is provided the product-scoped path is used:
       .signalos/products/<id>/worktree-state.json
-    Otherwise falls back to the repo-level:
-      .signalos/worktree-state.json
+    Otherwise the project-scoped path (Task #19 — projects.project_state_dir):
+      .signalos/worktree-state.json                       (project "default")
+      .signalos/projects/<project_id>/worktree-state.json (any other id)
     """
     if product_id:
         state_file = root / REPO_ROOT_MARKER / "products" / product_id / "worktree-state.json"
     else:
-        state_file = root / REPO_ROOT_MARKER / "worktree-state.json"
+        from signalos_lib.projects import project_state_dir
+
+        state_file = project_state_dir(root, project_id) / "worktree-state.json"
     if not state_file.is_file():
         return []
     try:
@@ -280,15 +287,21 @@ def _next_action(gates: dict[str, bool], tasks: list[dict[str, Any]]) -> tuple[s
 # State aggregation
 # ---------------------------------------------------------------------------
 
-def _detect_wave_id(root: Path, tasks: list[dict[str, Any]]) -> str:
+def _detect_wave_id(
+    root: Path,
+    tasks: list[dict[str, Any]],
+    project_id: str = "default",
+) -> str:
     """Try to determine current wave ID."""
     # From tasks
     for t in tasks:
         wave = t.get("wave", "")
         if wave:
             return str(wave)
-    # From worktree-state.json top-level field
-    state_file = root / REPO_ROOT_MARKER / "worktree-state.json"
+    # From worktree-state.json top-level field (project-scoped, Task #19)
+    from signalos_lib.projects import project_state_dir
+
+    state_file = project_state_dir(root, project_id) / "worktree-state.json"
     if state_file.is_file():
         try:
             data = json.loads(state_file.read_text(encoding="utf-8"))
@@ -634,20 +647,20 @@ def get_wave_status(
     worktree-state.json (.signalos/products/<id>/worktree-state.json).
     Gate and belief state are always repo-level.
 
-    The *project_id* parameter is plumbing for future multi-project support
-    per WAVE-ENGINE-DESIGN §3.2. With project_id == "default" (the only
-    value used today) the layout matches today's workspace-root layout
-    — no path changes. Future milestones that expose a project picker in
-    the UI will use project_id != "default" to namespace state under
-    `.signalos/projects/<project_id>/...`.
+    Per WAVE-ENGINE-DESIGN §3.2 (Task #19), *project_id* namespaces the
+    per-project wave state: with "default" the layout is the workspace
+    root (unchanged); any other id reads worktree-state.json from
+    `.signalos/projects/<project_id>/`. Gate/belief/governance artifacts
+    stay workspace-global (their namespacing is a future milestone), as
+    do AUDIT_TRAIL.jsonl and the vault.
     """
     gates = _detect_gates(repo_root)
     phase = _detect_phase(gates)
     belief_line = _read_belief_line(repo_root)
     scale_track = _read_scale_track(repo_root)
     delivery_mode = _read_delivery_mode(repo_root)
-    tasks = _read_tasks(repo_root, product_id=product_id)
-    wave_id = _detect_wave_id(repo_root, tasks)
+    tasks = _read_tasks(repo_root, product_id=product_id, project_id=project_id)
+    wave_id = _detect_wave_id(repo_root, tasks, project_id=project_id)
     role, action_cmd = _next_action(gates, tasks)
     return {
         "wave_id": wave_id,

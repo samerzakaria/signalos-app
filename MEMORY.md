@@ -10,6 +10,7 @@ govern this codebase. Read these before changing protocol-related code.
 | [docs/WAVE-ENGINE-DESIGN.md](docs/WAVE-ENGINE-DESIGN.md) | The wave-engine state machine + per-gate agents + scope-drift + refusal taxonomy. §12 lists implementation milestones M-W1 through M-W7 (all shipped — see commit log). |
 | [docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md](docs/SYSTEM-AUDIT-AND-COMPLETION-PLAN-v0.2-2026-05-20.md) | The v0.2 audit. §6.7 defines the G3 design three-shape contract (`doc + prototype/` / `doc + external-design-ref` / `doc + no-UI-attestation`). §2.5.2 + §6.6.1 define the enforcement universality + override-with-audit pattern that the M-W7 refusal taxonomy implements. |
 | [docs/GATE-REOPEN-DESIGN.md](docs/GATE-REOPEN-DESIGN.md) | The gate-reopen state machine: cascade invalidation of later signed/waived gates, reopen budget (`SIGNALOS_GATE_REOPEN_BUDGET`, default 3), audit event kinds (reopen/invalidate/unwaive + replay reverse markers), `agent:reopen-gate` IPC + UI contract, and the scope-drift extension that detects conflicts with signed G2/G3 (resolution option e = reopen). |
+| [docs/MECHANICAL-VERIFICATION.md](docs/MECHANICAL-VERIFICATION.md) | The three mechanical-verification layers of the delivery bridge: verifiability tiers + the `mechanical_pct` contract metric (acceptance.py), evidence-freshness snapshot binding (evidence_freshness.py — snapshot after final validation and after proof, verified at closeout), and the deterministic test-quality gate (test_quality.py). Artifact locations + blocking-semantics table (strict blocks / warn records / advisory never blocks). |
 
 ### Wave-engine modules (Python)
 
@@ -44,18 +45,31 @@ from `inspect()` each turn — design §3.1 v1 persistence model):
 
 ## Multi-project plumbing
 
-Per WAVE-ENGINE-DESIGN §3.2, every state-touching function takes a
-`project_id: str = "default"` parameter. Today only `"default"` is used
-and the layout is workspace-root (matching the pre-engine layout
-exactly). When a future M exposes a project picker in the UI, the
-namespace shifts to `.signalos/projects/<project_id>/...` without an
-engine refactor — the parameter already threads through:
+Real since Task #19. `signalos_lib/projects.py` owns the registry at
+`.signalos/projects.json` (schema `signalos.projects.v1`, atomic
+tmp+`os.replace` writes): `list_projects` / `create_project` (id =
+slugified name, collision-suffixed, `"default"` reserved; creating
+switches to the new project) / `set_active_project` /
+`get_active_project` (returns `"default"` when the file is absent —
+full backward compat).
 
-- `signalos_lib/status.py` — `get_wave_status` / `build_status_json` / `print_status_card`
-- `signalos_lib/orchestrator.py` — `_route_next_gate_action` / `run_wave`
-- `signalos_lib/commands/status.py` and `commands/orchestrate.py` — `--project-id` CLI flag
-- `signalos_ipc_server.py` — `handle()` reads `req["project_id"]` and threads to handlers
-- `signalos_ipc_server.get_status_json` — passes `--project-id` to the CLI
+Resolution order in `signalos_ipc_server.handle()`: explicit
+`req["project_id"]` wins → else the workspace's active project from the
+registry → `"default"`. `dispatch_cli` appends `--project-id` to the
+project-aware CLI subcommands (`status`, `orchestrate`). IPC commands
+`project:list` / `project:create` / `project:switch` manage the
+registry; create/switch refuse with `{"status": "delivery-active"}`
+while `_ACTIVE_DELIVERIES` is non-empty.
+
+Namespacing: `projects.project_state_dir` is the single source of truth
+(`"default"` → workspace-root `.signalos/`, any other id →
+`.signalos/projects/<id>/`). Per-project state: `wave-engine-state.json`
+(wave_engine) and the `worktree-state.json` reads in
+status.py/orchestrator.py. Workspace-global by design: `AUDIT_TRAIL.jsonl`
+(one append-only chain), vault/secrets, git checkpoints
+(`.signalos/wave-checkpoints/`), `sessions/`, `missing-deps.json`, and
+the signed gate artifacts under `core/governance` (their namespacing is
+a future milestone per WAVE-ENGINE-DESIGN §3.2).
 
 ## Skill validators
 

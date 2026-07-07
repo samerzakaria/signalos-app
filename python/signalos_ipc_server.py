@@ -166,13 +166,24 @@ def handle(req: dict) -> dict:
     raw_arg_list = raw_args if isinstance(raw_args, list) else [str(raw_args)]
     args = raw_arg_list if command == "attachment:analyze" else redact_arg_list(raw_arg_list)
     cwd = req.get("cwd")
-    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. UI does not yet
-    # expose a project picker, so callers omit `project_id` and we default
-    # to "default" (today's workspace-root layout).
-    project_id = str(req.get("project_id") or "default")
 
     if cwd and os.path.isdir(cwd):
         os.chdir(cwd)
+
+    # WAVE-ENGINE-DESIGN section3.2 / Task #19 - multi-project resolution.
+    # Precedence: an explicit `project_id` in the request always wins;
+    # otherwise the workspace's active project (from .signalos/projects.json
+    # via project:create / project:switch) applies; a workspace without a
+    # registry resolves to "default" (today's workspace-root layout).
+    # Resolved AFTER the chdir so the registry of the request's workspace
+    # (not the previous request's) decides.
+    explicit_project = req.get("project_id")
+    if explicit_project:
+        project_id = str(explicit_project)
+    else:
+        from signalos_lib.projects import get_active_project
+
+        project_id = get_active_project(Path(os.getcwd()))
 
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
@@ -451,6 +462,19 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
     # competitor analysis. Contract shapes live in `data` (the frontend reads
     # data.status / data.frames / ...); domain failures the founder can act on
     # are reported as {"status": "error", "error": ...} inside data.
+
+    # Multi-project registry (Task #19). list/create/switch operate on
+    # .signalos/projects.json in the current workspace; create switches to
+    # the new project; create/switch refuse while a delivery is running.
+
+    if command == "project:list":
+        return project_list(req_id)
+
+    if command == "project:create":
+        return project_create(req_id, args)
+
+    if command == "project:switch":
+        return project_switch(req_id, args)
 
     if command == "audit:replay-timeline":
         return audit_replay_timeline(req_id, args)
@@ -1145,6 +1169,98 @@ def _parse_object_arg(args: list, command: str) -> dict:
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Multi-project registry (Task #19 — WAVE-ENGINE-DESIGN §3.2)
+# ---------------------------------------------------------------------------
+
+
+def _active_delivery_refusal(req_id: str) -> dict | None:
+    """Return the delivery-active refusal, or None when it is safe to
+    change the active project.
+
+    Switching the active project retargets where subsequent state reads
+    and writes land; doing that under a running gate walk would split a
+    delivery's state across two namespaces. _ACTIVE_DELIVERIES holds the
+    orchestrators of in-flight deliveries (agent:verdict / agent:cancel
+    pop them when the walk ends)."""
+    if _ACTIVE_DELIVERIES:
+        return ok(req_id, data={
+            "status": "delivery-active",
+            "error": (
+                "A delivery is still running. Finish or cancel it before "
+                "switching projects."
+            ),
+            "runs": sorted(_ACTIVE_DELIVERIES),
+        })
+    return None
+
+
+def project_list(req_id: str) -> dict:
+    """project:list -> the registry (implicit default-only when absent)."""
+    from signalos_lib.projects import list_projects
+
+    reg = list_projects(Path(os.getcwd()))
+    return ok(req_id, data={
+        "status": "ok",
+        "active": reg["active"],
+        "projects": reg["projects"],
+    })
+
+
+def project_create(req_id: str, args: list) -> dict:
+    """project:create {"name": ...} -> register + switch to the new project.
+
+    Domain failures the founder can act on (empty/reserved name, running
+    delivery) are reported as data.status, matching the capability-wiring
+    contract used by audit:replay-timeline and friends."""
+    try:
+        payload = _parse_object_arg(args, "project:create")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"project:create args invalid: {exc}")
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return err(req_id, 'project:create requires {"name": ...}')
+
+    refusal = _active_delivery_refusal(req_id)
+    if refusal is not None:
+        return refusal
+
+    from signalos_lib.projects import create_project
+
+    try:
+        project = create_project(Path(os.getcwd()), name)
+    except ValueError as exc:
+        return ok(req_id, data={"status": "error", "error": str(exc)})
+    return ok(req_id, data={
+        "status": "ok",
+        "project": project,
+        "active": project["id"],
+    })
+
+
+def project_switch(req_id: str, args: list) -> dict:
+    """project:switch {"project_id": ...} -> set the active project."""
+    try:
+        payload = _parse_object_arg(args, "project:switch")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"project:switch args invalid: {exc}")
+    target = str(payload.get("project_id") or "").strip()
+    if not target:
+        return err(req_id, 'project:switch requires {"project_id": ...}')
+
+    refusal = _active_delivery_refusal(req_id)
+    if refusal is not None:
+        return refusal
+
+    from signalos_lib.projects import set_active_project
+
+    try:
+        active = set_active_project(Path(os.getcwd()), target)
+    except ValueError as exc:
+        return ok(req_id, data={"status": "error", "error": str(exc)})
+    return ok(req_id, data={"status": "ok", "active": active})
+
+
 # Hard cap on the number of replay frames returned over IPC (the response is
 # a single stdout line; an unbounded trail would be a payload bomb).
 _REPLAY_TIMELINE_CAP = 1000
@@ -1552,14 +1668,15 @@ def git_status_text(repo_root: Path) -> str:
     ])
 
 
+# CLI subcommands that accept --project-id (signalos_lib/commands/status.py
+# and commands/orchestrate.py). dispatch_cli appends the resolved project so
+# the wave state these commands read/report lands in the right namespace.
+_PROJECT_AWARE_CLI_SUBCOMMANDS = {"status", "orchestrate"}
+
+
 def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: str = "default") -> str:
     cwd = os.getcwd()
     redacted = redact_arg_list(args)
-    # WAVE-ENGINE-DESIGN section3.2 - multi-project plumbing. The UI does not yet
-    # expose a project picker, so the IPC layer accepts project_id but only
-    # forwards it to subcommands that have a --project-id flag wired. Future
-    # M-Wx milestones extend the list of commands that consume it.
-    _ = project_id  # plumbing - used by future M-W3+ command-wiring
 
     # Wave checkpoint: capture pre-wave HEAD SHA so "Undo Wave" can
     # restore the workspace to its pre-approval state.
@@ -1586,6 +1703,10 @@ def dispatch_cli(command: str, args: list[str], req_id: str = "", project_id: st
 
     argv = map_slash_command(command, redacted, cwd)
     if argv is not None:
+        # Task #19: thread the resolved project namespace to project-aware
+        # subcommands. An explicit --project-id in the user's args wins.
+        if argv[0] in _PROJECT_AWARE_CLI_SUBCOMMANDS and "--project-id" not in argv:
+            argv = [*argv, "--project-id", project_id]
         # Wave 2 / G1-7: emit phase substeps around wired commands so users
         # see real progress instead of a generic "Engine working" toast.
         emitter = ProgressEmitter(req_id) if req_id else None

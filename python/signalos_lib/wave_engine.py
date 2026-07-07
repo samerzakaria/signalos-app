@@ -75,10 +75,15 @@ STATE_FILE_PATH: tuple[str, ...] = (".signalos", "wave-engine-state.json")
 
 
 def _state_file_path(repo_root: Path, project_id: str = "default") -> Path:
-    """Resolve the on-disk state file. project_id is the namespace per §3.2."""
-    if project_id == "default":
-        return repo_root.joinpath(*STATE_FILE_PATH)
-    return repo_root / ".signalos" / "projects" / project_id / "wave-engine-state.json"
+    """Resolve the on-disk state file. project_id is the namespace per §3.2.
+
+    Delegates to projects.project_state_dir — the single source of truth
+    for the per-project layout ("default" → workspace-root .signalos/,
+    anything else → .signalos/projects/<project_id>/).
+    """
+    from signalos_lib.projects import project_state_dir
+
+    return project_state_dir(repo_root, project_id) / "wave-engine-state.json"
 
 
 def load_persisted_state(
