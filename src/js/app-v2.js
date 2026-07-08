@@ -117,6 +117,7 @@ async function bootApp() {
       if (isStarterWorkspacePath(activeWorkspace)) {
         await ipc.workspace.clear().catch(() => null);
         state.workspace = "";
+        state.govGates = [];  // no project -> no gate state (see loadGovPanel)
       } else {
         state.workspace = activeWorkspace;
       }
@@ -493,6 +494,16 @@ window.runCheck = runCheck;
 // ─── Gov sidebar panel ─────────────────────────────────────────────────────────
 
 async function loadGovPanel() {
+  // No active project -> no gate/audit state to show. Without this guard the
+  // sidecar answers get_gate_status for the "default" namespace, leaking a
+  // prior delivery's signed gates onto the "No project" view (phantom
+  // "2/6 gates signed · 2 Expectation Map" with nothing started). Clear and
+  // bail so every consumer (phase strip, macro line, dashboard) reads empty.
+  if (!String(state.workspace || "").trim()) {
+    state.govGates = [];
+    state.auditTrail = [];
+    return;
+  }
   try {
     const [gatesData, auditData] = await Promise.allSettled([
       ipc.gates.getAll(),

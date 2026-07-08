@@ -1,22 +1,35 @@
-import { currentCost, ai } from '../state';
+import { currentCost, ai, aiModel } from '../state';
+
+// Provider brand labels — a FALLBACK only, used when no concrete model is
+// selected. Never a stand-in for the real model: hardcoding "GPT-4o" here made
+// the badge lie ("GPT-4o") no matter which model the user actually picked.
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Claude",
+  openai: "OpenAI",
+  gemini: "Gemini",
+  ollama: "Ollama",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  mistral: "Mistral",
+  groq: "Groq",
+  cerebras: "Cerebras",
+  together: "Together AI",
+  xai: "xAI",
+  qwen: "Qwen",
+};
+
+// Show the ACTUAL selected model, lightly cleaned (drop a trailing -YYYYMMDD
+// snapshot suffix that model ids often carry). Falls back to the provider brand
+// only when no model is selected yet.
+function modelDisplay(provider: string, model: string): string {
+  const m = (model || '').trim().replace(/-\d{8}$/, '');
+  if (m) return m;
+  return PROVIDER_LABELS[provider] || provider || 'No model';
+}
 
 export function Titlebar() {
   const p = ai.value;
-  const names: Record<string, string> = {
-    anthropic: "Claude",
-    openai: "GPT-4o",
-    gemini: "Gemini",
-    ollama: "Ollama",
-    openrouter: "OpenRouter",
-    deepseek: "DeepSeek",
-    mistral: "Mistral",
-    groq: "Groq",
-    cerebras: "Cerebras",
-    together: "Together AI",
-    xai: "xAI",
-    qwen: "Qwen",
-  };
-  const provName = names[p] || p;
+  const provName = modelDisplay(p, aiModel.value);
 
   return (
     <>
