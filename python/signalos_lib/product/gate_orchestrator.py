@@ -412,16 +412,15 @@ class GateOrchestrator:
         Returns {"ok": bool, "reason": str, ...}. Never raises — a failure to
         verify is reported as not-ok so signing is refused, not bypassed.
         """
-        # 1. Real product source written this run. `agent_result` is a LoopResult
-        # object (has .files_written); tolerate a dict too.
-        if isinstance(agent_result, dict):
-            written = agent_result.get("files_written") or []
-        else:
-            written = getattr(agent_result, "files_written", None) or []
-        if not any(_is_real_product_src(str(w)) for w in written):
+        # 1. Real product source must EXIST in the repo (checked on disk -- the
+        # LoopResult exposes no files list). A stub (only the scaffold App.tsx +
+        # tests) is refused.
+        if not self._repo_has_real_product_src():
             return {"ok": False,
-                    "reason": "G4 wrote no real product source (src/**) this run — refusing to sign a stub build."}
-        # 2. Independent build + test.
+                    "reason": "No real product source under src/** -- implement the product's "
+                              "components/types/logic (not just tests or a stub), then rebuild."}
+        # 2. Independent build + test; surface the ACTUAL errors so rework
+        # feedback is actionable (e.g. a missing component tsc can name).
         try:
             from .stacks import detect_profile
             from .validation import build_validation_plan, run_validation
@@ -432,15 +431,41 @@ class GateOrchestrator:
                         "reason": f"profile '{profile}' has no build/test validation — cannot verify a real build."}
             result = run_validation(self.repo_root, plan)
             results = result.get("results", {})
-            b = results.get("build", {}).get("status")
-            t = results.get("test", {}).get("status")
-            if b == "passed" and t == "passed":
-                return {"ok": True, "profile": profile, "build": b, "test": t}
+            b, t = results.get("build", {}), results.get("test", {})
+            if b.get("status") == "passed" and t.get("status") == "passed":
+                return {"ok": True, "profile": profile}
+            detail = []
+            if b.get("status") != "passed":
+                detail.append(f"BUILD {b.get('status')}:\n{(b.get('output') or '')[-1500:]}")
+            if t.get("status") != "passed":
+                detail.append(f"TESTS {t.get('status')}:\n{(t.get('output') or '')[-1500:]}")
             return {"ok": False,
-                    "reason": f"G4 build not green (build={b}, test={t}).",
-                    "build": b, "test": t}
-        except Exception as exc:  # never bypass on error — fail closed
+                    "reason": "G4 build is not green -- fix these and rebuild:\n" + "\n\n".join(detail),
+                    "build": b.get("status"), "test": t.get("status")}
+        except Exception as exc:  # never bypass on error -- fail closed
             return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
+
+    def _repo_has_real_product_src(self) -> bool:
+        """True iff the repo has real product source beyond the scaffold: a
+        non-test source file under src/ that isn't main.tsx or the placeholder
+        App.tsx stub."""
+        src = self.repo_root / "src"
+        if not src.is_dir():
+            return False
+        for p in src.rglob("*"):
+            if not p.is_file() or p.suffix not in (".ts", ".tsx", ".js", ".jsx"):
+                continue
+            n = p.name
+            if ".test." in n or ".spec." in n or n in ("main.tsx", "main.ts", "vite-env.d.ts"):
+                continue
+            if n == "App.tsx":
+                try:
+                    if len(p.read_text(encoding="utf-8", errors="replace").splitlines()) <= 8:
+                        continue  # the 5-line scaffold stub
+                except OSError:
+                    pass
+            return True
+        return False
 
     def _emit_brief(self, gate: str) -> None:
         """1.3 + 1.8: author the real 4-field plain-words brief for this gate's

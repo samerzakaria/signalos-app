@@ -681,35 +681,48 @@ class TestG4BuildVerification(unittest.TestCase):
             sign_fn=fake_sign, prompt="build an expense tracker",
         )
 
-    def test_no_real_product_source_refuses(self):
-        with tempfile.TemporaryDirectory() as d:
-            orch = self._make(d)
-            # Wrote only governance bookkeeping, no src/** -> a stub build.
-            res = orch._verify_g4_build({"files_written": ["core/execution/BUILD_EVIDENCE.md"]})
-            self.assertFalse(res["ok"])
-            self.assertIn("no real product source", res["reason"])
+    def _write(self, root, rel, content):
+        p = Path(root) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
 
-    def test_build_or_test_failing_refuses(self):
+    def test_stub_only_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             orch = self._make(d)
+            # Only the 5-line scaffold stub + a test -> no real product source.
+            self._write(d, "src/App.tsx", "function App() {\n  return <h1>SignalOS Product</h1>;\n}\n\nexport default App;\n")
+            self._write(d, "src/App.test.tsx", "test('x', () => {});\n")
+            self._write(d, "src/main.tsx", "import App from './App';\n")
+            res = orch._verify_g4_build(None)
+            self.assertFalse(res["ok"])
+            self.assertIn("No real product source", res["reason"])
+
+    def test_build_or_test_failing_surfaces_real_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._write(d, "src/components/Expense.tsx", "export const Expense = () => null;\n")
             with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
                  mock.patch("signalos_lib.product.validation.build_validation_plan",
                             return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
                  mock.patch("signalos_lib.product.validation.run_validation",
-                            return_value={"results": {"build": {"status": "passed"}, "test": {"status": "failed"}}}):
-                res = orch._verify_g4_build({"files_written": ["src/App.tsx"]})
+                            return_value={"results": {"build": {"status": "failed", "output": "error TS2307: Cannot find module './Foo'"},
+                                                       "test": {"status": "passed"}}}):
+                res = orch._verify_g4_build(None)
             self.assertFalse(res["ok"])
             self.assertIn("not green", res["reason"])
+            self.assertIn("TS2307", res["reason"])  # actionable: the real error is fed back
 
-    def test_real_build_passing_allows(self):
+    def test_real_source_and_passing_build_allows(self):
         with tempfile.TemporaryDirectory() as d:
             orch = self._make(d)
+            self._write(d, "src/components/ExpenseList.tsx", "export const ExpenseList = () => null;\n")
+            self._write(d, "src/types/expense.ts", "export interface Expense { id: string }\n")
             with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
                  mock.patch("signalos_lib.product.validation.build_validation_plan",
                             return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
                  mock.patch("signalos_lib.product.validation.run_validation",
                             return_value={"results": {"build": {"status": "passed"}, "test": {"status": "passed"}}}):
-                res = orch._verify_g4_build({"files_written": ["src/App.tsx", "src/components/Expense.tsx"]})
+                res = orch._verify_g4_build(None)
             self.assertTrue(res["ok"])
 
     def test_apply_verdict_blocks_g4_until_verified(self):
