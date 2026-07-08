@@ -19,7 +19,48 @@ from signalos_lib.product.provider_adapter import (  # noqa: E402
     ProviderAuthError,
     ProviderCapabilities,
     _normalize_litellm_model,
+    _normalize_tool_calls,
 )
+
+
+def _msg(arguments):
+    return {"tool_calls": [{"id": "c1", "function": {"name": "write_file", "arguments": arguments}}]}
+
+
+class TestToolCallArgumentsAlwaysDict:
+    """Regression: ToolCall.arguments MUST always be a dict. A provider (e.g.
+    DeepSeek via OpenRouter) that returns arguments as a raw/typed/double-encoded
+    JSON value must not yield a non-dict payload that crashes every downstream
+    consumer with "'str' object has no attribute 'items'"."""
+
+    def test_dict_arguments(self):
+        tc = _normalize_tool_calls(_msg({"path": "a.txt", "content": "x"}))[0]
+        assert tc.arguments == {"path": "a.txt", "content": "x"}
+
+    def test_json_object_string(self):
+        tc = _normalize_tool_calls(_msg('{"path": "a.txt", "content": "x"}'))[0]
+        assert tc.arguments == {"path": "a.txt", "content": "x"}
+
+    def test_double_encoded_object_string(self):
+        # first json.loads yields a STRING, which must be decoded once more
+        tc = _normalize_tool_calls(_msg('"{\\"path\\": \\"a.txt\\"}"'))[0]
+        assert isinstance(tc.arguments, dict)
+        assert tc.arguments == {"path": "a.txt"}
+
+    def test_non_dict_json_becomes_parse_error_not_crash(self):
+        for bad in ('"just a string"', "123", "[1, 2, 3]", "true"):
+            tc = _normalize_tool_calls(_msg(bad))[0]
+            assert isinstance(tc.arguments, dict), f"{bad!r} -> non-dict"
+            assert "__parse_error__" in tc.arguments
+
+    def test_invalid_json_becomes_parse_error(self):
+        tc = _normalize_tool_calls(_msg("{not valid json"))[0]
+        assert isinstance(tc.arguments, dict)
+        assert "__parse_error__" in tc.arguments
+
+    def test_empty_arguments(self):
+        tc = _normalize_tool_calls(_msg(""))[0]
+        assert tc.arguments == {}
 
 
 class _FakeAuthError(Exception):

@@ -8,6 +8,7 @@ particular product stack.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -435,6 +436,31 @@ class ReactViteAdapter:
         plan["build"] = ["npm run build"]
         plan["test"] = ["npm test"]
         return plan
+
+    # Optional protocol extensions (consumed via getattr with graceful
+    # fallbacks, so adapters that don't define them keep working unchanged).
+
+    def test_file_command(self, repo_root: Path, test_path: str) -> list[str]:
+        """argv to run ONE test file (the per-task green gate in the
+        subagent-driven build)."""
+        npx = "npx.cmd" if os.name == "nt" else "npx"
+        return [npx, "vitest", "run", test_path]
+
+    def prompt_gotchas(self, repo_root: Path) -> str:
+        """Stack-specific conventions injected into build-agent prompts, so the
+        prompt layer stays stack-agnostic (mirrors design.UILibraryAdapter's
+        prompt_desc pattern)."""
+        return (
+            "Stack gotchas (react-vite + vitest) -- obey to avoid wasted build cycles:\n"
+            "- Tests use VITEST: describe/it/test/expect are GLOBAL (no import). For "
+            "mocks use `vi` from 'vitest' -- never `jest`.\n"
+            "- The react-jsx transform is automatic: do NOT `import React` (unused React "
+            "fails noUnusedLocals).\n"
+            "- There is NO `@` path alias: import with relative paths only (./types, "
+            "./components/Foo). `@/...` will not resolve (TS2307).\n"
+            "- Only import packages already in package.json/node_modules; never invent a "
+            "module a test imports without creating that module under the source tree.\n"
+        )
 
     def preview_plan(self, repo_root: Path) -> dict[str, Any]:
         return {

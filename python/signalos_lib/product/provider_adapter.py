@@ -225,7 +225,25 @@ def _normalize_tool_calls(message: Any) -> list[ToolCall]:
             parsed = raw_args
         elif isinstance(raw_args, str) and raw_args.strip():
             try:
-                parsed = _json.loads(raw_args)
+                decoded = _json.loads(raw_args)
+                # Cross-provider normalization: tool-call arguments MUST end up
+                # a dict. Providers variously return a JSON object, a JSON
+                # string, or a DOUBLE-encoded JSON string (first decode yields a
+                # string) -- decode once more in that case. Anything that still
+                # isn't an object becomes an explicit parse error rather than a
+                # non-dict ToolCall.arguments that crashes every downstream
+                # consumer ("'str' object has no attribute 'items'").
+                if isinstance(decoded, str):
+                    try:
+                        decoded = _json.loads(decoded)
+                    except _json.JSONDecodeError:
+                        pass
+                parsed = decoded if isinstance(decoded, dict) else {
+                    "__parse_error__": (
+                        f"tool arguments must be a JSON object, got "
+                        f"{type(decoded).__name__}"
+                    )
+                }
             except _json.JSONDecodeError as exc:
                 # INV-4: do not silently drop — surface as an explicit error arg
                 parsed = {"__parse_error__": f"invalid tool arguments JSON: {exc}"}

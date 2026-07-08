@@ -246,6 +246,18 @@ class GateOrchestrator:
         self.state = DeliveryState(run_id=rid, prompt=prompt,
                                    project_id=project_id,
                                    current_gate=self._current_gate())
+        # Seed the signed set from the repo's ACTUAL on-disk signatures so a
+        # fresh or resumed orchestrator that reaches G4 with G0-G3 already signed
+        # KNOWS they are signed. Without this the in-memory signed set is empty,
+        # and the AgentLoop's plan-gating / gate-gating see zero signed gates and
+        # DENY every product-source implementation write at G4 -- the build agent
+        # writes real source, governance throws it away, and only the (allowed)
+        # test files survive: the "tests without code" failure. The signed set is
+        # derived from next_gate (the first unsigned gate) since the walk signs
+        # gates strictly in order; a continuous walk still starts empty at G0 and
+        # accumulates as normal.
+        if not self.state.signed:
+            self.state.signed = self._signed_gates_on_disk()
         # G4 build verification (INV-2 hard completion): the walk must never
         # sign a stub. Set after G4's AgentLoop runs; apply_verdict refuses to
         # sign G4 until this is ok. None = not yet verified.
@@ -258,6 +270,21 @@ class GateOrchestrator:
         except Exception:
             return "G0"
 
+    def _signed_gates_on_disk(self) -> list:
+        """The gates already signed in the repo, as ordered gate labels
+        (['G0','G1',...]). Derived from next_gate (the first unsigned gate) since
+        the walk signs strictly in order; falls back to all-signed / empty."""
+        try:
+            insp = wave_engine.inspect(self.repo_root, self.project_id)
+        except Exception:
+            return []
+        if insp.get("all_signed"):
+            return list(GATE_ORDER)
+        nxt = insp.get("next_gate")
+        if nxt in GATE_ORDER:
+            return list(GATE_ORDER[:GATE_ORDER.index(nxt)])
+        return []
+
     def _next_after(self, gate: str) -> Optional[str]:
         idx = GATE_ORDER.index(gate)
         return GATE_ORDER[idx + 1] if idx + 1 < len(GATE_ORDER) else None
@@ -266,38 +293,21 @@ class GateOrchestrator:
         return GATE_ROLES.get(gate, "PO")
 
     def _g4_build_directive(self, base: str) -> str:
-        """G4 is the BUILD gate: the AgentLoop must actually IMPLEMENT the product
-        to satisfy the acceptance criteria and drive the build/tests to green --
-        not merely describe it. The walk otherwise hands G4 only the raw prompt,
-        so it never learns what to build; feed it the acceptance target + an
-        explicit build directive (this is what makes G4 produce real src/**)."""
+        """The BUILD gate's contract, stated stack- and layout-agnostically.
+
+        The subagent-driven build (subagent_build.py) resolves the signed
+        artifacts via the gate-artifact manifest and the stack's commands via
+        the adapter registry itself, so this directive carries NO paths, NO
+        stack commands, and NO inlined artifact text -- just the gate's
+        non-negotiable outcome."""
         directive = (
-            "You are at Gate 4 (Build). BUILD THE PRODUCT NOW using your tools. "
-            "This gate CANNOT be signed until you have written REAL source under "
-            "src/** and the product BUILDS and its TESTS PASS. Required steps:\n"
-            "1. Read the signed acceptance + design artifacts: "
-            "core/execution/ACCEPTANCE_CRITERIA.md, core/strategy/EXPECTATION_MAP.md, "
-            "core/execution/PLAN.md, core/strategy/DESIGN_NOTE.md.\n"
-            "2. Implement the product as real files under src/** (components, types, "
-            "state, logic) that satisfy EVERY acceptance criterion -- a real working "
-            "app, not a stub.\n"
-            "3. Write real tests for the acceptance behaviour (test-first).\n"
-            "4. Run the build+tests via run_command and ITERATE until green: "
-            "`npm install`, then `npm run build`, then `npm test`.\n"
-            "5. Only once green, write core/execution/BUILD_EVIDENCE.md with the "
-            "concrete results (files created, tsc clean, tests pass/total).\n"
-            "Writing only BUILD_EVIDENCE without real src/** source is a stub and "
-            "will be refused."
+            "You are at the Build gate. Implement the product for REAL: the "
+            "signed plan's acceptance tests are the spec, and this gate cannot "
+            "be signed until the product actually builds and its tests pass "
+            "green on an independent run. Writing evidence without real, "
+            "working implementation is a stub and will be refused."
         )
-        parts = [base, "", directive]
-        acc = self.repo_root / "core" / "execution" / "ACCEPTANCE_CRITERIA.md"
-        try:
-            if acc.is_file():
-                parts.append("\nAcceptance criteria to satisfy:\n"
-                             + acc.read_text(encoding="utf-8", errors="replace")[:4000])
-        except OSError:
-            pass
-        return "\n".join(parts)
+        return "\n".join([base, "", directive])
 
     def _gate_message(self, gate: str) -> str:
         base = self.state.prompt or "Proceed with the delivery."
@@ -358,32 +368,13 @@ class GateOrchestrator:
         except KeyError as exc:
             self.emit({"type": "error", "error": f"Unknown gate {gate}: {exc}"})
             raise
-        loop = AgentLoop(
-            adapter=self.adapter,
-            repo_root=self.repo_root,
-            enforcement_provider=self.enforcement_provider,
-            emit=self.emit,
-            execution_context="delivery",
-            active_gate=gate,
-            # §3.2 creation side: the loop rebases gate-artifact writes
-            # (core/governance|strategy|execution/**) under this project's
-            # governance base, so the artifact this gate generates is the
-            # one _default_sign/inspect/status resolve at sign time.
-            project_id=self.project_id,
-            signed_gates=[
-                int(str(g).lstrip("G"))
-                for g in self.state.signed
-                if str(g).lstrip("G").isdigit()
-            ],
-        )
-        result = loop.run(system_prompt, self._gate_message(gate))
-        if gate == "G4":
-            # INV-2: independently verify G4 built a real, passing product before
-            # it can be signed. apply_verdict refuses to sign G4 until ok.
-            self._g4_verify = self._verify_g4_build(result)
-            if not self._g4_verify.get("ok"):
-                self.emit({"type": "system",
-                           "text": f"G4 build not verified yet: {self._g4_verify.get('reason', '')}"})
+        signed_ints = [
+            int(str(g).lstrip("G"))
+            for g in self.state.signed
+            if str(g).lstrip("G").isdigit()
+        ]
+        executor = self._gate_executor(gate)
+        result = executor(gate, system_prompt, signed_ints)
         if gate == "G3":
             self._emit_preview(gate)
         self.emit({
@@ -399,28 +390,86 @@ class GateOrchestrator:
         self._persist()
         return result
 
+    def _gate_executor(self, gate: str):
+        """Gate execution strategy: which runner executes this gate's work.
+        Default is a single governed AgentLoop; the BUILD gate uses the
+        subagent-driven, test-first build. Registered here (not inline in
+        _run_gate) so adding a gate-specific executor never edits the walk."""
+        executors = {
+            "G4": self._execute_build_gate,
+        }
+        return executors.get(gate, self._execute_default_gate)
+
+    def _execute_default_gate(self, gate: str, system_prompt: str,
+                              signed_ints: list) -> Any:
+        loop = AgentLoop(
+            adapter=self.adapter,
+            repo_root=self.repo_root,
+            enforcement_provider=self.enforcement_provider,
+            emit=self.emit,
+            execution_context="delivery",
+            active_gate=gate,
+            # §3.2 creation side: the loop rebases gate-artifact writes
+            # (core/governance|strategy|execution/**) under this project's
+            # governance base, so the artifact this gate generates is the
+            # one _default_sign/inspect/status resolve at sign time.
+            project_id=self.project_id,
+            signed_gates=signed_ints,
+        )
+        return loop.run(system_prompt, self._gate_message(gate))
+
+    def _execute_build_gate(self, gate: str, system_prompt: str,
+                            signed_ints: list) -> Any:
+        """The BUILD gate runs the SUBAGENT-DRIVEN, test-first build assembled
+        from the bundled skills (implementer + spec-compliance reviewer +
+        code-quality reviewer per plan task) rather than one free-form loop
+        that batches tests and never implements. Reviews run on the
+        independent critic_adapter when configured (cross-vendor, not
+        double-biased self-review). The _verify_g4_build hard wall is
+        unchanged: it still runs the REAL build+test on disk and refuses to
+        sign a stub."""
+        from .subagent_build import run_subagent_driven_build
+        result = run_subagent_driven_build(
+            self.repo_root,
+            self.adapter,
+            reviewer_adapter=self.critic_adapter,
+            enforcement_provider=self.enforcement_provider,
+            emit=self.emit,
+            project_id=self.project_id,
+            signed_gates=signed_ints,
+            prompt=self._gate_message(gate),
+            governance_frame=system_prompt,
+        )
+        # INV-2: independently verify the build gate produced a real, passing
+        # product before it can be signed. apply_verdict refuses to sign until ok.
+        self._g4_verify = self._verify_g4_build(result)
+        if not self._g4_verify.get("ok"):
+            self.emit({"type": "system",
+                       "text": f"G4 build not verified yet: {self._g4_verify.get('reason', '')}"})
+        return result
+
     def _verify_g4_build(self, agent_result: Any) -> dict:
         """Independently verify G4 built a real, working product — the walk must
         never sign a stub (INV-2, no fake-green). Two checks, both required:
 
-          1. The G4 AgentLoop actually WROTE real product source this run
-             (not just prose BUILD_EVIDENCE over a scaffold stub).
-          2. The product BUILDS and its TESTS PASS on an independent run
-             (npm run build = tsc && vite build; npm test = vitest), via the
+          1. The build actually WROTE real product source this run (not just
+             prose Build Evidence over a scaffold stub), checked in the stack
+             adapter's OWN source directory.
+          2. The product BUILDS and its TESTS PASS on an independent run of the
              stack adapter's own validation plan.
 
         Returns {"ok": bool, "reason": str, ...}. Never raises — a failure to
         verify is reported as not-ok so signing is refused, not bypassed.
         """
+        src_dir = self._product_source_dir()
         # 1. Real product source must EXIST in the repo (checked on disk -- the
-        # LoopResult exposes no files list). A stub (only the scaffold App.tsx +
-        # tests) is refused.
+        # LoopResult exposes no files list). A scaffold-only stub is refused.
         if not self._repo_has_real_product_src():
             return {"ok": False,
-                    "reason": "No real product source under src/** -- implement the product's "
-                              "components/types/logic (not just tests or a stub), then rebuild."}
+                    "reason": f"No real product source under {src_dir}/** -- implement the "
+                              "product's modules/logic (not just tests or a stub), then rebuild."}
         # 2. Independent build + test; surface the ACTUAL errors so rework
-        # feedback is actionable (e.g. a missing component tsc can name).
+        # feedback is actionable (e.g. a missing module the compiler can name).
         try:
             from .stacks import detect_profile
             from .validation import build_validation_plan, run_validation
@@ -443,32 +492,55 @@ class GateOrchestrator:
                 errs.append(f"{f}{f':{ln}' if ln else ''} {v.get('code','')} {v.get('message','')}".strip())
             detail = "\n".join(errs) if errs else (
                 ((b.get("output") or "") + "\n" + (t.get("output") or ""))[-2000:])
+            # The rebuild hint quotes the stack's OWN validation commands.
+            cmds = " && ".join([*plan.get("build", []), *plan.get("test", [])]) \
+                or "the project's build and test commands"
             return {"ok": False,
-                    "reason": ("G4 build is not green. Fix EVERY error below, then rebuild "
-                               "(npm run build && npm test). If a test imports a module "
-                               "(e.g. './ExpenseList'), the component file MUST exist under "
-                               "src/** -- create it:\n" + detail),
+                    "reason": (f"G4 build is not green. Fix EVERY error below, then rebuild "
+                               f"({cmds}). If a test imports a module that does not exist, "
+                               f"the implementation file MUST be created under {src_dir}/** "
+                               "-- never delete or weaken the test:\n" + detail),
                     "build": b.get("status"), "test": t.get("status")}
         except Exception as exc:  # never bypass on error -- fail closed
             return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
 
+    def _product_source_dir(self) -> str:
+        """The stack adapter's own source directory (e.g. src, app, internal/app
+        -- never assume one layout). Falls back to 'src' if resolution fails."""
+        try:
+            from .stacks import detect_profile, get_adapter
+            targets = get_adapter(detect_profile(self.repo_root)).resolve_targets(self.repo_root)
+            return str(targets.get("source") or "src").strip() or "src"
+        except Exception:
+            return "src"
+
+    # Common source-code suffixes; the source DIRECTORY comes from the adapter.
+    _CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go", ".rs",
+                      ".cs", ".java", ".kt", ".dart", ".rb", ".php")
+    # Scaffold entry/config files that don't count as product source (name-based
+    # heuristics; harmless for stacks where these names don't occur).
+    _SCAFFOLD_NAMES = ("main.tsx", "main.ts", "vite-env.d.ts", "main.py",
+                       "__init__.py", "conftest.py", "setup.ts")
+
     def _repo_has_real_product_src(self) -> bool:
         """True iff the repo has real product source beyond the scaffold: a
-        non-test source file under src/ that isn't main.tsx or the placeholder
-        App.tsx stub."""
-        src = self.repo_root / "src"
+        non-test code file in the stack's source directory that isn't a known
+        scaffold entry file or the placeholder App stub."""
+        src = self.repo_root / self._product_source_dir()
         if not src.is_dir():
             return False
         for p in src.rglob("*"):
-            if not p.is_file() or p.suffix not in (".ts", ".tsx", ".js", ".jsx"):
+            if not p.is_file() or p.suffix not in self._CODE_SUFFIXES:
                 continue
             n = p.name
-            if ".test." in n or ".spec." in n or n in ("main.tsx", "main.ts", "vite-env.d.ts"):
+            if ".test." in n or ".spec." in n or "_test." in n or n.startswith("test_"):
+                continue
+            if n in self._SCAFFOLD_NAMES:
                 continue
             if n == "App.tsx":
                 try:
                     if len(p.read_text(encoding="utf-8", errors="replace").splitlines()) <= 8:
-                        continue  # the 5-line scaffold stub
+                        continue  # the scaffold's placeholder stub
                 except OSError:
                     pass
             return True

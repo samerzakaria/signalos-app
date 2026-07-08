@@ -870,6 +870,19 @@ class AgentLoop:
         """Govern, execute, audit one tool call. Always returns result text."""
         t0 = time.perf_counter()
         args = tc.arguments or {}
+        # Cross-provider robustness (defense in depth behind the adapter's own
+        # normalization): tool-call arguments must be a dict, but a provider may
+        # hand back a raw JSON string. Everything downstream (governance check,
+        # _redact_args) assumes a dict, so normalize here too. Unparseable args
+        # become an explicit parse error the model is told to fix, never a hard
+        # crash.
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except (ValueError, TypeError):
+                args = {"__parse_error__": f"tool arguments were not valid JSON: {args[:200]}"}
+        if not isinstance(args, dict):
+            args = {"__parse_error__": f"tool arguments must be a JSON object, got {type(args).__name__}"}
         content_for_hash = self._content_for_hash(tc.name, args)
         content_sha = _sha256(content_for_hash) if content_for_hash is not None else None
 
@@ -1426,6 +1439,11 @@ class AgentLoop:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _redact_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        # Safety net: never crash the audit on a non-dict argument payload (a
+        # provider that returns tool arguments as a raw/typed JSON value). The
+        # source normalizes to a dict; this guards the audit path regardless.
+        if not isinstance(args, dict):
+            return {"_raw": str(args)[:2000]}
         out: dict[str, Any] = {}
         for k, v in args.items():
             if isinstance(v, str):

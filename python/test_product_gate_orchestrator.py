@@ -18,11 +18,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.harness import AgentResponse, TokenUsage
 from signalos_lib.product.enforcement_state import StaticEnforcementProvider
+import signalos_lib.product.gate_orchestrator as go_mod
 from signalos_lib.product.gate_orchestrator import (
     GateOrchestrator,
+    GATE_ORDER,
     GATE_SPECIALISTS,
     resume_delivery,
 )
+
+
+class TestSignedSeeding(unittest.TestCase):
+    """Regression for the "tests without code" root cause: a fresh/resumed
+    orchestrator that reaches G4 with G0-G3 already signed on disk MUST seed its
+    signed set from those signatures, so the G4 AgentLoop's plan-gating knows G2
+    is signed and ALLOWS implementation writes under src/**. An empty signed set
+    denied every impl write, leaving only test files."""
+
+    def _orch_with_inspect(self, insp):
+        with mock.patch.object(go_mod.wave_engine, "inspect", return_value=insp):
+            with tempfile.TemporaryDirectory() as d:
+                return GateOrchestrator(
+                    Path(d), _EndAdapter(), [].append,
+                    enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                    sign_fn=lambda *a, **k: ["x"], prompt="x")
+
+    def test_seeds_prior_gates_at_g4(self):
+        orch = self._orch_with_inspect({"next_gate": "G4", "all_signed": False})
+        self.assertEqual(orch.state.signed, ["G0", "G1", "G2", "G3"])
+        signed_ints = [int(str(g).lstrip("G")) for g in orch.state.signed]
+        self.assertIn(2, signed_ints)  # plan-gating's G2 check now passes
+
+    def test_all_signed_seeds_every_gate(self):
+        orch = self._orch_with_inspect({"next_gate": None, "all_signed": True})
+        self.assertEqual(orch.state.signed, list(GATE_ORDER))
+
+    def test_fresh_delivery_at_g0_seeds_empty(self):
+        orch = self._orch_with_inspect({"next_gate": "G0", "all_signed": False})
+        self.assertEqual(orch.state.signed, [])
 
 
 class _EndAdapter:

@@ -14,11 +14,23 @@ DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET = 250
 DEFAULT_REPAIR_CYCLE_BUDGET = 8
 DEFAULT_GATE_REWORK_BUDGET = 8
 DEFAULT_GATE_REOPEN_BUDGET = 3
+# G4 subagent-driven build knobs (subagent_build.py). Each subagent is a FRESH
+# bounded conversation; the per-task/fixer cycles bound convergence loops.
+DEFAULT_BUILD_IMPLEMENTER_TOOL_BUDGET = 40
+DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 20
+DEFAULT_BUILD_TASK_FIX_CYCLES = 3
+DEFAULT_BUILD_MAX_TASKS = 12
+DEFAULT_BUILD_FIXER_ERROR_BATCH = 12
 
 AGENT_LOOP_TOOL_BUDGET_ENV = "SIGNALOS_AGENT_LOOP_TOOL_BUDGET"
 REPAIR_CYCLE_BUDGET_ENV = "SIGNALOS_AGENT_REPAIR_CYCLE_BUDGET"
 GATE_REWORK_BUDGET_ENV = "SIGNALOS_GATE_REWORK_BUDGET"
 GATE_REOPEN_BUDGET_ENV = "SIGNALOS_GATE_REOPEN_BUDGET"
+BUILD_IMPLEMENTER_TOOL_BUDGET_ENV = "SIGNALOS_BUILD_IMPLEMENTER_TOOL_BUDGET"
+BUILD_REVIEWER_TOOL_BUDGET_ENV = "SIGNALOS_BUILD_REVIEWER_TOOL_BUDGET"
+BUILD_TASK_FIX_CYCLES_ENV = "SIGNALOS_BUILD_TASK_FIX_CYCLES"
+BUILD_MAX_TASKS_ENV = "SIGNALOS_BUILD_MAX_TASKS"
+BUILD_FIXER_ERROR_BATCH_ENV = "SIGNALOS_BUILD_FIXER_ERROR_BATCH"
 
 
 def resolve_agent_loop_tool_budget(value: int | None = None) -> int:
@@ -59,6 +71,58 @@ def resolve_gate_reopen_budget(value: int | None = None) -> int:
         env_name=GATE_REOPEN_BUDGET_ENV,
         default=DEFAULT_GATE_REOPEN_BUDGET,
         label="gate reopen budget",
+    )
+
+
+def resolve_build_implementer_tool_budget(value: int | None = None) -> int:
+    """Tool-call budget for ONE G4 implementer/fixer subagent conversation."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_IMPLEMENTER_TOOL_BUDGET_ENV,
+        default=DEFAULT_BUILD_IMPLEMENTER_TOOL_BUDGET,
+        label="build implementer tool budget",
+    )
+
+
+def resolve_build_reviewer_tool_budget(value: int | None = None) -> int:
+    """Tool-call budget for ONE G4 reviewer subagent conversation."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_REVIEWER_TOOL_BUDGET_ENV,
+        default=DEFAULT_BUILD_REVIEWER_TOOL_BUDGET,
+        label="build reviewer tool budget",
+    )
+
+
+def resolve_build_task_fix_cycles(value: int | None = None) -> int:
+    """Bounded fixer passes to drive ONE plan task's test green before the
+    next task (the per-task green gate)."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_TASK_FIX_CYCLES_ENV,
+        default=DEFAULT_BUILD_TASK_FIX_CYCLES,
+        label="build per-task fix cycles",
+    )
+
+
+def resolve_build_max_tasks(value: int | None = None) -> int:
+    """Cap on how many plan/acceptance tasks the build fans into; overflow is
+    folded into the last task (never silently dropped)."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_MAX_TASKS_ENV,
+        default=DEFAULT_BUILD_MAX_TASKS,
+        label="build max tasks",
+    )
+
+
+def resolve_build_fixer_error_batch(value: int | None = None) -> int:
+    """Max diagnostics quoted per fixer prompt (context-window guard)."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_FIXER_ERROR_BATCH_ENV,
+        default=DEFAULT_BUILD_FIXER_ERROR_BATCH,
+        label="build fixer error batch",
     )
 
 
