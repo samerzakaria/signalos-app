@@ -434,13 +434,20 @@ class GateOrchestrator:
             b, t = results.get("build", {}), results.get("test", {})
             if b.get("status") == "passed" and t.get("status") == "passed":
                 return {"ok": True, "profile": profile}
-            detail = []
-            if b.get("status") != "passed":
-                detail.append(f"BUILD {b.get('status')}:\n{(b.get('output') or '')[-1500:]}")
-            if t.get("status") != "passed":
-                detail.append(f"TESTS {t.get('status')}:\n{(t.get('output') or '')[-1500:]}")
+            # Prefer the parsed per-file diagnostics (crisp + actionable); fall
+            # back to raw command output.
+            errs = []
+            for v in (result.get("violations") or [])[:25]:
+                f = v.get("file") or v.get("path") or ""
+                ln = v.get("line")
+                errs.append(f"{f}{f':{ln}' if ln else ''} {v.get('code','')} {v.get('message','')}".strip())
+            detail = "\n".join(errs) if errs else (
+                ((b.get("output") or "") + "\n" + (t.get("output") or ""))[-2000:])
             return {"ok": False,
-                    "reason": "G4 build is not green -- fix these and rebuild:\n" + "\n\n".join(detail),
+                    "reason": ("G4 build is NOT green. Fix EVERY error below, then rebuild "
+                               "(npm run build && npm test). If a test imports a module "
+                               "(e.g. './ExpenseList'), the component file MUST exist under "
+                               "src/** -- create it:\n" + detail),
                     "build": b.get("status"), "test": t.get("status")}
         except Exception as exc:  # never bypass on error -- fail closed
             return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
