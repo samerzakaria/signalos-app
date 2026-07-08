@@ -58,6 +58,18 @@ _SIGN_VERDICT = {
 _KNOWN_VERDICTS = {"approve", "approve-with-conditions", "request-changes", "reject", "waive"}
 
 
+def _is_real_product_src(rel_path: str) -> bool:
+    """A real product source/test file the G4 build must have produced — not
+    governance bookkeeping (.signalos/core/) or lockfiles."""
+    p = str(rel_path).replace("\\", "/").lstrip("/")
+    if not p or p.startswith((".signalos/", ".git/", "node_modules/", "core/")):
+        return False
+    return p.startswith((
+        "src/", "app/", "components/", "lib/", "pages/",
+        "tests/", "test/", "server/", "api/",
+    ))
+
+
 @dataclass
 class DeliveryState:
     run_id: str
@@ -234,6 +246,10 @@ class GateOrchestrator:
         self.state = DeliveryState(run_id=rid, prompt=prompt,
                                    project_id=project_id,
                                    current_gate=self._current_gate())
+        # G4 build verification (INV-2 hard completion): the walk must never
+        # sign a stub. Set after G4's AgentLoop runs; apply_verdict refuses to
+        # sign G4 until this is ok. None = not yet verified.
+        self._g4_verify: Optional[dict] = None
 
     def _current_gate(self) -> str:
         try:
@@ -325,6 +341,13 @@ class GateOrchestrator:
             ],
         )
         result = loop.run(system_prompt, self._gate_message(gate))
+        if gate == "G4":
+            # INV-2: independently verify G4 built a real, passing product before
+            # it can be signed. apply_verdict refuses to sign G4 until ok.
+            self._g4_verify = self._verify_g4_build(result)
+            if not self._g4_verify.get("ok"):
+                self.emit({"type": "system",
+                           "text": f"G4 build not verified yet: {self._g4_verify.get('reason', '')}"})
         if gate == "G3":
             self._emit_preview(gate)
         self.emit({
@@ -339,6 +362,49 @@ class GateOrchestrator:
         self.state.status = "awaiting-verdict"
         self._persist()
         return result
+
+    def _verify_g4_build(self, agent_result: Any) -> dict:
+        """Independently verify G4 built a real, working product — the walk must
+        never sign a stub (INV-2, no fake-green). Two checks, both required:
+
+          1. The G4 AgentLoop actually WROTE real product source this run
+             (not just prose BUILD_EVIDENCE over a scaffold stub).
+          2. The product BUILDS and its TESTS PASS on an independent run
+             (npm run build = tsc && vite build; npm test = vitest), via the
+             stack adapter's own validation plan.
+
+        Returns {"ok": bool, "reason": str, ...}. Never raises — a failure to
+        verify is reported as not-ok so signing is refused, not bypassed.
+        """
+        # 1. Real product source written this run. `agent_result` is a LoopResult
+        # object (has .files_written); tolerate a dict too.
+        if isinstance(agent_result, dict):
+            written = agent_result.get("files_written") or []
+        else:
+            written = getattr(agent_result, "files_written", None) or []
+        if not any(_is_real_product_src(str(w)) for w in written):
+            return {"ok": False,
+                    "reason": "G4 wrote no real product source (src/**) this run — refusing to sign a stub build."}
+        # 2. Independent build + test.
+        try:
+            from .stacks import detect_profile
+            from .validation import build_validation_plan, run_validation
+            profile = detect_profile(self.repo_root)
+            plan = build_validation_plan(self.repo_root, profile)
+            if not (plan.get("can_validate_build") and plan.get("can_validate_tests")):
+                return {"ok": False,
+                        "reason": f"profile '{profile}' has no build/test validation — cannot verify a real build."}
+            result = run_validation(self.repo_root, plan)
+            results = result.get("results", {})
+            b = results.get("build", {}).get("status")
+            t = results.get("test", {}).get("status")
+            if b == "passed" and t == "passed":
+                return {"ok": True, "profile": profile, "build": b, "test": t}
+            return {"ok": False,
+                    "reason": f"G4 build not green (build={b}, test={t}).",
+                    "build": b, "test": t}
+        except Exception as exc:  # never bypass on error — fail closed
+            return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
 
     def _emit_brief(self, gate: str) -> None:
         """1.3 + 1.8: author the real 4-field plain-words brief for this gate's
@@ -446,6 +512,12 @@ class GateOrchestrator:
         v = verdict if verdict in _KNOWN_VERDICTS else _classify(verdict)
 
         if v in ("approve", "approve-with-conditions"):
+            # INV-2: G4 cannot be signed until its build is independently verified
+            # (real product source written + build/tests pass). Never fake-green.
+            if gate == "G4" and not (self._g4_verify or {}).get("ok"):
+                reason = (self._g4_verify or {}).get("reason", "build not verified")
+                self.emit({"type": "error", "error": f"Gate G4 cannot be signed: {reason}"})
+                return {"status": "build-not-verified", "gate": gate, "reason": reason}
             try:
                 self._sign(self.repo_root, gate, self.signer, self._role_for(gate),
                            _SIGN_VERDICT[v], feedback)

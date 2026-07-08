@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -63,12 +64,18 @@ def _orch(root, events, signed, *, max_rework=None):
     def fake_sign(repo_root, gate, signer, role, verdict, conditions):
         signed.append((gate, role, verdict))
         return [f"{gate}.md"]
-    return GateOrchestrator(
+    orch = GateOrchestrator(
         Path(root), _EndAdapter(), events.append,
         enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
         sign_fn=fake_sign, prompt="build task management",
         max_rework=max_rework,
     )
+    # Walk-mechanics tests drive a fake adapter that builds no real product;
+    # stub the (real-npm) G4 build verification to pass -- the same spirit as
+    # the faked sign_fn. The REAL _verify_g4_build enforcement is covered in
+    # TestG4BuildVerification below.
+    orch._verify_g4_build = lambda *a, **k: {"ok": True}
+    return orch
 
 
 class TestRealBriefWiring(unittest.TestCase):
@@ -659,3 +666,61 @@ class TestBudgetParity(unittest.TestCase):
                 self.assertEqual(r2["status"], "max_cycles_reached")
         finally:
             os.environ.pop("SIGNALOS_GATE_REWORK_BUDGET", None)
+
+
+class TestG4BuildVerification(unittest.TestCase):
+    """INV-2 / no fake-green: G4 cannot be signed unless a REAL product was
+    written this run AND it builds + tests pass (independently verified)."""
+
+    def _make(self, root):
+        def fake_sign(repo_root, gate, signer, role, verdict, conditions):
+            return [f"{gate}.md"]
+        return GateOrchestrator(
+            Path(root), _EndAdapter(), (lambda e: None),
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=fake_sign, prompt="build an expense tracker",
+        )
+
+    def test_no_real_product_source_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            # Wrote only governance bookkeeping, no src/** -> a stub build.
+            res = orch._verify_g4_build({"files_written": ["core/execution/BUILD_EVIDENCE.md"]})
+            self.assertFalse(res["ok"])
+            self.assertIn("no real product source", res["reason"])
+
+    def test_build_or_test_failing_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation",
+                            return_value={"results": {"build": {"status": "passed"}, "test": {"status": "failed"}}}):
+                res = orch._verify_g4_build({"files_written": ["src/App.tsx"]})
+            self.assertFalse(res["ok"])
+            self.assertIn("not green", res["reason"])
+
+    def test_real_build_passing_allows(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation",
+                            return_value={"results": {"build": {"status": "passed"}, "test": {"status": "passed"}}}):
+                res = orch._verify_g4_build({"files_written": ["src/App.tsx", "src/components/Expense.tsx"]})
+            self.assertTrue(res["ok"])
+
+    def test_apply_verdict_blocks_g4_until_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            orch.state.current_gate = "G4"
+            orch._g4_verify = {"ok": False, "reason": "no real product source (src/**) this run"}
+            res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "build-not-verified")
+            self.assertNotIn("G4", orch.state.signed)
+
+
+if __name__ == "__main__":
+    unittest.main()

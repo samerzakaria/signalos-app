@@ -33,9 +33,9 @@ If the target product has live production incidents detected during read-only sc
 ## Outputs (paths the agent writes, with template links)
 
 - `core/governance/Governance/SOUL-DOCUMENT.md` — from `core/governance/Templates/soul-document-template.md` (one page max).
-- `core/governance/Governance/CONSTITUTION.md` — product-scoped draft, from the meta-Constitution as seed (PO reviews and amends).
-- `core/execution/SURFACE_INVENTORY.md` — a single table: every code surface discovered → proposed Trust Tier → Blast Radius → rationale.
-- `core/execution/PERMANENTLY_T3.md` — enumerated surfaces that must never be delegated regardless of Wave state (auth, payments, PII, billing, migrations).
+- `core/governance/Governance/CONSTITUTION.md` — product-scoped draft, from the meta-Constitution as seed (PO reviews and amends). Do **not** add an "Effective Date" field: the effective/lock date is stamped into the `## Signatures` block at sign time (and recorded by `constitution lock`); a body line like `Effective Date: TBD` both duplicates that mechanism and cannot be signed.
+- `core/governance/Governance/SURFACE_INVENTORY.md` — a single table: every code surface discovered → proposed Trust Tier → Blast Radius → rationale.
+- `core/governance/Governance/PERMANENTLY_T3.md` — enumerated surfaces that must never be delegated regardless of Wave state (auth, payments, PII, billing, migrations).
 - `core/strategy/BELIEF.md` — a seed Belief, deliberately small, falsifiable within 2 weeks.
 - Draft `core/execution/ROLE_ACTIVATION_CARD.md` — from `core/strategy/Templates/role-activation-card-template.md`, with PO expected to re-sign at Gate 1.
 - `core/execution/onboarding-report.md` — audit trail of what the agent read, what it skipped, and every assumption.
@@ -61,6 +61,7 @@ If the target product has live production incidents detected during read-only sc
 - Do not sign Gate 0, Gate 1, or any human approval.
 - Do not hide partial inventory coverage or stakeholder/code contradictions.
 - Do not edit `.git/`, secrets, env files, live infra, or production systems.
+- Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act (e.g. an effective/lock date). An artifact containing any such marker **cannot be signed and blocks the gate** — fix it before emitting.
 
 ## Repair/rework policy
 

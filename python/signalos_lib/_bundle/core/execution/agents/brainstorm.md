@@ -56,6 +56,7 @@ Body shape: `## Hypotheses` (8-12) · `## Risks` (3) · `## Edge cases` (3) · `
 - Do not invent domain facts, market facts, regulations, or user evidence.
 - Do not normalize permanently-T3 scope without PE acknowledgment.
 - Do not claim certainty when the Belief or evidence is insufficient.
+- Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.
 
 ## Repair/rework policy
 

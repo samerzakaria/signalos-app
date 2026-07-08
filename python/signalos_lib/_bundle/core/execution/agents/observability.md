@@ -4,7 +4,7 @@
 
 ## Purpose (one sentence)
 
-Run the Signal Window post-deploy — take metric readings, compare to the Belief threshold, tie `QUALITY_CHECK` evidence to the signal, and draft the Keep / Kill / Iterate report plus next-wave learning.
+Run the Signal Window post-deploy — take metric readings, compare to the Belief threshold, author the release-readiness `QUALITY_CHECK` summary and tie its evidence to the signal, and draft the Keep / Kill / Iterate report plus next-wave learning.
 
 ## Expertise frame
 
@@ -17,14 +17,16 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 ## Prerequisites (signed artifacts required before activation)
 
 - `core/strategy/BELIEF.md` signed (Gate 1)
-- `core/governance/QUALITY_CHECK.md` signed by QA (Gate 5 entry)
 - `Governance/signal-logs/wave-{N}-signal-log.md` opened by Release agent
-- Belief metric, QUALITY_CHECK evidence, and signal-log metric source are present.
+- Build/QA evidence for the wave is available to summarize (e.g. `core/execution/BUILD_EVIDENCE.md`, test results, review findings)
+- Belief metric and signal-log metric source are present.
+
+`core/governance/QUALITY_CHECK.md` is **not** a prerequisite — this agent authors it (see Outputs); Gate 5 signs the summary this agent produces.
 
 ## Inputs (paths the agent reads)
 
 - `core/strategy/BELIEF.md` — for metric, threshold, window, direction
-- `core/governance/QUALITY_CHECK.md` — QA evidence, findings, waivers, and coverage risks that may affect the Belief signal
+- `core/execution/BUILD_EVIDENCE.md`, test/review results, and any waivers — the source evidence this agent summarizes into `QUALITY_CHECK.md`
 - Live metrics endpoints (via tool adapter)
 - `Governance/signal-logs/wave-{N}-signal-log.md` (read + write — this is the agent's output file too)
 - Operational SLOs for the product
@@ -32,12 +34,14 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 
 ## Outputs (paths the agent writes, with template links)
 
+- `core/governance/QUALITY_CHECK.md` — **Gate 5 artifact.** A concrete release-readiness quality summary: the checks performed, the evidence backing each (build result, test pass/total, review findings, waivers, coverage risks), and an explicit pass/fail readiness verdict. Every field carries a real value — no placeholders — because G5 cannot sign a summary that still contains reserved markers. Leave only the QA signature line blank for the gate to fill.
 - `Governance/signal-logs/wave-{N}-signal-log.md` — hourly readings, activation checks, SLO status
 - Draft closeout section in `core/governance/Governance/RETROSPECTIVE.md` — at Window close, draft only (PO + QA sign)
 - Draft Keep/Kill/Iterate verdict written into the signal-log's verdict section — marked DRAFT until human signature
 
 ## Success criteria
 
+- `QUALITY_CHECK.md` records the release-readiness checks, their evidence, and an explicit pass/fail verdict, with every field filled (no reserved markers).
 - Signal Window readings are collected against the signed Belief metric, threshold, direction, and window.
 - `QUALITY_CHECK` results are cross-checked against the Belief signal: QA pass, waivers, findings, and coverage gaps are visible in the signal-log and debrief.
 - Metric freshness, cohort size, SLO status, and activation checks are recorded honestly.
@@ -61,6 +65,7 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 - Do not self-sign Keep/Kill/Iterate.
 - Do not hide stale metrics, sub-threshold cohort size, or zero-reading windows.
 - Do not mutate product code, signed artifacts, secrets, or live deployment state.
+- Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.
 
 ## Repair/rework policy
 
@@ -72,7 +77,7 @@ Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governa
 
 ## Refusal conditions (when this agent STOPS and does not act)
 
-- `QUALITY_CHECK.md` is missing or unsigned — emit: "Gate 5 QUALITY_CHECK required before Observe. QA must sign before signal readings begin."
+- The build/QA evidence needed to author `QUALITY_CHECK.md` is missing (no `BUILD_EVIDENCE.md`, no test results) — emit: "Cannot author QUALITY_CHECK without build evidence. Build/QA must produce results before the release-readiness summary."
 - Metric endpoint returns stale data (> 2 h old) — emit: "Stale metrics. Analytics must verify pipeline before readings resume."
 - Cohort size at Window open is < the threshold in BELIEF.md — emit: "Sub-threshold cohort. PO must decide: extend Window or mark Kill early."
 - Window expiry reached with zero readings above the floor — draft verdict **KILL**; does NOT self-sign.

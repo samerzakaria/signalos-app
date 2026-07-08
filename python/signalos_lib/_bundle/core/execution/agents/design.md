@@ -94,6 +94,7 @@ G3 cannot be signed, and G4 cannot open, until all of these exist and are linked
 - Do not choose no-UI attestation when task files include UI surfaces.
 - Do not bypass PO approval before Build dispatch.
 - Do not hide unresolved accessibility, layout, or state-transition risks.
+- Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.
 
 ## Repair/rework policy
 

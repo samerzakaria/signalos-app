@@ -4,7 +4,7 @@
 
 ## Purpose (one sentence)
 
-Translate a signed Belief + Expectation Map into `PLAN.tasks.yaml` as the machine-readable task source, render `PLAN.md` for human review, seed `ACCEPTANCE_CRITERIA`, and create failing-test skeletons for buildable tasks.
+Author the `EXPECTATION_MAP` from the signed Belief and founder prompt, then translate it into `PLAN.tasks.yaml` as the machine-readable task source, render `PLAN.md` for human review, seed `ACCEPTANCE_CRITERIA`, and create failing-test skeletons for buildable tasks.
 
 ## Expertise frame
 
@@ -12,25 +12,26 @@ Act as the highest-level technical planner, software architect, and TDD strategi
 
 ## Activates at (which phase/gate)
 
-Phase 2 (Plan), immediately after Gate 2 (Expectation Map signed by PO + Client) and before Gate 3 (Design Approval).
+Phase 2 (Plan). As the Gate 2 agent it first authors the Expectation Map that PO + Client sign at Gate 2, then decomposes the signed Belief + Expectation Map into the plan artifacts Gate 3 consumes. Runs after Gate 1 (Belief signed) and before Gate 3 (Design Approval).
 
 ## Prerequisites (signed artifacts required before activation)
 
 - `core/strategy/BELIEF.md` — Gate 1 signed
-- `core/strategy/EXPECTATION_MAP.md` — Gate 2 signed (both PO + Client)
+- The founder prompt / wave request describing the intended outcome for this wave
 
-If either signature is missing → refuse.
+If the Belief signature is missing → refuse. The Expectation Map is **not** a prerequisite — this agent authors it (see Outputs); Gate 2 signs the map this agent produces.
 
 ## Inputs (paths the agent reads)
 
-- `core/strategy/BELIEF.md`
-- `core/strategy/EXPECTATION_MAP.md`
+- `core/strategy/BELIEF.md` — the signed signal this wave is testing
+- The founder prompt / wave request describing the intended outcome
 - `Governance/SOUL-DOCUMENT.md`
 - `core/governance/Governance/CONSTITUTION.md` (especially §6 TDD)
-- Existing `core/execution/PLAN.tasks.yaml` and rendered `core/execution/PLAN.md` from prior Wave (for continuity)
+- Existing `core/strategy/EXPECTATION_MAP.md`, `core/execution/PLAN.tasks.yaml`, and rendered `core/execution/PLAN.md` from a prior Wave (for continuity)
 
 ## Outputs (paths the agent writes, with template links)
 
+- `core/strategy/EXPECTATION_MAP.md` — **Gate 2 artifact.** A concrete, measurable expectation / success-metric map derived from the signed Belief and the founder prompt: what success looks like for this wave, each expectation paired with a measurable threshold and direction, and the evidence that would confirm or disprove it, plus any redlines. Every field carries a real value — no placeholders — because G2 cannot sign a map that still contains reserved markers. Leave only the PO/Client signature lines blank for the gate to fill.
 - `core/execution/PLAN.tasks.yaml` — canonical machine-readable task source; follows `core/execution/plan/PLAN_SCHEMA.json`
 - `core/execution/PLAN.md` — rendered human view generated from `PLAN.tasks.yaml`; follows `core/governance/Templates/plan-template.md`
 - `core/execution/ACCEPTANCE_CRITERIA.md` — follows `core/governance/Templates/acceptance-criteria-template.md`
@@ -38,6 +39,7 @@ If either signature is missing → refuse.
 
 ## Success criteria
 
+- `EXPECTATION_MAP.md` states measurable success thresholds traceable to the signed Belief and founder prompt, with every field filled (no reserved markers).
 - `PLAN.tasks.yaml` decomposes the signed Belief and Expectation Map into bounded, parallelizable tasks.
 - `PLAN.md` is rendered from `PLAN.tasks.yaml`; task fields are not maintained only in prose.
 - Every task has acceptance trace, owner/seat, Trust Tier, files or surfaces, and test-first expectation.
@@ -62,6 +64,7 @@ If either signature is missing → refuse.
 - Do not invent scope beyond the signed Belief and Expectation Map.
 - Do not silently omit acceptance rows or redlines.
 - Do not write gate signatures, signed governance artifacts, secrets, or deploy actions.
+- Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.
 
 ## Repair/rework policy
 
