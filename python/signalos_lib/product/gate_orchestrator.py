@@ -444,7 +444,7 @@ class GateOrchestrator:
             detail = "\n".join(errs) if errs else (
                 ((b.get("output") or "") + "\n" + (t.get("output") or ""))[-2000:])
             return {"ok": False,
-                    "reason": ("G4 build is NOT green. Fix EVERY error below, then rebuild "
+                    "reason": ("G4 build is not green. Fix EVERY error below, then rebuild "
                                "(npm run build && npm test). If a test imports a module "
                                "(e.g. './ExpenseList'), the component file MUST exist under "
                                "src/** -- create it:\n" + detail),
