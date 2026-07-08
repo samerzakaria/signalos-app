@@ -67,12 +67,18 @@ def _orch(root, events, signed, *, adapter=None, **kw):
     def fake_sign(repo_root, gate, signer, role, verdict, conditions):
         signed.append((gate, role, verdict))
         return [f"{gate}.md"]
-    return GateOrchestrator(
+    orch = GateOrchestrator(
         Path(root), adapter or _EndAdapter(), events.append,
         enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
         sign_fn=fake_sign, prompt="build task management",
         **kw,
     )
+    # Reopen/cascade tests drive a fake adapter that builds no real product;
+    # stub the (real-npm) G4 build verification to pass -- same spirit as the
+    # faked sign_fn. Real _verify_g4_build is covered in
+    # test_product_gate_orchestrator.TestG4BuildVerification.
+    orch._verify_g4_build = lambda *a, **k: {"ok": True}
+    return orch
 
 
 def _approve_n(orch, n):
