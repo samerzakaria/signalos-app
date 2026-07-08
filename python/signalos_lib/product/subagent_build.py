@@ -734,10 +734,13 @@ def _default_run_agent(
     emit: Callable[[dict], None],
     project_id: str,
     signed_gates: list[int],
+    usage: Optional[dict] = None,
 ) -> RunAgent:
     """Real dispatcher: each call is a FRESH AgentLoop (fresh run_id, fresh
     context) -- the "fresh subagent per task/review" the bundled skill requires,
-    with a bounded tool budget so no single conversation blows the context."""
+    with a bounded tool budget so no single conversation blows the context.
+    When *usage* is given, per-run token totals accumulate into it
+    ({"in": int|None, "out": int|None}) for build-level cost accounting."""
     impl_budget = resolve_build_implementer_tool_budget()
     rev_budget = resolve_build_reviewer_tool_budget()
 
@@ -755,6 +758,11 @@ def _default_run_agent(
             tool_call_limit=limit,
         )
         res = loop.run(system_prompt, user_message)
+        if usage is not None:
+            if res.tokens_in is not None:
+                usage["in"] = (usage.get("in") or 0) + res.tokens_in
+            if res.tokens_out is not None:
+                usage["out"] = (usage.get("out") or 0) + res.tokens_out
         return res.final_text or ""
     return run
 
@@ -870,8 +878,10 @@ def run_subagent_driven_build(
     cycles = max(1, int(repair_cycles)) if repair_cycles else resolve_repair_cycle_budget()
     per_task_cycles = resolve_build_task_fix_cycles()
     reviewer = reviewer_adapter if reviewer_adapter is not None else adapter
+    usage: dict = {"in": None, "out": None}
     run = run_agent or _default_run_agent(
-        repo_root, enforcement_provider, emit, project_id, signed_gates)
+        repo_root, enforcement_provider, emit, project_id, signed_gates,
+        usage=usage)
     stack = _resolve_stack(repo_root)
     if build_check is not None:
         check = build_check
@@ -955,6 +965,12 @@ def run_subagent_driven_build(
         _evidence_message(repo_root, project_id, stack, green))
     calls += 1
 
+    if usage.get("in") is not None or usage.get("out") is not None:
+        summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
+        emit({"type": "system",
+              "text": f"Build used {usage.get('in') or 0:,} input / "
+                      f"{usage.get('out') or 0:,} output tokens."})
+
     return LoopResult(
         run_id="g4-subagent-build",
         status="completed",
@@ -963,4 +979,6 @@ def run_subagent_driven_build(
         tool_calls_made=calls,
         messages=[],
         error=None,
+        tokens_in=usage.get("in"),
+        tokens_out=usage.get("out"),
     )

@@ -103,7 +103,25 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             "npm install",
             "npm run build",
             "npm test",
+            "npm run test",
             "npm run dev",
+            # Verification runners (single-file test runs, type checks) across
+            # the supported stacks. The build gate's per-task green loop tells
+            # the agent to run exactly these; an allowlist that rejects them
+            # forces the agent to work blind (observed: 77 trust-tier denials
+            # of `npx vitest run <plan-test>` in one G4 walk). All are
+            # non-destructive verification commands; forbidden_always still
+            # applies on top.
+            "npx vitest",
+            "npx tsc",
+            "npx vite",
+            "pytest",
+            "python -m pytest",
+            "go test",
+            "cargo test",
+            "dotnet test",
+            "mvn test",
+            "gradle test",
             "git status",
             "git diff",
             "git log",

@@ -353,6 +353,26 @@ def _required_prior_gate_numbers(gate: str | None) -> set[int]:
     return {0, 1, 2, 3}
 
 
+# Per-stream cap on command output returned INTO the conversation. Tool-call
+# budgets bound the NUMBER of calls, not their SIZE -- one un-capped test-runner
+# dump (50-100k chars of failures + stack traces) repeated a few times blew a
+# provider's context ceiling mid-build (observed at 111k/163k tokens). Head+tail
+# truncation keeps both the leading error summary and the trailing totals.
+COMMAND_OUTPUT_CAP = 10_000
+_CAP_HEAD = 3_000
+
+
+def _cap_command_output(text: str) -> str:
+    if len(text) <= COMMAND_OUTPUT_CAP:
+        return text
+    dropped = len(text) - COMMAND_OUTPUT_CAP
+    tail = COMMAND_OUTPUT_CAP - _CAP_HEAD
+    return (text[:_CAP_HEAD]
+            + f"\n... [{dropped} chars truncated -- output capped; re-run a "
+              "NARROWER command (e.g. a single test file) for full detail] ...\n"
+            + text[-tail:])
+
+
 def _command_root(command: str) -> str:
     """Return a normalized leading token-pair for allowlist matching."""
     try:
@@ -485,6 +505,11 @@ class LoopResult:
     messages: list[dict[str, Any]]
     error: str | None = None
     text_only: bool = False
+    # Token accounting summed across every provider turn in this run (None when
+    # the provider reports no usage). Feeds cost tracking (commands/cost.py) and
+    # the per-model 360 comparison.
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -494,6 +519,8 @@ class LoopResult:
             "tool_calls_made": self.tool_calls_made,
             "error": self.error,
             "text_only": self.text_only,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
         }
 
 
@@ -544,6 +571,26 @@ class AgentLoop:
         self._context_signed_gates = set(signed_gates or [])
         self._test_written_this_run = False
         self._seq = 0
+        # Token accounting summed across every provider turn (None until the
+        # provider reports usage). Stamped onto the LoopResult by _finalize.
+        self._tokens_in: int | None = None
+        self._tokens_out: int | None = None
+
+    def _track_usage(self, resp: Any) -> None:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        ti = getattr(usage, "input_tokens", None)
+        to = getattr(usage, "output_tokens", None)
+        if ti is not None:
+            self._tokens_in = (self._tokens_in or 0) + int(ti)
+        if to is not None:
+            self._tokens_out = (self._tokens_out or 0) + int(to)
+
+    def _finalize(self, result: "LoopResult") -> "LoopResult":
+        result.tokens_in = self._tokens_in
+        result.tokens_out = self._tokens_out
+        return result
 
     # --- run-state paths (INV-5) --------------------------------------------
 
@@ -646,9 +693,9 @@ class AgentLoop:
 
         # INV-7: text-only degradation when the provider cannot do tools.
         if not self.adapter.supports_tool_calls:
-            return self._run_text_only(messages)
+            return self._finalize(self._run_text_only(messages))
 
-        return self._run_tool_loop(messages, tool_calls_made=0)
+        return self._finalize(self._run_tool_loop(messages, tool_calls_made=0))
 
     def resume(self) -> LoopResult:
         """Resume a persisted agent conversation without adding a new prompt.
@@ -699,9 +746,10 @@ class AgentLoop:
             )
 
         if not self.adapter.supports_tool_calls:
-            return self._run_text_only(messages)
+            return self._finalize(self._run_text_only(messages))
 
-        return self._run_tool_loop(messages, tool_calls_made=tool_calls_made)
+        return self._finalize(
+            self._run_tool_loop(messages, tool_calls_made=tool_calls_made))
 
     def _run_tool_loop(
         self,
@@ -739,6 +787,7 @@ class AgentLoop:
                     messages=[dict(m) for m in messages],
                     tools=tools,
                 )
+                self._track_usage(resp)
             except Exception as exc:  # INV-4
                 err = f"Provider call failed: {exc}"
                 self._emit({"type": "error", "error": err})
@@ -838,6 +887,7 @@ class AgentLoop:
     def _run_text_only(self, messages: list[dict[str, Any]]) -> LoopResult:
         try:
             resp = self.adapter.chat(messages=messages, tools=None)
+            self._track_usage(resp)
         except Exception as exc:  # INV-4
             err = f"Provider call failed (text-only): {exc}"
             self._emit({"type": "error", "error": err})
@@ -1110,7 +1160,44 @@ class AgentLoop:
                 f"{base}.spec.ts",
                 f"{base}.spec.tsx",
             ])
-        return any((self.repo_root / c).is_file() for c in candidates)
+        if any((self.repo_root / c).is_file() for c in candidates):
+            return True
+        return self._plan_authored_test_for(stem)
+
+    # Where the PLAN gate authors its acceptance-test skeletons. A test there
+    # that references the module satisfies test-first for that module: the
+    # failing test EXISTS (authored upstream, test-first-at-plan-time), so
+    # demanding the implementer write ANOTHER test before implementing forces
+    # exactly the duplicate/parallel tests the build forbids (observed: 20
+    # test-first denials + skeleton copies in one G4 walk).
+    _PLAN_TEST_DIRS = ("core/execution/tests", "tests")
+    _PLAN_TEST_SCAN_CAP = 200
+
+    def _plan_authored_test_for(self, stem: str) -> bool:
+        """True when a plan-authored test references the module *stem*."""
+        if not stem or len(stem) < 3:
+            return False
+        scanned = 0
+        for d in self._PLAN_TEST_DIRS:
+            root = self.repo_root / d
+            if not root.is_dir():
+                continue
+            for p in root.rglob("*"):
+                if scanned >= self._PLAN_TEST_SCAN_CAP:
+                    return False
+                if not p.is_file():
+                    continue
+                n = p.name
+                if not (".test." in n or ".spec." in n
+                        or n.startswith("test_") or n.endswith("_test.py")):
+                    continue
+                scanned += 1
+                try:
+                    if stem in p.read_text(encoding="utf-8", errors="replace"):
+                        return True
+                except OSError:
+                    continue
+        return False
 
     # --- execution (2.5) -----------------------------------------------------
 
@@ -1280,9 +1367,9 @@ class AgentLoop:
         stderr = redact_secrets(proc.stderr or "")
         parts = [f"exit_code: {proc.returncode}"]
         if stdout.strip():
-            parts.append("stdout:\n" + stdout)
+            parts.append("stdout:\n" + _cap_command_output(stdout))
         if stderr.strip():
-            parts.append("stderr:\n" + stderr)
+            parts.append("stderr:\n" + _cap_command_output(stderr))
         return "\n".join(parts)
 
     def _tool_search_files(self, pattern: str) -> str:

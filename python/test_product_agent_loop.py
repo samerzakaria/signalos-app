@@ -625,6 +625,89 @@ class TestGovernance(unittest.TestCase):
             self.assertTrue((root / "src" / "App.test.tsx").is_file())
             self.assertTrue((root / "src" / "App.tsx").is_file())
 
+    def test_g4_plan_authored_test_satisfies_test_first(self):
+        """Regression: the plan gate authors acceptance tests under
+        core/execution/tests/**. A module referenced by such a test must be
+        implementable WITHOUT writing another (duplicate) test first -- the
+        old check ignored plan tests, denied the write, and forced the exact
+        parallel-test drift the build forbids."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            skel = root / "core" / "execution" / "tests" / "skeletons" / "wave-1"
+            skel.mkdir(parents=True, exist_ok=True)
+            (skel / "T1.1_expense_store.test.ts").write_text(
+                "import { useExpenseStore } from '../../src/store/expenseStore';\n"
+                "test('store works', () => {});\n",
+                encoding="utf-8")
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "src/store/expenseStore.ts",
+                                              "content": "export const useExpenseStore = 1;"}),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "implement the store the plan test specifies")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("OK", tool_msgs[0]["content"])
+            self.assertTrue((root / "src" / "store" / "expenseStore.ts").is_file())
+
+    def test_loop_accumulates_token_usage_across_turns(self):
+        """Regression: the loop previously DISCARDED per-turn TokenUsage; it now
+        sums usage across every provider turn onto LoopResult (cost tracking /
+        pricing-model input / 360 comparison)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            r1 = _tool_resp("run_command", {"command": "git status"})
+            r1.usage = TokenUsage(input_tokens=1000, output_tokens=50)
+            r2 = _end_resp()
+            r2.usage = TokenUsage(input_tokens=1200, output_tokens=80)
+            provider = AgentTestProvider(script=[r1, r2])
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "do a thing")
+            self.assertEqual(result.tokens_in, 2200)
+            self.assertEqual(result.tokens_out, 130)
+            self.assertEqual(result.as_dict()["tokens_in"], 2200)
+
+    def test_command_output_is_capped_head_and_tail(self):
+        """Regression: uncapped test-runner output (50-100k chars) repeated in
+        one conversation blew the provider context ceiling mid-build. Output is
+        now head+tail truncated with an explicit marker."""
+        from signalos_lib.product.agent_loop import (
+            COMMAND_OUTPUT_CAP, _cap_command_output)
+        big = "A" * 5_000 + "MIDDLE" + "Z" * 60_000
+        capped = _cap_command_output(big)
+        self.assertLess(len(capped), COMMAND_OUTPUT_CAP + 300)
+        self.assertTrue(capped.startswith("A" * 100))   # head kept
+        self.assertTrue(capped.endswith("Z" * 100))     # tail kept
+        self.assertIn("chars truncated", capped)        # explicit marker
+        self.assertEqual(_cap_command_output("short"), "short")  # small passthrough
+
+    def test_t2_execute_allowlist_covers_verification_runners(self):
+        """Regression: the per-task green gate tells the implementer to run its
+        plan test (e.g. `npx vitest run <file>`); the T2 allowlist must permit
+        the verification runners or the agent works blind (observed: 77
+        trust-tier denials in one G4 walk)."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("run_command", {"command": "npx vitest run core/execution/tests/skeletons/wave-1/T1.1_expense_store.test.ts"}, "c1"),
+                    _tool_resp("run_command", {"command": "npm run test"}, "c2"),
+                    _tool_resp("run_command", {"command": "npx tsc --noEmit"}, "c3"),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "verify the build")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            for i, msg in enumerate(tool_msgs[:3]):
+                self.assertNotIn("DENIED", msg["content"],
+                                 f"verification command {i} was denied: {msg['content'][:120]}")
+
 
 # ---------------------------------------------------------------------------
 # Audit ledger (T23)
