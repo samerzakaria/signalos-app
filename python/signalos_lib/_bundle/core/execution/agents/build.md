@@ -41,8 +41,8 @@ If the Design Note or Trust Tier signature is missing, refuse. The acceptance ma
 ## Success criteria
 
 - Every row of the acceptance matrix is implemented in real product source under `src/**`, within approved scope.
-- For each behavior, a test is written before or alongside its implementation; the test fails before the code exists and passes after.
-- **Every test's implementation exists.** A test is INCOMPLETE work until the module it imports is written. If you create `X.test.tsx` that imports `./X`, you MUST create `X.tsx` (the real component/module) in the same pass — a component or module whose test exists but whose implementation is missing makes `tsc` fail (`error TS2307: Cannot find module './X'`) and the gate is refused. Before you stop, `tsc` must resolve every import: no `TS2307`.
+- **Build one unit at a time, IMPLEMENTATION FIRST, to green — do not batch tests.** For each module/component: (1) write its real implementation file (`X.tsx` / `X.ts`), (2) write its test (`X.test.tsx`), (3) run `npm run build` + `npm test` and fix until that unit is green, (4) only then move to the next unit. **Never write `X.test.tsx` (or any import of `./X`) before `X.tsx` exists.** A test whose implementation module is missing makes `tsc` fail (`error TS2307: Cannot find module './X'`) and the gate is refused. Writing failing tests and stopping is NOT progress — the deliverable is a **green build**, not a set of red tests.
+- **Do not end your turn while the build is red.** Before you stop, `tsc` must resolve every import (no `TS2307`), `npm run build` must pass, and `npm test` must pass. If you are not done, keep implementing — the implementations, not just the tests.
 - `npm install`, `npm run build` (`tsc && vite build`), and `npm test` (vitest) are run via `run_command` and iterated until they pass green — or the output records an exact tooling or environment blocker.
 - `core/execution/BUILD_EVIDENCE.md` is written after the real run with concrete numbers (files created, tsc clean yes/no, test pass/total) and traces back to the acceptance criteria.
 - Every touched surface matches the signed Trust Tier declaration.
