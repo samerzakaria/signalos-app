@@ -265,8 +265,44 @@ class GateOrchestrator:
     def _role_for(self, gate: str) -> str:
         return GATE_ROLES.get(gate, "PO")
 
+    def _g4_build_directive(self, base: str) -> str:
+        """G4 is the BUILD gate: the AgentLoop must actually IMPLEMENT the product
+        to satisfy the acceptance criteria and drive the build/tests to green --
+        not merely describe it. The walk otherwise hands G4 only the raw prompt,
+        so it never learns what to build; feed it the acceptance target + an
+        explicit build directive (this is what makes G4 produce real src/**)."""
+        directive = (
+            "You are at Gate 4 (Build). BUILD THE PRODUCT NOW using your tools. "
+            "This gate CANNOT be signed until you have written REAL source under "
+            "src/** and the product BUILDS and its TESTS PASS. Required steps:\n"
+            "1. Read the signed acceptance + design artifacts: "
+            "core/execution/ACCEPTANCE_CRITERIA.md, core/strategy/EXPECTATION_MAP.md, "
+            "core/execution/PLAN.md, core/strategy/DESIGN_NOTE.md.\n"
+            "2. Implement the product as real files under src/** (components, types, "
+            "state, logic) that satisfy EVERY acceptance criterion -- a real working "
+            "app, not a stub.\n"
+            "3. Write real tests for the acceptance behaviour (test-first).\n"
+            "4. Run the build+tests via run_command and ITERATE until green: "
+            "`npm install`, then `npm run build`, then `npm test`.\n"
+            "5. Only once green, write core/execution/BUILD_EVIDENCE.md with the "
+            "concrete results (files created, tsc clean, tests pass/total).\n"
+            "Writing only BUILD_EVIDENCE without real src/** source is a stub and "
+            "will be refused."
+        )
+        parts = [base, "", directive]
+        acc = self.repo_root / "core" / "execution" / "ACCEPTANCE_CRITERIA.md"
+        try:
+            if acc.is_file():
+                parts.append("\nAcceptance criteria to satisfy:\n"
+                             + acc.read_text(encoding="utf-8", errors="replace")[:4000])
+        except OSError:
+            pass
+        return "\n".join(parts)
+
     def _gate_message(self, gate: str) -> str:
         base = self.state.prompt or "Proceed with the delivery."
+        if gate == "G4":
+            base = self._g4_build_directive(base)
         if gate != self.state.current_gate:
             return base
         cyc = self.state.rework.get(gate, 0)

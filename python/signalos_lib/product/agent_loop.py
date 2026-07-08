@@ -68,7 +68,10 @@ from .provider_adapter import ProviderAdapter
 # ---------------------------------------------------------------------------
 
 READ_TIMEOUT_S = 30
-COMMAND_TIMEOUT_S = 120
+# 600s so the agent can `npm install` + build + test within a single tool call
+# and iterate to green; 120s routinely killed a cold install mid-run, leaving the
+# build unverifiable.
+COMMAND_TIMEOUT_S = 600
 DEFAULT_TOOL_CALL_BUDGET = DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET
 MAX_READ_BYTES = 2_000_000  # guard against reading huge binaries into context
 
@@ -1245,6 +1248,14 @@ class AgentLoop:
                 cwd=str(self.repo_root),
                 capture_output=True,
                 text=True,
+                # Force UTF-8 decoding: without an explicit encoding, text=True
+                # uses the OS locale (cp1252 on Windows), which raises
+                # UnicodeDecodeError on the non-ASCII bytes tools like npm emit --
+                # crashing the agent's own build/test commands so it can never
+                # iterate to green. errors="replace" keeps a bad byte from killing
+                # the read.
+                encoding="utf-8",
+                errors="replace",
                 timeout=COMMAND_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
