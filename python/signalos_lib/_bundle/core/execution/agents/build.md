@@ -42,6 +42,7 @@ If the Design Note or Trust Tier signature is missing, refuse. The acceptance ma
 
 - Every row of the acceptance matrix is implemented in real product source under `src/**`, within approved scope.
 - For each behavior, a test is written before or alongside its implementation; the test fails before the code exists and passes after.
+- **Every test's implementation exists.** A test is INCOMPLETE work until the module it imports is written. If you create `X.test.tsx` that imports `./X`, you MUST create `X.tsx` (the real component/module) in the same pass — a component or module whose test exists but whose implementation is missing makes `tsc` fail (`error TS2307: Cannot find module './X'`) and the gate is refused. Before you stop, `tsc` must resolve every import: no `TS2307`.
 - `npm install`, `npm run build` (`tsc && vite build`), and `npm test` (vitest) are run via `run_command` and iterated until they pass green — or the output records an exact tooling or environment blocker.
 - `core/execution/BUILD_EVIDENCE.md` is written after the real run with concrete numbers (files created, tsc clean yes/no, test pass/total) and traces back to the acceptance criteria.
 - Every touched surface matches the signed Trust Tier declaration.
@@ -61,6 +62,8 @@ If the Design Note or Trust Tier signature is missing, refuse. The acceptance ma
 - Do not edit signed governance artifacts, gate records, `.git/`, secrets, or env files.
 - Do not touch permanently-T3 surfaces unless PE explicitly typed or approved the diff.
 - Do not delete, weaken, or fabricate tests/evidence to make validation pass.
+- Do not leave a test whose implementation module is missing (an unresolved import / `TS2307`). Never write only tests: every component/module you test must also be implemented under `src/**` this pass.
+- Do not import a package that is not already installed; use only dependencies present in `package.json` / `node_modules` (e.g. do not import `@testing-library/react-hooks` if it is not installed).
 - Do not omit or backfill `BUILD_EVIDENCE.md` after verification; record real numbers and blockers honestly.
 - Do not push, publish, deploy, or perform destructive actions unless explicitly authorized.
 - Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field of `BUILD_EVIDENCE.md` carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.
