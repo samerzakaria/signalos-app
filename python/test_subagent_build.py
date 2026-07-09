@@ -31,15 +31,18 @@ def _repo(criteria_md: str | None = None) -> Path:
 
 
 class Recorder:
-    """Fake run_agent: records (role, adapter) per call and returns scripted
-    responses per role (defaults: implementers DONE, reviewers PASS)."""
+    """Fake run_agent: records (role, adapter, user_message) per call and
+    returns scripted responses per role (defaults: implementers DONE,
+    reviewers PASS)."""
 
     def __init__(self, script: dict[str, list[str]] | None = None):
         self.calls: list[tuple[str, object]] = []
+        self.messages: list[str] = []
         self.script = {k: list(v) for k, v in (script or {}).items()}
 
     def __call__(self, role: str, adapter, system_prompt: str, user_message: str) -> str:
         self.calls.append((role, adapter))
+        self.messages.append(user_message)
         queued = self.script.get(role)
         if queued:
             return queued.pop(0)
@@ -239,6 +242,30 @@ class TestOrchestration(unittest.TestCase):
         # spec-review FAIL -> a fixer pass right after
         self.assertIn("fixer", roles)
         self.assertGreater(roles.index("fixer"), roles.index("spec-reviewer"))
+
+    def test_stalled_integration_changes_strategy_then_model(self):
+        """Same input -> same model -> most likely same output: a stalled pass
+        (identical error signature) must CHANGE the prompt strategy, and a
+        second stall must switch the fixer to the independent reviewer model."""
+        rec = Recorder()
+        run_subagent_driven_build(
+            _repo(), adapter="PRIMARY", reviewer_adapter="CRITIC", prompt="x",
+            run_agent=rec,
+            build_check=lambda r, only_test=None: (False, "SAME ERROR every time"),
+            repair_cycles=3,
+        )
+        fixer_calls = [(a, m) for (role, a), m in zip(rec.calls, rec.messages)
+                       if role == "fixer"]
+        self.assertEqual(len(fixer_calls), 3)
+        # pass 1: fresh errors -> normal prompt on the primary model
+        self.assertEqual(fixer_calls[0][0], "PRIMARY")
+        self.assertNotIn("STALLED", fixer_calls[0][1])
+        # pass 2: stall 1 -> changed strategy, still primary
+        self.assertEqual(fixer_calls[1][0], "PRIMARY")
+        self.assertIn("STALLED", fixer_calls[1][1])
+        # pass 3: stall 2 -> different model (the independent reviewer)
+        self.assertEqual(fixer_calls[2][0], "CRITIC")
+        self.assertIn("FRESH reviewer-model pass", fixer_calls[2][1])
 
     def test_decompose_prefers_plan_tasks_with_files_and_test(self):
         tasks = decompose_tasks(_repo_with_plan(), "x")

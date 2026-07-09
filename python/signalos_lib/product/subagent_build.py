@@ -637,6 +637,28 @@ def _batch_errors(errors: str) -> str:
     return "\n".join(head)
 
 
+def _stall_directive(stalls: int) -> str:
+    """When a repair pass changes NOTHING (identical error signature), the next
+    pass must change strategy -- re-sending the same prompt to the same model
+    mostly reproduces the same failed fix."""
+    base = (
+        "# STALLED: the previous fix pass did not reduce these errors.\n"
+        "Do NOT repeat the previous approach. Change strategy:\n"
+        "- Pick ONLY the FIRST failing file. Read the ENTIRE test file and the "
+        "ENTIRE implementation module(s) it exercises with read_file before "
+        "changing anything.\n"
+        "- Reconcile the root cause (a wrong assumption, name, type, or state "
+        "shape), not the symptom. Fix that ONE file-pair completely, re-run just "
+        "that test, confirm it passes, and only then stop."
+    )
+    if stalls >= 2:
+        base += (
+            "\n- You are a FRESH reviewer-model pass: previous fixers failed "
+            "twice on this. Question their assumptions from scratch."
+        )
+    return base
+
+
 def _fixer_message(errors: str, repo_root: Path, stack: _StackContext) -> str:
     src_hint = f"under {stack.source_dir}/**"
     return "\n".join([
@@ -913,13 +935,17 @@ def run_subagent_driven_build(
         # OBJECTIVE per-task green gate (only when the plan gave this task a test).
         if task.test:
             ok, errs = check(repo_root, task.test)
+            prev = None
             for _ in range(per_task_cycles):
                 if ok:
                     break
+                stalled = hash(errs.strip()) == prev
+                prev = hash(errs.strip())
                 emit({"type": "system", "text": f"Getting “{task.name}” to pass its test."})
+                feedback = (_stall_directive(1) + "\n\n" + errs) if stalled else errs
                 run("fixer", adapter, impl_sys,
                     _implementer_message(task, context, repo_root, stack,
-                                         project_id, fix_feedback=errs))
+                                         project_id, fix_feedback=feedback))
                 calls += 1
                 ok, errs = check(repo_root, task.test)
             summary.append(f"{task.id} test_green={ok}")
@@ -927,14 +953,30 @@ def run_subagent_driven_build(
             summary.append(f"{task.id}: drafted (no plan test)")
 
     # PHASE 2 -- INTEGRATION: full build + whole suite to green (cross-task).
+    # Same input -> same model -> most likely the same failed output, so a
+    # stalled pass (identical error signature) must CHANGE something: first the
+    # strategy (narrow deep-dive on one file), then the model (the independent
+    # reviewer adapter, when it differs). Never re-send an identical prompt.
     green, last_errors = check(repo_root)
+    prev_sig = None
+    stalls = 0
     for cycle in range(cycles):
         if green:
             break
+        sig = hash(last_errors.strip())
+        stalls = stalls + 1 if sig == prev_sig else 0
+        prev_sig = sig
         n = len([l for l in last_errors.splitlines() if l.strip()]) if last_errors else 0
         emit({"type": "system",
-              "text": f"Integrating: compiling and fixing {n} real error(s) (pass {cycle + 1})."})
-        run("fixer", adapter, impl_sys, _fixer_message(last_errors, repo_root, stack))
+              "text": f"Integrating: compiling and fixing {n} real error(s) (pass {cycle + 1})"
+                      + (f" — changing approach (stall {stalls})." if stalls else ".")})
+        msg = _fixer_message(last_errors, repo_root, stack)
+        fixer_adapter = adapter
+        if stalls >= 1:
+            msg = _stall_directive(stalls) + "\n\n" + msg
+        if stalls >= 2 and reviewer is not adapter:
+            fixer_adapter = reviewer  # different model on the same evidence
+        run("fixer", fixer_adapter, impl_sys, msg)
         calls += 1
         green, last_errors = check(repo_root)
     emit({"type": "system",
