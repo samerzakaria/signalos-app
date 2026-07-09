@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -468,6 +469,17 @@ class GateOrchestrator:
             return {"ok": False,
                     "reason": f"No real product source under {src_dir}/** -- implement the "
                               "product's modules/logic (not just tests or a stub), then rebuild."}
+        # 1.5. WIRING gate: every product module must be reachable from the app
+        # entry through the import graph. Components that exist but are never
+        # composed ("pieces without wiring" -- the dominant observed failure)
+        # are refused by machine, with the orphan modules named.
+        orphans = self._unwired_modules()
+        if orphans:
+            return {"ok": False,
+                    "reason": ("Build has UNWIRED modules -- written but never imported/"
+                               "composed into the app. Wire each into the app's component "
+                               "tree (import + render/use it), or remove it if truly "
+                               "unneeded:\n" + "\n".join(f"- {o}" for o in orphans))}
         # 2. Independent build + test; surface the ACTUAL errors so rework
         # feedback is actionable (e.g. a missing module the compiler can name).
         try:
@@ -503,6 +515,71 @@ class GateOrchestrator:
                     "build": b.get("status"), "test": t.get("status")}
         except Exception as exc:  # never bypass on error -- fail closed
             return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
+
+    # Import-statement shapes across the supported code suffixes (ES import /
+    # require / python import) -- enough to build a reachability graph.
+    _IMPORT_RE = re.compile(
+        r"""(?:from\s+['"](?P<es>[^'"]+)['"]|require\(\s*['"](?P<req>[^'"]+)['"]\s*\)|"""
+        r"""^\s*from\s+(?P<py>[\w.]+)\s+import)""",
+        re.M,
+    )
+    _ENTRY_NAMES = ("main.tsx", "main.ts", "index.tsx", "index.ts", "main.py",
+                    "index.js", "main.js", "app.py")
+
+    def _unwired_modules(self) -> list:
+        """Modules in the product source tree UNREACHABLE from the app entry
+        through the import graph. 'Pieces without wiring' is the dominant
+        build failure mode (components written, never composed); this makes it
+        an OBJECTIVE, named violation instead of a reviewer opinion. Best-effort
+        static analysis: unresolvable/aliased imports never create false
+        positives (unknown paths are simply not counted as edges FROM a module,
+        and only same-tree modules can be flagged)."""
+        src = self.repo_root / self._product_source_dir()
+        if not src.is_dir():
+            return []
+        code: dict = {}
+        for p in src.rglob("*"):
+            if not p.is_file() or p.suffix not in self._CODE_SUFFIXES:
+                continue
+            n = p.name
+            if ".test." in n or ".spec." in n or "_test." in n or n.startswith("test_"):
+                continue
+            code[p.resolve()] = p
+        if not code:
+            return []
+        entries = [p for p in code if p.name in self._ENTRY_NAMES]
+        if not entries:
+            return []  # no recognizable entry -> cannot judge wiring; stay silent
+        suffixes = ("", *self._CODE_SUFFIXES,
+                    *[f"/index{s}" for s in self._CODE_SUFFIXES])
+        seen = set(entries)
+        stack = list(entries)
+        while stack:
+            cur = stack.pop()
+            try:
+                text = code[cur].read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for m in self._IMPORT_RE.finditer(text):
+                spec = m.group("es") or m.group("req")
+                if not spec or not spec.startswith("."):
+                    continue  # bare package or python import -- not a local edge
+                base = (cur.parent / spec)
+                for suf in suffixes:
+                    cand = Path(str(base) + suf).resolve() if suf else base.resolve()
+                    if cand in code and cand not in seen:
+                        seen.add(cand)
+                        stack.append(cand)
+                        break
+        orphans = sorted(
+            str(code[p].relative_to(self.repo_root)).replace("\\", "/")
+            for p in code
+            # scaffold files (vitest setup, entries) are wired via build
+            # config, not imports -- never flagged, but they STAY in the graph
+            # so the entry's edges are walked.
+            if p not in seen and code[p].name not in self._SCAFFOLD_NAMES
+        )
+        return orphans
 
     def _product_source_dir(self) -> str:
         """The stack adapter's own source directory (e.g. src, app, internal/app

@@ -207,21 +207,36 @@ class TestOrchestration(unittest.TestCase):
         self.assertEqual(res.status, "budget_exhausted")
         self.assertIn("STOPPED (fail-fast)", res.final_text)
 
-    def test_task_gate_failure_stops_the_build_fail_fast(self):
-        """A task whose plan test stays red after its fix budget STOPS the
-        build: later tasks are never dispatched (no paying for doomed work)."""
+    def test_failed_task_continues_independents_skips_dependents(self):
+        """A task whose plan test stays red after its fix budget does NOT stop
+        the build: independent tasks still run (bounded spend, real signal);
+        only DEPENDENT tasks are skipped for free; and with any task red the
+        doomed phases (integration/review/evidence) are cut."""
+        d = _repo_with_plan()
+        plan = d / "core" / "execution" / "PLAN.md"
+        plan.write_text(plan.read_text(encoding="utf-8") +
+                        "\n### T3 — Report\n**Files:** `src/r.tsx`\n"
+                        "**Test:** `core/execution/tests/T3.test.ts`\n"
+                        "**Dependencies:** T1\nneeds the store\n",
+                        encoding="utf-8")
+
         def check(_r, only_test=None):
             if only_test and only_test.endswith("T1.test.ts"):
                 return (False, "T1 stays red")
             return (True, "")
         rec = Recorder()
-        res = run_subagent_driven_build(_repo_with_plan(), adapter="A", prompt="x",
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=check)
         roles = rec.roles()
-        self.assertEqual(roles.count("implementer"), 1)  # only T1; T2 never starts
-        self.assertNotIn("evidence", roles)
+        # T1 attempted (1 impl + 3 fixers); T2 independent -> pre-check green,
+        # skipped free; T3 depends on failed T1 -> blocked, never dispatched.
+        self.assertEqual(roles.count("implementer"), 1)
+        self.assertEqual(roles.count("fixer"), 3)
+        self.assertNotIn("evidence", roles)          # red build: doomed phases cut
         self.assertEqual(res.status, "budget_exhausted")
         self.assertIn("T1", res.error)
+        self.assertIn("blocked=T3", res.final_text)  # dependent skipped, named
+        self.assertIn("T2 test_green=True", res.final_text)  # independent still ran
 
     def test_already_green_task_is_skipped_not_paid(self):
         """Resume economics: a task whose plan test already passes is skipped

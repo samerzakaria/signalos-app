@@ -255,6 +255,7 @@ class Task:
     extra: list[str] = field(default_factory=list)  # merged tail criteria, if any
     files: list[str] = field(default_factory=list)  # target source files (from plan)
     test: str = ""                                    # plan-authored test path (from plan)
+    deps: list[str] = field(default_factory=list)   # prerequisite task ids (from plan)
 
 
 def _clean_cell(cell: str) -> str:
@@ -269,7 +270,8 @@ def _clean_cell(cell: str) -> str:
 _PLAN_TASK_RE = re.compile(r"^#{2,4}\s+(T\d+(?:\.\d+)?)\b\s*[—:-]?\s*(.*)$")
 # Matches both `**Files:**` (colon inside the bold, as the plan authors it) and
 # `**Files**:` (colon after).
-_PLAN_FIELD_RE = re.compile(r"^\*\*(Files|Test)(?::\*\*|\*\*:)\s*(.+)$", re.I)
+_PLAN_FIELD_RE = re.compile(r"^\*\*(Files|Test|Dependencies)(?::\*\*|\*\*:)\s*(.+)$", re.I)
+_TASK_ID_RE = re.compile(r"\bT\d+(?:\.\d+)?\b")
 _BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
 
 
@@ -304,18 +306,24 @@ def decompose_plan_tasks(repo_root: Path, project_id: str = "default") -> list[T
         block = lines[i + 1:end]
         files: list[str] = []
         test = ""
+        deps: list[str] = []
         for bl in block:
             fm = _PLAN_FIELD_RE.match(bl.strip())
             if not fm:
                 continue
+            key = fm.group(1).lower()
+            if key == "dependencies":
+                deps = _TASK_ID_RE.findall(fm.group(2))
+                continue
             paths = _BACKTICK_PATH_RE.findall(fm.group(2)) or [fm.group(2).strip()]
-            if fm.group(1).lower() == "files":
+            if key == "files":
                 files = [p.strip() for p in paths if p.strip()]
             else:
                 test = paths[0].strip() if paths else ""
         text = "\n".join(block).strip()
         name = (f"{tid} — {title}" if title else tid)[:70]
-        tasks.append(Task(id=tid, name=name, text=text, files=files, test=test))
+        tasks.append(Task(id=tid, name=name, text=text, files=files, test=test,
+                          deps=deps))
     return tasks
 
 
@@ -933,7 +941,8 @@ def run_subagent_driven_build(
 
     summary: list[str] = []
     calls = 0
-    failed_task: Optional[str] = None
+    failed_tasks: list[str] = []
+    blocked_tasks: list[str] = []
 
     # PHASE 0 -- PREFLIGHT: verify every precondition BEFORE the first model
     # dispatch (zero LLM spend on a broken repo). Fail loud with exactly which
@@ -959,8 +968,20 @@ def run_subagent_driven_build(
                 error=f"preflight failed: {detail}",
             )
 
-    # PHASE 1 -- per task, test-first, drive to green BEFORE the next task.
+    # PHASE 1 -- per task, test-first, drive each to green before moving on.
+    # A DEFINITIVELY-failed task (budget exhausted) does NOT stop the build:
+    # independent tasks still run (bounded spend each, and they carry real
+    # signal + product value). Only its DEPENDENTS are skipped -- for free --
+    # because paying to build on a red prerequisite is the actual waste.
     for task in tasks:
+        blocked_by = [d for d in task.deps if d in failed_tasks or d in blocked_tasks]
+        if blocked_by:
+            blocked_tasks.append(task.id)
+            emit({"type": "system",
+                  "text": f"Skipping “{task.name}” — its prerequisite "
+                          f"({', '.join(blocked_by)}) did not pass."})
+            summary.append(f"{task.id} blocked_by={','.join(blocked_by)}")
+            continue
         # Resume/skip: if this task's plan test ALREADY passes (a resumed or
         # partially-built repo), don't pay an implementer to redo green work --
         # the objective gate, not an LLM, made that call.
@@ -992,29 +1013,31 @@ def run_subagent_driven_build(
                 ok, errs = check(repo_root, task.test)
             summary.append(f"{task.id} test_green={ok}")
             if not ok:
-                # FAIL FAST: this task DEFINITIVELY failed its gate (budget
-                # exhausted, not a transient). Later tasks depend on it and the
-                # walk can never sign -- stop paying for a doomed continuation.
-                failed_task = f"{task.id} {task.name}"
+                failed_tasks.append(task.id)
                 emit({"type": "system",
                       "text": f"“{task.name}” failed its gate after the fix budget — "
-                              "stopping the build (fail-fast)."})
-                break
+                              "continuing with tasks that don't depend on it."})
         else:
             summary.append(f"{task.id}: drafted (no plan test)")
 
-    if failed_task is not None:
+    if failed_tasks or blocked_tasks:
+        # FAIL FAST at the PHASE level: with any task red/blocked the build can
+        # never sign, so integration/review/evidence would be paid spend on a
+        # refused build. Every attemptable task was still attempted above.
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
         return LoopResult(
             run_id="g4-subagent-build",
             status="budget_exhausted",
-            final_text=(f"Subagent-driven build STOPPED (fail-fast) at {failed_task}: "
-                        "its plan test stayed red after the per-task fix budget.\n"
+            final_text=("Subagent-driven build finished RED: "
+                        f"failed={','.join(failed_tasks) or 'none'} "
+                        f"blocked={','.join(blocked_tasks) or 'none'} -- every "
+                        "independent task was attempted; integration/review/"
+                        "evidence skipped (a red build cannot sign).\n"
                         + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],
-            error=f"task failed its objective gate: {failed_task}",
+            error=f"tasks failed their objective gate: {','.join(failed_tasks)}",
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
         )
