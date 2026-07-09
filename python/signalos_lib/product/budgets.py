@@ -21,6 +21,13 @@ DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 20
 DEFAULT_BUILD_TASK_FIX_CYCLES = 3
 DEFAULT_BUILD_MAX_TASKS = 12
 DEFAULT_BUILD_FIXER_ERROR_BATCH = 12
+# Prompt-content caps (chars). Deliberately GENEROUS: a tight cap silently
+# hides part of the signed spec from the builder (observed: a plan test's
+# validation assertions truncated out of the prompt, then the builder graded
+# on expectations it could not see). Operators tune per model via env; the
+# default judges nobody's context needs.
+DEFAULT_BUILD_TEST_EMBED_CAP = 100_000
+DEFAULT_BUILD_DOC_CAP = 24_000
 
 AGENT_LOOP_TOOL_BUDGET_ENV = "SIGNALOS_AGENT_LOOP_TOOL_BUDGET"
 REPAIR_CYCLE_BUDGET_ENV = "SIGNALOS_AGENT_REPAIR_CYCLE_BUDGET"
@@ -31,6 +38,8 @@ BUILD_REVIEWER_TOOL_BUDGET_ENV = "SIGNALOS_BUILD_REVIEWER_TOOL_BUDGET"
 BUILD_TASK_FIX_CYCLES_ENV = "SIGNALOS_BUILD_TASK_FIX_CYCLES"
 BUILD_MAX_TASKS_ENV = "SIGNALOS_BUILD_MAX_TASKS"
 BUILD_FIXER_ERROR_BATCH_ENV = "SIGNALOS_BUILD_FIXER_ERROR_BATCH"
+BUILD_TEST_EMBED_CAP_ENV = "SIGNALOS_BUILD_TEST_EMBED_CAP"
+BUILD_DOC_CAP_ENV = "SIGNALOS_BUILD_DOC_CAP"
 
 
 def resolve_agent_loop_tool_budget(value: int | None = None) -> int:
@@ -123,6 +132,27 @@ def resolve_build_fixer_error_batch(value: int | None = None) -> int:
         env_name=BUILD_FIXER_ERROR_BATCH_ENV,
         default=DEFAULT_BUILD_FIXER_ERROR_BATCH,
         label="build fixer error batch",
+    )
+
+
+def resolve_build_test_embed_cap(value: int | None = None) -> int:
+    """Chars of a plan-authored test embedded verbatim in the implementer's
+    prompt. Generous by default -- truncating hides the signed spec."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_TEST_EMBED_CAP_ENV,
+        default=DEFAULT_BUILD_TEST_EMBED_CAP,
+        label="build test embed cap",
+    )
+
+
+def resolve_build_doc_cap(value: int | None = None) -> int:
+    """Chars per bundled-skill/artifact doc quoted into build prompts."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_DOC_CAP_ENV,
+        default=DEFAULT_BUILD_DOC_CAP,
+        label="build doc cap",
     )
 
 

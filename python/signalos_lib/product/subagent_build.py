@@ -52,11 +52,13 @@ from typing import Any, Callable, Optional
 from ..artifacts import resolve_gate_artifacts, resolve_workspace_path
 from .agent_loop import AgentLoop, LoopResult
 from .budgets import (
+    resolve_build_doc_cap,
     resolve_build_fixer_error_batch,
     resolve_build_implementer_tool_budget,
     resolve_build_max_tasks,
     resolve_build_reviewer_tool_budget,
     resolve_build_task_fix_cycles,
+    resolve_build_test_embed_cap,
     resolve_repair_cycle_budget,
 )
 
@@ -72,9 +74,9 @@ BuildCheck = Callable[..., "tuple[bool, str]"]
 _VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|FAIL)", re.I)
 _STATUS_RE = re.compile(r"\b(DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)\b")
 
-# Per bundled-doc char cap so a call's system prompt stays bounded (prompt
-# shaping, not an execution budget -- the execution budgets live in budgets.py).
-_PROMPT_CAP = 6000
+# Per bundled-doc / artifact char caps resolve through budgets.py (operator
+# env-tunable, generous defaults) -- the engine never judges a model's context
+# needs with a silent hardcoded number.
 
 # Common source-code suffixes for "files already in the project" listings.
 # The source DIRECTORY comes from the stack adapter (resolve_targets); this
@@ -462,8 +464,9 @@ def parse_implementer_status(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _implementer_system_prompt(governance_frame: str, stack: _StackContext) -> str:
-    impl = _strip_template_wrapper(_load_bundled("implementer"))[:_PROMPT_CAP]
-    tdd = _load_bundled("tdd")[:_PROMPT_CAP]
+    cap = resolve_build_doc_cap()
+    impl = _strip_template_wrapper(_load_bundled("implementer"))[:cap]
+    tdd = _load_bundled("tdd")[:cap]
     parts = [
         "You are the implementer subagent in a SignalOS-governed build. You "
         "have real tools (read_file, write_file, edit_file, run_command, "
@@ -481,7 +484,7 @@ def _implementer_system_prompt(governance_frame: str, stack: _StackContext) -> s
         impl,
     ]
     if governance_frame.strip():
-        parts += ["", "## Governance frame (binding forbidden rules)", governance_frame[:_PROMPT_CAP]]
+        parts += ["", "## Governance frame (binding forbidden rules)", governance_frame[:cap]]
     return "\n".join(parts)
 
 
@@ -524,7 +527,7 @@ def _task_context(repo_root: Path, prompt: str, project_id: str) -> str:
             if art.path.is_file():
                 txt = art.path.read_text(encoding="utf-8", errors="replace").strip()
                 if txt:
-                    parts.append(f"## {label} ({art.rel_path})\n{txt[:3000]}")
+                    parts.append(f"## {label} ({art.rel_path})\n{txt[:resolve_build_doc_cap()]}")
         except OSError:
             pass
     return "\n\n".join(parts)
@@ -586,7 +589,12 @@ def _implementer_message(task: Task, context: str, repo_root: Path,
             "- Run this one test to green via run_command.",
             "",
             "```",
-            test_src[:3500],
+            # The FULL test, never truncated: a capped embed hid part of the
+            # signed spec (observed: a 4.7k-char plan test lost its validation
+            # assertions past a 3.5k cap, and the builder was graded on
+            # expectations it could not see). Plan tests are small; the real
+            # context risk lives in command output, which is capped separately.
+            test_src[:resolve_build_test_embed_cap()],
             "```",
             "",
         ]
