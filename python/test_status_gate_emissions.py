@@ -27,6 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from conftest import seed_signed_artifact  # noqa: E402
 from signalos_lib.status import (  # noqa: E402
     build_status_json,
     get_wave_status,
@@ -244,6 +245,9 @@ class BuildStatusJsonGateEmissions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            # Deliberately UNSIGNED: gate detection is signature-based and
+            # fail-closed, so a drafted-but-unapproved TRUST_TIER.md must
+            # not turn G4 green.
             trust_tier = root / "core" / "execution" / "TRUST_TIER.md"
             trust_tier.parent.mkdir(parents=True, exist_ok=True)
             trust_tier.write_text("# Trust Tier\n\nT2.\n", encoding="utf-8")
@@ -251,9 +255,10 @@ class BuildStatusJsonGateEmissions(unittest.TestCase):
             trust_only = get_wave_status(root)
             self.assertFalse(trust_only["gates"]["G4"])
 
-            (root / "core" / "execution" / "BUILD_EVIDENCE.md").write_text(
+            # A signed BUILD_EVIDENCE.md is what turns G4 green.
+            seed_signed_artifact(
+                root, "core/execution/BUILD_EVIDENCE.md", "G4",
                 "# Build Evidence\n\nTests passed.\n",
-                encoding="utf-8",
             )
             with_build_evidence = get_wave_status(root)
             self.assertTrue(with_build_evidence["gates"]["G4"])

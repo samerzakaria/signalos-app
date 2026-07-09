@@ -191,7 +191,10 @@ class TestOrchestration(unittest.TestCase):
         self.assertEqual(roles[0], "implementer")
         self.assertLess(roles.index("fixer"), roles.index("spec-reviewer"))
 
-    def test_red_after_budget_skips_review_but_still_evidences(self):
+    def test_red_after_budget_fails_fast_no_review_no_evidence(self):
+        """FAIL FAST: a definitively-red integration stops the build -- review
+        and evidence would be paid spend on a build the gate must refuse (the
+        missing evidence artifact keeps the sign fail-closed)."""
         rec = Recorder()
         res = run_subagent_driven_build(
             _repo(), adapter="A", prompt="x", run_agent=rec,
@@ -200,8 +203,33 @@ class TestOrchestration(unittest.TestCase):
         roles = rec.roles()
         self.assertEqual(roles.count("fixer"), 3)  # exhausts the repair budget
         self.assertNotIn("spec-reviewer", roles)   # never green -> no review
-        self.assertIn("evidence", roles)           # evidence still recorded
-        self.assertIn("green=False", res.final_text)
+        self.assertNotIn("evidence", roles)        # fail-fast: no paid evidence pass
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertIn("STOPPED (fail-fast)", res.final_text)
+
+    def test_task_gate_failure_stops_the_build_fail_fast(self):
+        """A task whose plan test stays red after its fix budget STOPS the
+        build: later tasks are never dispatched (no paying for doomed work)."""
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                return (False, "T1 stays red")
+            return (True, "")
+        rec = Recorder()
+        res = run_subagent_driven_build(_repo_with_plan(), adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        roles = rec.roles()
+        self.assertEqual(roles.count("implementer"), 1)  # only T1; T2 never starts
+        self.assertNotIn("evidence", roles)
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertIn("T1", res.error)
+
+    def test_already_green_task_is_skipped_not_paid(self):
+        """Resume economics: a task whose plan test already passes is skipped
+        by the objective pre-check -- no implementer dispatch."""
+        rec = Recorder()
+        run_subagent_driven_build(_repo_with_plan(), adapter="A", prompt="x",
+                                  run_agent=rec, build_check=_green)
+        self.assertEqual(rec.roles().count("implementer"), 0)  # both tasks pre-green
 
     def test_reviews_run_on_independent_adapter(self):
         rec = Recorder()
@@ -290,7 +318,9 @@ class TestOrchestration(unittest.TestCase):
         self.assertIn(None, seen)
 
     def test_per_task_fixer_runs_when_a_task_test_is_red(self):
-        state = {"n": 1}
+        # red for the pre-check AND the post-implementer check, green after the
+        # fixer's pass -- exercising the full red->fix->green cycle.
+        state = {"n": 2}
 
         def check(_r, only_test=None):
             if only_test and only_test.endswith("T1.test.ts") and state["n"] > 0:

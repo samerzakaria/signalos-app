@@ -121,14 +121,24 @@ def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
     content check: a template-only Soul Document does not count as onboarded.
     *project_id* namespaces the artifact base per §3.2.
     """
-    base = _governance_base(root, project_id)
+    # A gate counts as passed only when an artifact EXISTS *and carries a
+    # signature* (sign.check_gate reads the in-file signature blocks). Bare
+    # existence was fail-open: an honest not-green BUILD_EVIDENCE.md made G4
+    # read "done", so a resumed walk mis-seeded its signed set and skipped the
+    # build. Uniform rule for every gate -- no per-gate special case; G0
+    # additionally keeps its non-template content check.
+    from . import sign as _sign
     g = {}
-    for gate, rel_paths in gate_detection_paths().items():
-        candidates = [base.joinpath(*rel.split("/")) for rel in rel_paths]
+    for gate in gate_detection_paths():
+        try:
+            statuses = _sign.check_gate(root, gate, project_id=project_id)
+        except Exception:
+            statuses = []
         if gate == "G0":
-            g[gate] = any(_is_non_template(path) for path in candidates)
+            g[gate] = any(st.exists and st.has_signatures and _is_non_template(st.path)
+                          for st in statuses)
         else:
-            g[gate] = any(path.is_file() for path in candidates)
+            g[gate] = any(st.exists and st.has_signatures for st in statuses)
     return g
 
 

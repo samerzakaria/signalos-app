@@ -20,6 +20,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 import signalos_ipc_server as ipc
+from conftest import seed_signed_artifact
 
 
 @contextmanager
@@ -34,9 +35,11 @@ def _in_workspace(soul_text: str | None = None):
                 soul_text.rstrip("\n")
                 + "\nOwner: PO.\nReviewer: lead engineer.\nReady when signed.\n"
             )
-        soul_dir = root / "core" / "governance" / "Governance"
-        soul_dir.mkdir(parents=True, exist_ok=True)
-        (soul_dir / "SOUL-DOCUMENT.md").write_text(soul_text, encoding="utf-8")
+        # Gate detection is signature-based (fail-closed): sign the Soul
+        # so it counts as a passed G0, not just a drafted file.
+        seed_signed_artifact(
+            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", soul_text,
+        )
     os.chdir(str(root))
     try:
         yield root

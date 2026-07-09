@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -49,3 +50,60 @@ for _var in _PROVIDER_ENV:
 def _hermetic_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in _PROVIDER_ENV:
         monkeypatch.delenv(var, raising=False)
+
+
+# ---------------------------------------------------------------------------
+# Gate-artifact seeding (fail-closed gate detection)
+#
+# status._detect_gates counts a gate as passed only when its artifact EXISTS
+# *and carries a signature* (read via signalos_lib.sign.check_gate; signatures
+# are the YAML blocks appended by signalos_lib.sign.sign_artifact). A bare
+# seeded file is honest "drafted, not approved" state and no longer counts,
+# so fixtures that simulate already-passed gates must sign what they seed.
+# ---------------------------------------------------------------------------
+
+# One plausible signing role per gate, from the gate manifest
+# (signalos_lib/gate_artifacts.json): G0 PO+PE, G1 PO, G2 PO, G3 PO/PE,
+# G4 PE, G5 QA. Detection needs >=1 valid signer per artifact.
+GATE_SEED_ROLES: dict[str, str] = {
+    "G0": "PO",
+    "G1": "PO",
+    "G2": "PO",
+    "G3": "PO",
+    "G4": "PE",
+    "G5": "QA",
+}
+
+# >=3 filled lines so status._is_non_template counts the artifact as filled.
+_SEED_CONTENT = (
+    "Seeded gate artifact content line one.\n"
+    "Seeded gate artifact content line two.\n"
+    "Seeded gate artifact content line three.\n"
+)
+
+
+def seed_signed_artifact(
+    base: Path | str,
+    rel_path: str,
+    gate: str,
+    content: str = _SEED_CONTENT,
+    *,
+    role: str | None = None,
+    signer: str | None = None,
+) -> Path:
+    """Write a gate artifact under *base* AND sign it for *gate*.
+
+    Use this (not a bare write_text) whenever a fixture seeds an artifact
+    file to simulate a passed gate — gate detection is signature-based and
+    fail-closed. Returns the artifact Path.
+    """
+    from signalos_lib.sign import sign_artifact
+
+    gate = gate.upper()
+    if role is None:
+        role = GATE_SEED_ROLES[gate]
+    path = Path(base).joinpath(*rel_path.replace("\\", "/").split("/"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    sign_artifact(path, signer or f"Test {role}", role, gate, "APPROVED")
+    return path

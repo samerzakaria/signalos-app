@@ -14,6 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from conftest import seed_signed_artifact
 from signalos_lib.wave_engine import (
     GATE_ORDER,
     WaveEngine,
@@ -28,15 +29,15 @@ def _mk_workspace_with_soul(soul_text: str | None = None) -> Path:
     """Make a temp workspace with optional signed Soul artifact.
 
     status._is_non_template requires ≥3 non-empty, non-comment, non-heading
-    lines for an artifact to count as "signed" (filled). The helper pads
-    short soul bodies with neutral stakeholder/success lines so test
-    intent stays focused on the body text rather than scaffolding lines.
+    lines for an artifact to count as filled. The helper pads short soul
+    bodies with neutral stakeholder/success lines so test intent stays
+    focused on the body text rather than scaffolding lines. Gate detection
+    is signature-based and fail-closed, so the Soul is also SIGNED (G0)
+    via conftest.seed_signed_artifact — a bare file would not count.
     """
     root = Path(tempfile.mkdtemp(prefix="signalos-wave-engine-"))
     (root / ".signalos").mkdir()
     if soul_text is not None:
-        soul_dir = root / "core" / "governance" / "Governance"
-        soul_dir.mkdir(parents=True, exist_ok=True)
         # Pad to ≥3 content lines if caller passed a short body.
         if soul_text.count("\n") < 3:
             soul_text = (
@@ -44,7 +45,9 @@ def _mk_workspace_with_soul(soul_text: str | None = None) -> Path:
                 + "\n"
                 + "Owner: PO.\nReviewer: lead engineer.\nReady when signed.\n"
             )
-        (soul_dir / "SOUL-DOCUMENT.md").write_text(soul_text, encoding="utf-8")
+        seed_signed_artifact(
+            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", soul_text,
+        )
     return root
 
 

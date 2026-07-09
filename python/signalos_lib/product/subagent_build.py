@@ -933,9 +933,19 @@ def run_subagent_driven_build(
 
     summary: list[str] = []
     calls = 0
+    failed_task: Optional[str] = None
 
     # PHASE 1 -- per task, test-first, drive to green BEFORE the next task.
     for task in tasks:
+        # Resume/skip: if this task's plan test ALREADY passes (a resumed or
+        # partially-built repo), don't pay an implementer to redo green work --
+        # the objective gate, not an LLM, made that call.
+        if task.test:
+            ok, errs = check(repo_root, task.test)
+            if ok:
+                emit({"type": "system", "text": f"“{task.name}” already passes its test — skipping."})
+                summary.append(f"{task.id} test_green=True (pre-existing)")
+                continue
         emit({"type": "system", "text": f"Building: {task.name}"})
         run("implementer", adapter, impl_sys,
             _implementer_message(task, context, repo_root, stack, project_id))
@@ -957,8 +967,33 @@ def run_subagent_driven_build(
                 calls += 1
                 ok, errs = check(repo_root, task.test)
             summary.append(f"{task.id} test_green={ok}")
+            if not ok:
+                # FAIL FAST: this task DEFINITIVELY failed its gate (budget
+                # exhausted, not a transient). Later tasks depend on it and the
+                # walk can never sign -- stop paying for a doomed continuation.
+                failed_task = f"{task.id} {task.name}"
+                emit({"type": "system",
+                      "text": f"“{task.name}” failed its gate after the fix budget — "
+                              "stopping the build (fail-fast)."})
+                break
         else:
             summary.append(f"{task.id}: drafted (no plan test)")
+
+    if failed_task is not None:
+        if usage.get("in") is not None or usage.get("out") is not None:
+            summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
+        return LoopResult(
+            run_id="g4-subagent-build",
+            status="budget_exhausted",
+            final_text=(f"Subagent-driven build STOPPED (fail-fast) at {failed_task}: "
+                        "its plan test stayed red after the per-task fix budget.\n"
+                        + "\n".join(summary)),
+            tool_calls_made=calls,
+            messages=[],
+            error=f"task failed its objective gate: {failed_task}",
+            tokens_in=usage.get("in"),
+            tokens_out=usage.get("out"),
+        )
 
     # PHASE 2 -- INTEGRATION: full build + whole suite to green (cross-task).
     # Same input -> same model -> most likely the same failed output, so a
@@ -989,8 +1024,27 @@ def run_subagent_driven_build(
         green, last_errors = check(repo_root)
     emit({"type": "system",
           "text": "The product compiles and all tests pass."
-                  if green else "Build still has errors after the repair budget."})
+                  if green else "Build still has errors after the repair budget — "
+                                "stopping (fail-fast)."})
     summary.append(f"integration_green={green}")
+
+    if not green:
+        # FAIL FAST: integration definitively failed its budget. Review and
+        # evidence would be spend on a build the gate must refuse anyway; the
+        # missing Build Evidence artifact keeps the sign fail-closed.
+        if usage.get("in") is not None or usage.get("out") is not None:
+            summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
+        return LoopResult(
+            run_id="g4-subagent-build",
+            status="budget_exhausted",
+            final_text="Subagent-driven build STOPPED (fail-fast): integration "
+                       "stayed red after the repair budget.\n" + "\n".join(summary),
+            tool_calls_made=calls,
+            messages=[],
+            error="integration failed its objective gate",
+            tokens_in=usage.get("in"),
+            tokens_out=usage.get("out"),
+        )
 
     # PHASE 3 -- independent review on the GREEN product (spec, then quality).
     if green:

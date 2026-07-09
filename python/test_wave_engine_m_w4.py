@@ -13,27 +13,23 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from conftest import seed_signed_artifact
 from signalos_lib.agent_loader import load_agent
 from signalos_lib.wave_engine import GATE_ORDER, WaveEngine, WaveState
 
 
-def _seed(root: Path, parts: tuple[str, ...], body: str) -> None:
-    p = root.joinpath(*parts)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body, encoding="utf-8")
-
-
 def _pad(text: str) -> str:
     """Pad short text to ≥3 non-comment lines so status._is_non_template
-    counts the artifact as signed."""
+    counts the artifact as filled."""
     if text.count("\n") >= 3:
         return text
     return text.rstrip("\n") + "\nOwner: PO.\nReviewer: lead.\nReady.\n"
 
 
 def _mk_workspace_signed_through(gate_signed_through: str) -> Path:
-    """Make a temp workspace with artifacts seeded so all gates up to
-    and including *gate_signed_through* are detected as signed."""
+    """Make a temp workspace with artifacts seeded AND SIGNED so all gates
+    up to and including *gate_signed_through* are detected as signed
+    (gate detection is signature-based, fail-closed)."""
     root = Path(tempfile.mkdtemp(prefix="signalos-m-w4-"))
     (root / ".signalos").mkdir()
 
@@ -69,7 +65,7 @@ def _mk_workspace_signed_through(gate_signed_through: str) -> Path:
     for i, (gate, entries) in enumerate(artifacts):
         if i <= target_idx:
             for parts, body in entries:
-                _seed(root, parts, body)
+                seed_signed_artifact(root, "/".join(parts), gate, body)
     return root
 
 

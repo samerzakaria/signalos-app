@@ -41,6 +41,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from conftest import seed_signed_artifact
 from signalos_lib import orchestrator, projects, sign, status as status_lib, wave_engine
 from signalos_lib.artifacts import resolve_gate_artifacts, resolve_workspace_path
 from signalos_lib.harness import AgentResponse, TokenUsage, ToolCall
@@ -363,11 +364,19 @@ class GovernanceNamespacingInvariantTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = _workspace(d)
             base = project_governance_dir(root, "alpha")
-            # Materialise G0..G3 detection artifacts in alpha's namespace.
-            _write(base / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md")
-            _write(base / "core" / "strategy" / "BELIEF.md")
-            _write(base / "core" / "strategy" / "EXPECTATION_MAP.md")
-            _write(base / "core" / "strategy" / "DESIGN_NOTE.md")
+            # Materialise G0..G3 detection artifacts in alpha's namespace,
+            # signed — gate detection is signature-based (fail-closed).
+            seed_signed_artifact(
+                base, "core/governance/Governance/SOUL-DOCUMENT.md", "G0",
+                _REAL_CONTENT,
+            )
+            seed_signed_artifact(base, "core/strategy/BELIEF.md", "G1", _REAL_CONTENT)
+            seed_signed_artifact(
+                base, "core/strategy/EXPECTATION_MAP.md", "G2", _REAL_CONTENT,
+            )
+            seed_signed_artifact(
+                base, "core/strategy/DESIGN_NOTE.md", "G3", _REAL_CONTENT,
+            )
 
             alpha_route = orchestrator._route_next_gate_action(
                 root, "1", "s", project_id="alpha",

@@ -15,6 +15,7 @@ from unittest import mock
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from conftest import seed_signed_artifact
 from signalos_lib.wave_engine_judge import (
     _extract_first_json_object,
     build_llm_judge,
@@ -257,11 +258,13 @@ class IntegrationWithDetectScopeDriftTests(unittest.TestCase):
         soul = "Personal helper application customer onboarding workflows daily"
         root = Path(tempfile.mkdtemp(prefix="signalos-judge-int-")).resolve()
         (root / ".signalos").mkdir()
-        soul_dir = root / "core" / "governance" / "Governance"
-        soul_dir.mkdir(parents=True, exist_ok=True)
-        (soul_dir / "SOUL-DOCUMENT.md").write_text(
+        # Gate detection is signature-based (fail-closed): the Soul must be
+        # signed for drift detection to see a passed G0.
+        seed_signed_artifact(
+            root,
+            "core/governance/Governance/SOUL-DOCUMENT.md",
+            "G0",
             soul + "\nOwner: PO.\nReviewer: lead.\nReady when signed.\n",
-            encoding="utf-8",
         )
         request = "Personal helper but inventory tracking warehouse manifests forklift"
 

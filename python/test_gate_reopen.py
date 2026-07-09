@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from conftest import seed_signed_artifact
 from signalos_lib.audit_replay import _REVERSE_MARKERS, load_audit_trail, replay_state
 from signalos_lib.harness import AgentResponse, TokenUsage
 from signalos_lib.product.enforcement_state import StaticEnforcementProvider
@@ -485,23 +486,26 @@ _SOUL = (
 
 
 def _mk_workspace(*, soul=True, g2=False, g3=False) -> Path:
+    # Gate detection is signature-based (fail-closed): every artifact seeded
+    # here to simulate a passed gate is signed via seed_signed_artifact.
     root = Path(tempfile.mkdtemp(prefix="signalos-gate-reopen-"))
     (root / ".signalos").mkdir()
     if soul:
-        soul_dir = root / "core" / "governance" / "Governance"
-        soul_dir.mkdir(parents=True, exist_ok=True)
-        (soul_dir / "SOUL-DOCUMENT.md").write_text(_SOUL, encoding="utf-8")
+        seed_signed_artifact(
+            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", _SOUL,
+        )
     if g2:
-        p = root / "core" / "strategy" / "EXPECTATION_MAP.md"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("Milestone plan: ship the onboarding intake first, "
-                     "then the routing loop, monolith architecture.\n",
-                     encoding="utf-8")
+        seed_signed_artifact(
+            root, "core/strategy/EXPECTATION_MAP.md", "G2",
+            "Milestone plan: ship the onboarding intake first, "
+            "then the routing loop, monolith architecture.\n",
+        )
     if g3:
-        p = root / "core" / "strategy" / "DESIGN_NOTE.md"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("Design note: light theme, single-page intake form, "
-                     "two screens total.\n", encoding="utf-8")
+        seed_signed_artifact(
+            root, "core/strategy/DESIGN_NOTE.md", "G3",
+            "Design note: light theme, single-page intake form, "
+            "two screens total.\n",
+        )
     return root
 
 
