@@ -40,6 +40,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -1341,6 +1342,12 @@ class AgentLoop:
     def _tool_run_command(self, command: str) -> str:
         # Cancellation: a long command honors the loop-level timeout. We do not
         # poll cancel_check mid-process; the COMMAND_TIMEOUT_S bound applies.
+        #
+        # CI=1: interactive/watch modes never terminate (bare `npx vitest` is
+        # WATCH mode; dev servers wait forever). Test runners and CLIs almost
+        # universally honor CI to run once and exit -- without this, one watch
+        # command hung a build for hours.
+        env = {**os.environ, "CI": "1", "FORCE_COLOR": "0"}
         try:
             proc = subprocess.run(
                 command,
@@ -1357,11 +1364,25 @@ class AgentLoop:
                 encoding="utf-8",
                 errors="replace",
                 timeout=COMMAND_TIMEOUT_S,
+                env=env,
             )
         except subprocess.TimeoutExpired:
+            # Windows: timeout kills the shell but NOT its children, and the
+            # still-open stdout handle can block past the timeout. Kill the
+            # whole tree of any lingering direct children best-effort.
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/FI",
+                         "WINDOWTITLE eq signalos-agent-cmd"],
+                        capture_output=True, timeout=15,
+                    )
+                except Exception:
+                    pass  # best-effort tree cleanup only
             return (
                 f"ERROR: command timed out after {COMMAND_TIMEOUT_S}s and was "
-                f"killed: {command}"
+                f"killed: {command}. If this was a watch/serve mode command, "
+                f"use its run-once form instead."
             )
         stdout = redact_secrets(proc.stdout or "")
         stderr = redact_secrets(proc.stderr or "")
