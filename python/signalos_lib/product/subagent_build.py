@@ -320,6 +320,14 @@ def decompose_plan_tasks(repo_root: Path, project_id: str = "default") -> list[T
                 files = [p.strip() for p in paths if p.strip()]
             else:
                 test = paths[0].strip() if paths else ""
+                # A plan may declare a non-automated verification ("N/A",
+                # "manual test protocol", "none"). That is NOT a test path --
+                # treating it as one made the build (and preflight) chase a
+                # file literally named "N/A (...)" and burn the task's whole
+                # fix budget on an unrunnable gate.
+                if test and ("/" not in test.replace("\\", "/")
+                             or re.match(r"^(n/?a|none|manual)\b", test, re.I)):
+                    test = ""
         text = "\n".join(block).strip()
         name = (f"{tid} — {title}" if title else tid)[:70]
         tasks.append(Task(id=tid, name=name, text=text, files=files, test=test,
