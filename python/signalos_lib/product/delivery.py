@@ -306,6 +306,22 @@ def run_delivery(
     errors: list[str] = []
     warnings: list[str] = []
 
+    # Resolve "auto" mode from the repo's ORIGINAL state, BEFORE this pipeline
+    # writes any .signalos/ artifact. run_scaffold's own detect_mode runs only in
+    # the SCAFFOLD phase -- by which point the INTENT phase has already created
+    # .signalos/product/QUESTIONS.json, so detect_mode would see a .signalos/ dir
+    # and misclassify a FIRST-TIME adoption of an existing codebase as a
+    # 'refresh'. Capturing the mode here (and passing it explicitly to
+    # run_scaffold) keeps greenfield/adopt/refresh honest, which in turn lets
+    # governance provisioning pick the correct provenance tier -- an existing
+    # codebase must reconstruct-from-code, never be labelled 'assumed'.
+    if mode == "auto":
+        try:
+            from .lifecycle import detect_mode
+            mode = detect_mode(repo_root)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # 1. INTENT phase
     # ------------------------------------------------------------------
@@ -725,6 +741,52 @@ def run_delivery(
     # scaffold stub when the agent wrote nothing.
     generation_blocked = False
     generation_blocker: str = ""
+    governance_tier: dict | None = None
+    # UNIFIED GOVERNANCE PROVISIONING -- runs in EVERY mode, including the
+    # no-build modes ('none'/'packet-only'), BEFORE any build dispatch. Fill any
+    # MISSING prior gate (G0-G3) present-and-signed under an EXPLICIT provenance
+    # tier so the repo is NEVER left with a governance-layer weakness: an
+    # unsigned gate that a later build -- or a route that does not re-check --
+    # could slip through ungoverned. This is what makes run_delivery a COMPLETE
+    # governed entrypoint: it never demands governance it did not produce, and it
+    # never leaves a half-governed repo behind. Provisioning is mode-shaped --
+    # existing code (adopt/refresh) -> reconstructed-from-code (the code is the
+    # decision; the founder reviews & corrects); greenfield -> assumed, grounded
+    # in the delivery's own generated brief -- and is ALWAYS signed as a SYSTEM
+    # identity, NEVER the founder. It is idempotent: an existing founder
+    # signature is preserved (provision_gates + sign_gate skip_signed).
+    try:
+        from .provision_gates import (
+            governance_tier_summary,
+            provision_gates,
+        )
+        from .reconstruct_gate_content import (
+            code_content_fn,
+            evidence_content_fn,
+        )
+        _pre_signed, _pre_blockers = _signed_prior_gates_for_g4(repo_root)
+        if _pre_blockers:
+            # RESOLVED mode (run_scaffold turns "auto" into greenfield/adopt/
+            # refresh). adopt AND refresh operate on an EXISTING codebase ->
+            # reconstructed-from-code; only a true greenfield -> assumed from the
+            # generated brief. Never a generic placeholder.
+            _resolved_mode = scaffold_result.get("mode", mode)
+            if _resolved_mode in ("adopt", "refresh"):
+                _tier, _content = "reconstructed", code_content_fn(repo_root)
+            else:
+                _tier, _content = "assumed", evidence_content_fn(repo_root)
+            provisioned = provision_gates(
+                repo_root, tier=_tier, content_fn=_content)
+            if provisioned:
+                _emit_progress(
+                    "generation", "governance", "running",
+                    f"Provisioned {len(provisioned)} prior gate(s) as "
+                    f"'{_tier}' (not founder-reviewed) -- present-and-signed "
+                    "under an explicit provenance tier")
+        governance_tier = governance_tier_summary(repo_root)
+    except Exception as exc:
+        errors.append(f"gate provisioning failed: {exc}")
+
     if generation_packet and agent_mode not in ("none", "packet-only"):
         _emit_progress("generation", "packet", "running", "Dispatching scoped build agent")
         try:
@@ -755,6 +817,22 @@ def run_delivery(
             )
 
             def _dispatch_once(_task: Any) -> dict:
+                # FIX A -- ROUTE-INDEPENDENT GOVERNANCE GATE: every build route
+                # (local-parallel, chunked-llm, agent-loop) requires the prior
+                # governance gates (G0-G3) to be signed before ANY product code
+                # is written. Previously only the agent-loop route checked, so
+                # the no-key deterministic local renderer emitted UNGOVERNED
+                # product and reported success -- a fail-open masked exactly on
+                # the path taken when a provider (hence the governed loop) is
+                # unavailable. Now no route can bypass governance.
+                _gov_signed, _gov_blockers = _signed_prior_gates_for_g4(repo_root)
+                if _gov_blockers:
+                    return {
+                        "status": "governance_required",
+                        "run_id": packet_for_agent.get("run_id"),
+                        "files_written": [],
+                        "errors": _gov_blockers,
+                    }
                 if route == "local-parallel":
                     # 1.1: transparently parallelizes across independent
                     # react-vite components; falls back verbatim to the single
@@ -1335,6 +1413,18 @@ def run_delivery(
     except Exception as exc:
         errors.append(f"evidence freshness verification failed: {exc}")
 
+    # Gate provenance is reported for EVERY delivery, honestly, regardless of
+    # agent_mode. Provisioning runs before dispatch even for no-build modes, so
+    # closeout should normally carry assumed/reconstructed/founder-signed tiers.
+    # If provisioning failed before computing the tier, still report whatever
+    # signed/unsigned state is on disk rather than omitting governance.
+    if governance_tier is None:
+        try:
+            from .provision_gates import governance_tier_summary
+            governance_tier = governance_tier_summary(repo_root)
+        except Exception as exc:
+            errors.append(f"gate provenance report failed: {exc}")
+
     # ------------------------------------------------------------------
     # 8. CLOSEOUT phase
     # ------------------------------------------------------------------
@@ -1343,6 +1433,24 @@ def run_delivery(
         closeout = build_closeout(
             repo_root, product_name, actual_profile, blueprint_id,
         )
+        # Honest governance provenance: which prior gates a human actually
+        # reviewed vs which were auto-provisioned. A reviewer must see this --
+        # an assumed/reconstructed gate is NOT founder-reviewed.
+        if governance_tier is not None:
+            closeout["governance_tier"] = governance_tier
+            _provisioned = [g for g, t in governance_tier.items()
+                            if t in ("assumed", "reconstructed")]
+            _unsigned = [g for g, t in governance_tier.items() if t == "unsigned"]
+            if _provisioned:
+                closeout.setdefault("known_limitations", []).append(
+                    "Governance: gate(s) " + ", ".join(_provisioned)
+                    + " were auto-provisioned (not founder-reviewed); founder "
+                    "review pending -- review and correct the artifacts to "
+                    "upgrade them to founder-signed.")
+            if _unsigned:
+                closeout.setdefault("known_limitations", []).append(
+                    "Governance: gate(s) " + ", ".join(_unsigned)
+                    + " are NOT signed -- no governed build ran for them.")
         # Layer 2: stale evidence fails the closeout CLOSED under strict
         # gate-compliance (drifted files listed); under warn it is recorded
         # in known_limitations without failing closed.
@@ -1393,6 +1501,11 @@ def run_delivery(
             "how_to_run": [],
             "known_limitations": errors,
         }
+        # Even on a closeout-phase failure, report gate provenance honestly --
+        # an assumed/reconstructed gate must never be silently dropped from the
+        # persisted closeout.
+        if governance_tier is not None:
+            closeout["governance_tier"] = governance_tier
         try:
             update_delivery_phase(repo_root, "closed", "partial")
         except Exception:

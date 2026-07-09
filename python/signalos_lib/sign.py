@@ -244,10 +244,19 @@ def sign_gate(
     oidc_sub_hash: str = "",
     oidc_issuer: str = "",
     project_id: str = "default",
+    skip_signed: bool = False,
 ) -> list[str]:
     """
     Sign every present artifact in *gate*.  Returns rel-paths of signed files.
     Missing artifacts are skipped.
+
+    ``skip_signed`` (default False) additionally skips any artifact that ALREADY
+    carries a signature. This is for auto-provisioning: it must fill only the
+    UNSIGNED artifacts of a gate and must never append a system co-signature onto
+    an artifact a founder already signed (which would both pollute the founder's
+    artifact and mislabel the gate's provenance). validate_gate accepts an
+    artifact with >=1 non-draft signature, so leaving a co-required role's second
+    signature off a system-authored artifact still passes the gate.
 
     Raises ValueError if role is not authorised for any artifact in gate.
     This enforces segregation of duties: PO cannot sign G5 (requires QA),
@@ -294,6 +303,14 @@ def sign_gate(
         # gate signing (a PO signing G3 died on the PE-only PLAN.md).
         if role not in artifact.required_roles:
             continue
+        # Auto-provision guard: never co-sign an artifact that already carries a
+        # signature (founder or a prior provisioning role). One non-draft
+        # signature satisfies validate_gate, so this preserves both the gate's
+        # signed-ness and the existing signer's provenance.
+        if skip_signed:
+            existing_signers, _is_draft, _hash_valid = _parse_signers(p)
+            if existing_signers:
+                continue
         sign_artifact(
             p,
             signer,

@@ -306,6 +306,79 @@ class TestDeliveryE2E(unittest.TestCase):
                 (repo_root / "existing.txt").read_text(), "precious content"
             )
 
+    def test_auto_mode_on_existing_repo_reconstructs_gates(self):
+        """run_delivery(mode='auto') on an EXISTING codebase must resolve to
+        adopt and provision its governance gates as 'reconstructed' -- never
+        'assumed'. Guards the ordering bug: the pipeline writes .signalos/ before
+        scaffold's mode detection, which used to reclassify a first-time
+        adoption as 'refresh' and mislabel the provenance tier."""
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "legacy-app"
+            repo_root.mkdir()
+            (repo_root / "package.json").write_text(json.dumps({
+                "name": "legacy-app",
+                "description": "an existing service to bring under governance",
+                "scripts": {"test": "vitest run"},
+                "dependencies": {"express": "^4"},
+            }), encoding="utf-8")
+            (repo_root / "src").mkdir()
+            (repo_root / "src" / "app.test.js").write_text(
+                "test('health', () => {});\n", encoding="utf-8")
+            closeout = run_delivery(
+                prompt="Add a health check endpoint",
+                name="legacy-app",
+                repo_root=repo_root,
+                mode="auto",
+                profile="generic",
+                deploy="none",
+                dry_run=True,
+            )
+            tier = closeout.get("governance_tier") or {}
+            self.assertTrue(tier, "governance_tier missing from closeout")
+            self.assertEqual(
+                set(tier.values()), {"reconstructed"},
+                f"existing repo run via auto must reconstruct, got {tier}")
+
+    def test_gates_provisioned_and_reported_in_every_mode(self):
+        """Missing gates are auto-authored+signed under an explicit provenance
+        tier in EVERY agent_mode -- including the no-build modes (none /
+        packet-only) -- so the repo is never left with an unsigned-gate weakness.
+        The tier is reported honestly and persisted."""
+        from signalos_lib.product.delivery import _signed_prior_gates_for_g4
+        for agent_mode in ("none", "packet-only"):
+            with tempfile.TemporaryDirectory() as td:
+                repo_root = Path(td) / f"nb-{agent_mode.replace('-', '')}"
+                closeout = run_delivery(
+                    prompt="Build a small notes app",
+                    name=repo_root.name,
+                    repo_root=repo_root,
+                    mode="greenfield",
+                    profile="generic",
+                    deploy="none",
+                    dry_run=True,
+                    agent_mode=agent_mode,
+                )
+                tier = closeout.get("governance_tier")
+                self.assertIsNotNone(
+                    tier, f"agent_mode={agent_mode} reported tier None")
+                self.assertEqual(
+                    set(tier), {"G0", "G1", "G2", "G3"},
+                    f"agent_mode={agent_mode} tier missing gates: {tier}")
+                # Greenfield with no founder -> provisioned as 'assumed', NOT
+                # left unsigned: no-build modes still close the governance gap.
+                self.assertEqual(
+                    set(tier.values()), {"assumed"},
+                    f"agent_mode={agent_mode} should be provisioned assumed, got {tier}")
+                # Gates are ACTUALLY signed (not merely reported): the build
+                # precondition is satisfied for a subsequent governed build.
+                signed, blockers = _signed_prior_gates_for_g4(repo_root)
+                self.assertEqual(signed, [0, 1, 2, 3],
+                                 f"agent_mode={agent_mode} gates not signed: {blockers}")
+                # Persisted closeout carries the same tier.
+                persisted = json.loads(
+                    (repo_root / ".signalos" / "product" / "CLOSEOUT.json").read_text("utf-8"))
+                self.assertEqual(persisted.get("governance_tier"), tier)
+
     def test_intent_file_written(self):
         """INTENT.json is written with extracted fields."""
         with tempfile.TemporaryDirectory() as td:
