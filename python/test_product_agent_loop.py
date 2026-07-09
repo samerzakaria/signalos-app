@@ -653,6 +653,28 @@ class TestGovernance(unittest.TestCase):
             self.assertIn("OK", tool_msgs[0]["content"])
             self.assertTrue((root / "src" / "store" / "expenseStore.ts").is_file())
 
+    def test_loop_attributes_provider_turn_errors(self):
+        """Regression: provider turns with finish_reason='error' are normalized
+        away by litellm (logged as a warning) -- transport noise silently eats
+        model attempts. The loop now attributes the count per run so a flaky
+        provider can't read as model weakness in comparisons."""
+        import logging
+
+        class _NoisyProvider(AgentTestProvider):
+            def chat(self, *a, **k):
+                logging.getLogger("LiteLLM").warning(
+                    "Unmapped finish_reason 'error', defaulting to 'stop'")
+                return super().chat(*a, **k)
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = _NoisyProvider(script=[_end_resp()])
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "one noisy turn")
+            self.assertEqual(result.provider_turn_errors, 1)
+            self.assertEqual(result.as_dict()["provider_turn_errors"], 1)
+
     def test_loop_accumulates_token_usage_across_turns(self):
         """Regression: the loop previously DISCARDED per-turn TokenUsage; it now
         sums usage across every provider turn onto LoopResult (cost tracking /

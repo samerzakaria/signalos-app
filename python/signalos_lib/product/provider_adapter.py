@@ -36,6 +36,45 @@ from ..harness import (
 )
 
 
+# --- provider turn-error accounting -----------------------------------------
+# Some providers return finish_reason='error' turns that litellm NORMALIZES to
+# 'stop' (logging a warning) -- the turn silently degrades instead of failing.
+# A flaky provider can eat a model's fix attempts and read as model weakness in
+# comparisons, so the warnings are COUNTED here (a logging handler on litellm's
+# logger) and exposed for per-run attribution.
+
+import logging as _logging
+
+_TURN_ERROR_COUNT = 0
+_TURN_ERROR_MARKERS = ("Unmapped finish_reason",)
+
+
+class _TurnErrorHandler(_logging.Handler):
+    def emit(self, record: _logging.LogRecord) -> None:  # pragma: no cover - trivial
+        global _TURN_ERROR_COUNT
+        try:
+            msg = record.getMessage()
+            if any(m in msg for m in _TURN_ERROR_MARKERS):
+                _TURN_ERROR_COUNT += 1
+        except Exception:
+            pass
+
+
+def _install_turn_error_handler() -> None:
+    logger = _logging.getLogger("LiteLLM")
+    if not any(isinstance(h, _TurnErrorHandler) for h in logger.handlers):
+        logger.addHandler(_TurnErrorHandler())
+
+
+_install_turn_error_handler()
+
+
+def turn_error_count() -> int:
+    """Process-wide count of provider turn errors observed so far. Callers
+    snapshot before/after a run to attribute errors to that run."""
+    return _TURN_ERROR_COUNT
+
+
 class ProviderAuthError(RuntimeError):
     """Raised when a provider rejects the request for auth reasons.
 

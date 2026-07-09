@@ -511,6 +511,9 @@ class LoopResult:
     # the per-model 360 comparison.
     tokens_in: int | None = None
     tokens_out: int | None = None
+    # Provider turn errors observed during this run (finish_reason='error'
+    # turns a provider normalized away): transport noise vs model weakness.
+    provider_turn_errors: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -522,6 +525,7 @@ class LoopResult:
             "text_only": self.text_only,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
+            "provider_turn_errors": self.provider_turn_errors,
         }
 
 
@@ -576,6 +580,11 @@ class AgentLoop:
         # provider reports usage). Stamped onto the LoopResult by _finalize.
         self._tokens_in: int | None = None
         self._tokens_out: int | None = None
+        try:
+            from .provider_adapter import turn_error_count
+            self._turn_errors_at_start = turn_error_count()
+        except Exception:
+            self._turn_errors_at_start = None
 
     def _track_usage(self, resp: Any) -> None:
         usage = getattr(resp, "usage", None)
@@ -591,6 +600,13 @@ class AgentLoop:
     def _finalize(self, result: "LoopResult") -> "LoopResult":
         result.tokens_in = self._tokens_in
         result.tokens_out = self._tokens_out
+        if self._turn_errors_at_start is not None:
+            try:
+                from .provider_adapter import turn_error_count
+                result.provider_turn_errors = (
+                    turn_error_count() - self._turn_errors_at_start)
+            except Exception:
+                pass
         return result
 
     # --- run-state paths (INV-5) --------------------------------------------

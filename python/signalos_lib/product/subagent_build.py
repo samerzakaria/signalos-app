@@ -771,6 +771,84 @@ def _evidence_message(repo_root: Path, project_id: str, stack: _StackContext,
 
 
 # ---------------------------------------------------------------------------
+# Traceability matrix -- the build's LIVE decision state, persisted on every
+# change. One row per plan task: criterion/task -> declared files -> test ->
+# result -> attempts -> dependency disposition. The loop's control decisions
+# (skip / block / fail-stop / proceed) are READS of this object, and the
+# on-disk artifact is the same object's latest snapshot -- so the audit trail
+# can never drift from what the loop actually decided, and a crashed run
+# leaves an exact, current matrix behind.
+# ---------------------------------------------------------------------------
+
+class _TraceMatrix:
+    REL_PATH = ".signalos/traceability.json"
+
+    def __init__(self, repo_root: Path, tasks: "list[Task]"):
+        self.repo_root = Path(repo_root)
+        self.rows: "dict[str, dict]" = {
+            t.id: {
+                "task": t.id,
+                "name": t.name,
+                "deps": list(t.deps),
+                "files_declared": list(t.files),
+                "test": t.test or None,
+                "status": "pending",   # pending | green | pre-existing-green |
+                                        # failed | blocked | drafted-no-test
+                "attempts": 0,
+                "blocked_by": [],
+            }
+            for t in tasks
+        }
+        self.persist()
+
+    def set(self, task_id: str, **fields: Any) -> None:
+        row = self.rows.get(task_id)
+        if row is None:
+            return
+        row.update(fields)
+        self.persist()
+
+    def bump_attempts(self, task_id: str) -> None:
+        row = self.rows.get(task_id)
+        if row is not None:
+            row["attempts"] = int(row.get("attempts") or 0) + 1
+            self.persist()
+
+    def failed_or_blocked(self, ids: "list[str]") -> "list[str]":
+        return [i for i in ids
+                if self.rows.get(i, {}).get("status") in ("failed", "blocked")]
+
+    def ids_with_status(self, *statuses: str) -> "list[str]":
+        return [i for i, r in self.rows.items() if r.get("status") in statuses]
+
+    def all_green(self) -> bool:
+        return all(r.get("status") in ("green", "pre-existing-green",
+                                       "drafted-no-test")
+                   for r in self.rows.values())
+
+    def snapshot(self, **extra: Any) -> dict:
+        return {"schema_version": "signalos.traceability.v1",
+                "rows": list(self.rows.values()), **extra}
+
+    def persist(self, **extra: Any) -> None:
+        """Best-effort write; the matrix must never break the build."""
+        try:
+            import json as _json
+            path = self.repo_root / self.REL_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # files_present resolved at write time (cheap, always current)
+            for r in self.rows.values():
+                r["files_present"] = [
+                    f for f in r.get("files_declared", [])
+                    if (self.repo_root / f).is_file()
+                ]
+            path.write_text(_json.dumps(self.snapshot(**extra), indent=2) + "\n",
+                            encoding="utf-8")
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -949,8 +1027,7 @@ def run_subagent_driven_build(
 
     summary: list[str] = []
     calls = 0
-    failed_tasks: list[str] = []
-    blocked_tasks: list[str] = []
+    matrix = _TraceMatrix(repo_root, tasks)
 
     # PHASE 0 -- PREFLIGHT: verify every precondition BEFORE the first model
     # dispatch (zero LLM spend on a broken repo). Fail loud with exactly which
@@ -982,20 +1059,22 @@ def run_subagent_driven_build(
     # signal + product value). Only its DEPENDENTS are skipped -- for free --
     # because paying to build on a red prerequisite is the actual waste.
     for task in tasks:
-        blocked_by = [d for d in task.deps if d in failed_tasks or d in blocked_tasks]
+        # CONTROL DECISION 1 (matrix read): block when any prerequisite row
+        # is failed/blocked -- skipped for free.
+        blocked_by = matrix.failed_or_blocked(task.deps)
         if blocked_by:
-            blocked_tasks.append(task.id)
+            matrix.set(task.id, status="blocked", blocked_by=blocked_by)
             emit({"type": "system",
                   "text": f"Skipping “{task.name}” — its prerequisite "
                           f"({', '.join(blocked_by)}) did not pass."})
             summary.append(f"{task.id} blocked_by={','.join(blocked_by)}")
             continue
-        # Resume/skip: if this task's plan test ALREADY passes (a resumed or
-        # partially-built repo), don't pay an implementer to redo green work --
-        # the objective gate, not an LLM, made that call.
+        # CONTROL DECISION 2 (objective read): the task's plan test ALREADY
+        # passes (resumed/partially-built repo) -- skip, spend nothing.
         if task.test:
             ok, errs = check(repo_root, task.test)
             if ok:
+                matrix.set(task.id, status="pre-existing-green")
                 emit({"type": "system", "text": f"“{task.name}” already passes its test — skipping."})
                 summary.append(f"{task.id} test_green=True (pre-existing)")
                 continue
@@ -1003,6 +1082,7 @@ def run_subagent_driven_build(
         run("implementer", adapter, impl_sys,
             _implementer_message(task, context, repo_root, stack, project_id))
         calls += 1
+        matrix.bump_attempts(task.id)
         # OBJECTIVE per-task green gate (only when the plan gave this task a test).
         if task.test:
             ok, errs = check(repo_root, task.test)
@@ -1018,17 +1098,22 @@ def run_subagent_driven_build(
                     _implementer_message(task, context, repo_root, stack,
                                          project_id, fix_feedback=feedback))
                 calls += 1
+                matrix.bump_attempts(task.id)
                 ok, errs = check(repo_root, task.test)
+            matrix.set(task.id, status="green" if ok else "failed")
             summary.append(f"{task.id} test_green={ok}")
             if not ok:
-                failed_tasks.append(task.id)
                 emit({"type": "system",
                       "text": f"“{task.name}” failed its gate after the fix budget — "
                               "continuing with tasks that don't depend on it."})
         else:
+            matrix.set(task.id, status="drafted-no-test")
             summary.append(f"{task.id}: drafted (no plan test)")
 
+    failed_tasks = matrix.ids_with_status("failed")
+    blocked_tasks = matrix.ids_with_status("blocked")
     if failed_tasks or blocked_tasks:
+        matrix.persist(phase="stopped-red", integration_green=False)
         # FAIL FAST at the PHASE level: with any task red/blocked the build can
         # never sign, so integration/review/evidence would be paid spend on a
         # refused build. Every attemptable task was still attempted above.
@@ -1082,6 +1167,7 @@ def run_subagent_driven_build(
                   if green else "Build still has errors after the repair budget — "
                                 "stopping (fail-fast)."})
     summary.append(f"integration_green={green}")
+    matrix.persist(phase="integration", integration_green=green)
 
     if not green:
         # FAIL FAST: integration definitively failed its budget. Review and

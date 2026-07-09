@@ -115,6 +115,16 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             "npx vitest",
             "npx tsc",
             "npx vite",
+            # Read-only shell idioms models reach for; denying them only burns
+            # a turn re-routing to the equivalent tool (read allowlist is **
+            # at T2 anyway, so these grant nothing new).
+            "ls",
+            "dir",
+            "cat",
+            "pwd",
+            "head",
+            "tail",
+            "wc",
             "pytest",
             "python -m pytest",
             "go test",
