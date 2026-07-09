@@ -907,8 +907,3 @@ def select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
         return "node-api"
 
     return "generic"
-
-
-def _select_greenfield_profile(repo_root: Path, intent: dict[str, Any]) -> str:
-    """Compatibility wrapper for older internal tests/imports."""
-    return select_greenfield_profile(repo_root, intent)

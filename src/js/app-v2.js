@@ -14,8 +14,7 @@
  */
 
 import * as ipc from "./ipc.js";
-import { isFinished as wizardFinished, resetWizard } from "./wizard.js";
-import { activeBuildId, appendTurn, loadHistory as loadConvHistory } from "./conversation.js";
+import { isFinished as wizardFinished } from "./wizard.js";
 import { loadDashboard } from "./ui/dashboard.js";
 import { loadBuild, addAIBubble, appendStreamToken, finaliseStream, showStreamError } from "./ui/chat.js";
 

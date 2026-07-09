@@ -103,6 +103,7 @@ export const updateCheck = signal<UpdateCheck>({
 });
 
 export const brainFilter = signal<string>('all');
+export const brainSearch = signal<string>('');
 export const revealedSecrets = signal<Record<string, string>>({});
 export const copiedSecret = signal<string | null>(null);
 export const vaultMessage = signal<string | null>(null);

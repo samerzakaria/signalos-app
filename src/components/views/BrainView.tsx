@@ -1,8 +1,15 @@
-import { brainList, brainFilter } from '../../state';
+import { brainList, brainFilter, brainSearch } from '../../state';
 import { viewClass } from '../viewShell';
 
 export function BrainView() {
-  const entries = brainList.value;
+  const query = brainSearch.value.trim().toLowerCase();
+  const entries = query
+    ? brainList.value.filter((e) => {
+        const title = (e.title || e.text || '').toLowerCase();
+        const body = (e.body || e.text || '').toLowerCase();
+        return title.includes(query) || body.includes(query);
+      })
+    : brainList.value;
   const filter = brainFilter.value;
   const cls = (f: string) => filter === f ? 'brain-type active' : 'brain-type';
 
@@ -17,7 +24,7 @@ export function BrainView() {
           <div style={{ 'display': 'flex', 'alignItems': 'center', 'gap': '12px', 'marginBottom': '4px' }}>
             <div className="sb-search" style={{ 'flex': '1', 'margin': '0' }}>
               <i className="ti ti-search"></i>
-              <input placeholder="Search notes and decisions…"/>
+              <input placeholder="Search notes and decisions…" value={brainSearch.value} onInput={(e) => { brainSearch.value = (e.target as HTMLInputElement).value; }}/>
             </div>
             <button className="btn btn-soft" onClick={() => window.addBrainEntry()}><i className="ti ti-plus"></i> Add note</button>
           </div>

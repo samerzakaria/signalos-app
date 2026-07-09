@@ -52,14 +52,12 @@ pub struct AuditEntry {
 
 pub struct GovernanceState {
     pub wave: Mutex<Option<WaveSnapshot>>,
-    pub audit: Mutex<Vec<AuditEntry>>,
 }
 
 impl Default for GovernanceState {
     fn default() -> Self {
         Self {
             wave: Mutex::new(Some(Self::default_wave())),
-            audit: Mutex::new(vec![]),
         }
     }
 }

@@ -401,38 +401,6 @@ class LiteLLMAgentProvider:
                 return
 
 
-def _normalize_litellm_model_legacy_unused(model: str) -> str:
-    """Route a bare model name to the correct LiteLLM provider path.
-
-    A bare ``gemini-*`` name is ambiguous to LiteLLM and falls through to its
-    Vertex AI path, which requires a Google Cloud service account (the
-    ``ModuleNotFoundError: No module named 'google'`` failure). A ``GEMINI_API_KEY``
-    is a Google *AI Studio* key, which LiteLLM only routes when the model is
-    explicitly prefixed ``gemini/``. We add that prefix when an AI Studio key is
-    present and the caller has not already chosen a provider path (no ``/``).
-
-    Ollama is a local server, not a keyed provider: LiteLLM only routes to the
-    localhost daemon when the model is prefixed ``ollama/``. Callers select it by
-    passing that prefix explicitly (respected by the path passthrough below) —
-    we do NOT infer it from a global env var, because a single process may mix
-    providers (e.g. the smoke harness) and a cloud model must never be mangled.
-
-    Models that already carry a provider prefix (``gemini/``, ``vertex_ai/``,
-    ``ollama/``, ``openai/`` ...) are left untouched, as are anthropic/openai
-    bare names that LiteLLM resolves correctly on their own.
-    """
-    import os
-
-    m = (model or "").strip()
-    if "/" in m:
-        return m  # caller chose an explicit provider path — respect it
-    if m.lower().startswith("gemini") and (
-        os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    ):
-        return f"gemini/{m}"
-    return m
-
-
 _PROVIDER_PREFIX_BY_NAME: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",

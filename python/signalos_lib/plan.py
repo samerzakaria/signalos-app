@@ -37,8 +37,6 @@ from typing import Any
 VALID_STATUSES = frozenset({"pending", "in_progress", "done", "blocked", "skipped"})
 VALID_TIERS = frozenset({"T1", "T2", "T3"})
 
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent / "core" / "execution" / "plan" / "PLAN_SCHEMA.json"
-
 # Crockford base32 alphabet (upper-case, no I/L/O/U)
 _B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -274,10 +272,6 @@ def dump_tasks(doc: PlanDoc, path: str | Path) -> None:
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
-
-class ValidationError(Exception):
-    """Raised when a plan document fails validation."""
-
 
 def validate_tasks(doc: PlanDoc) -> list[str]:
     """Validate *doc* and return a list of error strings (empty = valid).

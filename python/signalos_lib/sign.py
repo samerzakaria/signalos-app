@@ -23,7 +23,6 @@ __all__ = [
 import hashlib
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import subprocess

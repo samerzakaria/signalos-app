@@ -935,6 +935,30 @@ def run_subagent_driven_build(
     calls = 0
     failed_task: Optional[str] = None
 
+    # PHASE 0 -- PREFLIGHT: verify every precondition BEFORE the first model
+    # dispatch (zero LLM spend on a broken repo). Fail loud with exactly which
+    # precondition is broken -- never degrade silently into a doomed walk.
+    # Skipped when a custom build_check is injected (unit tests / callers that
+    # deliberately simulate repo states preflight would reject).
+    if build_check is None:
+        from .preflight import validate_build_readiness
+        problems = validate_build_readiness(
+            repo_root, project_id=project_id,
+            enforcement_provider=enforcement_provider)
+        if problems:
+            detail = "; ".join(problems[:10])
+            emit({"type": "system",
+                  "text": f"Build preflight failed -- fix before building: {detail}"})
+            return LoopResult(
+                run_id="g4-subagent-build",
+                status="error",
+                final_text="Build preflight failed (no model was dispatched, "
+                           "nothing was spent):\n- " + "\n- ".join(problems),
+                tool_calls_made=0,
+                messages=[],
+                error=f"preflight failed: {detail}",
+            )
+
     # PHASE 1 -- per task, test-first, drive to green BEFORE the next task.
     for task in tasks:
         # Resume/skip: if this task's plan test ALREADY passes (a resumed or
