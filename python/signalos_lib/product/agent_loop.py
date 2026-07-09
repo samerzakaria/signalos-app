@@ -418,6 +418,55 @@ def _command_denied(command: str, denylist: list[str]) -> str | None:
     return None
 
 
+def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
+    """Return the first command token that names a filesystem path OUTSIDE
+    *repo_root*, or None when every path stays within the workspace.
+
+    run_command executes with shell=True and cwd=repo_root and allows read
+    utilities (cat/type/ls/head/tail/npx vitest/npx tsc ...). Without this guard
+    a model could read files outside the repo -- e.g. `cat ../../gold/x`,
+    `type ..\\..\\gold\\x`, `ls c:/tmp/prove-a`, or
+    `npx vitest run ../../gold/x.test.ts` -- and exfiltrate a hidden gold test
+    suite stored outside the workspace.
+
+    To minimize false positives only genuine path tokens are inspected: flags
+    (leading '-') are skipped, and a bare word with no separator, that is not
+    absolute and has no '..' segment (npx, vitest, run, cat, src, *.ts globs) is
+    left alone. Candidates are resolved against the workspace; anything that does
+    not resolve to repo_root or a descendant of it is reported. Windows drive
+    letters and case-insensitivity fall out of Path.resolve()/comparison.
+    """
+    if not command or not command.strip():
+        return None
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        tokens = command.split()
+    try:
+        root = repo_root.resolve()
+    except (OSError, RuntimeError):
+        root = repo_root
+    for raw in tokens:
+        token = raw.strip().strip('"').strip("'")
+        if not token or token.startswith("-"):
+            continue
+        has_sep = "/" in token or "\\" in token
+        is_abs = os.path.isabs(token)
+        has_dotdot = ".." in re.split(r"[\\/]", token)
+        # Bare words / globs without a separator-escape are always in-workspace.
+        if not (has_sep or is_abs or has_dotdot):
+            continue
+        try:
+            cand = Path(token).resolve() if is_abs else (root / token).resolve()
+        except (OSError, RuntimeError, ValueError):
+            # Malformed/unresolvable path -> fail closed and deny it.
+            return token
+        if cand == root or root in cand.parents:
+            continue
+        return token
+    return None
+
+
 def redact_secrets(text: str) -> str:
     """Redact secret-looking substrings from command output (2.5/2.9)."""
     if not text:
@@ -1131,6 +1180,16 @@ class AgentLoop:
                 raise ToolPolicyError(
                     f"Command matches forbidden action '{denied}'.",
                     rule="secret-block",
+                )
+            # Path containment: the execute allowlist (cat/type/ls/head/tail/
+            # npx vitest/npx tsc ...) must never reach files outside the
+            # workspace via `../` traversal or an absolute path -- otherwise a
+            # model could read a hidden gold suite stored beside the repo.
+            escaping = _command_escapes_workspace(command, self.repo_root)
+            if escaping:
+                raise ToolPolicyError(
+                    f"command references a path outside the workspace: {escaping}",
+                    rule="path-escape",
                 )
             if enf.rule_enabled("trust-tier"):
                 allow = enf.tier_paths("execute")

@@ -636,6 +636,62 @@ def _read_test(repo_root: Path, test_path: str, project_id: str) -> str:
         return ""
 
 
+def _impl_digest(repo_root: Path, task: Task, project_id: str) -> str:
+    """A short summary of the task's target implementation files (path + head),
+    for the dispute arbiter -- enough to reason about impl vs test fault without
+    the builder's failed-attempt transcript."""
+    out: list[str] = []
+    for rel in (getattr(task, "files", None) or [])[:3]:
+        p = _workspace_path(repo_root, rel, project_id)
+        try:
+            if p and p.is_file():
+                head = p.read_text(encoding="utf-8", errors="replace")[:800]
+                out.append(f"// {rel}\n{head}")
+            else:
+                out.append(f"// {rel} (not written)")
+        except OSError:
+            out.append(f"// {rel} (unreadable)")
+    return "\n\n".join(out)
+
+
+def _diagnose_deadlock(repo_root: Path, task: Task, errs: str, reviewer, adapter,
+                       run, stack, project_id: str) -> dict:
+    """When a task deadlocks (fix budget exhausted, still red), decide whether the
+    TEST is broken (dispute) or the impl is just wrong. Deterministic health
+    check first (zero LLM); then, only if a genuinely DIFFERENT model is wired, a
+    fresh-context second-opinion classify. Never edits the test. Returns
+    {disputed, reason, source, used_arbiter}."""
+    from .test_dispute import (arbiter_messages, deterministic_test_health,
+                               parse_arbiter_verdict, record_dispute)
+    test_src = _read_test(repo_root, task.test, project_id)
+    health = deterministic_test_health(test_src, errs)
+    if health["broken"]:
+        record_dispute(repo_root, task.id, task.name, health["reason"],
+                       "deterministic", task.test)
+        return {"disputed": True, "reason": health["reason"],
+                "source": "deterministic", "used_arbiter": False}
+    # Second opinion only when a genuinely different model/vendor is configured
+    # (reviewer is adapter when none was) -- a same-model self-diagnosis inherits
+    # the builder's anchoring and adds spend for little signal.
+    if reviewer is not adapter:
+        sysm, usrm = arbiter_messages(
+            task.name, test_src, errs, _impl_digest(repo_root, task, project_id))
+        try:
+            verdict_text = run("test-arbiter", reviewer, sysm, usrm)
+        except Exception:
+            verdict_text = ""
+        v = parse_arbiter_verdict(verdict_text)
+        if v["test_broken"]:
+            record_dispute(repo_root, task.id, task.name, v["reason"],
+                           "arbiter", task.test)
+            return {"disputed": True, "reason": v["reason"],
+                    "source": "arbiter", "used_arbiter": True}
+        return {"disputed": False, "reason": v["reason"],
+                "source": "arbiter", "used_arbiter": True}
+    return {"disputed": False, "reason": health["reason"],
+            "source": "deterministic", "used_arbiter": False}
+
+
 def _implementer_message(task: Task, context: str, repo_root: Path,
                          stack: _StackContext, project_id: str = "default",
                          fix_feedback: str = "") -> str:
@@ -1172,12 +1228,39 @@ def run_subagent_driven_build(
                 calls += 1
                 matrix.bump_attempts(task.id)
                 ok, errs = check(repo_root, task.test)
-            matrix.set(task.id, status="green" if ok else "failed")
-            summary.append(f"{task.id} test_green={ok}")
-            if not ok:
-                emit({"type": "system",
-                      "text": f"“{task.name}” failed its gate after the fix budget — "
-                              "continuing with tasks that don't depend on it."})
+            if ok:
+                matrix.set(task.id, status="green")
+                summary.append(f"{task.id} test_green=True")
+            else:
+                # ESCAPE VALVE (test-dispute): a red deadlock is NOT proof the
+                # CODE is wrong -- the plan-authored test itself may be broken/
+                # unpassable (a hallucinated assertion, or a literal always-fail
+                # stub). Diagnose it -- deterministic health check first (zero
+                # LLM), then a SECOND-OPINION classify on a genuinely DIFFERENT
+                # model with FRESH context -- instead of silently blaming the
+                # model. A broken test is RECORDED as a dispute for a separate
+                # arbiter; the builder never edits its own exam, and scheduling
+                # is unchanged (status stays 'failed' so dependent-skip and
+                # fail-fast are intact).
+                matrix.set(task.id, status="failed")
+                summary.append(f"{task.id} test_green=False")
+                dispute = _diagnose_deadlock(
+                    repo_root, task, errs, reviewer, adapter, run, stack,
+                    project_id)
+                if dispute.get("used_arbiter"):
+                    calls += 1
+                if dispute["disputed"]:
+                    emit({"type": "system",
+                          "text": f"“{task.name}” DISPUTED — the plan test appears "
+                                  f"broken/unpassable ({dispute['source']}): "
+                                  f"{dispute['reason']}. Recorded for arbiter review; "
+                                  "the build never edits its own exam."})
+                    summary.append(
+                        f"{task.id} test_disputed[{dispute['source']}]: {dispute['reason']}")
+                else:
+                    emit({"type": "system",
+                          "text": f"“{task.name}” failed its gate after the fix budget — "
+                                  "continuing with tasks that don't depend on it."})
         else:
             matrix.set(task.id, status="drafted-no-test")
             summary.append(f"{task.id}: drafted (no plan test)")
