@@ -310,6 +310,41 @@ class TestOrchestration(unittest.TestCase):
         self.assertEqual(fixer_calls[2][0], "CRITIC")
         self.assertIn("FRESH reviewer-model pass", fixer_calls[2][1])
 
+    def test_repair_test_import_depths_is_deterministic(self):
+        """The plan may ship a test with a wrong relative import DEPTH; the
+        correct number of `../` is computed from the file's directory depth and
+        fixed in Python -- the model never touches the spec. Assertions and
+        already-correct imports are byte-untouched."""
+        from signalos_lib.product.subagent_build import (
+            decompose_plan_tasks, repair_test_import_depths)
+        d = Path(tempfile.mkdtemp())
+        # a plan task whose test sits 5 dirs deep but imports at 2 levels
+        plan = d / "core" / "execution" / "PLAN.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(
+            "### T1 — Store\n**Files:** `src/store/s.ts`\n"
+            "**Test:** `core/execution/tests/skeletons/wave-1/T1.test.ts`\n\n"
+            "### T2 — Ok\n**Files:** `src/f.ts`\n"
+            "**Test:** `core/execution/tests/skeletons/wave-1/T2.test.ts`\n",
+            encoding="utf-8")
+        tdir = d / "core" / "execution" / "tests" / "skeletons" / "wave-1"
+        tdir.mkdir(parents=True, exist_ok=True)
+        (tdir / "T1.test.ts").write_text(
+            "import { s } from '../../src/store/s';\n"
+            "test('a', () => expect(s).toBe(42));\n", encoding="utf-8")
+        (tdir / "T2.test.ts").write_text(  # already correct depth
+            "import { f } from '../../../../../src/f';\ntest('b', () => {});\n",
+            encoding="utf-8")
+        tasks = decompose_plan_tasks(d, "default")
+        reps = repair_test_import_depths(d, tasks, "src", "default")
+        self.assertEqual(len(reps), 1)                          # only T1 wrong
+        self.assertEqual(reps[0][1:], ("../../", "../../../../../"))
+        t1 = (tdir / "T1.test.ts").read_text(encoding="utf-8")
+        self.assertIn("'../../../../../src/store/s'", t1)       # depth fixed
+        self.assertIn("expect(s).toBe(42)", t1)                 # assertion intact
+        t2 = (tdir / "T2.test.ts").read_text(encoding="utf-8")
+        self.assertIn("'../../../../../src/f'", t2)             # correct left alone
+
     def test_decompose_prefers_plan_tasks_with_files_and_test(self):
         tasks = decompose_tasks(_repo_with_plan(), "x")
         self.assertEqual([t.id for t in tasks], ["T1", "T2"])

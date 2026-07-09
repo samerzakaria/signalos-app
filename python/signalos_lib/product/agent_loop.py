@@ -288,6 +288,16 @@ def _matches_forbidden_path(path: str, forbidden: list[str]) -> bool:
     return False
 
 
+def _is_plan_test_path(path: str) -> bool:
+    """True for a plan-authored acceptance test (the signed spec). These live
+    under the plan's test tree (core/execution/tests/**) and are read-only to
+    the build agent -- see the 'spec-immutable' rule."""
+    normed = _norm(path)
+    return (normed.startswith("core/execution/tests/")
+            and (".test." in normed or ".spec." in normed
+                 or "/test_" in normed or normed.endswith("_test.py")))
+
+
 def _is_governance_path(path: str) -> bool:
     """No direct governance-file edits (2.5): anything under .signalos/."""
     normed = _norm(path)
@@ -1027,6 +1037,19 @@ class AgentLoop:
             path = str(args.get("path", "")).strip()
             if not path:
                 raise ToolPolicyError("write requires a non-empty path")
+            # Spec immutability: the plan-authored acceptance tests are the
+            # SIGNED SPEC the build is graded against. At the BUILD gate the
+            # model must never edit them (import paths are repaired
+            # deterministically before the run), so a weak model cannot corrupt
+            # the exam it is measured on. The earlier gates that AUTHOR these
+            # tests (plan/design) are unaffected -- the guard is build-scoped.
+            if self.active_gate == "G4" and _is_plan_test_path(path):
+                raise ToolPolicyError(
+                    f"'{path}' is a plan-authored acceptance test (the signed "
+                    "spec) and is read-only during the build; make it pass by "
+                    "implementing the product, not by editing the test.",
+                    rule="spec-immutable",
+                )
             is_impl_write = _is_implementation_path(path)
             if self.execution_context == "conversation":
                 raise ToolPolicyError(

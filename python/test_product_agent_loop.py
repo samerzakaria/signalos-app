@@ -625,6 +625,27 @@ class TestGovernance(unittest.TestCase):
             self.assertTrue((root / "src" / "App.test.tsx").is_file())
             self.assertTrue((root / "src" / "App.tsx").is_file())
 
+    def test_plan_authored_test_is_read_only_to_the_agent(self):
+        """Spec immutability: the plan's acceptance tests (core/execution/
+        tests/**) are the signed spec the build is graded on. The agent must
+        never edit them -- a weak model repairing/altering the exam it is
+        measured against is the root cause of thrash-and-fail (import-depth
+        edits, weakened assertions). Denied with rule 'spec-immutable'."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(script=[
+                _tool_resp("edit_file", {
+                    "path": "core/execution/tests/skeletons/wave-1/T1.test.ts",
+                    "old_string": "../../src", "new_string": "../../../../../src"}),
+                _end_resp(),
+            ])
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "edit the plan test")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            self.assertIn("DENIED", tool_msgs[0]["content"])
+            self.assertIn("read-only", tool_msgs[0]["content"])
+
     def test_g4_plan_authored_test_satisfies_test_first(self):
         """Regression: the plan gate authors acceptance tests under
         core/execution/tests/**. A module referenced by such a test must be

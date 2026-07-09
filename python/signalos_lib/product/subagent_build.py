@@ -173,6 +173,66 @@ def _workspace_path(repo_root: Path, rel_path: str, project_id: str) -> Optional
         return None
 
 
+# A relative import that points at the repo-root source tree, e.g.
+# `from '../../src/store/x'` or `import('../../../src/utils/y')`.
+_REL_SRC_IMPORT_RE = re.compile(
+    r"""(?P<pre>(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"])"""
+    r"""(?P<dots>(?:\.\./)+)"""
+    r"""(?P<tail>%s/[^'"]+)"""
+    r"""(?P<post>['"])"""
+)
+
+
+def repair_test_import_depths(repo_root: Path, tasks: "list[Task]",
+                              source_dir: str, project_id: str = "default") -> list:
+    """Deterministically correct the relative import DEPTH of plan-authored
+    tests. A plan may ship `from '../../src/...'` from a directory several levels
+    deep; the correct number of `../` is COMPUTABLE from the file's depth
+    relative to the repo root -- it is arithmetic, not a judgment call. We do it
+    in Python so no model ever has to (delegating it to the LLM turned a fixed
+    computation into a guessing game that burned weak models' fix budgets).
+
+    Only the `../`-prefix of a repo-root source import is rewritten; assertions,
+    identifiers, and everything else are byte-untouched. Returns the list of
+    (rel_path, old_prefix, new_prefix) repairs made."""
+    src_alt = re.escape(source_dir.strip("/")) if source_dir and source_dir != "src" else ""
+    pat = _REL_SRC_IMPORT_RE.pattern % (
+        f"(?:src|{src_alt})" if src_alt else "src")
+    rx = re.compile(pat)
+    repairs: list = []
+    seen: set = set()
+    for task in tasks:
+        if not task.test or task.test in seen:
+            continue
+        seen.add(task.test)
+        p = _workspace_path(repo_root, task.test, project_id)
+        if p is None or not p.is_file():
+            continue
+        try:
+            rel_dir = p.parent.resolve().relative_to(repo_root.resolve())
+        except (ValueError, OSError):
+            continue
+        correct = "../" * len(rel_dir.parts)  # depth from repo root = # of `../`
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        def _fix(m: "re.Match") -> str:
+            if m.group("dots") == correct:
+                return m.group(0)
+            repairs.append((task.test, m.group("dots"), correct))
+            return m.group("pre") + correct + m.group("tail") + m.group("post")
+
+        new = rx.sub(_fix, text)
+        if new != text:
+            try:
+                p.write_text(new, encoding="utf-8")
+            except OSError:
+                pass
+    return repairs
+
+
 # ---------------------------------------------------------------------------
 # Bundled skill loading (assemble, don't rebuild)
 # ---------------------------------------------------------------------------
@@ -598,9 +658,9 @@ def _implementer_message(task: Task, context: str, repo_root: Path,
             f"(RED -> GREEN) by implementing the product {src_hint}. Rules:",
             "- Do NOT write a new or duplicate test, and do NOT copy this test "
             "anywhere else. This test file, at this path, IS the test.",
-            "- Do NOT weaken, delete, or alter its assertions.",
-            "- The ONLY thing you may change in the test file is a BROKEN import "
-            "path (e.g. fix the relative depth) so it resolves to the real module "
+            "- The test file is READ-ONLY. Do NOT edit it at all -- not its "
+            "assertions, not its imports. Its import paths are already correct; "
+            "make the test pass by implementing the modules it imports "
             f"{src_hint}. Target implementation files: {', '.join(task.files) or src_hint}.",
             "- Run this one test to green via run_command.",
             "",
@@ -692,12 +752,10 @@ def _fixer_message(errors: str, repo_root: Path, stack: _StackContext) -> str:
         _batch_errors(errors),
         "",
         f"Fix these in real source {src_hint}:",
-        "- The tests are the SIGNED SPEC. Never delete, weaken, or trivially "
-        "satisfy a test to make it pass. If a test imports a module that does not "
-        "exist, CREATE that module as a REAL, functional implementation "
-        f"{src_hint}.",
-        "- If a plan test's IMPORT PATH is broken (wrong relative depth), you MAY "
-        "fix only that import path so it resolves -- but not its assertions.",
+        "- The tests are the SIGNED SPEC and are READ-ONLY -- never edit, delete, "
+        "weaken, or trivially satisfy a test (imports included; their paths are "
+        "already correct). If a test imports a module that does not exist, CREATE "
+        f"that module as a REAL, functional implementation {src_hint}.",
         "- If an assertion fails because the IMPLEMENTATION is wrong, fix the "
         "implementation to satisfy the test (the test encodes the required "
         "behavior).",
@@ -1029,7 +1087,21 @@ def run_subagent_driven_build(
     calls = 0
     matrix = _TraceMatrix(repo_root, tasks)
 
-    # PHASE 0 -- PREFLIGHT: verify every precondition BEFORE the first model
+    # PHASE 0a -- deterministic spec repair: a plan test may ship with a wrong
+    # relative import depth (e.g. `../../src/...` from a 5-deep directory). The
+    # correct depth is arithmetic, so we fix it in Python BEFORE the run -- the
+    # model never has to (and must not: the spec is read-only to it). Runs only
+    # on the real path (a custom build_check means a unit test simulating state).
+    if build_check is None:
+        repairs = repair_test_import_depths(
+            repo_root, tasks, stack.source_dir, project_id)
+        if repairs:
+            emit({"type": "system",
+                  "text": f"Repaired {len(repairs)} plan-test import path(s) so the "
+                          "acceptance tests resolve (deterministic, spec assertions "
+                          "untouched)."})
+
+    # PHASE 0b -- PREFLIGHT: verify every precondition BEFORE the first model
     # dispatch (zero LLM spend on a broken repo). Fail loud with exactly which
     # precondition is broken -- never degrade silently into a doomed walk.
     # Skipped when a custom build_check is injected (unit tests / callers that
