@@ -8,6 +8,34 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Foundry governed-build hardening — audit-verified (2026-07-10)
+
+An on-disk audit confirmed 11/11 P0/P1 findings a consultant raised: the visible Foundry app
++ the benchmark harness could report "no generated code" before model quality mattered. Six
+parallel workstreams fixed them; findings were separated into *benchmark-path* (what scores
+the models) vs *desktop-path* (what a real user hits). A cross-vendor panel ($0.26) ranked the
+tool-call fix. Offline suite after: **2363 passed, 0 failed**.
+
+| # | Issue | Root cause | Fix | Location | Verified | Commit |
+|---|-------|-----------|-----|----------|----------|--------|
+| 54 | **Capable models (glm/qwen) scored as producing nothing** — narrate a plan, emit no tool call, run deadlocks | `stop_reason != "tool_use"` treated a no-tool-call turn (and `max_tokens` truncation) as `completed`; the subagent wrapper discarded `LoopResult.status` | No-tool turn in a work-expecting context is re-prompted (then guarded `tool_choice="required"` with auto-fallback); truncation is continued; a stalled run returns `stalled_no_tool`, never `completed` | `product/agent_loop.py`, `provider_adapter.py`, `subagent_build.py` | test, repro | `30bb4bb` |
+| 55 | Forced `required` could write a placeholder (empty path/content) that looks like success | tool-call presence was trusted without validating args | `_tool_call_defect` rejects empty/placeholder/unknown calls; they don't count as work, nothing is written | `product/agent_loop.py` | test | `30bb4bb` |
+| 56 | `cd frontend && npm test` denied while bare `npm test` allowed → false trust-tier denials tanked governance score | command matcher only checked the first two tokens | Validate each `&&`/`;`/`\|\|` segment; allow a leading in-workspace `cd` | `product/agent_loop.py` | test | `30bb4bb` |
+| 57 | Non-React task declared "green" without running any test (fake-green) | `_run_single_test` returned `(True,"")` when a stack had no per-test runner; caller skipped the implementer as pre-existing-green | No runner → honest `(False, …)`; implementer runs; full-suite gate remains the real check | `product/subagent_build.py` | test, repro | `30bb4bb` |
+| 58 | Model denied writing stack files it must create (`index.html`, `vite.config.ts`, `pyproject.toml`, `Cargo.toml`, `go.mod`, Next `app/**`) → deadlock-by-policy | T2 write/execute allowlist omitted real adapter files/commands | Allowlist extended to what the shipped adapters actually create/run (no `**`) | `product/enforcement_state.py` | test | `30bb4bb` |
+| 59 | Gate read "passed" on **any** signed artifact while G4 preflight required **all** → dead-end projects | `status._detect_gates` used `any()` | Fail-closed `all()` over the required manifest (matches preflight); gate-seed fixtures now sign every artifact | `status.py`, `conftest.py`, 6 wave tests | test | `30bb4bb` |
+| 60 | Selected stack lost before G4 (react → detected `generic` → Python cmds); greenfield deadlocked with no shell | `detect_profile` ignored `.signalos/profile.json`; GateOrchestrator never scaffolded | Honor `profile.json`; idempotent scaffold-first before G4 (no-op when shell exists — benchmark-safe, sha256-proven) | `product/gate_orchestrator.py`, `stacks.py` | test | `30bb4bb` |
+| 61 | "Create an authentication module" / "Add login" / any `?`-ending prompt could not build | intent classifier omitted module/library/auth/… and forced every `?` to conversation mode (writes refused) | Broadened vocabulary; dropped the blanket `?`→conversational rule | `src/js/ui/chat.js` | test, build | `f6f6e1a` |
+| 62 | Gate verdict optimistic + could advance the wrong run; a failure stranded the card | fire-and-forget send using a stale global `lastRunId`; no revert path | Verdict carries the bubble's own run_id, awaited + revertible (refusal re-opens the card) | `BuildView.tsx`, `agentEvents.ts` | test, build | `f6f6e1a` |
+| 63 | G4 progress silent; generated files unbrowsable; dep auto-repair a silent no-op; deliver killed at 10 min | dropped `system`/`gate_signed`/`delivery_complete` events; single-level tree, no expand; `read_workspace_file` passed `path` not `relative_path`; hard 600 s cap | Render those events; expandable lazy file tree; fix arg to `relative_path`; deliver uncapped | `agentEvents.ts`, `Sidebar.tsx`, `preview.ts`, `approvePlan.ts`, `chat.js`, `ipc.rs` | test, build | `f6f6e1a` |
+| 64 | Shipped sidecar could be stale (`0.0.9`, no `agent:deliver`) yet accepted → desktop can't generate | `ensure-sidecar` checked existence only; no runtime capability check | Startup capability handshake (fails loud if `agent:deliver` absent); freshness-guarding ensure scripts (+`.ps1`) | `src-tauri/src/sidecar.rs`, `signalos_ipc_server.py`, `scripts/ensure-sidecar.{sh,ps1}` | test (cargo), repro | `f6f6e1a` |
+| 65 | `agent:cancel` couldn't interrupt an in-flight delivery; nested dirs unlistable | serial stdin loop; single-level `list_workspace_dir` | Dedicated stdin reader honors cancel mid-flight; `capabilities` command; per-level dir listing with containment | `signalos_ipc_server.py`, `src-tauri/src/ipc.rs` | test (cargo) | `f6f6e1a` |
+| 66 | Offline test suite non-hermetic → slow, order-dependent, non-deterministic failures | `test_postgres_task_store._load_dotenv` loads a repo-root `.env` into `os.environ`; conftest's hermetic clear-list **omitted `OPENROUTER_API_KEY`**, leaking a live key so downstream `run_delivery` routed to a real provider. Pre-existing (pure HEAD + `.env` reproduces) | Added `OPENROUTER_API_KEY` (+`_API_BASE`/CEREBRAS/DASHSCOPE) to the hermetic clear-list | `conftest.py` | test, repro | `30bb4bb` |
+
+Deferred (documented, not benchmark-affecting): canonical `PLAN.tasks.yaml` → G4 markdown-parser unification (latent architecture split); actual sidecar `.exe` PyInstaller rebuild (must run on a build machine/CI — the new handshake+freshness guard fail loud until then).
+
+---
+
 ## Real user-journey / cockpit UX — the layer that was never e2e-tested (v3.2.4-internal.2 + follow-up)
 
 Every UI unit test mocks the Tauri bridge, so nothing ever walked the real cockpit — journey-breaking
