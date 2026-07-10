@@ -44,7 +44,6 @@ import logging
 import os
 import re
 import shlex
-import subprocess
 import sys
 import time
 import uuid
@@ -64,6 +63,7 @@ from .budgets import (
     resolve_agent_loop_tool_budget,
 )
 from .provider_adapter import ProviderAdapter
+from .sandbox import SandboxRunner, select_runner
 
 # ---------------------------------------------------------------------------
 # Constants / timeouts
@@ -2027,6 +2027,24 @@ class AgentLoop:
         # `cd frontend` alone (no following command) is a no-op at the new cwd.
         return sub, (rest or "cd .")
 
+    def _get_sandbox_runner(self) -> SandboxRunner:
+        """The runtime CONTAINMENT backend for run_command, selected once per
+        loop from SIGNALOS_SANDBOX (default = in-process = today's behavior).
+
+        This is the "boundary endgame": when a container backend is selected the
+        command runs inside a bounded OS/process boundary (workspace-only mount,
+        network off) so the in-code allowlist becomes a backstop rather than the
+        primary defense. The default keeps the current subprocess path
+        byte-identical, so nothing changes unless a caller opts in. See
+        sandbox.py. The in-code path/allowlist policy already ran in
+        _check_governance and stays in force regardless of backend.
+        """
+        runner = getattr(self, "_sandbox_runner", None)
+        if runner is None:
+            runner = select_runner(self.repo_root, emit=self._emit)
+            self._sandbox_runner = runner
+        return runner
+
     def _tool_run_command(self, command: str) -> str:
         # Cancellation: a long command honors the loop-level timeout. We do not
         # poll cancel_check mid-process; the COMMAND_TIMEOUT_S bound applies.
@@ -2034,51 +2052,28 @@ class AgentLoop:
         # CI=1: interactive/watch modes never terminate (bare `npx vitest` is
         # WATCH mode; dev servers wait forever). Test runners and CLIs almost
         # universally honor CI to run once and exit -- without this, one watch
-        # command hung a build for hours.
+        # command hung a build for hours. Passed as an environment OVERLAY: the
+        # in-process runner merges it onto os.environ (byte-identical to before);
+        # the container runner forwards ONLY these keys as -e so no host env
+        # leaks past the boundary.
         #
         # FIX 2: cwd is jailed to the workspace root (or a contained subdir a
         # leading `cd` names), so a compound `cd <abs> && x` is never required.
         run_cwd, command = self._resolve_run_cwd(command)
-        env = {**os.environ, "CI": "1", "FORCE_COLOR": "0"}
-        try:
-            proc = subprocess.run(
-                command,
-                shell=True,
-                cwd=str(run_cwd),
-                capture_output=True,
-                text=True,
-                # Force UTF-8 decoding: without an explicit encoding, text=True
-                # uses the OS locale (cp1252 on Windows), which raises
-                # UnicodeDecodeError on the non-ASCII bytes tools like npm emit --
-                # crashing the agent's own build/test commands so it can never
-                # iterate to green. errors="replace" keeps a bad byte from killing
-                # the read.
-                encoding="utf-8",
-                errors="replace",
-                timeout=COMMAND_TIMEOUT_S,
-                env=env,
-            )
-        except subprocess.TimeoutExpired:
-            # Windows: timeout kills the shell but NOT its children, and the
-            # still-open stdout handle can block past the timeout. Kill the
-            # whole tree of any lingering direct children best-effort.
-            if os.name == "nt":
-                try:
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/FI",
-                         "WINDOWTITLE eq signalos-agent-cmd"],
-                        capture_output=True, timeout=15,
-                    )
-                except Exception:
-                    pass  # best-effort tree cleanup only
+        env = {"CI": "1", "FORCE_COLOR": "0"}
+        runner = self._get_sandbox_runner()
+        exit_code, output = runner.run(command, run_cwd, COMMAND_TIMEOUT_S, env)
+        if output.timed_out:
             return (
                 f"ERROR: command timed out after {COMMAND_TIMEOUT_S}s and was "
                 f"killed: {command}. If this was a watch/serve mode command, "
                 f"use its run-once form instead."
             )
-        stdout = redact_secrets(proc.stdout or "")
-        stderr = redact_secrets(proc.stderr or "")
-        parts = [f"exit_code: {proc.returncode}"]
+        # Secret redaction + output-cap are POLICY that applies regardless of
+        # backend, so they stay here (a backstop layer over containment).
+        stdout = redact_secrets(output.stdout or "")
+        stderr = redact_secrets(output.stderr or "")
+        parts = [f"exit_code: {exit_code}"]
         if stdout.strip():
             parts.append("stdout:\n" + _cap_command_output(stdout))
         if stderr.strip():

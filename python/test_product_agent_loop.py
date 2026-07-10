@@ -328,8 +328,10 @@ class TestToolExecution(unittest.TestCase):
             )
             loop = _loop(root, provider)
 
+            # run_command now executes through the sandbox layer (default =
+            # InProcessRunner), so the subprocess it drives lives in sandbox.py.
             with patch(
-                "signalos_lib.product.agent_loop.subprocess.run",
+                "signalos_lib.product.sandbox.subprocess.run",
                 side_effect=subprocess.TimeoutExpired("long-running-command", 120),
             ):
                 result = loop.run("sys", "run a command that hangs")
@@ -1912,3 +1914,105 @@ class TestVerificationCommandClass(unittest.TestCase):
         with self.assertRaises(ToolPolicyError):
             loop._check_governance(
                 "write_file", {"path": "../outside.md", "content": "x"})
+
+
+# ---------------------------------------------------------------------------
+# Boundary endgame — run_command routes through the SandboxRunner abstraction
+# (default = InProcessRunner = today's behavior, byte-identical).
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxRouting(unittest.TestCase):
+    def test_default_backend_is_in_process(self):
+        # With SIGNALOS_SANDBOX unset, the loop selects the in-process runner,
+        # so nothing changes unless a caller opts in.
+        import os
+
+        from signalos_lib.product.sandbox import InProcessRunner
+
+        with tempfile.TemporaryDirectory() as d:
+            loop = _loop(Path(d), AgentTestProvider())
+            env = {k: v for k, v in os.environ.items() if k != "SIGNALOS_SANDBOX"}
+            with patch.dict(os.environ, env, clear=True):
+                runner = loop._get_sandbox_runner()
+            self.assertIsInstance(runner, InProcessRunner)
+
+    def test_run_command_is_dispatched_through_the_selected_runner(self):
+        # Inject a fake runner and prove _tool_run_command calls it (rather than
+        # hitting subprocess directly) and formats exit_code/stdout/stderr.
+        from signalos_lib.product.sandbox import CommandOutput
+
+        calls: list[tuple] = []
+
+        class _FakeRunner:
+            name = "fake"
+
+            def run(self, cmd, cwd, timeout, env):
+                calls.append((cmd, str(cwd), timeout, dict(env)))
+                return 0, CommandOutput("out-here", "err-here")
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=[_tool_resp("run_command", {"command": "echo hi"}), _end_resp()]
+            )
+            loop = _loop(root, provider)
+            loop._sandbox_runner = _FakeRunner()  # inject before the run
+            result = loop.run("sys", "run echo")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            content = tool_msgs[0]["content"]
+        self.assertEqual(len(calls), 1, "run_command did not route through the runner")
+        cmd, _cwd, timeout, env = calls[0]
+        self.assertEqual(cmd, "echo hi")
+        # The CI/FORCE_COLOR overlay is passed to the runner, not the whole env.
+        self.assertEqual(env, {"CI": "1", "FORCE_COLOR": "0"})
+        self.assertGreater(timeout, 0)
+        self.assertIn("exit_code: 0", content)
+        self.assertIn("out-here", content)
+        self.assertIn("err-here", content)
+
+    def test_env_selects_container_backend(self):
+        # SIGNALOS_SANDBOX=docker + a docker binary present -> ContainerRunner.
+        from signalos_lib.product.sandbox import ContainerRunner, select_runner
+
+        with tempfile.TemporaryDirectory() as d:
+            runner = select_runner(
+                Path(d),
+                environ={"SIGNALOS_SANDBOX": "docker"},
+                which=lambda name: "/usr/bin/docker" if name == "docker" else None,
+            )
+        self.assertIsInstance(runner, ContainerRunner)
+        self.assertEqual(runner.engine, "docker")
+
+    def test_default_run_command_is_byte_identical_to_in_process_runner(self):
+        # Proof the DEFAULT path is unchanged: the string _tool_run_command
+        # returns equals the string built directly from an InProcessRunner
+        # result via the same redaction + cap + formatting.
+        from signalos_lib.product import agent_loop as al
+        from signalos_lib.product.sandbox import InProcessRunner
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            loop = _loop(root, AgentTestProvider())
+            self.assertIsInstance(loop._get_sandbox_runner(), InProcessRunner)
+
+            command = "echo signalos-sandbox-proof"
+            got = loop._tool_run_command(command)
+
+            # Reconstruct the expected output independently from the runner.
+            run_cwd, cmd2 = loop._resolve_run_cwd(command)
+            exit_code, out = InProcessRunner().run(
+                cmd2, run_cwd, al.COMMAND_TIMEOUT_S, {"CI": "1", "FORCE_COLOR": "0"}
+            )
+            stdout = al.redact_secrets(out.stdout or "")
+            stderr = al.redact_secrets(out.stderr or "")
+            parts = [f"exit_code: {exit_code}"]
+            if stdout.strip():
+                parts.append("stdout:\n" + al._cap_command_output(stdout))
+            if stderr.strip():
+                parts.append("stderr:\n" + al._cap_command_output(stderr))
+            expected = "\n".join(parts)
+
+        self.assertEqual(got, expected)
+        self.assertIn("exit_code: 0", got)
+        self.assertIn("signalos-sandbox-proof", got)
