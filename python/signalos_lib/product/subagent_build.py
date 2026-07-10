@@ -35,6 +35,7 @@ from __future__ import annotations
 
 __all__ = [
     "Task",
+    "decompose_canonical_plan_tasks",
     "decompose_plan_tasks",
     "decompose_tasks",
     "parse_verdict",
@@ -51,7 +52,7 @@ from typing import Any, Callable, Optional
 
 from ..artifacts import resolve_gate_artifacts, resolve_workspace_path
 from .agent_loop import AgentLoop, LoopResult
-from .wiring_check import find_unwired_modules
+from .wiring_check import unwired_lint
 from .budgets import (
     resolve_build_doc_cap,
     resolve_build_fixer_error_batch,
@@ -347,11 +348,120 @@ def _plan_text(repo_root: Path, project_id: str) -> str:
     return ""
 
 
+# Test-shaped path detection, for deriving a canonical task's acceptance-test
+# path from its declared files when the machine plan carries no explicit test.
+_TEST_PATH_RE = re.compile(r"(?:\.test\.|\.spec\.|_test\.|(?:^|/)test_)")
+
+
+def _is_test_path(path: str) -> bool:
+    return bool(_TEST_PATH_RE.search(path.replace("\\", "/")))
+
+
+def _canonical_plan_path(repo_root: Path, project_id: str) -> Optional[Path]:
+    """Locate the CANONICAL machine plan ``PLAN.tasks.yaml``. It lives beside
+    the rendered PLAN.md (the "Plan" artifact); we also try the project-
+    namespaced canonical workspace path. None when absent."""
+    candidates: list[Path] = []
+    art = _artifact_by_label(repo_root, project_id, "Plan").get("Plan")
+    if art is not None:
+        try:
+            candidates.append(art.path.parent / "PLAN.tasks.yaml")
+        except (OSError, AttributeError):
+            pass
+    ws = _workspace_path(repo_root, "core/execution/PLAN.tasks.yaml", project_id)
+    if ws is not None:
+        candidates.append(ws)
+    seen: set = set()
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        try:
+            if c.is_file():
+                return c
+        except OSError:
+            continue
+    return None
+
+
+def _canonical_task_test(raw: dict, files: list[str]) -> "tuple[str, list[str]]":
+    """The acceptance-test path notion for a canonical task. The canonical
+    schema carries no test field, so we derive one: prefer an explicit
+    ``test`` / ``acceptance_test`` / ``acceptance_path`` key if a plan author
+    supplied one (forward-compatible), else the first test-shaped entry in the
+    task's declared files (that entry is then removed from the impl file list).
+    Returns ``(test_path, impl_files)``. A non-path sentinel ("N/A"/"none"/
+    "manual") yields no test, matching the markdown parser's own guard."""
+    test = ""
+    for key in ("test", "acceptance_test", "acceptance_path"):
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            test = val.strip()
+            break
+    impl_files = list(files)
+    if not test:
+        for f in files:
+            if _is_test_path(f):
+                test = f
+                impl_files = [x for x in files if x != f]
+                break
+    if test and ("/" not in test.replace("\\", "/")
+                 or re.match(r"^(n/?a|none|manual)\b", test, re.I)):
+        test = ""
+    return test, impl_files
+
+
+def decompose_canonical_plan_tasks(repo_root: Path,
+                                   project_id: str = "default") -> list[Task]:
+    """Parse the CANONICAL machine plan ``PLAN.tasks.yaml`` into ordered build
+    tasks (Claim 5: G4 consumes the machine plan, not only rendered markdown).
+    Each build Task carries its declared implementation files, dependency ids,
+    and a derived acceptance-test path. Empty list when there is no canonical
+    plan or it does not parse/validate -- the caller falls back to the markdown
+    parser, so the benchmark fixture's markdown-shaped plan keeps working."""
+    path = _canonical_plan_path(repo_root, project_id)
+    if path is None:
+        return []
+    try:
+        from .. import plan as _plan
+        doc = _plan.load_tasks(path)
+    except Exception:
+        return []  # invalid/absent canonical plan -> markdown fallback
+    if not doc.tasks:
+        return []
+    # Raw dicts (by id) so an optional explicit test path the typed loader drops
+    # is still available to _canonical_task_test.
+    raw_by_id: dict[str, dict] = {}
+    try:
+        import yaml  # type: ignore[import]
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for t in (data.get("tasks") or []):
+            if isinstance(t, dict) and t.get("id"):
+                raw_by_id[str(t["id"])] = t
+    except Exception:
+        raw_by_id = {}
+    tasks: list[Task] = []
+    for pt in doc.tasks:
+        raw = raw_by_id.get(pt.id, {})
+        test, impl_files = _canonical_task_test(raw, list(pt.files))
+        body = (pt.description or pt.notes or pt.title or "").strip()
+        name = (pt.title or pt.id)[:70]
+        tasks.append(Task(id=pt.id, name=name, text=body, files=impl_files,
+                          test=test, deps=list(pt.depends_on)))
+    return tasks
+
+
 def decompose_plan_tasks(repo_root: Path, project_id: str = "default") -> list[Task]:
-    """Parse the signed plan artifact into ordered build tasks, each carrying
-    its target source files and its plan-authored acceptance TEST path. Empty
-    list when there is no such structured plan (caller falls back to acceptance
+    """Parse the signed plan into ordered build tasks, each carrying its target
+    source files and its acceptance TEST path. PREFERS the canonical machine
+    plan ``PLAN.tasks.yaml`` (Claim 5); falls back to parsing the rendered
+    PLAN.md markdown for back-compat (the benchmark fixture's plan is
+    markdown-shaped, so that path must keep working). Empty list when neither
+    yields a structured task list (caller falls back to acceptance
     decomposition)."""
+    canonical = decompose_canonical_plan_tasks(repo_root, project_id)
+    if canonical:
+        return canonical
     md = _plan_text(repo_root, project_id)
     if not md:
         return []
@@ -1382,40 +1492,25 @@ def run_subagent_driven_build(
                 green, _ = check(repo_root)  # a review fix must not break the build
             summary.append(f"{kind}_review={parse_verdict(verdict)}")
 
-    # PHASE 3b -- WIRING review (in-loop, not the final fatal gate). Modules
-    # written-and-tested but never imported/composed into the running app are the
-    # dominant "green but not a product" failure (the exact reason a build passes
-    # every test yet the gate refuses it). Run the SAME shared check the G4 gate
-    # uses, HERE, and give the builder a fix pass to WIRE them -- so a wired
-    # product reaches the gate instead of dying at it.
+    # PHASE 3b -- WIRING advisory lint (informational, NEVER pass/fail). The
+    # old in-loop "wiring reviewer" subagent pass was DELETED: wiring is now
+    # enforced BY CONSTRUCTION through the acceptance/integration test that
+    # renders the real app entry (`render(<App/>)`) and asserts behaviour that
+    # requires the new module to be mounted -- an unwired module fails a RED
+    # test through the normal loop above, so no reviewer is needed. What stays
+    # here is only a cheap, crisp heads-up naming any module that is not
+    # reachable from the entry; it does not gate and dispatches no fixer.
     if green:
-        orphans = find_unwired_modules(repo_root, stack.source_dir)
+        orphans = unwired_lint(repo_root, stack.source_dir)
         if orphans:
             emit({"type": "system",
-                  "text": f"Wiring review: {len(orphans)} module(s) written but never "
-                          "composed into the app — asking the builder to wire them."})
-            wire_msg = (
-                "The build is green but these modules are UNWIRED -- written and "
-                "passing their tests, yet never imported/composed into the running "
-                "app:\n" + "\n".join(f"  - {o}" for o in orphans)
-                + "\n\nWire EACH one into the app: import it and actually USE it from "
-                "the component/store/entry that needs it, so it is part of the "
-                "running product -- e.g. a shared utility must be CALLED by the code "
-                "that needs it, not duplicated inline. Do NOT delete or weaken any "
-                "test. Keep the build green."
-            )
-            run("fixer", adapter, impl_sys, _fixer_message(wire_msg, repo_root, stack))
-            calls += 1
-            green, _ = check(repo_root)  # a wiring fix must not break the build
-            remaining = find_unwired_modules(repo_root, stack.source_dir)
-            emit({"type": "system",
-                  "text": ("Wiring review: all modules are composed into the app."
-                           if not remaining else
-                           f"Wiring review: {len(remaining)} module(s) still unwired "
-                           "after the fix pass.")})
-            summary.append(f"wiring_review={len(orphans)}->{len(remaining)}")
+                  "text": "Wiring lint (advisory, does not gate): "
+                          + "; ".join(f"{o} is not reachable from the app entry"
+                                      for o in orphans[:10])
+                          + (f" (+{len(orphans) - 10} more)" if len(orphans) > 10 else "")})
+            summary.append(f"wiring_lint_advisory={len(orphans)}")
         else:
-            summary.append("wiring_review=clean")
+            summary.append("wiring_lint=clean")
 
     # PHASE 4 -- record the Build Evidence artifact with the real numbers,
     # honestly: a not-green build is recorded as not green (the sign gate will

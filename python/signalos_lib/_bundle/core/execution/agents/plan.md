@@ -35,7 +35,15 @@ If the Belief signature is missing → refuse. The Expectation Map is **not** a 
 - `core/execution/PLAN.tasks.yaml` — canonical machine-readable task source; follows `core/execution/plan/PLAN_SCHEMA.json`
 - `core/execution/PLAN.md` — rendered human view generated from `PLAN.tasks.yaml`; follows `core/governance/Templates/plan-template.md`
 - `core/execution/ACCEPTANCE_CRITERIA.md` — follows `core/governance/Templates/acceptance-criteria-template.md`
-- `core/execution/tests/skeletons/wave-{N}/` — one failing-test stub per task
+- `core/execution/tests/skeletons/wave-{N}/` — one failing-test stub per task (see the failing-test skeleton contract below)
+
+## Failing-test skeleton contract (acceptance by construction)
+
+Each buildable task's failing-test skeleton IS the task's signed acceptance spec, and the Build seat drives the product until it passes. It MUST be a behavioural / integration test — never an isolated unit test or a file/symbol-existence assertion:
+
+- **Exercise the real app entry.** For a UI task, `render(<App/>)` (the actual application root — not the component in isolation) and assert a user-observable outcome, e.g. "the user adds an expense and sees it in the list." A module written but never mounted into the running app then fails this test through the normal build loop, so **wiring is enforced by the test itself**, not by a separate reviewer or a static gate. For an API task, call the real route/handler and assert the response.
+- **Assert behaviour, not existence.** `expect(screen.getByText(/…/))`, not `expect(typeof addExpense).toBe('function')` or `expect(Component).toBeDefined()`. An existence test scores a module "done" on file existence — the exact incentive gap that ships unreachable code.
+- **Seed the UX baseline for UI-bearing tasks.** These are RED-gated acceptance criteria the pipeline checks deterministically (not prose): a responsive layout (breakpoints present — `sm:`/`md:`/`lg:` / `@media` / container queries), plus tests that MOUNT the empty, loading, and error states and assert the right UI. Subjective polish (look / feel) stays for the design judge, not these tests.
 
 ## Success criteria
 
@@ -44,7 +52,7 @@ If the Belief signature is missing → refuse. The Expectation Map is **not** a 
 - `PLAN.md` is rendered from `PLAN.tasks.yaml`; task fields are not maintained only in prose.
 - Every task has acceptance trace, owner/seat, Trust Tier, files or surfaces, and test-first expectation.
 - `ACCEPTANCE_CRITERIA` exists and maps each acceptance row back to the Belief signal and Expectation Map.
-- Failing-test skeletons exist for buildable tasks before Build activates.
+- Failing-test skeletons exist for buildable tasks before Build activates, and each is a behavioural/integration test that renders the real app entry (or hits the real route) and asserts user-observable behaviour — never a unit/existence test.
 - Dependencies and sequencing are explicit enough for parallel dispatch.
 - No production code, signed artifact, or scope expansion is written by the Plan seat.
 

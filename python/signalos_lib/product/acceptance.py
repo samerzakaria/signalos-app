@@ -11,17 +11,170 @@ __all__ = [
     "build_acceptance_matrix",
     "check_closure_readiness",
     "classify_criterion_verifiability",
+    "has_responsive_breakpoints",
     "load_acceptance_matrix",
     "reconcile_acceptance_evidence",
+    "scan_ux_state_coverage",
     "update_criterion_status",
     "write_acceptance_matrix",
 ]
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# UX baseline must-haves (deterministic, RED-gated)
+# ---------------------------------------------------------------------------
+#
+# The design contract already ASKS, in prose, for a responsive layout and
+# empty/loading/error states. Prose is not enforcement -- weaker models skip it,
+# scoring a UI "done" on file existence. These helpers promote the
+# deterministically-checkable UX floor into real acceptance criteria the
+# pipeline verifies:
+#
+#   * responsive  -- FAILS if a browser product declares ZERO responsive
+#                    breakpoints (Tailwind sm:/md:/lg:/xl:/2xl:, a CSS @media
+#                    query, or a @container query).
+#   * empty/loading/error -- FAIL unless a test MOUNTS the UI (render/mount/
+#                    screen) and exercises that state.
+#
+# Subjective aesthetics (look / feel / polish) are deliberately NOT gated here;
+# that stays for the human/LLM judge. Baseline must-haves are RED-gated;
+# quality above baseline is graded. All checks are deterministic (no LLM).
+
+# The four UX baseline criteria, as (marker, outcome) pairs. The marker keys
+# into the scan result and the reconciliation blocker/evidence maps.
+_UX_BASELINE_CRITERIA: tuple[tuple[str, str], ...] = (
+    ("responsive",
+     "Responsive layout: the UI adapts across screen sizes "
+     "(responsive breakpoints present)"),
+    ("empty_state",
+     "Empty state: the UI handles the no-data case "
+     "(a test mounts empty data and asserts the empty UI)"),
+    ("loading_state",
+     "Loading state: the UI shows a loading indicator while data is pending "
+     "(a test mounts the pending state)"),
+    ("error_state",
+     "Error state: the UI handles failures gracefully "
+     "(a test mounts an error and asserts the error UI)"),
+)
+
+_UX_BASELINE_BLOCKERS = {
+    "responsive": ("no responsive breakpoints in the UI source -- add sm:/md:/lg: "
+                   "utilities, a @media query, or a @container query so the "
+                   "layout adapts to screen size"),
+    "empty_state": "no test mounts the empty / no-data state and asserts the empty UI",
+    "loading_state": ("no test mounts the loading / pending state and asserts a "
+                      "loading indicator"),
+    "error_state": "no test mounts the error / failure state and asserts the error UI",
+}
+
+_UX_BASELINE_EVIDENCE = {
+    "responsive": "responsive breakpoints present",
+    "empty_state": "empty-state test present",
+    "loading_state": "loading-state test present",
+    "error_state": "error-state test present",
+}
+
+# Front-end source / markup / style files to scan (product code, not backend).
+_UX_SOURCE_SUFFIXES = (".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte",
+                       ".astro", ".css", ".scss", ".sass", ".less", ".html")
+_SCAN_SKIP_DIRS = frozenset({
+    "node_modules", "dist", "build", "out", ".next", "coverage", ".signalos",
+    "vendor", "__pycache__", ".turbo", ".cache", ".venv", "venv", ".git",
+})
+_SCAN_FILE_CAP = 5000
+
+# Tailwind responsive variants (sm:/md:/lg:/xl:/2xl:), CSS media queries, and
+# container queries -- any one proves the layout adapts to viewport size. The
+# lookbehind keeps a breakpoint token from matching inside a longer identifier.
+_RESPONSIVE_RE = re.compile(r"@media\b|@container\b|(?<![\w-])(?:sm|md|lg|xl|2xl):")
+
+# A test that MOUNTS the app/component -- distinguishes a real behavioural test
+# from a pure unit test that never renders UI.
+_MOUNTS_UI_RE = re.compile(r"\b(?:render|mount|renderHook)\s*\(|\bscreen\b")
+
+_UX_STATE_RES = {
+    "empty_state": re.compile(
+        r"\bempty\b|no\s+\w+\s+(?:yet|found|to\s+show)|nothing\s+here|"
+        r"get\s+started|\bno\s+data\b|\bisempty\b|\[\s*\]", re.I),
+    "loading_state": re.compile(
+        r"\bloading\b|\bpending\b|\bis[_-]?loading\b|\bis[_-]?fetching\b|"
+        r"\bspinner\b|\bskeleton\b|aria-busy", re.I),
+    "error_state": re.compile(
+        r"\berror\b|\bfailed\b|\bfailure\b|try\s+again|something\s+went\s+wrong|"
+        r"mock[_-]?reject|rejectedvalue|\bis[_-]?error\b|onerror|\.catch\b|"
+        r"\bthrow\b|\breject\b", re.I),
+}
+
+
+def _is_test_file(name: str) -> bool:
+    return ".test." in name or ".spec." in name or name.startswith("test_")
+
+
+def _scan_ux(repo_root: Path, source_dir: str | None = None) -> dict[str, bool]:
+    """Single deterministic walk of the front-end source. Returns
+    ``{"responsive": bool, "empty_state": bool, "loading_state": bool,
+    "error_state": bool}``. ``responsive`` is set from product source (non-test)
+    breakpoints; the three state flags require a TEST file that mounts the UI AND
+    references that state. Vendor/build dirs are pruned and the scan is capped so
+    it stays cheap on a real product repo."""
+    result = {"responsive": False, "empty_state": False,
+              "loading_state": False, "error_state": False}
+    base = Path(repo_root)
+    if source_dir:
+        base = base / source_dir
+    if not base.is_dir():
+        return result
+    files_read = 0
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames
+                       if d not in _SCAN_SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(_UX_SOURCE_SUFFIXES):
+                continue
+            try:
+                text = (Path(dirpath) / fn).read_text(
+                    encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            files_read += 1
+            if files_read > _SCAN_FILE_CAP:
+                return result
+            if _is_test_file(fn):
+                if _MOUNTS_UI_RE.search(text):
+                    for state, rx in _UX_STATE_RES.items():
+                        if not result[state] and rx.search(text):
+                            result[state] = True
+            elif not result["responsive"] and _RESPONSIVE_RE.search(text):
+                result["responsive"] = True
+            if all(result.values()):
+                return result
+    return result
+
+
+def has_responsive_breakpoints(repo_root: Path,
+                               source_dir: str | None = None) -> bool:
+    """True if any UI source/style file declares a responsive breakpoint
+    (Tailwind sm:/md:/lg:/xl:/2xl:, a CSS @media query, or a @container query).
+    RED-gates the responsive baseline: a browser product with zero breakpoints
+    does not adapt to screen size."""
+    return _scan_ux(repo_root, source_dir)["responsive"]
+
+
+def scan_ux_state_coverage(repo_root: Path,
+                           source_dir: str | None = None) -> dict[str, bool]:
+    """Which UX states {empty_state, loading_state, error_state} are exercised by
+    a test that MOUNTS the UI (render/mount/screen) AND references that state.
+    Makes the design contract's 'handle empty/loading/error' MANDATE enforceable
+    rather than advisory."""
+    scan = _scan_ux(repo_root, source_dir)
+    return {k: scan[k] for k in ("empty_state", "loading_state", "error_state")}
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +352,28 @@ def build_acceptance_matrix(
             "profile_target": _test_target(profile, surface),
             "status": "pending",
         })
+
+    # --- 3b. UX baseline must-haves (RED-gated, deterministic) ---
+    # Promote the deterministically-checkable UX floor (responsive layout +
+    # empty/loading/error states) that the design contract only ASKS for in
+    # prose into real criteria the pipeline verifies. Only when there is a
+    # browser surface; subjective aesthetics stay with the judge. Marked with
+    # ``ux_baseline`` so reconciliation verifies them by source/test scan
+    # instead of the test-file-existence path.
+    for baseline, outcome in (_UX_BASELINE_CRITERIA if browser_acceptance else ()):
+        ac_counter += 1
+        criteria.append({
+            "id": _ac_id(ac_counter),
+            "source": "intent",
+            "description": outcome,
+            "entity": None,
+            "workflow": None,
+            "test_ids": [],
+            "status": "pending",
+            "evidence": None,
+            "ux_baseline": baseline,
+        })
+        from_intent += 1
 
     # --- 4. Blueprint acceptance criteria ---
     if blueprint is not None:
@@ -497,6 +672,12 @@ def reconcile_acceptance_evidence(
     ux_status = (ux_proof or {}).get("status", "not_run")
     security_status = (security_result or {}).get("status", "not_run")
 
+    # UX baseline must-haves are verified by a deterministic source/test scan
+    # (responsive breakpoints; tests that mount empty/loading/error) rather than
+    # a named test file. Compute the scan once, only when such criteria exist.
+    needs_ux_scan = any(c.get("ux_baseline") for c in criteria)
+    ux_scan = _scan_ux(repo_root) if needs_ux_scan else {}
+
     passed = 0
     pending = 0
     failed = 0
@@ -525,6 +706,7 @@ def reconcile_acceptance_evidence(
             validation_result=validation_result,
             ux_status=ux_status,
             security_status=security_status,
+            ux_scan=ux_scan,
         )
         if result["passed"]:
             criterion["status"] = "passed"
@@ -581,7 +763,17 @@ def _criterion_reconciliation_result(
     validation_result: dict[str, Any] | None,
     ux_status: str,
     security_status: str,
+    ux_scan: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
+    baseline = criterion.get("ux_baseline")
+    if baseline:
+        return _ux_baseline_reconciliation_result(
+            baseline=str(baseline),
+            validation_ok=validation_ok,
+            validation_result=validation_result,
+            ux_scan=ux_scan or {},
+        )
+
     blockers: list[str] = []
     evidence_parts: list[str] = []
 
@@ -629,6 +821,46 @@ def _criterion_reconciliation_result(
             "; ".join(evidence_parts)
             if evidence_parts
             else "Acceptance evidence is pending."
+        ),
+    }
+
+
+def _ux_baseline_reconciliation_result(
+    *,
+    baseline: str,
+    validation_ok: bool,
+    validation_result: dict[str, Any] | None,
+    ux_scan: dict[str, bool],
+) -> dict[str, Any]:
+    """Reconcile a UX baseline must-have. Verified by the deterministic
+    source/test scan (``ux_scan``), not a named test file. Still requires the
+    build+test suite to be green (a criterion cannot pass on a red build)."""
+    blockers: list[str] = []
+    evidence_parts: list[str] = []
+
+    if not validation_ok:
+        if validation_result and validation_result.get("dry_run"):
+            blockers.append("validation was dry-run only")
+        else:
+            blockers.append("build and test validation have not both passed")
+
+    if ux_scan.get(baseline):
+        evidence_parts.append(
+            _UX_BASELINE_EVIDENCE.get(baseline, f"{baseline} present"))
+    else:
+        blockers.append(
+            _UX_BASELINE_BLOCKERS.get(baseline, f"{baseline} not satisfied"))
+
+    if validation_ok:
+        evidence_parts.append("build/test validation passed")
+
+    return {
+        "passed": not blockers,
+        "blockers": blockers,
+        "evidence": (
+            "; ".join(evidence_parts)
+            if evidence_parts
+            else "UX baseline evidence is pending."
         ),
     }
 

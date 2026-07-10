@@ -24,8 +24,10 @@ from signalos_lib.product.capabilities import apply_capability_choices
 from signalos_lib.product.acceptance import (
     build_acceptance_matrix,
     check_closure_readiness,
+    has_responsive_breakpoints,
     load_acceptance_matrix,
     reconcile_acceptance_evidence,
+    scan_ux_state_coverage,
     update_criterion_status,
     write_acceptance_matrix,
 )
@@ -405,3 +407,130 @@ class TestSourceTags:
         m = build_acceptance_matrix(task_intent, task_blueprint, "react-vite")
         intent_crit = [c for c in m["criteria"] if c["source"] == "intent"]
         assert len(intent_crit) > 0
+
+
+# ---------------------------------------------------------------------------
+# FIX 2 — UX baseline must-haves as RED-gated acceptance criteria
+# ---------------------------------------------------------------------------
+
+_UX_BASELINE_MARKERS = {"responsive", "empty_state", "loading_state", "error_state"}
+
+
+def _baseline_only_matrix() -> dict:
+    return {
+        "schema_version": "signalos.acceptance_matrix.v1",
+        "criteria": [
+            {"id": f"AC-00{i + 1}", "source": "intent", "description": desc,
+             "entity": None, "workflow": None, "test_ids": [],
+             "status": "pending", "evidence": None, "ux_baseline": marker}
+            for i, (marker, desc) in enumerate([
+                ("responsive", "Responsive layout"),
+                ("empty_state", "Empty state"),
+                ("loading_state", "Loading state"),
+                ("error_state", "Error state"),
+            ])
+        ],
+        "test_scenarios": [],
+    }
+
+
+class TestResponsiveScan:
+    def test_tailwind_breakpoints_detected(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "App.tsx").write_text(
+            'export default () => <div className="grid sm:grid-cols-2 lg:grid-cols-4" />',
+            encoding="utf-8")
+        assert has_responsive_breakpoints(tmp_path) is True
+
+    def test_media_query_detected(self, tmp_path):
+        (tmp_path / "styles.css").write_text(
+            "@media (min-width: 768px){ .x{display:flex} }", encoding="utf-8")
+        assert has_responsive_breakpoints(tmp_path) is True
+
+    def test_no_breakpoints_is_false(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "App.tsx").write_text(
+            'export default () => <div className="flex gap-2" />', encoding="utf-8")
+        assert has_responsive_breakpoints(tmp_path) is False
+
+    def test_node_modules_pruned(self, tmp_path):
+        nm = tmp_path / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "x.css").write_text("@media (min-width: 1px){}", encoding="utf-8")
+        assert has_responsive_breakpoints(tmp_path) is False
+
+
+class TestUxStateScan:
+    def test_states_detected_from_mounting_tests(self, tmp_path):
+        t = tmp_path / "src" / "App.test.tsx"
+        t.parent.mkdir(parents=True)
+        t.write_text(
+            "import { render, screen } from '@testing-library/react';\n"
+            "test('empty', () => { render(<App items={[]} />); "
+            "screen.getByText(/no expenses yet/i); });\n"
+            "test('loading', () => { render(<App loading />); "
+            "screen.getByText(/loading/i); });\n"
+            "test('error', () => { render(<App error='boom' />); "
+            "screen.getByText(/something went wrong/i); });\n",
+            encoding="utf-8")
+        assert scan_ux_state_coverage(tmp_path) == {
+            "empty_state": True, "loading_state": True, "error_state": True}
+
+    def test_unit_test_without_mount_does_not_count(self, tmp_path):
+        # references states but never MOUNTS the UI -> not counted (a real
+        # behavioural test must render the component, not just call a helper).
+        t = tmp_path / "src" / "util.test.ts"
+        t.parent.mkdir(parents=True)
+        t.write_text("test('x', () => { expect(isEmpty([])).toBe(true); "
+                     "expect(loadingFlag).toBe(false); });\n", encoding="utf-8")
+        assert scan_ux_state_coverage(tmp_path) == {
+            "empty_state": False, "loading_state": False, "error_state": False}
+
+
+class TestUxBaselineCriteria:
+    def test_browser_intent_adds_ux_baseline_criteria(self, task_intent):
+        m = build_acceptance_matrix(task_intent, None, "react-vite")
+        markers = {c.get("ux_baseline") for c in m["criteria"] if c.get("ux_baseline")}
+        assert markers == _UX_BASELINE_MARKERS
+        # counted as intent-derived (keeps from_intent == total for intent-only)
+        assert m["summary"]["from_intent"] == m["summary"]["total_criteria"]
+        # baseline criteria carry no test scenarios (verified by scan, not a file)
+        assert all(not c["test_ids"] for c in m["criteria"] if c.get("ux_baseline"))
+
+    def test_frontend_none_has_no_ux_baseline(self):
+        intent = extract_product_intent("Build a REST API for task management")
+        intent = apply_capability_choices(
+            intent, technologies=["node"], frontend="none",
+            database="postgresql", cache="redis")
+        m = build_acceptance_matrix(intent, None, "node-api")
+        assert not any(c.get("ux_baseline") for c in m["criteria"])
+
+    def test_reconcile_passes_baseline_when_scan_satisfied(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "App.tsx").write_text(
+            'export default () => <div className="grid sm:grid-cols-2" />',
+            encoding="utf-8")
+        (tmp_path / "src" / "App.test.tsx").write_text(
+            "import { render, screen } from 'x';\n"
+            "test('e', () => { render(<App items={[]} />); screen.getByText(/no data/i); });\n"
+            "test('l', () => { render(<App loading />); screen.getByText(/loading/i); });\n"
+            "test('r', () => { render(<App error />); screen.getByText(/error/i); });\n",
+            encoding="utf-8")
+        reconciled = reconcile_acceptance_evidence(
+            _baseline_only_matrix(), tmp_path,
+            validation_result=_validation_result())
+        statuses = {c["ux_baseline"]: c["status"] for c in reconciled["criteria"]}
+        assert statuses == {"responsive": "passed", "empty_state": "passed",
+                            "loading_state": "passed", "error_state": "passed"}
+
+    def test_reconcile_blocks_baseline_when_scan_empty(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "App.tsx").write_text(
+            'export default () => <div className="flex" />', encoding="utf-8")
+        reconciled = reconcile_acceptance_evidence(
+            _baseline_only_matrix(), tmp_path,
+            validation_result=_validation_result())
+        assert all(c["status"] == "pending" for c in reconciled["criteria"])
+        blockers = " ".join(reconciled["reconciliation"]["blockers"])
+        assert "responsive breakpoints" in blockers
+        assert "empty" in blockers

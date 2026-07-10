@@ -59,6 +59,18 @@ A design-doc is not a wishlist. Sections in this order:
 5. `## Chosen approach` — describe the decision; link to the prototype (or external ref, or no-UI attestation).
 6. `## Open questions` — what the design is leaving for the build-time decision; bound it.
 
+## UX baseline (RED-gated) vs. quality (graded)
+
+Split the UX contract into two tiers so the design does not rely on prose the Build seat can silently skip:
+
+- **Baseline must-haves — enforced by a RED acceptance test, not prose.** These are deterministically checked and BLOCK the gate when missing:
+  - **Rendering through the real entry.** Every UX surface's acceptance test drives the real app entry (`render(<App/>)`) and asserts a user-observable outcome that requires the new module to be mounted — so a component that exists but is never composed into the running app fails the test. Do not sign a design whose acceptance tests only mount a component in isolation.
+  - **Responsive layout.** At least one real breakpoint (`sm:`/`md:`/`lg:` utilities, a `@media` query, or a container query) — a single fixed-width layout fails the baseline.
+  - **Empty / loading / error states.** Each is a concrete state with defined UI, and each is covered by a test that MOUNTS that state (empty data / pending / error) and asserts the right UI.
+- **Quality above baseline — graded, not gated.** Visual hierarchy, spacing/typography, palette, motion, "looks like a shipped product." These stay with the human/LLM design judge; do NOT try to encode subjective aesthetics as a pass/fail acceptance test.
+
+State this split explicitly in `design-doc.md` (which states are handled, which breakpoints exist, how each is tested) so the Plan seat can author the matching failing tests.
+
 ## G3 completion packet (required before G4)
 
 G3 cannot be signed, and G4 cannot open, until all of these exist and are linked from `DESIGN_NOTE.md`:
