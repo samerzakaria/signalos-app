@@ -1,5 +1,6 @@
 import { workspacePath, userName, userRole } from '../state';
 import { refreshProtocolContext } from './protocolContext';
+import { signal } from '../js/ipc';
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const tauri = window.__TAURI__;
@@ -78,7 +79,14 @@ export async function initWorkspace(path: string, options: InitWorkspaceOptions 
   if (profile) args.push('--profile', profile);
 
   try {
-    await tauriInvoke('run_signal_command', { command: 'signal-init', args });
+    // FIX 1 (Claim 3a): AWAIT real sidecar completion. `run_signal_command`
+    // is fire-and-forget -- the Rust side returns a request id at ENQUEUE, so
+    // the old code reported the workspace "initialized" before the sidecar had
+    // done anything, and a sidecar-side failure was never surfaced. Use the
+    // awaited transport the chat path already uses (ipc.signal.runAndWait):
+    // it resolves only when the engine has actually finished init and rejects
+    // if it failed, so strict callers see the real error.
+    await signal.runAndWait('signal-init', args, 120000);
   } catch (e) {
     console.warn('signal-init failed:', e);
     if (options.strict) throw e;
@@ -202,16 +210,32 @@ export async function instantiateGovernanceAndSignG0(): Promise<{
   // filled-in soul / constitution.
   await refreshProtocolContext();
 
-  // Sign Gate 0 -- setup checkpoint. Best-effort; an audit failure shouldn't
-  // block onboarding.
+  // Sign Gate 0 -- setup checkpoint. FIX 1 (Claim 3a): AWAIT the real sidecar
+  // sign so `signed` reflects what the engine actually did, not the enqueue of
+  // a fire-and-forget request. Two bugs this closes:
+  //   * verdict 'pass' is not a valid CLI verdict (the sign CLI accepts only
+  //     APPROVED / APPROVED-WITH-CONDITIONS / WAIVED), so the enqueued sign
+  //     actually FAILED -- invisibly, because it was fire-and-forget.
+  //   * G0's manifest spans two roles: Soul + Constitution require PO + PE,
+  //     while Surface Inventory + Permanently-T3 require PE. Signing under a
+  //     single role left half the gate unsigned, so under the strict all()
+  //     gate detection G0 never genuinely passed. In the solo-founder setup the
+  //     founder holds both seats, so we sign once per required role and only
+  //     report `signed` when EVERY awaited sign resolves ok.
+  const signer = sub.user || 'User';
   let signed = false;
   try {
-    await tauriInvoke('run_signal_command', {
-      command: 'signal-sign',
-      args: ['G0', '--signer', sub.user, '--role', sub.role, '--verdict', 'pass'],
-    });
+    for (const role of ['PO', 'PE']) {
+      await signal.runAndWait(
+        'signal-sign',
+        ['G0', '--signer', signer, '--role', role, '--verdict', 'APPROVED'],
+        60000,
+      );
+    }
     signed = true;
   } catch (e) {
+    // Surface the real failure: `signed` stays false, which the New Project
+    // flow reports to the user ("Gate 0 was not signed automatically").
     console.warn('Gate 0 sign failed:', e);
   }
 

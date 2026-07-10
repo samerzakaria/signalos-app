@@ -283,6 +283,156 @@ Full docs: <https://github.com/samerzakaria/SignalOS>
     )
 
 
+def _seed_onboarding_artifacts(target: Path, project_name: str) -> list[str]:
+    """Seed the Gate 0 / Gate 1 governance artifacts a fresh project needs.
+
+    `signalos init` already lays down the Soul Document, Constitution, and
+    Decision DNA (via the profile's governance templates). But Gate 0 ALSO
+    requires a Surface Inventory and a Permanently-T3 list, and Gate 1's
+    brainstorm agent refuses to activate unless a draft Belief exists (it is
+    forbidden to author one itself). Without these, a freshly created project
+    dead-ends: Gate 0 can never be genuinely complete (only 2 of its 4
+    artifacts exist, so the strict all() gate detection keeps it open) and
+    Gate 1 demands a Belief that nothing ever created.
+
+    The onboarding agent (core/execution/agents/onboarding.md) is the rich,
+    interview-driven producer of these artifacts. This function is the
+    least-surprising, design-consistent complement for the desktop New Project
+    flow (which has no interview loop): it lays down the SAME artifacts as
+    concrete, reviewable seeds so the founder can sign Gate 0 as-is or refine,
+    and completes + signs the Gate 1 drafts later. It mirrors the existing
+    per-project scaffolding pattern (`_render_plan_template`).
+
+    We seed:
+      * Surface Inventory + Permanently-T3 -- concrete, reviewable Gate 0
+        starters (the standard trust-tiered surfaces every product has).
+      * Belief + Role Activation Card      -- clearly-marked DRAFTS the founder
+        completes and signs at Gate 1. Never signed here, so Gate 1 stays
+        honestly open until a human commits to the Belief.
+
+    Every file is written only when ABSENT (keep-existing safe) and carries no
+    reserved template markers (no TODO/TBD/[DATE]/YYYY-MM-DD/{{...}}), so the
+    Gate 0 artifacts pass both the status board's non-template content check
+    and the gate validator's marker check. Returns the rel-paths written.
+    """
+    written: list[str] = []
+
+    def _seed(rel: str, content: str) -> None:
+        dst = target / Path(rel)
+        if dst.is_file():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content, encoding="utf-8")
+        written.append(rel)
+
+    surface_inventory = f"""# Surface Inventory -- {project_name}
+
+Every code surface in this product, with its proposed Trust Tier, blast
+radius, and the rationale for that classification. The Product Engineer
+reviews and signs this at Gate 0; refine it as the codebase grows.
+
+Trust Tiers: T1 = an agent may act autonomously; T2 = an agent proposes and a
+human reviews the diff; T3 = a human authors the change directly.
+
+| Surface | Trust Tier | Blast Radius | Rationale |
+|---|---|---|---|
+| Application UI / presentation | T1 | Local | Cosmetic and layout changes are low risk and easy to revert. |
+| Business logic / services | T2 | Module | Behaviour changes need a reviewed diff before they land. |
+| Data access / persistence | T2 | Product | Schema and query changes can corrupt or lose data. |
+| Authentication and authorization | T3 | Product | A mistake exposes every user; a human must author it. |
+| Secrets and configuration | T3 | Product | Leaked or wrong secrets compromise the whole system. |
+| Build, CI, and release pipeline | T3 | Product | The release path ships to every user at once. |
+
+This inventory starts from the standard surfaces above. Add product-specific
+surfaces (integrations, background jobs, public APIs) as you map the codebase,
+and re-sign Gate 0 whenever the tiering changes.
+"""
+
+    permanently_t3 = f"""# Permanently-T3 Surfaces -- {project_name}
+
+These surfaces must NEVER be delegated to an agent regardless of Wave state or
+Trust Tier ceiling. A human authors every change to them and signs the diff.
+This list is a floor, not a ceiling -- add to it, never quietly remove from it.
+
+- Authentication and session handling -- sign-in, tokens, password and identity flows.
+- Authorization and access control -- roles, permissions, and tenancy boundaries.
+- Payments and billing -- charges, refunds, invoicing, and subscription state.
+- Personally identifiable information -- storage, export, and deletion of user data.
+- Database migrations and destructive schema changes.
+- Secrets, keys, and credentials -- anything under .env or the secrets vault.
+- Infrastructure as code and the deploy / release pipeline.
+
+Removing anything from this list requires explicit Product Engineer
+acknowledgement recorded in the Decision DNA log.
+"""
+
+    belief_draft = f"""# Belief -- {project_name}
+
+> DRAFT -- this is a starting scaffold. Replace the prompts below with your
+> product's specifics, then sign Gate 1. The brainstorm agent reads this draft
+> but will not author it for you.
+
+scale_track: wave
+
+## Problem
+
+Describe, in one or two sentences, who is affected and what is broken today.
+State it concretely enough that you could recognise the problem in the wild.
+
+## Bet
+
+Describe the single change you believe will move the problem, and the effect
+you expect it to have.
+
+## Signal
+
+Describe how you will know it worked -- the metric you will watch and the
+number that would count as success.
+
+## Falsifiable within
+
+State the time window (for example, two weeks) in which the signal must appear,
+after which the bet is considered wrong.
+
+## Acceptance
+
+Describe what "done" looks like in one line.
+"""
+
+    role_card_draft = f"""# Role Activation Card -- {project_name}
+
+> DRAFT -- confirm the activation levels and Trust Tiers below reflect this
+> Wave, then sign it together with the Belief at Gate 1.
+
+model: one-man-show -- the sole human seat is the Product Owner; every
+execution role is an agent sub-role the Product Owner reviews.
+
+## Active roles this Wave
+
+| Seat | Activation | Default Trust Tier |
+|---|---|---|
+| Product Owner (sole human -- reads and signs) | Active | -- |
+| Brainstorm agent | Active | T1 (advisory) |
+| Architecture / design agent | AI-heavy | T1 |
+| Build agents | AI-heavy | T2 |
+| Test agent | Minimal | T1 |
+| Review agent | AI-heavy | T2 |
+| Release agent | Minimal | T3 (all release-path surfaces) |
+
+## Escalation
+
+- The Product Owner is unavailable at a Gate -- the Wave pauses; no substitution.
+- An agent finds a Permanently-T3 surface in scope -- hard stop; the Product
+  Owner re-declares the tier and re-signs.
+"""
+
+    _seed("core/governance/Governance/SURFACE_INVENTORY.md", surface_inventory)
+    _seed("core/governance/Governance/PERMANENTLY_T3.md", permanently_t3)
+    _seed("core/strategy/BELIEF.md", belief_draft)
+    _seed("core/execution/ROLE_ACTIVATION_CARD.md", role_card_draft)
+    return written
+
+
 def _safe_profile_path(root: Path, rel_path: str) -> Path:
     candidate = (root / rel_path).resolve(strict=False)
     try:
@@ -690,6 +840,12 @@ def main(argv: list[str]) -> int:
     if adoption_report is not None:
         write_adoption_artifacts(target, adoption_report)
     _render_plan_template(target, project_name)
+    # Seed the Gate 0 (Surface Inventory + Permanently-T3) and Gate 1 draft
+    # (Belief + Role Activation Card) artifacts a fresh project needs so setup
+    # doesn't dead-end: without these, Gate 0 can never be genuinely complete
+    # (only 2 of its 4 artifacts would exist) and Gate 1's brainstorm agent
+    # refuses to run with no draft Belief present. Only fills MISSING files.
+    _seed_onboarding_artifacts(target, project_name)
     ide = detect_ide()
     _render_readme(target, project_name, ide)
     try:

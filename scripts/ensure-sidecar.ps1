@@ -62,9 +62,21 @@ function Test-SidecarLooksLikeStub {
 
 # Probe the binary's capability handshake. Returns $true only when agent:deliver
 # is reported. The sidecar exits on stdin EOF, so one piped line is enough.
+#
+# BOM hazard (Windows): Process.StandardInput's StreamWriter inherits
+# [Console]::InputEncoding. On a UTF-8 console that encoding carries a byte-order
+# mark, so the very first write prepends EF BB BF. The sidecar reads its stdin
+# pipe under the process ANSI code page (cp1252 on Windows), where those bytes
+# decode to "ï»¿" — which its BOM guard (lstrip "﻿") cannot strip — so the
+# probe JSON fails to parse and a *fresh* binary is mis-reported as stale. Force
+# BOM-less UTF-8 for the duration of the probe (restored in finally) so the
+# handshake bytes reach the sidecar clean.
 function Test-SidecarReportsAgentDeliver {
   param([string]$Path)
+  $prevInputEncoding = $null
   try {
+    try { $prevInputEncoding = [Console]::InputEncoding } catch { $prevInputEncoding = $null }
+    try { [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false) } catch {}
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Path
     $psi.RedirectStandardInput = $true
@@ -83,6 +95,10 @@ function Test-SidecarReportsAgentDeliver {
     return ($out -match "agent:deliver")
   } catch {
     return $false
+  } finally {
+    if ($null -ne $prevInputEncoding) {
+      try { [Console]::InputEncoding = $prevInputEncoding } catch {}
+    }
   }
 }
 
