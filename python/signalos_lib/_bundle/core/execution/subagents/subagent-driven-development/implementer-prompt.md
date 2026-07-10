@@ -61,6 +61,26 @@ Task tool (general-purpose):
     - In existing codebases, follow established patterns. Improve code you're touching
       the way a good developer would, but don't restructure things outside your task.
 
+    ## User Interface & UX (when the task produces anything a user sees)
+
+    A working feature with an ugly, default-looking UI is NOT done. Ship a UI a real
+    product team would be proud of — not raw, unstyled HTML.
+
+    - **Use a real styling system / component library** appropriate to the stack —
+      e.g. Tailwind CSS, or a component kit (MUI, Chakra, Radix, Mantine, shadcn/ui),
+      or well-organized CSS Modules. **Add the dependency if it isn't present.**
+      Do NOT hand-roll bare `<table>`/`<div>` with no styling.
+    - **Design with intent:** clear visual hierarchy, consistent spacing/typography, a
+      cohesive color palette, sensible layout (cards/lists/forms laid out properly),
+      empty / loading / error states, and interactive states (hover, focus, disabled).
+    - **Responsive** — usable on small and large screens.
+    - **Accessible = also how tests find things:** keep semantic HTML, real `<label>`s
+      tied to inputs, ARIA roles, and visible text. A component library that preserves
+      roles/labels keeps `getByRole`/`getByLabelText`/`getByText` working — so a
+      polished UI and green tests are the SAME goal, not a trade-off.
+    - Match any design direction the plan/brief gives; if none, apply tasteful,
+      modern defaults. The bar is "looks like a shipped product," not "AI demo output."
+
     ## When You're in Over Your Head
 
     It is always OK to stop and say "this is too hard for me." Bad work is worse than
