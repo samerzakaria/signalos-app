@@ -8,6 +8,20 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Root-cause structural hardening + readiness gate (2026-07-10)
+
+Panels validated that our recurring failures were a *class*: guaranteeing properties with growing heuristic lists (command/path allowlists, a post-hoc wiring reviewer) and mocked test seams, instead of structural boundaries + executable proofs. This wave fixes the *class*, and adds the deterministic readiness gate so we stop discovering harness bugs by burning funded builds. Integrated: **2458 passed, 0 failed**, readiness gate green.
+
+| # | Issue | Root cause | Fix | Location | Verified | Commit |
+|---|-------|-----------|-----|----------|----------|--------|
+| 70 | **Endless command/path allowlist false-denials** (`cd /c/ws && npm test` denied as "outside workspace"; absolute write to an allowlisted dir denied; `node -e`/`sha256sum` gaps) | OS-sandbox-by-regex: string-matched command prefixes + path globs against whatever *spelling* the model typed (Win `c:\` vs Git-Bash `/c/` vs quoted vs absolute) | ONE canonical path pipeline (`_degitbash`/`_workspace_relative`) feeding every containment + allowlist check (canonicalize→relative→glob); cwd **jailed** to workspace so no `cd <abs>` needed; verification-command **class** instead of enumerating | `product/agent_loop.py` | test (134, +21), repro | `33da5ef` |
+| 71 | **Modules generated but never wired**; UX must-haves asked in prose, never enforced | reachability checked out-of-band by a reactive LLM reviewer; "done" = file exists, not app renders it | **Deleted the wiring reviewer** (→ advisory lint); reachability + responsive/empty/loading/error promoted to **RED-gated acceptance criteria** (behavioral `render(<App/>)` tests); G4 consumes canonical `PLAN.tasks.yaml` | `product/subagent_build.py`, `acceptance.py`, `wiring_check.py`, bundled agent prompts | test (97) | `ccdb9fc` |
+| 72 | **Harness bugs only discovered by burning funded LLM builds** ($0.80/55min each) | validated the harness with a green *unit* suite that mocks the seams where the bugs live | **Layered readiness gate** — capability-contract unit tests (regression-proven: reverting the fix → 22 fails; real litellm still false-negatives all pinned IDs), **wire-level** golden path (fake at the HTTP boundary, real litellm path), opt-in raw-transcript capture (+151/−0, off by default) | `test_capability_contract.py`, `test_golden_path_e2e.py`, `test_transcript_capture.py`, `product/provider_adapter.py` | test (55, $0/sec) | `7cabb3a` |
+| 73 | **Two diverged engines** (Claim 2) — GateOrchestrator path didn't share `run_delivery`'s services | historical fork; validation already shared, closeout/repair/proof/security/review not called | Conservative convergence: **locked** the shared validation with a test; wired **closeout** via the same impl (strictly post-G5, `.signalos`-only, opt-out) — benchmark path proven byte-identical. Repair/proof/security/review deferred as profile design decisions (panel-guided) | `product/gate_orchestrator.py` | test (42), repro | `f200bb5` |
+| 74 | **Grader penalized capable models for OUR bugs** (glm `clean_walk` 0 = 92% harness denials; `cn()`-composed UX undercounted; `lines≤30` over-penalized React) | conflated harness-caused vs model-caused; literal `className` regex; flat per-threshold deduction | Split `clean_walk` **harness-vs-policy** (only policy scores the model; still catches qwen's signed-test tampering); `cn()`/`clsx` class extraction; **graduated** context-aware complexity; `failure_taxonomy` in the 360 | benchmark grader (scratchpad: `gov_v2.py`, `cq_ux.py`, `cq_deterministic.py`, `measure_360.py`) | test (48), re-grade | scratchpad |
+
+---
+
 ## Foundry governed-build hardening — audit-verified (2026-07-10)
 
 An on-disk audit confirmed 11/11 P0/P1 findings a consultant raised: the visible Foundry app
