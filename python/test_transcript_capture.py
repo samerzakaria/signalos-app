@@ -98,6 +98,14 @@ class _WireFake:
         wire = self
 
         def send(client_self, request, **kwargs):  # noqa: ANN001 - httpx.Client.send
+            url = str(request.url)
+            # URL-aware: litellm's model-cost-map GET also travels through the
+            # patched httpx.Client.send. Refuse non-chat traffic so it neither
+            # hits the network nor consumes a scripted turn (litellm falls back
+            # to its bundled local cost map) -- otherwise the cost-map GET eats
+            # the first script slot and the real chat 404s off the end.
+            if "chat/completions" not in url:
+                raise httpx.ConnectError(f"blocked non-chat request: {url}", request=request)
             try:
                 body = json.loads(request.content.decode("utf-8"))
             except Exception:  # pragma: no cover
