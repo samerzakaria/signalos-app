@@ -51,6 +51,7 @@ from typing import Any, Callable, Optional
 
 from ..artifacts import resolve_gate_artifacts, resolve_workspace_path
 from .agent_loop import AgentLoop, LoopResult
+from .wiring_check import find_unwired_modules
 from .budgets import (
     resolve_build_doc_cap,
     resolve_build_fixer_error_batch,
@@ -1357,6 +1358,41 @@ def run_subagent_driven_build(
                 calls += 1
                 green, _ = check(repo_root)  # a review fix must not break the build
             summary.append(f"{kind}_review={parse_verdict(verdict)}")
+
+    # PHASE 3b -- WIRING review (in-loop, not the final fatal gate). Modules
+    # written-and-tested but never imported/composed into the running app are the
+    # dominant "green but not a product" failure (the exact reason a build passes
+    # every test yet the gate refuses it). Run the SAME shared check the G4 gate
+    # uses, HERE, and give the builder a fix pass to WIRE them -- so a wired
+    # product reaches the gate instead of dying at it.
+    if green:
+        orphans = find_unwired_modules(repo_root, stack.source_dir)
+        if orphans:
+            emit({"type": "system",
+                  "text": f"Wiring review: {len(orphans)} module(s) written but never "
+                          "composed into the app — asking the builder to wire them."})
+            wire_msg = (
+                "The build is green but these modules are UNWIRED -- written and "
+                "passing their tests, yet never imported/composed into the running "
+                "app:\n" + "\n".join(f"  - {o}" for o in orphans)
+                + "\n\nWire EACH one into the app: import it and actually USE it from "
+                "the component/store/entry that needs it, so it is part of the "
+                "running product -- e.g. a shared utility must be CALLED by the code "
+                "that needs it, not duplicated inline. Do NOT delete or weaken any "
+                "test. Keep the build green."
+            )
+            run("fixer", adapter, impl_sys, _fixer_message(wire_msg, repo_root, stack))
+            calls += 1
+            green, _ = check(repo_root)  # a wiring fix must not break the build
+            remaining = find_unwired_modules(repo_root, stack.source_dir)
+            emit({"type": "system",
+                  "text": ("Wiring review: all modules are composed into the app."
+                           if not remaining else
+                           f"Wiring review: {len(remaining)} module(s) still unwired "
+                           "after the fix pass.")})
+            summary.append(f"wiring_review={len(orphans)}->{len(remaining)}")
+        else:
+            summary.append("wiring_review=clean")
 
     # PHASE 4 -- record the Build Evidence artifact with the real numbers,
     # honestly: a not-green build is recorded as not green (the sign gate will

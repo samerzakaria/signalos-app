@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 
 from .. import agent_loader, wave_engine, sign
 from .agent_loop import AgentLoop
+from .wiring_check import CODE_SUFFIXES, SCAFFOLD_NAMES, find_unwired_modules
 from .budgets import resolve_gate_reopen_budget, resolve_gate_rework_budget
 from .enforcement_state import EnforcementProvider
 
@@ -516,70 +517,18 @@ class GateOrchestrator:
         except Exception as exc:  # never bypass on error -- fail closed
             return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
 
-    # Import-statement shapes across the supported code suffixes (ES import /
-    # require / python import) -- enough to build a reachability graph.
-    _IMPORT_RE = re.compile(
-        r"""(?:from\s+['"](?P<es>[^'"]+)['"]|require\(\s*['"](?P<req>[^'"]+)['"]\s*\)|"""
-        r"""^\s*from\s+(?P<py>[\w.]+)\s+import)""",
-        re.M,
-    )
-    _ENTRY_NAMES = ("main.tsx", "main.ts", "index.tsx", "index.ts", "main.py",
-                    "index.js", "main.js", "app.py")
+    # (Import-graph shapes + entry names live in wiring_check.py -- the single
+    # source for the wiring analysis, shared with the in-loop build reviewer so a
+    # module written-but-never-composed is caught DURING the build, not only at
+    # this gate.)
 
     def _unwired_modules(self) -> list:
-        """Modules in the product source tree UNREACHABLE from the app entry
-        through the import graph. 'Pieces without wiring' is the dominant
-        build failure mode (components written, never composed); this makes it
-        an OBJECTIVE, named violation instead of a reviewer opinion. Best-effort
-        static analysis: unresolvable/aliased imports never create false
-        positives (unknown paths are simply not counted as edges FROM a module,
-        and only same-tree modules can be flagged)."""
-        src = self.repo_root / self._product_source_dir()
-        if not src.is_dir():
-            return []
-        code: dict = {}
-        for p in src.rglob("*"):
-            if not p.is_file() or p.suffix not in self._CODE_SUFFIXES:
-                continue
-            n = p.name
-            if ".test." in n or ".spec." in n or "_test." in n or n.startswith("test_"):
-                continue
-            code[p.resolve()] = p
-        if not code:
-            return []
-        entries = [p for p in code if p.name in self._ENTRY_NAMES]
-        if not entries:
-            return []  # no recognizable entry -> cannot judge wiring; stay silent
-        suffixes = ("", *self._CODE_SUFFIXES,
-                    *[f"/index{s}" for s in self._CODE_SUFFIXES])
-        seen = set(entries)
-        stack = list(entries)
-        while stack:
-            cur = stack.pop()
-            try:
-                text = code[cur].read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for m in self._IMPORT_RE.finditer(text):
-                spec = m.group("es") or m.group("req")
-                if not spec or not spec.startswith("."):
-                    continue  # bare package or python import -- not a local edge
-                base = (cur.parent / spec)
-                for suf in suffixes:
-                    cand = Path(str(base) + suf).resolve() if suf else base.resolve()
-                    if cand in code and cand not in seen:
-                        seen.add(cand)
-                        stack.append(cand)
-                        break
-        orphans = sorted(
-            str(code[p].relative_to(self.repo_root)).replace("\\", "/")
-            for p in code
-            # scaffold files (vitest setup, entries) are wired via build
-            # config, not imports -- never flagged, but they STAY in the graph
-            # so the entry's edges are walked.
-            if p not in seen and code[p].name not in self._SCAFFOLD_NAMES
-        )
-        return orphans
+        """Product-source modules UNREACHABLE from the app entry through the
+        import graph -- the dominant 'green but not a product' failure (pieces
+        written, never composed). Delegates to the shared wiring check, which the
+        in-loop build reviewer also runs, so the same violation is caught DURING
+        the build (with a fix pass) rather than only here at the gate."""
+        return find_unwired_modules(self.repo_root, self._product_source_dir())
 
     def _product_source_dir(self) -> str:
         """The stack adapter's own source directory (e.g. src, app, internal/app
@@ -591,13 +540,10 @@ class GateOrchestrator:
         except Exception:
             return "src"
 
-    # Common source-code suffixes; the source DIRECTORY comes from the adapter.
-    _CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go", ".rs",
-                      ".cs", ".java", ".kt", ".dart", ".rb", ".php")
-    # Scaffold entry/config files that don't count as product source (name-based
-    # heuristics; harmless for stacks where these names don't occur).
-    _SCAFFOLD_NAMES = ("main.tsx", "main.ts", "vite-env.d.ts", "main.py",
-                       "__init__.py", "conftest.py", "setup.ts")
+    # Single source lives in wiring_check.py (shared with the in-loop reviewer);
+    # referenced here for _repo_has_real_product_src.
+    _CODE_SUFFIXES = CODE_SUFFIXES
+    _SCAFFOLD_NAMES = SCAFFOLD_NAMES
 
     def _repo_has_real_product_src(self) -> bool:
         """True iff the repo has real product source beyond the scaffold: a
