@@ -214,6 +214,7 @@ class GateOrchestrator:
         run_id: Optional[str] = None,
         prompt: str = "",
         critic_adapter: Any = None,
+        finalize_closeout: bool = True,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.adapter = adapter
@@ -223,6 +224,14 @@ class GateOrchestrator:
         # falls back to the primary adapter -- still a real 4-field brief,
         # honestly recorded as same-vendor in its provenance.
         self.critic_adapter = critic_adapter
+        # Convergence with run_delivery's CLOSEOUT phase (Claim 2): when the
+        # walk COMPLETES, produce the SAME closeout evidence run_delivery writes
+        # via the shared closeout.* functions, so a fix to closeout reaches BOTH
+        # engines. Runs strictly AFTER G5 (post-G4) and only writes .signalos
+        # governance evidence, so it cannot change the G4 build. Opt-out flag so
+        # a driver (e.g. a build benchmark) that wants zero completion writes can
+        # disable it; see _finalize_closeout.
+        self.finalize_closeout = finalize_closeout
         self.emit = emit
         self.enforcement_provider = enforcement_provider
         self.signer = signer
@@ -758,6 +767,7 @@ class GateOrchestrator:
                 ready = len(self.state.waived) == 0
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": ready, "waived": list(self.state.waived)})
+                self._finalize_closeout(ready=ready)
                 return {"status": "complete", "ready": ready, "waived": list(self.state.waived)}
             self._run_gate(nxt)
             return {"status": "advanced", "gate": nxt}
@@ -809,6 +819,7 @@ class GateOrchestrator:
                 self._persist()
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": False, "waived": list(self.state.waived)})
+                self._finalize_closeout(ready=False)
                 return {"status": "complete-waived", "ready": False,
                         "waived": list(self.state.waived)}
             self._run_gate(nxt)
@@ -956,6 +967,46 @@ class GateOrchestrator:
                            + (f" Also invalidated: {', '.join(invalidated)}."
                               if invalidated else "")})
         return {"status": "reopened", "gate": gate, "invalidated": invalidated}
+
+    def _finalize_closeout(self, *, ready: bool) -> None:
+        """CONVERGENCE (Claim 2): produce the delivery CLOSEOUT via the SAME
+        closeout.build_closeout / write_closeout the full run_delivery pipeline
+        uses, so a fix to the closeout service reaches BOTH engines instead of
+        only the CLI path. Previously a completed GateOrchestrator walk (the
+        desktop `agent:deliver` surface) emitted `delivery_complete` but wrote
+        NO CLOSEOUT.json, while run_delivery did -- the exact divergence the
+        audit flags.
+
+        Behaviour-preserving for the benchmark's G4 build:
+          * Runs ONLY at final completion, strictly AFTER G4 is signed and
+            independently verified, so it cannot change the G4 build behaviour,
+            the scores, or the verified-build outcome for an already-scaffolded
+            React repo.
+          * Writes ONLY .signalos governance evidence (CLOSEOUT.json/.md);
+            never touches product source or the G4 build outputs.
+          * Deliberately does NOT invoke write_handoff_files here: its GTM stage
+            is LLM-gated and would add a provider call to the walk. Handoff/GTM
+            convergence is left for a design decision (see the workstream note).
+          * Opt-out via finalize_closeout=False (a strict no-op), and never
+            raises -- a closeout hiccup is reported through emit and swallowed,
+            so it can never fail the walk or perturb a driver that does not want
+            completion writes.
+        """
+        if not self.finalize_closeout:
+            return
+        try:
+            from .closeout import build_closeout, write_closeout
+            from .stacks import detect_profile
+            profile = detect_profile(self.repo_root)
+            closeout = build_closeout(self.repo_root, self.repo_root.name,
+                                      profile, None)
+            write_closeout(closeout, self.repo_root / ".signalos")
+            self.emit({"type": "closeout",
+                       "closure_level": closeout.get("closure_level"),
+                       "ready": ready})
+        except Exception as exc:  # never fail the walk on a closeout hiccup
+            self.emit({"type": "system",
+                       "text": f"Closeout skipped ({type(exc).__name__}: {exc})."})
 
     def _state_dir(self) -> Path:
         return self.repo_root / ".signalos" / "agent-runs" / self.state.run_id
