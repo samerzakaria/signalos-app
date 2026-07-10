@@ -66,10 +66,13 @@ Task tool (general-purpose):
     A working feature with an ugly, default-looking UI is NOT done. Ship a UI a real
     product team would be proud of — not raw, unstyled HTML.
 
-    - **Use a real styling system / component library** appropriate to the stack —
-      e.g. Tailwind CSS, or a component kit (MUI, Chakra, Radix, Mantine, shadcn/ui),
-      or well-organized CSS Modules. **Add the dependency if it isn't present.**
-      Do NOT hand-roll bare `<table>`/`<div>` with no styling.
+    - **Use a real styling system.** First check `package.json` — a styling
+      system or component kit (Tailwind, MUI, Chakra, Radix, Mantine…) may already
+      be installed and simply unused; prefer those. CSS / CSS Modules / a small
+      inline style system need no install and are always available. Only add a NEW
+      dependency if you can install it and the project still builds — **never
+      `import` a package that isn't installed; that breaks the build (TS2307).**
+      Either way: do NOT ship bare `<table>`/`<div>` with no styling.
     - **Design with intent:** clear visual hierarchy, consistent spacing/typography, a
       cohesive color palette, sensible layout (cards/lists/forms laid out properly),
       empty / loading / error states, and interactive states (hover, focus, disabled).
