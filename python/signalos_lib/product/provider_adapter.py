@@ -22,6 +22,11 @@ __all__ = [
     "detect_capabilities",
     "ProviderAuthError",
     "classify_error_scenario",
+    # Layer 2 seed — opt-in raw transcript capture (OFF by default).
+    "capture_transcript",
+    "iter_cassette",
+    "CAPTURE_ENV",
+    "CAPTURE_DIR_ENV",
 ]
 
 from dataclasses import dataclass, field
@@ -235,6 +240,147 @@ def detect_capabilities(model: str, litellm_module: Any | None = None) -> Provid
 
 
 # ---------------------------------------------------------------------------
+# Layer 2 seed — raw provider-payload capture (opt-in, OFF by default)
+# ---------------------------------------------------------------------------
+# Funded builds throw away the raw provider request/response payloads that are
+# the single highest-fidelity regression corpus we have (each is ~$0.80 to
+# produce). When SIGNALOS_CAPTURE_TRANSCRIPTS=1, every LiteLLMAgentProvider.chat
+# call appends its RAW request + RAW response JSON to a per-process cassette
+# under .signalos/transcripts/ (override the dir with SIGNALOS_TRANSCRIPTS_DIR).
+# A captured cassette can later be replayed offline for $0 to re-drive the real
+# litellm parse/normalize path (see test_transcript_capture.py's stub replay).
+#
+# Contract: OFF by default => ZERO behavior change. Every step is wrapped so a
+# capture failure can NEVER break a live provider call (this is diagnostic-only
+# telemetry, not a load-bearing path). Streamed calls capture the request only
+# (never consume the live stream).
+
+CAPTURE_ENV = "SIGNALOS_CAPTURE_TRANSCRIPTS"
+CAPTURE_DIR_ENV = "SIGNALOS_TRANSCRIPTS_DIR"
+
+_CAPTURE_FILENAME: str | None = None
+
+
+def _capture_enabled() -> bool:
+    import os
+
+    return os.environ.get(CAPTURE_ENV) == "1"
+
+
+def _transcripts_dir() -> "Path":
+    import os
+    from pathlib import Path
+
+    override = os.environ.get(CAPTURE_DIR_ENV)
+    if override:
+        return Path(override)
+    return Path.cwd() / ".signalos" / "transcripts"
+
+
+def _capture_cassette_path() -> "Path":
+    """One rolling cassette file per process (stable across calls in a run)."""
+    global _CAPTURE_FILENAME
+    import os
+    from datetime import datetime, timezone
+
+    if _CAPTURE_FILENAME is None:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        _CAPTURE_FILENAME = f"cassette-{ts}-{os.getpid()}.jsonl"
+    return _transcripts_dir() / _CAPTURE_FILENAME
+
+
+def _jsonable(obj: Any) -> Any:
+    """Best-effort convert a litellm request/response into a JSON-able value.
+
+    Handles pydantic ModelResponse (model_dump/dict/json), plain
+    dict/list/scalars, and falls back to a bounded repr — it NEVER raises.
+    """
+    import json as _json
+
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    for meth in ("model_dump", "dict"):
+        fn = getattr(obj, meth, None)
+        if callable(fn):
+            try:
+                return _jsonable(fn())
+            except Exception:
+                pass
+    json_fn = getattr(obj, "json", None)
+    if callable(json_fn):
+        try:
+            return _json.loads(json_fn())
+        except Exception:
+            pass
+    try:
+        _json.dumps(obj)
+        return obj
+    except Exception:
+        return {"__repr__": str(obj)[:20000]}
+
+
+def capture_transcript(
+    request: dict[str, Any], response: Any, *, streamed: bool = False
+) -> None:
+    """Append one raw request/response record to the process cassette IFF
+    SIGNALOS_CAPTURE_TRANSCRIPTS=1. No-op (and no filesystem touch) when off.
+
+    Defensive by contract: any error is swallowed so a capture problem can
+    never affect the real provider call. Not INV-4 relevant — this is opt-in
+    telemetry, not a user-visible result path.
+    """
+    if not _capture_enabled():
+        return
+    try:
+        import json as _json
+        from datetime import datetime, timezone
+
+        path = _capture_cassette_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "streamed": bool(streamed),
+            "request": _jsonable(request),
+            # A live stream must not be consumed here; capture request-only.
+            "response": None if streamed else _jsonable(response),
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        # Best-effort telemetry only — never surface to the caller.
+        pass
+
+
+def iter_cassette(path: Any) -> Iterator[dict[str, Any]]:
+    """Yield {'request','response',...} records from a cassette file.
+
+    The seam the future replay harness plugs into: a saved funded-run payload
+    can be fed back through the adapter's parse/normalize path offline for $0.
+    Missing file / malformed lines yield nothing rather than raising.
+    """
+    import json as _json
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.is_file():
+        return
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = _json.loads(line)
+        except Exception:
+            continue
+        if isinstance(rec, dict):
+            yield rec
+
+
+# ---------------------------------------------------------------------------
 # LiteLLMAgentProvider — implements harness.AgentProvider
 # ---------------------------------------------------------------------------
 
@@ -383,6 +529,8 @@ class LiteLLMAgentProvider:
             raise RuntimeError(_provider_error_message(exc, provider_name=self._provider_name)) from exc
 
         if stream:
+            # Layer 2 seed: capture the request only — never consume the stream.
+            capture_transcript(kwargs, None, streamed=True)
             return AgentResponse(
                 content=None,
                 tool_calls=None,
@@ -391,6 +539,9 @@ class LiteLLMAgentProvider:
                 stream=self._wrap_stream(resp),
             )
 
+        # Layer 2 seed: capture the raw request + raw response (opt-in, OFF by
+        # default) before we normalize it, so funded runs seed a replay corpus.
+        capture_transcript(kwargs, resp, streamed=False)
         return self._normalize_response(resp)
 
     def _normalize_response(self, resp: Any) -> AgentResponse:
