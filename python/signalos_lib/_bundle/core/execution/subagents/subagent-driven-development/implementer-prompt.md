@@ -84,6 +84,22 @@ Task tool (general-purpose):
     - Match any design direction the plan/brief gives; if none, apply tasteful,
       modern defaults. The bar is "looks like a shipped product," not "AI demo output."
 
+    ## Wiring: make the running app actually use what you build
+
+    Your acceptance test renders the REAL app entry (`render(<App/>)`) and asserts
+    user-observable behaviour — so a module you create but never mount does NOT
+    make the test pass. A file existing is not "done"; the app RENDERING it is.
+
+    - Import every module you add and USE it from the component / store / route /
+      entry that needs it, so it is part of the running product. A shared utility
+      must be CALLED by the code that needs it — never duplicated inline.
+    - Trace the path from the app entry to your new code. If nothing on that path
+      imports it, it is unreachable and the behavioural test will stay RED.
+    - The UX baseline is required, not optional: a responsive layout (real
+      breakpoints) and empty / loading / error states each rendered and tested.
+      These are RED-gated acceptance criteria; subjective polish is graded
+      separately, so meeting the baseline is never a trade-off against tests.
+
     ## When You're in Over Your Head
 
     It is always OK to stop and say "this is too hard for me." Bad work is worse than

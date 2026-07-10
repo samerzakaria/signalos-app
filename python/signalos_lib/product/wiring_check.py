@@ -1,16 +1,35 @@
 # signalos_lib/product/wiring_check.py
-# One shared "is every module actually wired into the app?" static check, used
-# by BOTH the final G4 gate (objective refusal) and the in-loop build reviewer
-# (so a module written-but-never-composed is fixed DURING the build instead of
-# killing it at the gate). "Pieces without wiring" -- components written but
-# never imported/composed into the running app -- is the dominant "green but not
-# a product" failure. Best-effort reachability from the app entry through the
-# local import graph: unresolvable/aliased/bare imports never create false
-# positives (only same-tree modules can be flagged).
+# Import-graph reachability -- now a FAST ADVISORY LINT, no longer a gate/blocker.
+#
+# History: "modules written but never composed into the running app" (an
+# ExpenseForm.tsx that exists but the App never renders) was the dominant
+# "green but not a product" failure. It used to be enforced two reactive ways --
+# a hard G4 gate refusal AND an in-loop reviewer subagent -- both "connection by
+# reviewer" mechanisms that a passing test suite could not itself force. Scoring
+# a task "done" on FILE EXISTENCE rather than on the app RENDERING the module is
+# an incentive gap no reviewer tuning fixes.
+#
+# The root-cause fix moves enforcement INTO the test: the acceptance/integration
+# test renders the real app entry (`render(<App/>)`) and asserts user-observable
+# behaviour that REQUIRES the new module to be mounted ("user adds an expense,
+# sees it in the list"), so an unwired module fails a RED test through the normal
+# build loop -- self-healing, no reviewer, no separate static gate.
+#
+# What remains here is a cheap, EARLY, INFORMATIONAL signal: `unwired_lint`
+# names any source module not reachable from the app entry so the build can emit
+# a crisp heads-up ("src/X is not reachable from the app entry"). It NEVER
+# decides pass/fail. `find_unwired_modules` is kept as a DEMOTED no-op shim so
+# the legacy static G4 wiring gate no longer refuses a build on reachability
+# alone (that refusal is now the App-rendering test's job).
+#
+# Best-effort reachability from the app entry through the local import graph:
+# unresolvable/aliased/bare imports never create false positives (only same-tree
+# modules can be flagged).
 
 from __future__ import annotations
 
-__all__ = ["find_unwired_modules", "CODE_SUFFIXES", "ENTRY_NAMES", "SCAFFOLD_NAMES"]
+__all__ = ["unwired_lint", "find_unwired_modules", "CODE_SUFFIXES",
+           "ENTRY_NAMES", "SCAFFOLD_NAMES"]
 
 import re
 from pathlib import Path
@@ -36,10 +55,15 @@ def _is_test(name: str) -> bool:
     return any(m in name for m in _TEST_MARKERS) or name.startswith("test_")
 
 
-def find_unwired_modules(repo_root: Path, source_dir: str) -> list:
-    """Product-source modules UNREACHABLE from the app entry through the local
-    import graph, as repo-relative POSIX paths (sorted). Empty when there is no
-    source dir, no code, or no recognizable entry (cannot judge -> stay silent)."""
+def unwired_lint(repo_root: Path, source_dir: str) -> list:
+    """ADVISORY reachability lint (never pass/fail). Product-source modules
+    UNREACHABLE from the app entry through the local import graph, as
+    repo-relative POSIX paths (sorted). Empty when there is no source dir, no
+    code, or no recognizable entry (cannot judge -> stay silent).
+
+    This is an informational early signal only -- the build emits it as a
+    heads-up. Reachability is ENFORCED by the acceptance/integration test that
+    renders the real app entry, not by this function."""
     repo_root = Path(repo_root)
     src = repo_root / source_dir
     if not src.is_dir():
@@ -81,3 +105,14 @@ def find_unwired_modules(repo_root: Path, source_dir: str) -> list:
         for p in code
         if p not in seen and code[p].name not in SCAFFOLD_NAMES
     )
+
+
+def find_unwired_modules(repo_root: Path, source_dir: str) -> list:
+    """DEMOTED (v1.2) -- wiring is no longer a gate/blocker. Reachability is now
+    enforced by the acceptance/integration test that renders the real app entry
+    (an unwired module fails a RED test through the normal loop), so this shim
+    returns an EMPTY list: the legacy static G4 wiring gate never refuses a build
+    on reachability alone (a refusal that caused false-positive "green but the
+    gate killed it" deaths and is the very reason an in-loop reviewer had to
+    exist). For the informational early signal, call ``unwired_lint``."""
+    return []

@@ -485,5 +485,105 @@ class TestRunWrapperSurfacesNoWork(unittest.TestCase):
                         f"no no-work signal surfaced; got {system_texts}")
 
 
+# ---------------------------------------------------------------------------
+# FIX 3 (Claim 5) — G4 consumes the CANONICAL machine plan (PLAN.tasks.yaml),
+# not only the rendered markdown. Prefer it; keep the markdown parser for
+# back-compat (the benchmark fixture's plan is markdown-shaped).
+# ---------------------------------------------------------------------------
+
+# Two valid ULIDs (26 chars, Crockford base32 — no I/L/O/U).
+_ULID_A = "0000000000000000000000000A"
+_ULID_B = "0000000000000000000000000B"
+
+
+def _write_canonical_plan(d: Path, body: str) -> None:
+    p = d / "core" / "execution" / "PLAN.tasks.yaml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+
+
+class TestCanonicalPlanTasks(unittest.TestCase):
+    def test_canonical_two_task_plan_parsed_with_files_and_deps(self):
+        from signalos_lib.product.subagent_build import decompose_plan_tasks
+        d = Path(tempfile.mkdtemp())
+        _write_canonical_plan(d, (
+            "wave: W1\n"
+            "tasks:\n"
+            f'  - id: "{_ULID_A}"\n'
+            "    title: Zustand store\n"
+            "    status: pending\n"
+            "    tier: T1\n"
+            "    files:\n"
+            "      - src/store/s.ts\n"
+            f'  - id: "{_ULID_B}"\n'
+            "    title: Expense form\n"
+            "    status: pending\n"
+            "    tier: T2\n"
+            "    depends_on:\n"
+            f'      - "{_ULID_A}"\n'
+            "    files:\n"
+            "      - src/components/F.tsx\n"
+            "      - src/components/__tests__/F.test.tsx\n"
+        ))
+        tasks = decompose_plan_tasks(d, "default")
+        self.assertEqual([t.id for t in tasks], [_ULID_A, _ULID_B])
+        self.assertEqual(tasks[0].name, "Zustand store")
+        self.assertEqual(tasks[0].files, ["src/store/s.ts"])
+        self.assertEqual(tasks[0].test, "")            # no test-shaped file
+        self.assertEqual(tasks[1].deps, [_ULID_A])     # dependency carried
+        # the test-shaped file becomes the acceptance-test path, not an impl file
+        self.assertEqual(tasks[1].files, ["src/components/F.tsx"])
+        self.assertEqual(tasks[1].test, "src/components/__tests__/F.test.tsx")
+
+    def test_decompose_tasks_prefers_canonical_over_markdown(self):
+        # BOTH a markdown PLAN.md and a canonical PLAN.tasks.yaml exist; the
+        # canonical machine plan wins.
+        d = _repo_with_plan()  # writes core/execution/PLAN.md (T1/T2 markdown)
+        _write_canonical_plan(d, (
+            "wave: W1\n"
+            "tasks:\n"
+            f'  - id: "{_ULID_A}"\n'
+            "    title: Canonical task\n"
+            "    status: pending\n"
+            "    tier: T1\n"
+        ))
+        tasks = decompose_tasks(d, "x")
+        self.assertEqual([t.id for t in tasks], [_ULID_A])  # canonical, not T1/T2
+
+    def test_explicit_test_key_is_honored(self):
+        from signalos_lib.product.subagent_build import decompose_plan_tasks
+        d = Path(tempfile.mkdtemp())
+        _write_canonical_plan(d, (
+            "wave: W1\n"
+            "tasks:\n"
+            f'  - id: "{_ULID_A}"\n'
+            "    title: A\n"
+            "    status: pending\n"
+            "    tier: T1\n"
+            "    test: core/execution/tests/A.test.tsx\n"
+            f'  - id: "{_ULID_B}"\n'
+            "    title: B\n"
+            "    status: pending\n"
+            "    tier: T1\n"
+        ))
+        tasks = decompose_plan_tasks(d, "default")
+        self.assertEqual(tasks[0].test, "core/execution/tests/A.test.tsx")
+
+    def test_markdown_plan_still_parses_when_no_canonical(self):
+        # No PLAN.tasks.yaml -> the markdown parser is the fallback (unchanged).
+        tasks = decompose_tasks(_repo_with_plan(), "x")
+        self.assertEqual([t.id for t in tasks], ["T1", "T2"])
+        self.assertEqual(tasks[0].files, ["src/store/s.ts"])
+        self.assertEqual(tasks[0].test, "core/execution/tests/T1.test.ts")
+
+    def test_invalid_canonical_falls_back_to_markdown(self):
+        # A canonical file missing the required 'wave' key does not parse; the
+        # build must not break -- it falls back to the markdown plan.
+        d = _repo_with_plan()
+        _write_canonical_plan(d, "tasks: []\n")  # no 'wave' -> load_tasks raises
+        tasks = decompose_tasks(d, "x")
+        self.assertEqual([t.id for t in tasks], ["T1", "T2"])  # markdown fallback
+
+
 if __name__ == "__main__":
     unittest.main()
