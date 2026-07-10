@@ -91,6 +91,36 @@ class CommandContainmentTest(unittest.TestCase):
         self.assertIsNone(self._check(""))
         self.assertIsNone(self._check("   "))
 
+    # --- FIX 1 regression: the Git-Bash absolute form of the workspace root ---
+    # itself was false-denied as "outside the workspace" because Path('/c/ws')
+    # mis-resolves to C:\c\ws. The canonical pipeline collapses /c/ -> c:\.
+
+    def _gitbash(self, p: Path) -> str:
+        s = str(p)
+        return "/" + s[0].lower() + s[2:].replace("\\", "/")
+
+    def test_gitbash_absolute_workspace_root_is_in_workspace(self):
+        # `cd /c/tmp/.../proj && npm test` where /c/tmp/.../proj IS the root.
+        cmd = f"cd {self._gitbash(self.repo)} && npm test"
+        self.assertIsNone(self._check(cmd))
+
+    def test_gitbash_absolute_subdir_is_in_workspace(self):
+        sub = self.repo / "src"
+        sub.mkdir()
+        self.assertIsNone(self._check(f"cat {self._gitbash(sub)}/x.ts"))
+
+    def test_windows_absolute_workspace_path_is_in_workspace(self):
+        # An absolute Windows path INTO the workspace must not read as an escape.
+        self.assertIsNone(self._check(f"cat {self.repo / 'README.md'}"))
+
+    def test_gitbash_absolute_outside_still_escapes(self):
+        # Sanity: a Git-Bash absolute path OUTSIDE the workspace still escapes.
+        token = "/c/definitely/not/the/workspace/gold/x.ts"
+        self.assertEqual(self._check(f"cat {token}"), token)
+
+    def test_home_dir_reference_escapes(self):
+        self.assertEqual(self._check("cat ~/.ssh/id_rsa"), "~/.ssh/id_rsa")
+
 
 if __name__ == "__main__":
     unittest.main()

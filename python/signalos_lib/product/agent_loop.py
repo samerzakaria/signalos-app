@@ -384,6 +384,98 @@ def _norm(path: str) -> str:
     return path.replace("\\", "/").lstrip("./")
 
 
+# ---------------------------------------------------------------------------
+# FIX 1 — ONE canonical path pipeline (kills path-form whack-a-mole)
+#
+# The old policy layer did "OS-level sandboxing by regex": it string-matched
+# command prefixes and path globs against whatever FORM the model happened to
+# type. That endlessly false-denied, because a single filesystem location has
+# many spellings on Windows + Git-Bash:
+#   c:\ws\x   c:/ws/x   C:\WS\X   /c/ws/x   ws\..\ws\x   (and absolute vs rel)
+# ~90% of observed denials were OUR bug (e.g. `cd /c/tmp/.../proj && npm test`
+# where /c/tmp/.../proj IS the workspace root, denied as "outside workspace";
+# an absolute write into core/execution/** denied because the allowlist matched
+# RELATIVE globs). The fix: funnel EVERY containment + allowlist check through
+# ONE normalization that collapses all those spellings to a single canonical
+# absolute real-path, then derives a workspace-RELATIVE path for glob matching.
+# ---------------------------------------------------------------------------
+
+# Git-Bash / MSYS absolute form: `/c/foo` denotes drive C exactly like `c:\foo`.
+# A SINGLE drive letter followed by a separator or end-of-string. A genuine
+# POSIX root such as `/etc` is NOT this (two+ leading chars can't be a drive),
+# so it is left untouched and still correctly reads as an escape on Windows.
+_GITBASH_ABS_RE = re.compile(r"^/([A-Za-z])(?:/|$)")
+
+
+def _degitbash(token: str) -> str:
+    """Collapse a Git-Bash absolute path (`/c/ws`) to the Windows drive form
+    (`c:/ws`) so it resolves to the SAME real path as `c:\\ws`. Without this,
+    Path('/c/ws').resolve() anchors to the current drive as `C:\\c\\ws` -- the
+    exact mis-resolution behind the `cd /c/tmp/... && npm test` false denial."""
+    m = _GITBASH_ABS_RE.match(token)
+    if not m:
+        return token
+    return f"{m.group(1)}:/" + token[m.end():]
+
+
+def _canonical_abs(root: Path, candidate: str) -> Path | None:
+    """Resolve *candidate* to ONE canonical absolute real-path (FIX 1).
+
+    Single normalization used by every containment + allowlist check (writes
+    AND commands). It:
+      * strips surrounding quotes / whitespace,
+      * expands a leading `~` (the shell WOULD, since run_command is shell=True,
+        so an un-expanded `~/.ssh` must be treated as the home dir it becomes),
+      * collapses the Git-Bash `/c/` vs `c:\\` duality (`_degitbash`),
+      * treats `\\` and `/` interchangeably and lowercases the drive-letter
+        difference implicitly (pathlib + case-insensitive WindowsPath compare),
+      * resolves a relative candidate against *root*,
+      * returns the resolved absolute Path.
+
+    Returns None for a malformed / unresolvable candidate; every caller treats
+    None as "deny / escape" (fail closed).
+    """
+    tok = candidate.strip().strip('"').strip("'")
+    if not tok:
+        return None
+    if tok.startswith("~"):
+        tok = os.path.expanduser(tok)
+    else:
+        tok = _degitbash(tok)
+    try:
+        p = Path(tok)
+        combined = p if p.is_absolute() else (Path(root) / tok)
+        return combined.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _workspace_relative(root: Path, candidate: str) -> str | None:
+    """Canonical workspace-RELATIVE POSIX path for *candidate*, or None when it
+    resolves OUTSIDE *root* (a true escape). The workspace root ITSELF maps to
+    "" (empty relative) -- a `cd` to the workspace root must ALWAYS be allowed.
+
+    This is the single funnel: an ABSOLUTE path into an allowlisted dir
+    (`c:\\ws\\core\\execution\\X`) becomes the relative `core/execution/X`, so it
+    matches the RELATIVE glob `core/execution/**`. Containment is decided here,
+    not by string-matching a prefix.
+    """
+    target = _canonical_abs(root, candidate)
+    if target is None:
+        return None
+    try:
+        root_abs = Path(root).resolve()
+    except (OSError, RuntimeError):
+        root_abs = Path(root)
+    # WindowsPath == / parents are case-insensitive; parts slicing is structural
+    # (no re-comparison), so the drive-case and separator forms already agree.
+    if target == root_abs:
+        return ""
+    if root_abs not in target.parents:
+        return None
+    return "/".join(target.parts[len(root_abs.parts):])
+
+
 def _matches_glob(path: str, patterns: list[str]) -> bool:
     normed = _norm(path)
     for pat in patterns:
@@ -556,9 +648,94 @@ def _cd_target(segment: str) -> str | None:
     return toks[1].strip().strip('"').strip("'")
 
 
+# FIX 2 — jail cwd to the workspace root. A leading `cd <target>` in a compound
+# command is peeled off and turned into the child process's cwd, so the model
+# never NEEDS an absolute `cd <root> && x`: `cd frontend && npm test` runs with
+# cwd=<root>/frontend and command="npm test". This is shell-agnostic (cmd.exe
+# won't `cd /c/ws/...`, Git-Bash will -- peeling sidesteps that entirely) and
+# keeps the compound-segment governance validation on the ORIGINAL command.
+_LEADING_CD_RE = re.compile(
+    r"""^\s*cd\s+(?P<target>'[^']*'|"[^"]*"|\S+)
+        \s*(?:(?:&&|;|\|\|)\s*(?P<rest>.+))?\s*$""",
+    re.VERBOSE | re.DOTALL,
+)
+
+
+def _peel_leading_cd(command: str) -> tuple[str | None, str]:
+    """If *command* starts with `cd <target>` (optionally `&& <rest>`), return
+    (target, rest); otherwise (None, command). `rest` is "" for a bare
+    `cd <target>` with nothing after it."""
+    m = _LEADING_CD_RE.match(command)
+    if not m:
+        return None, command
+    target = m.group("target").strip().strip('"').strip("'")
+    rest = (m.group("rest") or "").strip()
+    return target, rest
+
+
+# FIX 3 — a principled VERIFICATION command CLASS, instead of enumerating one
+# command at a time in the trust-tier config (the whack-a-mole we are killing).
+# These are read-only / analysis / integrity commands the build gate routinely
+# tells the agent to run (observed gaps that got false-denied: `node -e`,
+# `sha256sum`). They are permitted IN ADDITION to the trust-tier execute
+# allowlist. Two notes on why this is safe:
+#   * Path containment still holds: cwd is jailed to the workspace (FIX 2) and
+#     any path ARGUMENT that escapes is still rejected by _command_escapes_
+#     workspace (FIX 1). So a verification command cannot reach outside the repo
+#     by a path token.
+#   * Arbitrary-code evaluators (`node -e`, `python -c`) are in the SAME threat
+#     class the policy ALREADY accepts via `npm test` / `pytest` / `node --test`
+#     (a test file runs arbitrary project code). They are not a new capability;
+#     the real containment boundary for what such code does at runtime is a
+#     sandbox (container/WSL) -- see the report. Genuinely destructive/exfil
+#     verbs (rm -rf, git push --force, ...) remain on the always-forbidden
+#     denylist and are checked BEFORE this class.
+# Matched on the first token OR the first two tokens, so both `sha256sum FILE`
+# (single verb) and `node -e '...'` (verb + subcommand/flag) are recognized.
+_VERIFICATION_COMMANDS: frozenset[str] = frozenset({
+    # JS/TS one-off eval + syntax/type checks (no watch, no serve).
+    "node -e", "node -p", "node --eval", "node --print",
+    "node --check", "node --test",
+    "tsc", "npx tsc", "npx vitest", "npx vite",
+    # Python one-off eval + byte-compile / syntax check.
+    "python -c", "python -m py_compile", "python -m compileall",
+    "python3 -c", "python3 -m py_compile", "python3 -m compileall",
+    # Integrity / hashing (BUILD_EVIDENCE checksums were denied as a gap).
+    "sha256sum", "sha1sum", "sha512sum", "md5sum", "shasum", "cksum", "b2sum",
+    # Read-only inspection idioms.
+    "cat", "head", "tail", "wc", "ls", "dir", "pwd", "echo", "printf",
+    "type", "find", "grep", "rg", "stat", "file", "true", "false", "which",
+    # Read-only VCS queries (mutating subcommands are deliberately excluded).
+    "git status", "git diff", "git log", "git rev-parse", "git show",
+    "git branch", "git ls-files",
+})
+
+
+def _is_verification_command(segment: str) -> bool:
+    """True when *segment*'s leading verb is in the read-only verification class
+    (FIX 3). Recognizes the single-verb (`sha256sum`), verb+flag (`node -e`),
+    and verb+module (`python -m compileall`) forms by matching the first 1, 2,
+    or 3 leading tokens against the class."""
+    seg = segment.strip()
+    if not seg:
+        return False
+    try:
+        toks = shlex.split(seg, posix=False)
+    except ValueError:
+        toks = seg.split()
+    if not toks:
+        return False
+    return any(
+        " ".join(toks[:n]) in _VERIFICATION_COMMANDS
+        for n in (1, 2, 3)
+    )
+
+
 def _segment_matches(segment: str, patterns: list[str]) -> bool:
     """True when a single (non-compound) command segment matches the allowlist.
-    This is the historical single-command matching logic."""
+    This is the historical single-command matching logic, plus the FIX-3
+    verification class (a principled read-only set permitted on top of the
+    trust-tier allowlist so we stop growing the list one command at a time)."""
     seg = segment.strip()
     if not seg:
         return True
@@ -569,7 +746,7 @@ def _segment_matches(segment: str, patterns: list[str]) -> bool:
             return True
         if seg == p or seg.startswith(p + " ") or root == p:
             return True
-    return False
+    return _is_verification_command(seg)
 
 
 def _command_matches(
@@ -624,9 +801,11 @@ def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
     To minimize false positives only genuine path tokens are inspected: flags
     (leading '-') are skipped, and a bare word with no separator, that is not
     absolute and has no '..' segment (npx, vitest, run, cat, src, *.ts globs) is
-    left alone. Candidates are resolved against the workspace; anything that does
-    not resolve to repo_root or a descendant of it is reported. Windows drive
-    letters and case-insensitivity fall out of Path.resolve()/comparison.
+    left alone. Candidates run through the ONE canonical pipeline (FIX 1), which
+    collapses the Git-Bash `/c/`, drive-case, and mixed-separator spellings to a
+    single real-path before deciding containment -- so `cd /c/ws/... && x` where
+    /c/ws/... IS the workspace root is correctly recognized as in-workspace
+    (the previous version mis-resolved it to C:\\c\\ws\\... and false-denied).
     """
     if not command or not command.strip():
         return None
@@ -634,10 +813,6 @@ def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
         tokens = shlex.split(command, posix=False)
     except ValueError:
         tokens = command.split()
-    try:
-        root = repo_root.resolve()
-    except (OSError, RuntimeError):
-        root = repo_root
     for raw in tokens:
         token = raw.strip().strip('"').strip("'")
         if not token or token.startswith("-"):
@@ -645,17 +820,14 @@ def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
         has_sep = "/" in token or "\\" in token
         is_abs = os.path.isabs(token)
         has_dotdot = ".." in re.split(r"[\\/]", token)
+        is_home = token.startswith("~")
         # Bare words / globs without a separator-escape are always in-workspace.
-        if not (has_sep or is_abs or has_dotdot):
+        if not (has_sep or is_abs or has_dotdot or is_home):
             continue
-        try:
-            cand = Path(token).resolve() if is_abs else (root / token).resolve()
-        except (OSError, RuntimeError, ValueError):
-            # Malformed/unresolvable path -> fail closed and deny it.
+        # Canonical containment: None means it resolves outside the workspace
+        # (or is unresolvable -> fail closed) and is reported as escaping.
+        if _workspace_relative(repo_root, token) is None:
             return token
-        if cand == root or root in cand.parents:
-            continue
-        return token
     return None
 
 
@@ -1411,9 +1583,26 @@ class AgentLoop:
         assert enf is not None  # set in run()
 
         if name in ("write_file", "edit_file"):
-            path = str(args.get("path", "")).strip()
-            if not path:
+            raw_path = str(args.get("path", "")).strip()
+            if not raw_path:
                 raise ToolPolicyError("write requires a non-empty path")
+            # FIX 1: canonicalize to a workspace-RELATIVE path BEFORE any
+            # containment / allowlist / classification check, so every check
+            # sees ONE form. This is what lets an ABSOLUTE path into an
+            # allowlisted dir (c:\ws\core\execution\X, or /c/ws/core/execution/X)
+            # match the RELATIVE glob core/execution/** instead of false-denying.
+            rel = _workspace_relative(self.repo_root, raw_path)
+            if rel is None:
+                raise ToolPolicyError(
+                    f"Write path '{raw_path}' resolves outside the workspace.",
+                    rule="trust-tier",
+                )
+            if rel == "":
+                raise ToolPolicyError(
+                    "Cannot write to the workspace root itself; give a file path.",
+                    rule="trust-tier",
+                )
+            path = rel
             # Spec immutability: the plan-authored acceptance tests are the
             # SIGNED SPEC the build is graded against. At the BUILD gate the
             # model must never edit them (import paths are repaired
@@ -1529,9 +1718,19 @@ class AgentLoop:
                     )
 
         elif name == "read_file":
-            path = str(args.get("path", "")).strip()
-            if not path:
+            raw_path = str(args.get("path", "")).strip()
+            if not raw_path:
                 raise ToolPolicyError("read_file requires a non-empty path")
+            # FIX 1: canonicalize first -> a read that escapes the workspace is
+            # denied here (not just at execution), and an absolute in-workspace
+            # path matches the relative read allowlist.
+            rel = _workspace_relative(self.repo_root, raw_path)
+            if rel is None:
+                raise ToolPolicyError(
+                    f"read_file path '{raw_path}' resolves outside the workspace.",
+                    rule="trust-tier",
+                )
+            path = rel or "."
             if enf.rule_enabled("trust-tier"):
                 allow = enf.tier_paths("read")
                 if not _matches_glob(path, allow):
@@ -1541,8 +1740,19 @@ class AgentLoop:
                         rule="trust-tier",
                     )
         elif name == "list_directory":
-            path = str(args.get("path", "")).strip()
+            raw_path = str(args.get("path", "")).strip()
             # Root ('' or '.') is always listable; sub-paths honor the read allowlist.
+            if raw_path in ("", "."):
+                path = "."
+            else:
+                rel = _workspace_relative(self.repo_root, raw_path)
+                if rel is None:
+                    raise ToolPolicyError(
+                        f"list_directory path '{raw_path}' resolves outside the "
+                        "workspace.",
+                        rule="trust-tier",
+                    )
+                path = rel or "."
             if enf.rule_enabled("trust-tier") and path not in ("", "."):
                 allow = enf.tier_paths("read")
                 if not _matches_glob(path, allow):
@@ -1652,32 +1862,51 @@ class AgentLoop:
         return self.repo_root
 
     def _resolve_in_workspace(self, rel_path: str) -> Path | None:
-        """Resolve *rel_path* under the workspace; None if it escapes (guard)."""
+        """Resolve *rel_path* under the workspace; None if it escapes (guard).
+
+        Routed through the ONE canonical pipeline (FIX 1) so an absolute /
+        Git-Bash `/c/` / mixed-separator path that points back INSIDE the
+        workspace resolves correctly instead of being mis-anchored (the bug
+        that denied absolute in-workspace writes). The gate-artifact rebase
+        (non-default project) is preserved: the physical base may be the
+        project governance dir, which is itself under repo_root.
+        """
         if not rel_path:
             return None
-        candidate = (self._artifact_base(rel_path) / rel_path).resolve()
-        root = self.repo_root.resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError:
+        base = self._artifact_base(rel_path)
+        target = _canonical_abs(base, rel_path)
+        if target is None:
             return None
-        return candidate
+        try:
+            root = self.repo_root.resolve()
+        except (OSError, RuntimeError):
+            root = self.repo_root
+        if target == root or root in target.parents:
+            return target
+        return None
 
     def _validate_workspace_write(self, target: Path) -> None:
         """Rust-safety-net analogue (Q2 step 5).
 
         The canonical check is Rust ipc::validate_workspace_write. In the
         sidecar process we re-assert the same invariant in Python (path is
-        inside the workspace). Phase 3 wires the actual Rust round-trip.
+        inside the workspace). Phase 3 wires the actual Rust round-trip. Uses
+        the same case-insensitive containment (==/parents) the canonical
+        pipeline uses, so it never spuriously trips on a drive-case difference.
         """
-        root = self.repo_root.resolve()
         try:
-            target.resolve().relative_to(root)
-        except ValueError as exc:
+            root = self.repo_root.resolve()
+            resolved = target.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ToolPolicyError(
+                f"Write denied: {target} could not be resolved ({exc}).",
+                rule="trust-tier",
+            ) from exc
+        if resolved != root and root not in resolved.parents:
             raise ToolPolicyError(
                 f"Write denied: {target} is outside the workspace boundary.",
                 rule="trust-tier",
-            ) from exc
+            )
 
     def _execute_tool(self, name: str, args: dict[str, Any]) -> str:
         if name == "read_file":
@@ -1767,6 +1996,37 @@ class AgentLoop:
             msg += "\nSECURITY WARNINGS:\n" + "\n".join(f"- {w}" for w in warnings)
         return msg
 
+    def _resolve_run_cwd(self, command: str) -> tuple[Path, str]:
+        """FIX 2: jail the child cwd to the workspace root, honoring a leading
+        `cd <subdir>`.
+
+        A leading `cd <target>` is resolved via the canonical pipeline (FIX 1).
+        When it stays IN the workspace (relative OR absolute-but-contained,
+        including the workspace root itself) it becomes the child's cwd and the
+        `cd` segment is stripped -- so the model never needs `cd <abs> && x`,
+        and it works regardless of the underlying shell. An escaping / absolute
+        cd target (rel is None) is left in the command as-is; the containment
+        guard in _check_governance has already denied it, so this path is only
+        reached for contained targets, but leaving it untouched fails closed.
+        A non-existent subdir is left to the shell so its error reaches the
+        model verbatim.
+        """
+        root = self.repo_root
+        target, rest = _peel_leading_cd(command)
+        if target is None:
+            return root, command
+        rel = _workspace_relative(root, target)
+        if rel is None:
+            return root, command  # escaping cd: leave it (already governed)
+        sub = (root / rel) if rel else root
+        try:
+            if not sub.is_dir():
+                return root, command  # nonexistent subdir -> let the shell say so
+        except OSError:
+            return root, command
+        # `cd frontend` alone (no following command) is a no-op at the new cwd.
+        return sub, (rest or "cd .")
+
     def _tool_run_command(self, command: str) -> str:
         # Cancellation: a long command honors the loop-level timeout. We do not
         # poll cancel_check mid-process; the COMMAND_TIMEOUT_S bound applies.
@@ -1775,12 +2035,16 @@ class AgentLoop:
         # WATCH mode; dev servers wait forever). Test runners and CLIs almost
         # universally honor CI to run once and exit -- without this, one watch
         # command hung a build for hours.
+        #
+        # FIX 2: cwd is jailed to the workspace root (or a contained subdir a
+        # leading `cd` names), so a compound `cd <abs> && x` is never required.
+        run_cwd, command = self._resolve_run_cwd(command)
         env = {**os.environ, "CI": "1", "FORCE_COLOR": "0"}
         try:
             proc = subprocess.run(
                 command,
                 shell=True,
-                cwd=str(self.repo_root),
+                cwd=str(run_cwd),
                 capture_output=True,
                 text=True,
                 # Force UTF-8 decoding: without an explicit encoding, text=True
