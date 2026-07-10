@@ -24,8 +24,10 @@
 #                            caller opts in. Byte-identical to the pre-sandbox
 #                            execution.
 #   * ContainerRunner     -- opt-in via SIGNALOS_SANDBOX=docker|podman|wsl. Runs
-#                            the command inside a throwaway container with ONLY
-#                            the workspace bind-mounted (read-write), the network
+#                            the command inside a throwaway container with a
+#                            READ-ONLY root filesystem, ONLY the workspace
+#                            bind-mounted (read-write), size-capped writable
+#                            tmpfs at /tmp (and the HOME cache dir), the network
 #                            disabled (--network none), and cpu/mem/pids/time
 #                            caps. The runtime containment boundary.
 #   * select_runner()     -- reads SIGNALOS_SANDBOX and returns the backend
@@ -77,6 +79,38 @@ DEFAULT_CPUS = "2"
 DEFAULT_MEMORY = "2g"
 DEFAULT_PIDS = "512"
 DEFAULT_NETWORK = "none"  # the containment win: no network from the workload.
+
+# Rootfs hardening: the container root filesystem is mounted READ-ONLY
+# (--read-only) so the ONLY writable surface is the explicit list below. Anything
+# else -- /etc, /usr, the image's own files -- cannot be tampered with, so a
+# permitted evaluator cannot persist a payload outside the workspace.
+DEFAULT_READ_ONLY = True
+
+# Size cap for every writable tmpfs. A single knob (SIGNALOS_SANDBOX_TMPFS_SIZE)
+# keeps a runaway write inside the container from exhausting host memory.
+DEFAULT_TMPFS_SIZE = "512m"
+
+
+def _default_tmpfs(size: str) -> dict[str, str]:
+    """The writable tmpfs surface layered on top of the read-only rootfs.
+
+    Determined EMPIRICALLY with a real read-only container smoke:
+
+      /tmp   -- build/test tools (npm, vitest, tsc, mktemp) need a writable,
+                world-writable sticky temp dir; mode=1777 matches a normal /tmp.
+      /root  -- HOME for the image's default root user. npm/yarn/pnpm and many
+                CLIs write a cache/config under $HOME (e.g. /root/.npm/_logs);
+                with a read-only rootfs and no writable HOME they break even for
+                purely offline work. A small writable HOME tmpfs fixes that.
+
+    Both are size-capped. To add a writable path a build unexpectedly needs,
+    extend this mapping (or pass ``tmpfs=`` to build_container_argv) -- the
+    read-only default stays the safe floor.
+    """
+    return {
+        "/tmp": f"rw,size={size},mode=1777",
+        "/root": f"rw,size={size}",
+    }
 
 _TIMEOUT_EXIT_CODE = 124  # GNU `timeout` convention (unused by the caller, which
 #                            short-circuits on CommandOutput.timed_out).
@@ -176,15 +210,28 @@ def build_container_argv(
     pids: str = DEFAULT_PIDS,
     network: str = DEFAULT_NETWORK,
     workdir_rel: str = "",
+    read_only: bool = DEFAULT_READ_ONLY,
+    tmpfs: Mapping[str, str] | None = None,
+    tmpfs_size: str = DEFAULT_TMPFS_SIZE,
 ) -> list[str]:
     """Construct the container CLI argv that runs *command* inside a throwaway
-    container with ONLY *workspace* bind-mounted read-write at ``/workspace``,
-    the network disabled, and cpu/mem/pids caps.
+    container with a READ-ONLY root filesystem, ONLY *workspace* bind-mounted
+    read-write at ``/workspace``, size-capped writable tmpfs (``/tmp`` + the HOME
+    cache dir), the network disabled, and cpu/mem/pids caps.
 
-    This is the runtime CONTAINMENT boundary: because the workload can only see
-    the mount and cannot reach the network or spawn beyond the pids cap, ANY
-    command is bounded by the container and the in-code allowlist becomes a
-    backstop rather than the primary defense.
+    This is the runtime CONTAINMENT boundary: because the rootfs is immutable, the
+    workload can only see the workspace mount plus a couple of size-capped tmpfs,
+    cannot reach the network, and cannot spawn beyond the pids cap, ANY command is
+    bounded by the container and the in-code allowlist becomes a backstop rather
+    than the primary defense.
+
+    Writable surface (everything else is read-only):
+      * ``/workspace``     -- the bind mount (rw), the only path that persists.
+      * ``/tmp`` + ``/root`` (or *tmpfs* keys) -- size-capped tmpfs, discarded
+        with the container. See ``_default_tmpfs``.
+
+    Pass ``read_only=False`` to drop the immutable rootfs, or ``tmpfs=`` to
+    override the writable tmpfs surface.
 
     The argv is built (and assertable) WITHOUT a running daemon, so it is unit
     testable offline; executing it needs a docker/podman/WSL host.
@@ -203,6 +250,14 @@ def build_container_argv(
         "--cpus", cpus,
         "--memory", memory,
         "--pids-limit", pids,   # bound child/process fan-out.
+    ]
+    if read_only:
+        argv.append("--read-only")  # immutable rootfs; only the mounts below write.
+    tmpfs_mounts = _default_tmpfs(tmpfs_size) if tmpfs is None else dict(tmpfs)
+    for path, opts in tmpfs_mounts.items():
+        # size-capped writable scratch/HOME, discarded with the container.
+        argv += ["--tmpfs", f"{path}:{opts}" if opts else path]
+    argv += [
         "-v", f"{mount_src}:{CONTAINER_WORKSPACE}",  # ONLY the workspace (rw).
         "-w", workdir,          # cwd = the mount (or a contained subdir).
     ]
@@ -332,6 +387,8 @@ class ContainerRunner(SandboxRunner):
         memory: str = DEFAULT_MEMORY,
         pids: str = DEFAULT_PIDS,
         network: str = DEFAULT_NETWORK,
+        read_only: bool = DEFAULT_READ_ONLY,
+        tmpfs_size: str = DEFAULT_TMPFS_SIZE,
         runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         if engine not in _ENGINE_CLI:
@@ -343,6 +400,8 @@ class ContainerRunner(SandboxRunner):
         self.memory = memory
         self.pids = pids
         self.network = network
+        self.read_only = read_only
+        self.tmpfs_size = tmpfs_size
         self._runner = runner
         self.name = f"container:{engine}"
 
@@ -359,6 +418,8 @@ class ContainerRunner(SandboxRunner):
             memory=self.memory,
             pids=self.pids,
             network=self.network,
+            read_only=self.read_only,
+            tmpfs_size=self.tmpfs_size,
             workdir_rel=_rel_subdir(self.workspace, cwd),
         )
 
@@ -418,11 +479,16 @@ def select_runner(
     Container tunables read from the environment when set:
     ``SIGNALOS_SANDBOX_IMAGE``, ``SIGNALOS_SANDBOX_CPUS``,
     ``SIGNALOS_SANDBOX_MEMORY``, ``SIGNALOS_SANDBOX_PIDS``,
-    ``SIGNALOS_SANDBOX_NETWORK``.
+    ``SIGNALOS_SANDBOX_NETWORK``, ``SIGNALOS_SANDBOX_TMPFS_SIZE`` (writable tmpfs
+    cap), and ``SIGNALOS_SANDBOX_READONLY`` (set falsey to drop the immutable
+    rootfs -- an escape hatch; the read-only default is the safe floor).
     """
     env = os.environ if environ is None else environ
     raw = (env.get("SIGNALOS_SANDBOX") or "").strip().lower()
     strict = _is_true(env.get("SIGNALOS_SANDBOX_STRICT"))
+    # read-only rootfs is the default; only an explicit falsey value drops it.
+    read_only = not (env.get("SIGNALOS_SANDBOX_READONLY") or "").strip().lower() \
+        in {"0", "false", "no", "off"}
 
     def _emit(event: dict) -> None:
         if emit is not None:
@@ -466,6 +532,8 @@ def select_runner(
         memory=env.get("SIGNALOS_SANDBOX_MEMORY") or DEFAULT_MEMORY,
         pids=env.get("SIGNALOS_SANDBOX_PIDS") or DEFAULT_PIDS,
         network=env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK,
+        read_only=read_only,
+        tmpfs_size=env.get("SIGNALOS_SANDBOX_TMPFS_SIZE") or DEFAULT_TMPFS_SIZE,
     )
     _LOGGER.info("runtime containment active: %s", runner.name)
     _emit({"type": "sandbox_selected", "engine": raw, "backend": runner.name})

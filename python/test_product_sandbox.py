@@ -30,6 +30,7 @@ from signalos_lib.product.sandbox import (
     container_engine_available,
     select_runner,
 )
+from signalos_lib.product.sandbox import _ENGINE_CLI  # CLI prefixes, for image probe
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,30 @@ class TestBackendSelection:
         assert r.memory == "8g"
         assert r.pids == "1024"
 
+    def test_read_only_is_on_by_default(self):
+        r = select_runner(
+            "/ws",
+            environ={"SIGNALOS_SANDBOX": "docker"},
+            which=lambda n: "/usr/bin/docker",
+        )
+        assert r.read_only is True
+
+    def test_read_only_env_escape_hatch(self):
+        r = select_runner(
+            "/ws",
+            environ={"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_READONLY": "0"},
+            which=lambda n: "/usr/bin/docker",
+        )
+        assert r.read_only is False
+
+    def test_tmpfs_size_read_from_env(self):
+        r = select_runner(
+            "/ws",
+            environ={"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_TMPFS_SIZE": "1g"},
+            which=lambda n: "/usr/bin/docker",
+        )
+        assert r.tmpfs_size == "1g"
+
 
 # ---------------------------------------------------------------------------
 # Availability detection
@@ -151,13 +176,22 @@ class TestContainerArgv:
             ws = Path(d)
             argv = build_container_argv("npm test", ws, engine="docker",
                                         image="node:20-bookworm")
-        # docker run --network none -v <ws>:/workspace -w /workspace ... sh -lc "npm test"
+        # docker run --network none --read-only --tmpfs /tmp ... -v <ws>:/workspace
+        #   -w /workspace ... sh -lc "npm test"
         assert argv[:3] == ["docker", "run", "--rm"]
         assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
         assert "-w" in argv and argv[argv.index("-w") + 1] == CONTAINER_WORKSPACE
-        # the ONLY mount is the workspace, read-write, at /workspace
+        # rootfs hardening: immutable root filesystem
+        assert "--read-only" in argv
+        # writable tmpfs scratch at /tmp (world-writable sticky) + a writable HOME
+        assert "--tmpfs" in argv
+        tmpfs_specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+        assert any(s.startswith("/tmp:") and "mode=1777" in s for s in tmpfs_specs)
+        assert any(s.startswith("/root:") for s in tmpfs_specs)  # HOME/cache for npm
+        # the ONLY bind mount is the workspace, read-write (no :ro), at /workspace
         vflag = argv[argv.index("-v") + 1]
         assert vflag.endswith(":" + CONTAINER_WORKSPACE)
+        assert not vflag.endswith(":ro")
         assert argv.count("-v") == 1
         # cpu/mem/pids caps present
         assert "--cpus" in argv and "--memory" in argv and "--pids-limit" in argv
@@ -217,6 +251,67 @@ class TestContainerArgv:
         argv = build_container_argv("ls", Path("/ws"), engine="docker",
                                     network="bridge")
         assert argv[argv.index("--network") + 1] == "bridge"
+
+
+# ---------------------------------------------------------------------------
+# Read-only rootfs hardening — the immutable-rootfs + writable-tmpfs surface,
+# asserted on the constructed argv WITHOUT a live daemon.
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyHardening:
+    def test_read_only_is_the_default(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker")
+        assert "--read-only" in argv
+
+    def test_read_only_can_be_disabled(self):
+        # Escape hatch: drop the immutable rootfs but KEEP the tmpfs surface.
+        argv = build_container_argv("ls", Path("/ws"), engine="docker",
+                                    read_only=False)
+        assert "--read-only" not in argv
+        assert "--tmpfs" in argv  # tmpfs is independent of --read-only
+
+    def test_default_writable_surface_is_tmp_and_home(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker")
+        specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+        paths = {s.split(":", 1)[0] for s in specs}
+        # only /tmp (scratch) and /root (HOME cache) — nothing broader.
+        assert paths == {"/tmp", "/root"}
+        # /tmp is world-writable + sticky like a normal /tmp; both are size-capped.
+        assert all("size=" in s for s in specs)
+        assert any(s.startswith("/tmp:") and "mode=1777" in s for s in specs)
+
+    def test_tmpfs_size_is_configurable(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker",
+                                    tmpfs_size="128m")
+        specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+        assert specs and all("size=128m" in s for s in specs)
+
+    def test_tmpfs_mapping_is_overridable_for_extension(self):
+        # The writable surface is easy to extend when a build needs another path.
+        argv = build_container_argv(
+            "ls", Path("/ws"), engine="docker",
+            tmpfs={"/tmp": "rw,size=64m,mode=1777", "/var/cache": "rw,size=64m"},
+        )
+        specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+        paths = {s.split(":", 1)[0] for s in specs}
+        assert paths == {"/tmp", "/var/cache"}
+
+    def test_wsl_argv_is_hardened_too(self):
+        argv = build_container_argv("pytest", Path("C:/Users/x/ws"), engine="wsl")
+        assert argv[:4] == ["wsl.exe", "-e", "docker", "run"]
+        assert "--read-only" in argv
+        specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+        assert any(s.startswith("/tmp:") for s in specs)
+
+    def test_runner_threads_read_only_and_size_into_argv(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Path(d)
+            r = ContainerRunner(ws, engine="docker", tmpfs_size="200m")
+            assert r.read_only is True
+            argv = r.build_argv("ls", ws, {})
+        assert "--read-only" in argv
+        assert any("size=200m" in a for a in argv)
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +444,162 @@ class TestContainerIntegrationSmoke:
             pytest.skip(f"{engine} present but container did not run "
                         f"(exit {exit_code}): {(out.stderr or out.stdout)[:200]}")
         assert "inside" in out.stdout
+
+
+# ---------------------------------------------------------------------------
+# Read-only rootfs containment smoke — the REAL proof (not just argv) that the
+# hardened container writes ONLY to the workspace + /tmp + HOME and CANNOT touch
+# the rootfs. SKIPS cleanly with no runtime or no cached image (--network none
+# cannot pull). Chooses a cached image so the test is hermetic (no surprise pull).
+# ---------------------------------------------------------------------------
+
+# Small base images (fs-only checks) and node images (a representative tool),
+# in preference order. The first one CACHED for the engine is used.
+_BASE_IMAGE_CANDIDATES = ("alpine:latest", "busybox:latest",
+                          "debian:bookworm-slim", "ubuntu:latest")
+_NODE_IMAGE_CANDIDATES = ("node:20-bookworm", "node:20", "node:22", "node:24",
+                          "node:lts", "node:latest")
+
+
+def _cached_images(engine: str) -> set[str]:
+    """`repo:tag` images already cached for *engine* (empty on any failure)."""
+    try:
+        proc = subprocess.run(
+            list(_ENGINE_CLI[engine]) + ["images", "--format", "{{.Repository}}:{{.Tag}}"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception:
+        return set()
+    if proc.returncode != 0:
+        return set()
+    return {ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()}
+
+
+def _pick_cached(engine: str, candidates) -> str | None:
+    override = os.environ.get("SIGNALOS_SANDBOX_IMAGE")
+    cached = _cached_images(engine)
+    if override and override in cached:
+        return override
+    return next((c for c in candidates if c in cached), None)
+
+
+# The four-way containment probe reused by the docker + wsl smokes:
+#   (a) workspace write OK, (b) /tmp write OK, (c) /etc + /usr write BLOCKED.
+_FS_PROBE = (
+    "echo ok > /workspace/ws.txt && echo WS_OK; "
+    "echo ok > /tmp/t.txt && echo TMP_OK; "
+    "(echo x > /etc/x 2>/dev/null && echo ETC_BAD) || echo ETC_BLOCKED; "
+    "(echo x > /usr/x 2>/dev/null && echo USR_BAD) || echo USR_BLOCKED"
+)
+
+
+def _assert_fs_containment(out, host_write_landed: bool) -> None:
+    s = out.stdout
+    assert "WS_OK" in s        # (a) the workspace bind mount is writable
+    assert "TMP_OK" in s       # (b) the /tmp tmpfs is writable
+    assert "ETC_BLOCKED" in s  # (c) rootfs is read-only
+    assert "USR_BLOCKED" in s
+    assert "ETC_BAD" not in s and "USR_BAD" not in s
+    assert host_write_landed   # the write really landed on the host mount
+
+
+class TestReadOnlyContainmentSmoke:
+    @pytest.mark.skipif(
+        _first_available_engine() is None,
+        reason="no docker/podman/wsl runtime on PATH — read-only E2E not verifiable",
+    )
+    def test_readonly_rootfs_contains_writes(self):
+        engine = _first_available_engine()
+        image = _pick_cached(engine, _BASE_IMAGE_CANDIDATES)
+        if image is None:
+            pytest.skip(f"no small base image cached for {engine} "
+                        "(--network none cannot pull) — read-only E2E skipped")
+        with tempfile.TemporaryDirectory() as d:
+            ws = Path(d)
+            r = ContainerRunner(ws, engine=engine, image=image)
+            exit_code, out = r.run(_FS_PROBE, ws, 120, {})
+            landed = (ws / "ws.txt").exists()  # check before the tempdir is removed
+        if "WS_OK" not in out.stdout and "ETC_BLOCKED" not in out.stdout:
+            pytest.skip(f"{engine}/{image} present but container did not run "
+                        f"(exit {exit_code}): {(out.stderr or out.stdout)[:200]}")
+        _assert_fs_containment(out, landed)
+
+    @pytest.mark.skipif(
+        _first_available_engine() is None,
+        reason="no docker/podman/wsl runtime on PATH — node tool E2E not verifiable",
+    )
+    def test_node_tool_works_under_readonly(self):
+        # A representative build tool: node writes to the workspace (OK) but not
+        # the rootfs (blocked), and npm can write its cache/config to the writable
+        # HOME tmpfs (/root) despite the read-only rootfs.
+        engine = _first_available_engine()
+        image = _pick_cached(engine, _NODE_IMAGE_CANDIDATES)
+        if image is None:
+            pytest.skip(f"no node image cached for {engine} "
+                        "(--network none cannot pull) — node tool E2E skipped")
+        script = (
+            """node -e "require('fs').writeFileSync('/workspace/ok.txt','ok')" && echo NODE_WS_OK; """
+            """( node -e "require('fs').writeFileSync('/etc/ok.txt','x')" 2>/dev/null && echo NODE_ETC_BAD ) || echo NODE_ETC_BLOCKED; """
+            """npm config set fund false 2>/dev/null && echo NPM_HOME_OK || echo NPM_HOME_FAIL"""
+        )
+        with tempfile.TemporaryDirectory() as d:
+            ws = Path(d)
+            r = ContainerRunner(ws, engine=engine, image=image)
+            exit_code, out = r.run(script, ws, 180, {})
+            landed = (ws / "ok.txt").exists()  # check before the tempdir is removed
+        if "NODE_WS_OK" not in out.stdout and "NODE_ETC_BLOCKED" not in out.stdout:
+            pytest.skip(f"{engine}/{image} present but node did not run "
+                        f"(exit {exit_code}): {(out.stderr or out.stdout)[:200]}")
+        assert "NODE_WS_OK" in out.stdout        # node writes to the workspace
+        assert "NODE_ETC_BLOCKED" in out.stdout  # node CANNOT write the rootfs
+        assert "NODE_ETC_BAD" not in out.stdout
+        assert "NPM_HOME_OK" in out.stdout       # writable HOME tmpfs works
+        assert landed                            # the write really landed on host
+
+
+# ---------------------------------------------------------------------------
+# WSL-engine smoke — exercises the `wsl` backend for REAL (the /mnt/c path
+# translation + --network none + read-only rootfs), previously offline-only.
+# SKIPS with a clear reason when docker is not reachable via `wsl.exe -e docker`.
+# ---------------------------------------------------------------------------
+
+
+def _wsl_docker_reachable() -> bool:
+    if shutil.which("wsl") is None and shutil.which("wsl.exe") is None:
+        return False
+    try:
+        proc = subprocess.run(["wsl.exe", "-e", "docker", "version"],
+                              capture_output=True, text=True, timeout=60)
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+_WSL_DOCKER_REACHABLE = _wsl_docker_reachable()
+
+
+class TestWslEngineSmoke:
+    @pytest.mark.skipif(
+        not _WSL_DOCKER_REACHABLE,
+        reason="docker not reachable via `wsl.exe -e docker` — wsl E2E not verifiable",
+    )
+    def test_wsl_readonly_containment(self):
+        image = _pick_cached("wsl", _BASE_IMAGE_CANDIDATES)
+        if image is None:
+            pytest.skip("no small base image cached in wsl docker "
+                        "(--network none cannot pull) — wsl E2E skipped")
+        with tempfile.TemporaryDirectory() as d:
+            ws = Path(d)
+            r = ContainerRunner(ws, engine="wsl", image=image)
+            # The argv really goes THROUGH wsl.exe with the /mnt path + hardening.
+            argv = r.build_argv("true", ws, {})
+            assert argv[:4] == ["wsl.exe", "-e", "docker", "run"]
+            assert "--read-only" in argv
+            assert argv[argv.index("-v") + 1].startswith("/mnt/")
+            exit_code, out = r.run(_FS_PROBE, ws, 180, {})
+            landed = (ws / "ws.txt").exists()  # check before the tempdir is removed
+        if "WS_OK" not in out.stdout and "ETC_BLOCKED" not in out.stdout:
+            pytest.skip(f"wsl docker present but container did not run "
+                        f"(exit {exit_code}): {(out.stderr or out.stdout)[:200]}")
+        # Same containment guarantees hold through the wsl path translation.
+        _assert_fs_containment(out, landed)
