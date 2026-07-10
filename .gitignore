@@ -71,3 +71,7 @@ distribution/internal/
 .signalos/worktrees/
 .signalos/trust-tier-paths.json
 .signalos/evidence/v4-smoke/
+.signalos/po-cycles/
+
+# One-off local analysis artifact, not source.
+signalos-system-analysis.html
