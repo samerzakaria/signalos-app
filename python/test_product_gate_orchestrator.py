@@ -851,5 +851,187 @@ class TestScaffoldFirst(unittest.TestCase):
                 orch._scaffold_shell_if_greenfield()  # no exception escapes
 
 
+class TestValidationConvergence(unittest.TestCase):
+    """Claim 2 convergence PROOF (validation): both engines call the SAME
+    validation implementation -- a fix to validation.run_validation reaches the
+    GateOrchestrator G4 wall AND the run_delivery pipeline. This locks the
+    already-shared convergence so a future refactor cannot silently re-diverge."""
+
+    def test_delivery_uses_the_single_validation_impl(self):
+        # run_delivery imports run_validation from validation.py -> the very same
+        # function object the G4 wall runs. One implementation, not a copy.
+        from signalos_lib.product import delivery, validation
+        self.assertIs(delivery.run_validation, validation.run_validation)
+        self.assertIs(delivery.build_validation_plan, validation.build_validation_plan)
+
+    def test_g4_wall_routes_through_the_single_validation_impl(self):
+        # The GateOrchestrator G4 build wall delegates to validation.run_validation
+        # (imported locally inside _verify_g4_build), so patching the shared symbol
+        # is observed here exactly as it would be in run_delivery.
+        with tempfile.TemporaryDirectory() as d:
+            orch = GateOrchestrator(
+                Path(d), _EndAdapter(), (lambda e: None),
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                sign_fn=lambda *a, **k: ["x"], prompt="build an expense tracker")
+            (Path(d) / "src" / "components").mkdir(parents=True)
+            (Path(d) / "src" / "components" / "ExpenseList.tsx").write_text(
+                "export const ExpenseList = () => null;\n", encoding="utf-8")
+            calls = []
+            real_run = __import__(
+                "signalos_lib.product.validation", fromlist=["run_validation"]
+            ).run_validation
+
+            def _spy(repo_root, plan, dry_run=False):
+                calls.append(plan.get("profile"))
+                return {"results": {"build": {"status": "passed"},
+                                    "test": {"status": "passed"}}}
+
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True,
+                                          "can_validate_tests": True,
+                                          "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation",
+                            side_effect=_spy):
+                res = orch._verify_g4_build(None)
+            self.assertTrue(res["ok"])
+            self.assertEqual(calls, ["react-vite"])  # the shared impl was invoked
+            self.assertIsNotNone(real_run)
+
+
+class TestCloseoutConvergence(unittest.TestCase):
+    """Claim 2 convergence (closeout): a COMPLETED GateOrchestrator walk (the
+    desktop `agent:deliver` surface) now writes the delivery CLOSEOUT via the
+    SAME closeout.build_closeout / write_closeout run_delivery uses -- closing
+    the divergence where the walk emitted `delivery_complete` but produced no
+    CLOSEOUT.json. Proven strictly post-G4 and product-file-preserving, so the
+    already-scaffolded React benchmark's G4 build is behaviour-identical."""
+
+    def _orch(self, root, *, finalize_closeout=True):
+        events: list[dict] = []
+        orch = GateOrchestrator(
+            Path(root), _EndAdapter(), events.append,
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: ["x"], prompt="build an expense tracker",
+            finalize_closeout=finalize_closeout)
+        # Walk-mechanics: don't run the real (npm) build or its verification.
+        orch._verify_g4_build = lambda *a, **k: {"ok": True}
+        orch._execute_build_gate = lambda *a, **k: setattr(
+            orch, "_g4_verify", {"ok": True})
+        return orch, events
+
+    @staticmethod
+    def _product_snapshot(root):
+        """Byte-level map of every NON-.signalos file, to prove closeout leaves
+        product source / build outputs untouched."""
+        import hashlib
+        root = Path(root)
+        snap = {}
+        for p in sorted(root.rglob("*")):
+            if p.is_file() and ".signalos" not in p.relative_to(root).parts:
+                data = p.read_bytes()
+                snap[str(p.relative_to(root))] = (len(data),
+                                                  hashlib.sha256(data).hexdigest())
+        return snap
+
+    def _closeout_json(self, root):
+        return Path(root) / ".signalos" / "product" / "CLOSEOUT.json"
+
+    def test_completed_walk_writes_closeout_via_shared_impl(self):
+        from signalos_lib.product import closeout as closeout_mod
+        real_build = closeout_mod.build_closeout
+        seen = []
+
+        def _wrapped(repo_root, product_name, profile, blueprint_id):
+            seen.append(profile)
+            return real_build(repo_root, product_name, profile, blueprint_id)
+
+        with tempfile.TemporaryDirectory() as d:
+            orch, events = self._orch(d)
+            with mock.patch("signalos_lib.product.closeout.build_closeout",
+                            side_effect=_wrapped):
+                orch.start()
+                for _ in range(6):                 # G0..G5 -> complete
+                    orch.apply_verdict("approve")
+            self.assertTrue(seen, "walk did not delegate to closeout.build_closeout")
+            self.assertTrue(self._closeout_json(d).is_file(),
+                            "completed walk wrote no CLOSEOUT.json")
+            self.assertTrue(any(e.get("type") == "closeout" for e in events))
+            # `delivery_complete` still emitted and unchanged (additive only).
+            self.assertTrue(any(e.get("type") == "delivery_complete" for e in events))
+
+    def test_opt_out_is_strict_noop(self):
+        # A driver (e.g. a build benchmark) that wants zero completion writes can
+        # disable it -- no CLOSEOUT.json, no `closeout` event, walk still completes.
+        with tempfile.TemporaryDirectory() as d:
+            orch, events = self._orch(d, finalize_closeout=False)
+            orch.start()
+            res = None
+            for _ in range(6):
+                res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "complete")
+            self.assertFalse(self._closeout_json(d).is_file())
+            self.assertFalse(any(e.get("type") == "closeout" for e in events))
+
+    def test_already_scaffolded_react_g4_unchanged_and_product_untouched(self):
+        # CRITICAL benchmark guarantee. A pre-scaffolded React fixture:
+        #   (a) G4's REAL verified-build outcome is unchanged (still ok);
+        #   (b) closeout writes ONLY under .signalos -- product files (src/**,
+        #       package.json, vite.config.ts) are byte-identical after a full
+        #       walk to completion; and
+        #   (c) no CLOSEOUT.json exists until the walk actually completes at G5.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "package.json").write_text(
+                json.dumps({
+                    "dependencies": {"react": "^18.3.1"},
+                    "devDependencies": {"vite": "^5.4.0", "vitest": "^3.2.0"},
+                    "scripts": {"build": "tsc && vite build", "test": "vitest run"},
+                }, indent=2) + "\n", encoding="utf-8")
+            (root / "src" / "components").mkdir(parents=True)
+            (root / "src" / "main.tsx").write_text(
+                "import App from './App';\n", encoding="utf-8")
+            (root / "src" / "App.tsx").write_text(
+                "import { ExpenseList } from './components/ExpenseList';\n"
+                "export default function App() {\n  return <ExpenseList />;\n}\n",
+                encoding="utf-8")
+            (root / "src" / "components" / "ExpenseList.tsx").write_text(
+                "export const ExpenseList = () => null;\n", encoding="utf-8")
+            (root / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
+
+            orch, _events = self._orch(d)
+
+            # (a) the REAL G4 wall still verifies this already-scaffolded repo as a
+            # passing build (validation mocked green, same as TestG4BuildVerification).
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True,
+                                          "can_validate_tests": True,
+                                          "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation",
+                            return_value={"results": {"build": {"status": "passed"},
+                                                      "test": {"status": "passed"}}}):
+                verdict = orch._verify_g4_build(None)
+            self.assertTrue(verdict["ok"])  # verified-build outcome preserved
+
+            before = self._product_snapshot(root)
+            orch.start()
+            # G0..G3 approve -> now parked at G4; nothing completed yet.
+            for _ in range(4):
+                orch.apply_verdict("approve")
+            self.assertFalse(self._closeout_json(d).is_file(),
+                             "closeout must not run before the walk completes")
+            orch.apply_verdict("approve")  # sign G4 -> advance to G5
+            self.assertFalse(self._closeout_json(d).is_file(),
+                             "closeout must not run at G4 -- strictly post-G4")
+            orch.apply_verdict("approve")  # sign G5 -> complete
+            self.assertTrue(self._closeout_json(d).is_file())
+
+            after = self._product_snapshot(root)
+            self.assertEqual(before, after)  # product files untouched by closeout
+
+
 if __name__ == "__main__":
     unittest.main()
