@@ -8,6 +8,18 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Engine profiles + panel-validated service design (2026-07-10)
+
+WS-E's conservative Claim-2 convergence deferred four services (repair/proof/security/review) because turning them on would change benchmark behavior. A cross-vendor panel resolved them via **one engine, config-gated profiles** — benchmark stays deterministic, production adds release-safety. Implemented additively; **benchmark path byte-identical, full suite 2470/0**.
+
+| # | Issue | Root cause | Fix | Location | Verified | Commit |
+|---|-------|-----------|-----|----------|----------|--------|
+| 75 | One engine must serve both deterministic benchmarking and full production delivery without forking | GateOrchestrator ran neither the security gate nor runtime proof; adding them unconditionally would inject flakiness/score-changes into the benchmark | `profile: benchmark\|production` switch (**default benchmark = no extra stages, proven byte-identical**); production runs security-gate (CRITICAL hard-blocks the sign, fails *open* on a degraded/flaky scanner) + runtime-proof (evidence-only, never blocks) strictly **after** G4 verify, before sign | `product/gate_orchestrator.py` | test (49+50) | (this push) |
+| 76 | "Retry until green" could hide a shaky build; per-task repair can't see integration failures | no machine-readable repair metric — "converged in 0 repairs" was indistinguishable from "needed 3"; final integration-repair already existed but was invisible | Per-phase `repair_attempts` counters (per_task / integration / review) surfaced in `traceability.json` + `BUILD_EVIDENCE.md` + `LoopResult`; final integration repair stays **bounded** and never forces green. Green build = zero added work (byte-identical dispatch) | `product/subagent_build.py` | test (38) | (this push) |
+| 77 | Review-gate looked like a duplicate of the LLM judge; security double-counted (gate + cap on same severity) | (corrected via real code: `review_gate.py` is DETERMINISTIC, not an LLM — kept) | Judge-as-gate: `judge_gate()` blocks on the **same** median-of-3 result (no second pass); security split — CAP for scoring (CRITICAL 30/HIGH 65/MED 85 preserved), CRITICAL-only `gate_block` for production; never both within a profile. `review_gate.py` untouched | benchmark grader (scratchpad: `cq_judge.py`, `measure_360.py`) | test (78), re-grade unchanged | scratchpad |
+
+---
+
 ## Root-cause structural hardening + readiness gate (2026-07-10)
 
 Panels validated that our recurring failures were a *class*: guaranteeing properties with growing heuristic lists (command/path allowlists, a post-hoc wiring reviewer) and mocked test seams, instead of structural boundaries + executable proofs. This wave fixes the *class*, and adds the deterministic readiness gate so we stop discovering harness bugs by burning funded builds. Integrated: **2458 passed, 0 failed**, readiness gate green.
