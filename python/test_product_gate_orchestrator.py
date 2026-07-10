@@ -1033,5 +1033,230 @@ class TestCloseoutConvergence(unittest.TestCase):
             self.assertEqual(before, after)  # product files untouched by closeout
 
 
+class TestEngineProfiles(unittest.TestCase):
+    """Panel decision: ONE engine, config-gated PROFILES (not two engines).
+    The benchmark profile MUST be behavior-identical to today (no new blocking/
+    flaky post-build stage); the production profile adds the release-safety
+    stages -- a hard-blocking security gate and evidence-only runtime/UX proof --
+    STRICTLY after the G4 build is verified so they can never move the score."""
+
+    def _make(self, root, *, profile=None, signed=None):
+        """Orchestrator + captured events. `signed` (if given) records every
+        sign call so we can assert which gates were signed."""
+        events: list[dict] = []
+
+        def fake_sign(repo_root, gate, signer, role, verdict, conditions):
+            if signed is not None:
+                signed.append(gate)
+            return [f"{gate}.md"]
+
+        kw = {} if profile is None else {"profile": profile}
+        orch = GateOrchestrator(
+            Path(root), _EndAdapter(), events.append,
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=fake_sign, prompt="build an expense tracker", **kw)
+        # Walk-mechanics: never run the real (npm) build / verification.
+        orch._verify_g4_build = lambda *a, **k: {"ok": True}
+        orch._execute_build_gate = lambda *a, **k: setattr(
+            orch, "_g4_verify", {"ok": True})
+        return orch, events
+
+    @staticmethod
+    def _product_snapshot(root):
+        import hashlib
+        root = Path(root)
+        snap = {}
+        for p in sorted(root.rglob("*")):
+            if p.is_file() and ".signalos" not in p.relative_to(root).parts:
+                data = p.read_bytes()
+                snap[str(p.relative_to(root))] = (len(data),
+                                                  hashlib.sha256(data).hexdigest())
+        return snap
+
+    # -- profile selection + safe default ----------------------------------
+
+    def test_default_profile_is_the_safe_benchmark_profile(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch, _ = self._make(d)  # no profile= -> default
+            self.assertEqual(orch.profile, "benchmark")
+            self.assertFalse(go_mod.PROFILE_STAGES["benchmark"]["security_gate"])
+            self.assertFalse(go_mod.PROFILE_STAGES["benchmark"]["runtime_proof"])
+
+    def test_unknown_profile_falls_back_to_safe_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch, _ = self._make(d, profile="totally-bogus")
+            self.assertEqual(orch.profile, "benchmark")
+
+    def test_post_build_stages_are_noop_under_benchmark(self):
+        # Direct unit check: with every service patched, the benchmark profile's
+        # post-build hook returns None and calls NONE of them.
+        with tempfile.TemporaryDirectory() as d:
+            orch, _ = self._make(d, profile="benchmark")
+            with mock.patch("signalos_lib.product.security_gate.run_security_gate") as m_sec, \
+                 mock.patch("signalos_lib.product.proof.run_runtime_proof") as m_rt, \
+                 mock.patch("signalos_lib.product.proof.run_ux_proof") as m_ux:
+                self.assertIsNone(orch._run_post_build_stages())
+            m_sec.assert_not_called()
+            m_rt.assert_not_called()
+            m_ux.assert_not_called()
+
+    # -- production profile invokes the stages ------------------------------
+
+    def _prod_g4(self, orch):
+        """Park a production orchestrator at a verified G4 and neutralize the
+        advance so the test isolates the post-build stages + G4 sign."""
+        orch.state.current_gate = "G4"
+        orch._g4_verify = {"ok": True}
+        orch._run_gate = lambda g: None  # don't run the real G5 gate on advance
+
+    def test_production_profile_invokes_security_and_proof(self):
+        with tempfile.TemporaryDirectory() as d:
+            signed: list[str] = []
+            orch, events = self._make(d, profile="production", signed=signed)
+            self._prod_g4(orch)
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.security_gate.run_security_gate",
+                            return_value={"status": "passed",
+                                          "injection_scan": {"issues_found": []}}) as m_sec, \
+                 mock.patch("signalos_lib.product.security_gate.write_security_result"), \
+                 mock.patch("signalos_lib.product.proof.requires_browser_ux_proof",
+                            return_value=True), \
+                 mock.patch("signalos_lib.product.proof.run_runtime_proof",
+                            return_value={"status": "passed", "port": 4173,
+                                          "html_snapshot": "<div id='root'>ok</div>"}) as m_rt, \
+                 mock.patch("signalos_lib.product.proof.run_ux_proof",
+                            return_value={"status": "passed", "checks": [], "errors": []}) as m_ux, \
+                 mock.patch("signalos_lib.product.proof.write_proof_artifacts"):
+                res = orch.apply_verdict("approve")
+            # Both production services actually ran, and G4 signed + advanced.
+            m_sec.assert_called_once()
+            m_rt.assert_called_once()
+            m_ux.assert_called_once()
+            self.assertEqual(res["status"], "advanced")
+            self.assertEqual(res["gate"], "G5")
+            self.assertIn("G4", signed)
+            self.assertTrue(any(e.get("type") == "security_gate" for e in events))
+            self.assertTrue(any(e.get("type") == "proof" for e in events))
+
+    def test_production_critical_security_finding_hard_blocks_the_sign(self):
+        with tempfile.TemporaryDirectory() as d:
+            signed: list[str] = []
+            orch, events = self._make(d, profile="production", signed=signed)
+            self._prod_g4(orch)
+            critical = {"status": "failed", "injection_scan": {"issues_found": [
+                {"file": "src/App.tsx", "line": 10,
+                 "risk": "XSS risk via dangerouslySetInnerHTML"}]}}
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.security_gate.run_security_gate",
+                            return_value=critical), \
+                 mock.patch("signalos_lib.product.security_gate.write_security_result"), \
+                 mock.patch("signalos_lib.product.proof.run_runtime_proof") as m_rt:
+                res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "security-blocked")
+            self.assertNotIn("G4", signed)                 # sign refused
+            self.assertNotIn("G4", orch.state.signed)
+            self.assertEqual(orch.state.current_gate, "G4")  # did not advance
+            m_rt.assert_not_called()  # blocked BEFORE the (flaky) proof stage
+            self.assertTrue(any(e.get("type") == "error" for e in events))
+
+    def test_production_security_warning_fails_open_and_signs(self):
+        # A DEGRADED gate ('warning', not a real finding) must NOT block -- that
+        # would let a flaky scanner fail a release. It signs; proof still runs.
+        with tempfile.TemporaryDirectory() as d:
+            signed: list[str] = []
+            orch, _ = self._make(d, profile="production", signed=signed)
+            self._prod_g4(orch)
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.security_gate.run_security_gate",
+                            return_value={"status": "warning",
+                                          "injection_scan": {"issues_found": []}}), \
+                 mock.patch("signalos_lib.product.security_gate.write_security_result"), \
+                 mock.patch("signalos_lib.product.proof.requires_browser_ux_proof",
+                            return_value=False), \
+                 mock.patch("signalos_lib.product.proof.run_runtime_proof",
+                            return_value={"status": "skipped", "port": None,
+                                          "html_snapshot": ""}) as m_rt, \
+                 mock.patch("signalos_lib.product.proof.run_ux_proof",
+                            return_value={"status": "skipped", "checks": [], "errors": []}), \
+                 mock.patch("signalos_lib.product.proof.write_proof_artifacts"):
+                res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "advanced")
+            self.assertIn("G4", signed)
+            m_rt.assert_called_once()
+
+    # -- CRITICAL benchmark-identical proof ---------------------------------
+
+    def test_benchmark_already_scaffolded_react_identical_and_no_extra_stages(self):
+        # Mirrors WS-E's `test_already_scaffolded_react_g4_unchanged_and_product_
+        # untouched`, but asserts it explicitly under the (default) BENCHMARK
+        # profile AND proves the new profile stages NEVER fire there:
+        #   (a) the REAL G4 verified-build outcome is unchanged (still ok);
+        #   (b) a full walk signs the SAME gates G0..G5;
+        #   (c) product files (src/**, package.json, vite.config.ts) are
+        #       byte-identical after the walk; and
+        #   (d) run_security_gate / run_runtime_proof / run_ux_proof are NEVER
+        #       called under the benchmark profile.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "package.json").write_text(
+                json.dumps({
+                    "dependencies": {"react": "^18.3.1"},
+                    "devDependencies": {"vite": "^5.4.0", "vitest": "^3.2.0"},
+                    "scripts": {"build": "tsc && vite build", "test": "vitest run"},
+                }, indent=2) + "\n", encoding="utf-8")
+            (root / "src" / "components").mkdir(parents=True)
+            (root / "src" / "main.tsx").write_text(
+                "import App from './App';\n", encoding="utf-8")
+            (root / "src" / "App.tsx").write_text(
+                "import { ExpenseList } from './components/ExpenseList';\n"
+                "export default function App() {\n  return <ExpenseList />;\n}\n",
+                encoding="utf-8")
+            (root / "src" / "components" / "ExpenseList.tsx").write_text(
+                "export const ExpenseList = () => null;\n", encoding="utf-8")
+            (root / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
+
+            # (a) REAL G4 wall (validation mocked green) verifies the fixture --
+            # a separate orch whose _verify_g4_build is NOT stubbed.
+            real_orch, _ = self._make(d, profile="benchmark")
+            del real_orch._verify_g4_build  # drop the stub -> use the real method
+            with mock.patch("signalos_lib.product.stacks.detect_profile",
+                            return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True,
+                                          "can_validate_tests": True,
+                                          "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation",
+                            return_value={"results": {"build": {"status": "passed"},
+                                                      "test": {"status": "passed"}}}):
+                self.assertTrue(real_orch._verify_g4_build(None)["ok"])
+
+            # (b)-(d) full walk to completion under the benchmark profile, with
+            # every profile service patched so we can prove they never fire.
+            signed: list[str] = []
+            orch, events = self._make(d, profile="benchmark", signed=signed)
+            before = self._product_snapshot(root)
+            with mock.patch("signalos_lib.product.security_gate.run_security_gate") as m_sec, \
+                 mock.patch("signalos_lib.product.proof.run_runtime_proof") as m_rt, \
+                 mock.patch("signalos_lib.product.proof.run_ux_proof") as m_ux:
+                orch.start()
+                res = None
+                for _ in range(6):                 # G0..G5 -> complete
+                    res = orch.apply_verdict("approve")
+            after = self._product_snapshot(root)
+
+            self.assertEqual(res["status"], "complete")
+            self.assertEqual(signed, ["G0", "G1", "G2", "G3", "G4", "G5"])
+            self.assertEqual(before, after)  # product bytes untouched
+            m_sec.assert_not_called()
+            m_rt.assert_not_called()
+            m_ux.assert_not_called()
+            # No benchmark-profile leak of the production evidence events.
+            self.assertFalse(any(e.get("type") == "security_gate" for e in events))
+            self.assertFalse(any(e.get("type") == "proof" for e in events))
+
+
 if __name__ == "__main__":
     unittest.main()

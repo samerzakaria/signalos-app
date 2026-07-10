@@ -59,6 +59,33 @@ _SIGN_VERDICT = {
 }
 _KNOWN_VERDICTS = {"approve", "approve-with-conditions", "request-changes", "reject", "waive"}
 
+# ---------------------------------------------------------------------------
+# Engine PROFILES (cross-vendor panel decision: ONE engine, config-gated
+# profiles -- NOT two engines). A profile selects which POST-BUILD release-
+# safety stages run AFTER the G4 build is independently verified. Every gated
+# stage runs STRICTLY where it cannot change the G4 build outcome, the scores,
+# or the product bytes of the benchmark profile.
+#
+#   * "benchmark" (the SAFE DEFAULT): runs NONE of the extra stages, so the
+#     benchmark path is BEHAVIOR-IDENTICAL to today -- deterministic, no new
+#     blocking/flaky stages (benchmark variance is poison). The grader already
+#     scores security, and the behavioral acceptance tests already own "the app
+#     runs", so re-running them here would only add noise and flake.
+#   * "production": adds the release-safety stages -- a real security gate
+#     (gitleaks/semgrep-style scan; a CRITICAL finding HARD-BLOCKS the sign) and
+#     real runtime/UX proof (a live dev server / headless page; release EVIDENCE
+#     only, never a hard block, because real servers/ports/timing are flaky).
+#
+# Each stage is a single existing implementation (security_gate.run_security_gate,
+# proof.run_runtime_proof / run_ux_proof) -- called here, never reimplemented.
+DEFAULT_PROFILE = "benchmark"
+
+PROFILE_STAGES: dict[str, dict[str, bool]] = {
+    # security_gate OFF, runtime_proof OFF -> byte-identical to today.
+    "benchmark": {"security_gate": False, "runtime_proof": False},
+    "production": {"security_gate": True, "runtime_proof": True},
+}
+
 
 def _is_real_product_src(rel_path: str) -> bool:
     """A real product source/test file the G4 build must have produced — not
@@ -215,9 +242,16 @@ class GateOrchestrator:
         prompt: str = "",
         critic_adapter: Any = None,
         finalize_closeout: bool = True,
+        profile: str = DEFAULT_PROFILE,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.adapter = adapter
+        # Engine profile (see PROFILE_STAGES). The SAFE DEFAULT is "benchmark":
+        # it enables NO extra post-build stage, so a caller that does not opt in
+        # gets the behavior-identical, deterministic benchmark path. "production"
+        # must be requested explicitly to turn on the release-safety stages. An
+        # unknown value falls back to the safe default rather than erroring.
+        self.profile = profile if profile in PROFILE_STAGES else DEFAULT_PROFILE
         # 1.3 + 1.8: an optional second adapter used to author the plain-words
         # gate brief. When configured (and its vendor differs), the brief is
         # genuinely cross-vendor (1.4's independence guarantee). When absent,
@@ -752,6 +786,16 @@ class GateOrchestrator:
                 reason = (self._g4_verify or {}).get("reason", "build not verified")
                 self.emit({"type": "error", "error": f"Gate G4 cannot be signed: {reason}"})
                 return {"status": "build-not-verified", "gate": gate, "reason": reason}
+            # Production-profile POST-BUILD release-safety stages. Runs only for
+            # the BUILD gate, only after its build is independently verified
+            # (above), so it can NEVER change the verified-build outcome, the
+            # scores, or the product bytes -- it only adds a release gate on top.
+            # In the benchmark profile this is a STRICT no-op (returns None), so
+            # the benchmark G4 sign is byte-identical to today.
+            if gate == "G4":
+                blocked = self._run_post_build_stages()
+                if blocked is not None:
+                    return blocked
             try:
                 self._sign(self.repo_root, gate, self.signer, self._role_for(gate),
                            _SIGN_VERDICT[v], feedback)
@@ -968,6 +1012,142 @@ class GateOrchestrator:
                               if invalidated else "")})
         return {"status": "reopened", "gate": gate, "invalidated": invalidated}
 
+    # -- production-profile post-build release-safety stages ----------------
+
+    def _run_post_build_stages(self) -> Optional[dict]:
+        """Run the profile's POST-BUILD release-safety stages, in order.
+
+        Config-gated by the engine profile (PROFILE_STAGES). The benchmark
+        profile enables NONE of them, so this is a STRICT no-op that returns
+        None -- the benchmark G4 sign is byte-identical to today. Every stage
+        runs AFTER the G4 build is independently verified, so it can never
+        change the verified-build outcome, the scores, or the product bytes.
+
+        Returns a blocking status dict when a production stage refuses the sign
+        (a CRITICAL security finding); otherwise None (proof is evidence-only).
+        """
+        stages = PROFILE_STAGES.get(self.profile, PROFILE_STAGES[DEFAULT_PROFILE])
+        if stages.get("security_gate"):
+            blocked = self._run_security_gate_stage()
+            if blocked is not None:
+                return blocked
+        if stages.get("runtime_proof"):
+            self._run_proof_stage()
+        return None
+
+    def _run_security_gate_stage(self) -> Optional[dict]:
+        """PRODUCTION-ONLY. Call the SINGLE security_gate implementation
+        (gitleaks/semgrep-style injection scan) over the built product; a
+        CRITICAL finding HARD-BLOCKS the G4 sign. Deliberately OFF in the
+        benchmark profile: the grader already scores security, so re-scoring
+        here would only add noise. Fail policy: a real finding fails CLOSED
+        (blocks the sign), but the gate merely ERRORING ('warning') or an
+        unexpected exception fails OPEN (never blocks) -- a flaky scanner must
+        not be able to fail a release on its own. Never raises."""
+        try:
+            from .security_gate import run_security_gate, write_security_result
+            from .stacks import detect_profile
+            stack = detect_profile(self.repo_root)
+            result = run_security_gate(
+                repo_root=self.repo_root,
+                intent=self._load_intent(),
+                generated_files=self._product_files_for_scan(),
+                profile=stack,
+            )
+            try:
+                write_security_result(result, self.repo_root / ".signalos")
+            except OSError:
+                pass
+            issues = (result.get("injection_scan") or {}).get("issues_found") or []
+            status = str(result.get("status") or "")
+            self.emit({"type": "security_gate", "gate": "G4",
+                       "status": status, "issue_count": len(issues)})
+            # Only a real 'failed' verdict (critical findings) blocks. A
+            # 'warning' (the gate itself degraded) is reported, not enforced.
+            if status == "failed":
+                reason = (
+                    f"Security gate found {len(issues)} critical finding(s) in "
+                    "the built product. Fix them before signing the build:\n"
+                    + "\n".join(
+                        f"- {i.get('file', '?')}:{i.get('line', '?')} "
+                        f"{i.get('risk') or i.get('pattern') or 'issue'}"
+                        for i in issues[:25]
+                    )
+                )
+                self.emit({"type": "error",
+                           "error": f"Gate G4 cannot be signed: {reason}"})
+                return {"status": "security-blocked", "gate": "G4",
+                        "reason": reason, "issue_count": len(issues)}
+        except Exception as exc:  # fail OPEN on infra -- never block on a hiccup
+            self.emit({"type": "system",
+                       "text": f"Security gate skipped ({type(exc).__name__}: {exc})."})
+        return None
+
+    def _run_proof_stage(self) -> None:
+        """PRODUCTION-ONLY. Real runtime + UX proof (starts a live dev server /
+        headless page) via the SINGLE proof implementation. Deliberately OFF in
+        the benchmark profile: real servers/ports/timing are flaky and the
+        benchmark's behavioral acceptance tests already own 'the app runs', so
+        running it there would inject exactly the variance the benchmark must
+        avoid. Release EVIDENCE only -- emitted and persisted under .signalos,
+        NEVER a hard block, so flaky infra can never fail a release on its own.
+        Never raises."""
+        try:
+            from .proof import (
+                requires_browser_ux_proof,
+                run_runtime_proof,
+                run_ux_proof,
+                write_proof_artifacts,
+            )
+            from .stacks import detect_profile
+            stack = detect_profile(self.repo_root)
+            runtime = run_runtime_proof(self.repo_root, stack)
+            passed = runtime.get("status") == "passed"
+            if requires_browser_ux_proof(self.repo_root, stack):
+                html = runtime.get("html_snapshot") if passed else None
+                ux = run_ux_proof(
+                    self.repo_root, stack,
+                    port=runtime.get("port") if passed else None,
+                    html=html if isinstance(html, str) and html else None,
+                )
+            else:
+                ux = run_ux_proof(self.repo_root, stack, port=None)
+            try:
+                write_proof_artifacts(runtime, ux, self.repo_root)
+            except OSError:
+                pass
+            self.emit({"type": "proof", "gate": "G4",
+                       "runtime_status": runtime.get("status"),
+                       "ux_status": ux.get("status")})
+        except Exception as exc:  # evidence-only -- a hiccup never fails the walk
+            self.emit({"type": "system",
+                       "text": f"Runtime proof skipped ({type(exc).__name__}: {exc})."})
+
+    def _load_intent(self) -> dict:
+        """Best-effort product intent for the security gate: the delivery's
+        persisted INTENT.json when present, else a minimal intent from the
+        prompt. The security gate tolerates an empty/minimal intent."""
+        try:
+            from .intent import load_intent
+            data = load_intent(self.repo_root / ".signalos")
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return {"product_name": self.repo_root.name, "prompt": self.state.prompt}
+
+    def _product_files_for_scan(self) -> list:
+        """Real product source files (repo-relative) the security gate scans:
+        the stack's own source dir, code suffixes only. Mirrors what
+        run_delivery hands run_security_gate, gathered from disk here."""
+        src = self.repo_root / self._product_source_dir()
+        out: list[str] = []
+        if src.is_dir():
+            for p in sorted(src.rglob("*")):
+                if p.is_file() and p.suffix in self._CODE_SUFFIXES:
+                    out.append(str(p.relative_to(self.repo_root)).replace("\\", "/"))
+        return out
+
     def _finalize_closeout(self, *, ready: bool) -> None:
         """CONVERGENCE (Claim 2): produce the delivery CLOSEOUT via the SAME
         closeout.build_closeout / write_closeout the full run_delivery pipeline
@@ -1030,11 +1210,14 @@ def resume_delivery(
     enforcement_provider: Optional[EnforcementProvider] = None,
     sign_fn: Optional[Callable[..., list]] = None,
     signer: str = "foundry-agent",
+    profile: str = DEFAULT_PROFILE,
 ) -> "GateOrchestrator":
     """Reconstruct a GateOrchestrator from its persisted delivery.json (INV-5).
 
     Used after a sidecar crash/restart to resume from the last checkpoint.
-    Raises FileNotFoundError if no state was persisted."""
+    Raises FileNotFoundError if no state was persisted. *profile* is an engine
+    config (not delivery state), so the caller re-declares it on resume; it
+    defaults to the SAFE benchmark profile just like a fresh orchestrator."""
     state_file = Path(repo_root) / ".signalos" / "agent-runs" / run_id / "delivery.json"
     data = json.loads(state_file.read_text(encoding="utf-8"))
     orch = GateOrchestrator(
@@ -1045,6 +1228,7 @@ def resume_delivery(
         # keeps signing/generating in the same namespace it started in.
         # Older persisted states predate the field -> "default".
         project_id=str(data.get("project_id") or "default"),
+        profile=profile,
     )
     st = orch.state
     st.current_gate = data.get("current_gate", "G0")
