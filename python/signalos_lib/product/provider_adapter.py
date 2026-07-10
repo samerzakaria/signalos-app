@@ -27,6 +27,9 @@ __all__ = [
     "iter_cassette",
     "CAPTURE_ENV",
     "CAPTURE_DIR_ENV",
+    # Layer 2 — offline cassette replay (the other half of the capture hook).
+    "CassetteTransport",
+    "replay_cassette",
 ]
 
 from dataclasses import dataclass, field
@@ -378,6 +381,166 @@ def iter_cassette(path: Any) -> Iterator[dict[str, Any]]:
             continue
         if isinstance(rec, dict):
             yield rec
+
+
+# ---------------------------------------------------------------------------
+# Layer 2 — offline cassette REPLAY (the other half of the capture hook)
+# ---------------------------------------------------------------------------
+# The replay harness turns a recorded cassette (see capture_transcript) into a
+# $0 OFFLINE regression: it re-serves each recorded provider response, IN ORDER,
+# through the SAME network seam the wire-level golden path uses (a monkeypatched
+# httpx.Client.send). litellm's real request construction/routing and our real
+# normalize path (_normalize_response / _normalize_tool_calls / _wrap_stream)
+# therefore run UNMODIFIED against the recorded REAL payloads -- so a whole
+# real-provider bug class (tool-call parsing, reasoning-channel leak, streamed
+# delta assembly) is regression-tested without ever touching the network.
+#
+# The transport is URL-aware ON PURPOSE: only /chat/completions traffic consumes
+# a recorded turn. litellm's model-cost-map GET (which ALSO travels through
+# httpx.Client.send once the seam is patched) is refused so litellm falls back
+# to its bundled local map -- otherwise that GET would silently eat the first
+# recorded turn and desync the whole cassette.
+
+
+def _sse_stream_bytes(chunks: list[Any]) -> bytes:
+    """Serialize chunk dicts as an OpenAI-style ``text/event-stream`` body: one
+    ``data: {json}`` line per chunk, terminated by ``data: [DONE]``. litellm's
+    streaming parser then reassembles them exactly as it would a live SSE feed,
+    so the adapter's _wrap_stream delta assembly runs against real chunk shapes.
+    """
+    import json as _json
+
+    lines = [f"data: {_json.dumps(c, ensure_ascii=False, default=str)}" for c in chunks]
+    lines.append("data: [DONE]")
+    return ("\n\n".join(lines) + "\n\n").encode("utf-8")
+
+
+class CassetteTransport:
+    """Re-serves a cassette's recorded provider responses in order at the
+    ``httpx.Client.send`` seam.
+
+    ``transport()`` returns a PLAIN function suitable for
+    ``monkeypatch.setattr(httpx.Client, "send", ...)`` (a bound method would
+    swallow the client ``self``), mirroring the wire-level golden path's fake.
+    Prefer the :func:`replay_cassette` context manager, which does the
+    patch/restore for you.
+
+    Each record's ``response`` is served according to its shape:
+
+      * ``dict``  -> a normal JSON ``chat.completion`` (a non-streamed turn);
+      * ``list``  -> an SSE stream of delta chunks (a streamed turn); also used
+                     when the record's ``streamed`` flag is set;
+      * ``str``   -> a raw body served verbatim, so a truncated/garbled payload
+                     can be replayed to exercise the adapter's graceful path.
+
+    A non-chat request (e.g. litellm's cost-map GET) and an exhausted cassette
+    both raise ``httpx.ConnectError``; the adapter surfaces that as a clean
+    RuntimeError instead of crashing.
+    """
+
+    def __init__(self, records: list[dict[str, Any]]):
+        self._records: list[dict[str, Any]] = [r for r in records if isinstance(r, dict)]
+        self._cursor = 0
+        self.requests: list[dict[str, Any]] = []
+        self.exhausted = False
+
+    @classmethod
+    def from_cassette(cls, path: Any) -> "CassetteTransport":
+        """Build a transport from a cassette file (malformed lines are skipped
+        by :func:`iter_cassette`)."""
+        return cls(list(iter_cassette(path)))
+
+    def transport(self):
+        """Return the ``httpx.Client.send`` replacement (a plain function)."""
+        shim = self
+
+        def send(client_self, request, **kwargs):  # noqa: ANN001 - httpx.Client.send
+            return shim._serve(request)
+
+        return send
+
+    def _serve(self, request: Any):
+        import httpx  # local import: keep module import stdlib-light
+
+        url = str(getattr(request, "url", ""))
+        if "chat/completions" not in url:
+            # Refuse non-chat traffic (cost-map GET, etc.): it must neither reach
+            # the network nor consume a recorded turn. litellm falls back to its
+            # bundled local cost map on this error.
+            raise httpx.ConnectError(
+                f"offline replay: blocked non-chat request {url}", request=request
+            )
+
+        import json as _json
+
+        try:
+            body = _json.loads(request.content.decode("utf-8"))
+        except Exception:  # pragma: no cover - defensive
+            body = {}
+        self.requests.append(body)
+
+        if self._cursor >= len(self._records):
+            self.exhausted = True
+            raise httpx.ConnectError(
+                "offline replay: cassette exhausted (no recorded turn left)",
+                request=request,
+            )
+        rec = self._records[self._cursor]
+        self._cursor += 1
+        response = rec.get("response")
+        streamed = bool(rec.get("streamed"))
+
+        if streamed or isinstance(response, list):
+            chunks = response if isinstance(response, list) else []
+            return httpx.Response(
+                200,
+                content=_sse_stream_bytes(chunks),
+                headers={"content-type": "text/event-stream"},
+                request=request,
+            )
+        if isinstance(response, str):
+            # Replay a raw/truncated body verbatim (graceful-degradation probe).
+            return httpx.Response(
+                200,
+                content=response.encode("utf-8"),
+                headers={"content-type": "application/json"},
+                request=request,
+            )
+        # Normal recorded chat.completion (dict); a captured stream leg stores
+        # response=None -> serve an empty object so litellm still parses cleanly.
+        return httpx.Response(
+            200, json=response if response is not None else {}, request=request
+        )
+
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def replay_cassette(path: Any = None, *, records: list[dict[str, Any]] | None = None):
+    """Patch ``httpx.Client.send`` to re-serve *path*'s recorded provider
+    responses in order (offline, $0), then restore it on exit.
+
+    Yields the :class:`CassetteTransport` so callers can inspect ``.requests`` /
+    ``.exhausted``. Build the ProviderAdapter/AgentLoop INSIDE the ``with`` block
+    so litellm's capability lookups also stay offline. litellm + ProviderAdapter
+    run UNMODIFIED against the recorded payloads -- the same ``httpx.Client.send``
+    seam the wire-level golden path uses::
+
+        with replay_cassette(".signalos/transcripts/cassette-....jsonl") as tape:
+            resp = ProviderAdapter(model="openrouter/z-ai/glm-5.2").chat(...)
+        assert tape.requests  # the recorded turn was actually replayed
+    """
+    import httpx
+
+    recs = list(records) if records is not None else list(iter_cassette(path))
+    shim = CassetteTransport(recs)
+    original_send = httpx.Client.send
+    httpx.Client.send = shim.transport()  # type: ignore[assignment]
+    try:
+        yield shim
+    finally:
+        httpx.Client.send = original_send  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
