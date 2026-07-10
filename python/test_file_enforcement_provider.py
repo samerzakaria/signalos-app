@@ -24,11 +24,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.product.enforcement_state import (  # noqa: E402
     CORE_INVARIANTS_PY,
+    DEFAULT_TRUST_TIER_PATHS,
     ENFORCEMENT_REL,
     RUNTIME_RULES,
     FileEnforcementProvider,
     StaticEnforcementProvider,
     seed_trust_tier_paths,
+)
+
+# The real matchers the agent loop applies against the allowlists (imported so
+# these tests exercise the same code path production does, not a re-implementation).
+from signalos_lib.product.agent_loop import (  # noqa: E402
+    _command_matches,
+    _matches_glob,
 )
 
 _RUST_ENFORCEMENT = (
@@ -135,6 +143,150 @@ class TestFileEnforcementProvider(unittest.TestCase):
             self.assertIn(token, const_map, token)
             rust_core.add(const_map[token])
         self.assertEqual(rust_core, set(CORE_INVARIANTS_PY))
+
+
+class TestT2StackAllowlist(unittest.TestCase):
+    """The T2 write/execute allowlists must cover the files and validation
+    commands the shipped stack adapters actually produce -- production runs at
+    T2, so a scaffold/model file or a validation command that is not covered is
+    silently DENIED (observed: stack config writes + `python -m compileall`
+    rejected mid-build). These load the allowlist through the real on-disk seed
+    + the real agent-loop matchers, so they prove the enforced policy, not a
+    copy of it.
+    """
+
+    def _t2(self, root: Path) -> tuple[list[str], list[str]]:
+        seed_trust_tier_paths(root)
+        state = StaticEnforcementProvider(trust_tier="T2").get_enforcement_state(root)
+        return state.tier_paths("write"), state.tier_paths("execute")
+
+    # -- writes -------------------------------------------------------------
+
+    # Representative files each shipped adapter's scaffold() writes (root-level
+    # stack config/entry files + framework source dirs outside src/).
+    _WRITABLE = [
+        "index.html",            # react-vite / vue
+        "index.css",
+        "vite.config.ts",        # react-vite / vue
+        "vitest.config.ts",
+        "tsconfig.json",         # ts stacks
+        "tsconfig.app.json",     # angular
+        "angular.json",          # angular
+        "next.config.js",        # nextjs
+        "next.config.mjs",
+        "next-env.d.ts",
+        "app/layout.tsx",        # nextjs app router
+        "app/page.tsx",
+        "pages/index.tsx",       # nextjs pages router
+        "components/Button.tsx",
+        "styles/globals.css",
+        "postcss.config.js",
+        "tailwind.config.ts",
+        ".eslintrc.json",
+        "README.md",
+        "pyproject.toml",        # generic / fastapi / django / flask
+        "setup.cfg",
+        "requirements-dev.txt",
+        "manage.py",             # django
+        "Cargo.toml",            # rust
+        "go.mod",                # go
+        "go.sum",
+        "cmd/server/main.go",    # go entry
+        "internal/app/app.go",   # go handler
+        "pom.xml",               # java / spring
+        "build.gradle",
+        "SignalOSProduct.Api/Program.cs",                       # .net source
+        "SignalOSProduct.Api/SignalOSProduct.Api.csproj",       # .net project
+        "pubspec.yaml",          # flutter
+        "analysis_options.yaml",
+        "lib/main.dart",         # flutter source
+        "test/widget_test.dart", # flutter test dir (singular)
+        "app.json",              # expo
+        "App.tsx",               # expo/react-native root entry
+        "src/App.tsx",           # generic product source
+    ]
+
+    # Paths that must STAY denied -- traversal / absolute / outside-tree.
+    _DENIED = [
+        "/etc/passwd",
+        "../secrets",
+        "../../gold/hidden.test.ts",
+        "~/.ssh/id_rsa",
+        "secret/keys.txt",
+    ]
+
+    def test_representative_stack_files_are_writable_at_t2(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_allow, _ = self._t2(Path(d))
+            for path in self._WRITABLE:
+                self.assertTrue(
+                    _matches_glob(path, write_allow),
+                    f"{path!r} should be writable under the T2 write allowlist",
+                )
+
+    def test_out_of_scope_paths_still_denied_at_t2(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_allow, _ = self._t2(Path(d))
+            for path in self._DENIED:
+                self.assertFalse(
+                    _matches_glob(path, write_allow),
+                    f"{path!r} must NOT be granted by the T2 write allowlist",
+                )
+
+    def test_t2_write_allowlist_is_not_a_wildcard(self):
+        # Governance must stay principled: extending the allowlist must never
+        # collapse to "**" (which would allow any path, e.g. /etc/passwd).
+        self.assertNotIn("**", DEFAULT_TRUST_TIER_PATHS["T2"]["write"])
+        with tempfile.TemporaryDirectory() as d:
+            write_allow, _ = self._t2(Path(d))
+            self.assertNotIn("**", write_allow)
+
+    # -- executes -----------------------------------------------------------
+
+    # Real validation/install commands the shipped adapters' validation_plan()
+    # emits (cross-checked against stacks.py). Each must match the T2 execute
+    # allowlist or the per-task green loop runs blind.
+    _EXECUTABLE = [
+        'python -c "import x"',                    # generic build guard
+        "python -m compileall src tests",          # generic / py-api build
+        "python -m unittest discover -s tests",    # generic test
+        'python -m pip install -e ".[dev]"',       # fastapi/django/flask install
+        "node --check src/app.js",                 # node/expo build
+        "node --test",                             # node/expo test
+        "cargo build",                             # rust build
+        "go build ./...",                          # go build (existing-repo)
+        "golangci-lint run",                       # go lint
+        "ruff check .",                            # python lint
+        "npm run lint",                            # node lint
+        "dotnet restore SignalOSProduct.Api/SignalOSProduct.Api.csproj",
+        "dotnet build SignalOSProduct.Api/SignalOSProduct.Api.csproj --no-restore",
+        "dotnet run --project SignalOSProduct.Api/SignalOSProduct.Api.csproj --no-build -- --self-test",
+        "javac -d build/classes src/main/java/com/signalos/product/ProductServer.java",
+        "java -cp build/classes com.signalos.product.ProductServerTest",
+        "mvn -q test",                             # spring test
+        "mvn -q -DskipTests package",              # spring build
+        "flutter pub get",                         # flutter install
+        "flutter analyze",                         # flutter build
+        "flutter test",                            # flutter test
+    ]
+
+    def test_adapter_validation_commands_on_execute_allowlist(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, execute_allow = self._t2(Path(d))
+            for cmd in self._EXECUTABLE:
+                self.assertTrue(
+                    _command_matches(cmd, execute_allow),
+                    f"{cmd!r} should match the T2 execute allowlist",
+                )
+
+    def test_t2_execute_allowlist_is_not_a_wildcard(self):
+        self.assertNotIn("**", DEFAULT_TRUST_TIER_PATHS["T2"]["execute"])
+        with tempfile.TemporaryDirectory() as d:
+            _, execute_allow = self._t2(Path(d))
+            self.assertNotIn("**", execute_allow)
+            # A genuinely destructive command is still NOT matched by the
+            # (non-wildcard) execute allowlist.
+            self.assertFalse(_command_matches("rm -rf /", execute_allow))
 
 
 if __name__ == "__main__":

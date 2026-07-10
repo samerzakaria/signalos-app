@@ -90,14 +90,78 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
     "T2": {
         "read": ["**"],
         "write": [
+            # Governance / strategy / execution artifact subtrees.
             "core/governance/**",
             "core/strategy/**",
             "core/execution/**",
+            # Product source / asset / test trees the adapters resolve targets
+            # into. `src/**` covers React/Vite/Vue/Node/FastAPI/Django/Flask/
+            # Rust/NestJS/Java-Maven (src/main/java) sources; `tests/**`,
+            # `public/**` cover the shared test/asset dirs.
             "src/**",
             "public/**",
             "tests/**",
+            # Framework source dirs a scaffold creates OUTSIDE src/ (so the
+            # build agent can author/extend them without a trust-tier denial):
+            #   app/**    Next.js app router (also its resolve_targets source)
+            #   pages/**  Next.js pages router
+            #   components/**, styles/**  conventional React/Next UI trees
+            #   lib/**, test/**  Flutter (lib/main.dart, test/widget_test.dart)
+            #   cmd/**, internal/**  Go (cmd/server, internal/app)
+            #   SignalOSProduct.Api/**  the .NET minimal-API project dir
+            "app/**",
+            "pages/**",
+            "components/**",
+            "styles/**",
+            "lib/**",
+            "test/**",
+            "cmd/**",
+            "internal/**",
+            "SignalOSProduct.Api/**",
+            # Root-level stack config / entry files the shipped adapters write
+            # (or the agent must author alongside them). Explicit files, not a
+            # blanket root glob — governance stays principled.
             "package.json",
             "tsconfig.json",
+            "tsconfig.app.json",
+            "tsconfig.spec.json",
+            "tsconfig.node.json",
+            "index.html",
+            "index.css",
+            "vite.config.ts",
+            "vite.config.js",
+            "vitest.config.ts",
+            "vitest.config.js",
+            "angular.json",
+            "next.config.js",
+            "next.config.mjs",
+            "next-env.d.ts",
+            "postcss.config.*",
+            "tailwind.config.*",
+            ".eslintrc*",
+            "README.md",
+            # Python packaging / deps
+            "pyproject.toml",
+            "setup.cfg",
+            "setup.py",
+            "requirements*.txt",
+            "manage.py",
+            # Rust / Go / JVM / .NET / Flutter / Expo project manifests
+            "Cargo.toml",
+            "go.mod",
+            "go.sum",
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "*.csproj",
+            "pubspec.yaml",
+            "analysis_options.yaml",
+            "app.json",
+            "App.js",
+            "App.tsx",
+            "PRODUCT_STACK.md",
         ],
         "execute": [
             "npm install",
@@ -105,6 +169,7 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             "npm test",
             "npm run test",
             "npm run dev",
+            "npm run lint",
             # Verification runners (single-file test runs, type checks) across
             # the supported stacks. The build gate's per-task green loop tells
             # the agent to run exactly these; an allowlist that rejects them
@@ -115,6 +180,45 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             "npx vitest",
             "npx tsc",
             "npx vite",
+            # Node: `node --check` (Node/Expo build validation) + `node --test`
+            # (the Node-API/Expo test scripts).
+            "node --check",
+            "node --test",
+            # Python: the generic/FastAPI/Django/Flask validation plans run
+            # these directly (build = compileall, tests = unittest/pytest,
+            # install = pip install -e '.[dev]', plus `python -c` guards).
+            "pytest",
+            "python -m pytest",
+            "python -c",
+            "python -m compileall",
+            "python -m unittest",
+            "python -m pip install",
+            "pip install",
+            "ruff check",
+            # Go: build + test + lint (go-api adapter, existing-repo go plan).
+            "go build",
+            "go test",
+            "golangci-lint run",
+            # Rust: build + test + clippy lint.
+            "cargo build",
+            "cargo test",
+            "cargo clippy",
+            # .NET minimal-API adapter: restore/build/run (--self-test) + test.
+            "dotnet restore",
+            "dotnet build",
+            "dotnet run",
+            "dotnet test",
+            # JVM: Java adapter (javac/java -cp), Maven (Spring `mvn -q ...`),
+            # Gradle.
+            "javac",
+            "java -cp",
+            "mvn test",
+            "mvn -q",
+            "gradle test",
+            # Flutter adapter: pub get / analyze / test.
+            "flutter pub get",
+            "flutter analyze",
+            "flutter test",
             # Read-only shell idioms models reach for; denying them only burns
             # a turn re-routing to the equivalent tool (read allowlist is **
             # at T2 anyway, so these grant nothing new).
@@ -125,13 +229,6 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             "head",
             "tail",
             "wc",
-            "pytest",
-            "python -m pytest",
-            "go test",
-            "cargo test",
-            "dotnet test",
-            "mvn test",
-            "gradle test",
             "git status",
             "git diff",
             "git log",

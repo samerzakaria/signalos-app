@@ -767,5 +767,89 @@ class TestG4BuildVerification(unittest.TestCase):
             self.assertNotIn("G4", orch.state.signed)
 
 
+class TestScaffoldFirst(unittest.TestCase):
+    """FIX 2: GateOrchestrator materializes the SELECTED stack's shell before
+    the BUILD gate on a greenfield repo -- and is a STRICT no-op on a repo that
+    already has the shell on disk (the benchmark's React/Vitest fixture)."""
+
+    def _orch(self, root):
+        return GateOrchestrator(
+            Path(root), _EndAdapter(), (lambda e: None),
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: ["x"], prompt="build an expense tracker")
+
+    def _write_profile_json(self, root, data):
+        meta = Path(root) / ".signalos"
+        meta.mkdir(parents=True, exist_ok=True)
+        (meta / "profile.json").write_text(json.dumps(data), encoding="utf-8")
+
+    @staticmethod
+    def _snapshot(root):
+        """Map of every file -> (size, sha256) so we can prove a no-op created,
+        modified, or removed NOTHING."""
+        import hashlib
+        snap = {}
+        for p in sorted(Path(root).rglob("*")):
+            if p.is_file():
+                data = p.read_bytes()
+                snap[str(p.relative_to(root))] = (len(data), hashlib.sha256(data).hexdigest())
+        return snap
+
+    def test_greenfield_react_selection_scaffolds_shell(self):
+        # (a) greenfield repo + profile.json react-vite -> the React shell is
+        # materialized before the build gate.
+        with tempfile.TemporaryDirectory() as d:
+            self._write_profile_json(d, {"profile": "react-vite"})
+            self._orch(d)._scaffold_shell_if_greenfield()
+            root = Path(d)
+            self.assertTrue((root / "package.json").is_file())
+            self.assertTrue((root / "vite.config.ts").is_file())
+            self.assertTrue((root / "src" / "main.tsx").is_file())
+            self.assertTrue((root / "tsconfig.json").is_file())
+
+    def test_already_scaffolded_react_repo_is_noop(self):
+        # (b) CRITICAL benchmark guarantee: a repo that already ships
+        # package.json + a React/Vitest shell is left EXACTLY as-is -- no file
+        # created, modified, or removed by scaffold-first.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "package.json").write_text(
+                json.dumps({
+                    "dependencies": {"react": "^18.3.1"},
+                    "devDependencies": {"vite": "^5.4.0", "vitest": "^3.2.0"},
+                    "scripts": {"build": "tsc && vite build", "test": "vitest run"},
+                }, indent=2) + "\n", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "App.tsx").write_text(
+                "export default function App() { return null; }\n", encoding="utf-8")
+            (root / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
+            self._write_profile_json(d, {"profile": "react-vite"})
+
+            before = self._snapshot(root)
+            self._orch(d)._scaffold_shell_if_greenfield()
+            after = self._snapshot(root)
+
+            self.assertEqual(before, after)  # nothing created/modified/removed
+
+    def test_generic_profile_is_noop(self):
+        # (c) unknown/generic -> no adapter shell to materialize: no-op, no crash.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._write_profile_json(d, {"profile": "not-a-real-stack"})  # -> generic
+            before = self._snapshot(root)
+            self._orch(d)._scaffold_shell_if_greenfield()  # must not raise
+            after = self._snapshot(root)
+            self.assertEqual(before, after)
+
+    def test_scaffold_error_never_raises(self):
+        # A scaffold hiccup must be swallowed -- the walk is never failed by it.
+        with tempfile.TemporaryDirectory() as d:
+            self._write_profile_json(d, {"profile": "react-vite"})
+            orch = self._orch(d)
+            with mock.patch("signalos_lib.product.stacks.get_adapter",
+                            side_effect=RuntimeError("boom")):
+                orch._scaffold_shell_if_greenfield()  # no exception escapes
+
+
 if __name__ == "__main__":
     unittest.main()

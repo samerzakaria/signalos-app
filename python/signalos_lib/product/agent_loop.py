@@ -40,6 +40,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import logging
 import os
 import re
 import shlex
@@ -75,6 +76,27 @@ READ_TIMEOUT_S = 30
 COMMAND_TIMEOUT_S = 600
 DEFAULT_TOOL_CALL_BUDGET = DEFAULT_AGENT_LOOP_TOOL_CALL_BUDGET
 MAX_READ_BYTES = 2_000_000  # guard against reading huge binaries into context
+
+# Narration/truncation recovery bounds. A capable model that narrates a plan but
+# emits NO tool call (observed: 14k-char prose, zero tool calls) would otherwise
+# have its bare end_turn accepted as "completed" -- it writes nothing, the task
+# deadlocks, and the run reads as success at trivial cost. Instead: re-prompt a
+# work-expecting run (up to MAX_NO_TOOL_REPROMPTS) with a firm "perform the work
+# now" nudge, escalating tool_choice to "required" on the reprompt turn; and when
+# a turn is TRUNCATED (max_tokens), continue it (up to MAX_TRUNCATION_CONTINUES)
+# rather than treating the cut-off as a finished turn.
+MAX_NO_TOOL_REPROMPTS = 2
+MAX_TRUNCATION_CONTINUES = 2
+_NO_TOOL_NUDGE = (
+    "You did not call any tool and no files have been written yet. Do NOT "
+    "describe what you will do -- perform the work NOW by calling write_file / "
+    "edit_file / run_command. Emit a tool call, not prose."
+)
+_CONTINUE_NUDGE = (
+    "Your previous message was cut off before it finished (output token limit). "
+    "Continue exactly where you stopped and, when ready, emit the tool call -- "
+    "do not restart or re-summarize."
+)
 
 # Secret-redaction patterns applied to command stdout/stderr (2.5/2.9).
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
@@ -241,6 +263,116 @@ def build_tool_definitions() -> list[ToolDefinition]:
 
 
 AGENT_TOOLS: list[ToolDefinition] = build_tool_definitions()
+_KNOWN_TOOL_NAMES: frozenset[str] = frozenset(t.name for t in AGENT_TOOLS)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Tool-call validity (Refinement 1) — reject empty/placeholder tool calls
+# ---------------------------------------------------------------------------
+
+
+def _tool_call_defect(tc: ToolCall) -> str | None:
+    """Return a reason string when *tc* is an invalid / placeholder tool call
+    that must NOT count as real work; None when the call is well-formed.
+
+    Guards the required-escalation path: a provider forced to emit a tool call
+    (tool_choice="required") can satisfy the constraint with empty/placeholder
+    args (write_file with empty path/content) that would write garbage while
+    looking like success. An unknown tool name is also invalid. Genuine JSON
+    parse errors keep their existing dispatch/audit path (they are surfaced to
+    the model as an explicit arg-parse error), so they are NOT flagged here.
+    """
+    name = tc.name
+    if name not in _KNOWN_TOOL_NAMES:
+        return f"unknown tool '{name}'"
+    args = tc.arguments if isinstance(tc.arguments, dict) else {}
+    if "__parse_error__" in args:
+        return None  # handled by _dispatch_tool's arg-parse path, unchanged
+    if name == "write_file":
+        if not str(args.get("path", "")).strip():
+            return "write_file with empty path"
+        if not str(args.get("content", "")).strip():
+            return "write_file with empty content"
+    elif name == "edit_file":
+        if not str(args.get("path", "")).strip():
+            return "edit_file with empty path"
+        if not str(args.get("old_string", "")).strip():
+            return "edit_file with empty old_string"
+    elif name == "run_command":
+        if not str(args.get("command", "")).strip():
+            return "run_command with empty command"
+    elif name == "read_file":
+        if not str(args.get("path", "")).strip():
+            return "read_file with empty path"
+    elif name == "search_files":
+        if not str(args.get("pattern", "")).strip():
+            return "search_files with empty pattern"
+    # list_directory: '' / '.' is the workspace root -> always valid.
+    return None
+
+
+def _obj_get(obj: Any, key: str) -> Any:
+    """getattr-or-dict-get, returning None on absence/error (diagnostic use)."""
+    if obj is None:
+        return None
+    try:
+        val = getattr(obj, key, None)
+        if val is None and isinstance(obj, dict):
+            val = obj.get(key)
+        return val
+    except Exception:
+        return None
+
+
+def _no_tool_diagnostic(resp: Any) -> dict[str, Any]:
+    """Compact, defensive snapshot of a no-tool provider turn (Refinement 2).
+
+    Leading hypothesis for the observed 14-16k-char no-tool narrations is a
+    "reasoning-channel leak": the model's real output (or even a tool call)
+    lands in message.reasoning / reasoning_content / reasoning_details, which
+    the adapter does not read, so we see empty content + no tool_calls. This
+    makes that OBSERVABLE (it does NOT extract tool calls from reasoning). Every
+    field is best-effort: a provider (or the CI double) that omits them yields
+    None/False, never a crash.
+    """
+    content = getattr(resp, "content", None) or ""
+    diag: dict[str, Any] = {
+        "content_len": len(content),
+        "has_tool_calls": bool(getattr(resp, "tool_calls", None)),
+        "stop_reason": getattr(resp, "stop_reason", None),
+        "finish_reason": None,
+        "native_finish_reason": None,
+        "provider": None,
+    }
+    # Always present (default absent) so downstream consumers can rely on them
+    # even when the provider/CI double supplies no raw payload.
+    for fld in ("reasoning", "reasoning_content", "reasoning_details"):
+        diag[f"{fld}_present"] = False
+        diag[f"{fld}_len"] = 0
+    raw = getattr(resp, "raw", None)
+    if raw is None:
+        return diag
+    choices = _obj_get(raw, "choices") or []
+    choice = choices[0] if choices else None
+    msg = _obj_get(choice, "message")
+    diag["finish_reason"] = _obj_get(choice, "finish_reason")
+    diag["native_finish_reason"] = _obj_get(choice, "native_finish_reason")
+    diag["provider"] = (
+        _obj_get(raw, "provider")
+        or _obj_get(raw, "served_by")
+        or _obj_get(raw, "model")
+    )
+    for fld in ("reasoning", "reasoning_content", "reasoning_details"):
+        val = _obj_get(msg, fld)
+        present = val is not None and val != ""
+        diag[f"{fld}_present"] = bool(present)
+        try:
+            diag[f"{fld}_len"] = len(val) if present else 0
+        except Exception:
+            diag[f"{fld}_len"] = None
+    return diag
 
 
 # ---------------------------------------------------------------------------
@@ -396,16 +528,76 @@ def _command_root(command: str) -> str:
     return " ".join(toks[:2]).strip()
 
 
-def _command_matches(command: str, patterns: list[str]) -> bool:
-    cmd = command.strip()
-    root = _command_root(cmd)
+# Shell separators that chain independent commands. A compound command
+# (`cd frontend && npm test`) is allowed only when EVERY segment is itself
+# allowed -- the old first-two-token check denied the whole thing because
+# "cd frontend" matched nothing (observed: ~25 false denials tanking a model's
+# governance score), and `npm run build && npm test` passed only by accident.
+_COMMAND_SEPARATORS = re.compile(r"&&|\|\||;")
+
+
+def _split_command_segments(command: str) -> list[str]:
+    """Split *command* on shell separators (&&, ||, ;) into stripped,
+    non-empty segments. Empty segments (e.g. a trailing `;`) are dropped."""
+    return [seg.strip() for seg in _COMMAND_SEPARATORS.split(command) if seg.strip()]
+
+
+def _cd_target(segment: str) -> str | None:
+    """Return the target of a bare `cd <path>` segment, or None if the segment
+    is not a `cd`. A bare `cd` with no argument returns "" (home; harmless)."""
+    try:
+        toks = shlex.split(segment, posix=False)
+    except ValueError:
+        toks = segment.split()
+    if not toks or toks[0] != "cd":
+        return None
+    if len(toks) == 1:
+        return ""
+    return toks[1].strip().strip('"').strip("'")
+
+
+def _segment_matches(segment: str, patterns: list[str]) -> bool:
+    """True when a single (non-compound) command segment matches the allowlist.
+    This is the historical single-command matching logic."""
+    seg = segment.strip()
+    if not seg:
+        return True
+    root = _command_root(seg)
     for pat in patterns:
         p = pat.strip()
         if p == "**":
             return True
-        if cmd == p or cmd.startswith(p + " ") or root == p:
+        if seg == p or seg.startswith(p + " ") or root == p:
             return True
     return False
+
+
+def _command_matches(
+    command: str, patterns: list[str], repo_root: Path | None = None
+) -> bool:
+    """True when EVERY segment of *command* is allowed.
+
+    A compound command is split on &&/||/; and each segment must independently
+    match an allowlisted pattern. A `cd <path>` segment is permitted as long as
+    <path> stays inside the workspace -- validated with the same
+    `_command_escapes_workspace` containment guard the caller applies to the
+    whole command; a `cd` that escapes fails the match (and is independently
+    rejected upstream). A non-compound command behaves exactly as before.
+    """
+    segments = _split_command_segments(command.strip())
+    if not segments:
+        return False
+    for seg in segments:
+        target = _cd_target(seg)
+        if target is not None:
+            # A `cd` inside the workspace is fine; an escaping `cd` is not.
+            if (repo_root is not None and target
+                    and _command_escapes_workspace(seg, repo_root)):
+                return False
+            continue
+        if not _segment_matches(seg, patterns):
+            return False
+    return True
 
 
 def _command_denied(command: str, denylist: list[str]) -> str | None:
@@ -559,12 +751,19 @@ class LoopResult:
     """Outcome of one agent-loop run, returned to the orchestrator (Q4)."""
 
     run_id: str
-    status: str  # "completed" | "budget_exhausted" | "text_only" | "cancelled" | "error"
+    # "completed" | "budget_exhausted" | "text_only" | "cancelled" | "error"
+    # | "stalled_no_tool" (gave up after reprompts with no tool work)
+    # | "max_tokens" (truncated and could not finish within the continue budget)
+    status: str
     final_text: str | None
     tool_calls_made: int
     messages: list[dict[str, Any]]
     error: str | None = None
     text_only: bool = False
+    # True when the run produced NO landed write (write_file/edit_file) -- lets a
+    # caller distinguish a "narrated, wrote nothing" run from real work even when
+    # status is "completed" (stamped by _finalize from _wrote_file_this_run).
+    wrote_no_files: bool = False
     # Token accounting summed across every provider turn in this run (None when
     # the provider reports no usage). Feeds cost tracking (commands/cost.py) and
     # the per-model 360 comparison.
@@ -582,6 +781,7 @@ class LoopResult:
             "tool_calls_made": self.tool_calls_made,
             "error": self.error,
             "text_only": self.text_only,
+            "wrote_no_files": self.wrote_no_files,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "provider_turn_errors": self.provider_turn_errors,
@@ -634,6 +834,9 @@ class AgentLoop:
         self.project_id = project_id
         self._context_signed_gates = set(signed_gates or [])
         self._test_written_this_run = False
+        # Whether ANY write (write_file/edit_file) actually LANDED this run.
+        # Feeds LoopResult.wrote_no_files so a narration-only run is honest.
+        self._wrote_file_this_run = False
         self._seq = 0
         # Token accounting summed across every provider turn (None until the
         # provider reports usage). Stamped onto the LoopResult by _finalize.
@@ -659,6 +862,7 @@ class AgentLoop:
     def _finalize(self, result: "LoopResult") -> "LoopResult":
         result.tokens_in = self._tokens_in
         result.tokens_out = self._tokens_out
+        result.wrote_no_files = not self._wrote_file_this_run
         if self._turn_errors_at_start is not None:
             try:
                 from .provider_adapter import turn_error_count
@@ -835,6 +1039,10 @@ class AgentLoop:
     ) -> LoopResult:
         tools = [t.as_openai_tool() for t in AGENT_TOOLS]
         final_text: str | None = None
+        # Narration/truncation recovery counters (see MAX_* constants).
+        reprompts_used = 0
+        continues_used = 0
+        escalate_next = False  # request tool_choice="required" next turn
 
         self._persist_state(messages, tool_calls_made, status="running")
 
@@ -858,43 +1066,145 @@ class AgentLoop:
                     final_text,
                 )
 
-            try:
-                resp: AgentResponse = self.adapter.chat(
-                    messages=[dict(m) for m in messages],
-                    tools=tools,
-                )
-                self._track_usage(resp)
-            except Exception as exc:  # INV-4
-                err = f"Provider call failed: {exc}"
-                self._emit({"type": "error", "error": err})
-                # 1.10: also surface a plain-words incident card with recovery
-                # options -- a founder should never see a bare error string.
+            escalate = escalate_next
+            escalate_next = False
+            resp: AgentResponse | None = None
+            if escalate:
+                # Reprompt turn: force a tool call if the provider supports it.
+                # GUARD: some providers reject tool_choice="required"; never let
+                # the escalation crash the run -- fall back to the default "auto"
+                # plus the firm text nudge already sitting in the transcript.
                 try:
-                    from .provider_adapter import classify_error_scenario
-                    from .incidents import build_incident_card
-                    scenario = classify_error_scenario(exc) or "unclassified-provider-error"
-                    self._emit(build_incident_card(scenario, detail=str(exc)).to_dict())
+                    resp = self.adapter.chat(
+                        messages=[dict(m) for m in messages],
+                        tools=tools,
+                        tool_choice="required",
+                    )
+                    self._track_usage(resp)
                 except Exception:
-                    pass
-                self._persist_state(messages, tool_calls_made, status="error")
-                return LoopResult(
-                    run_id=self.run_id,
-                    status="error",
-                    final_text=final_text,
-                    tool_calls_made=tool_calls_made,
-                    messages=messages,
-                    error=err,
-                )
+                    self._emit(
+                        {"type": "tool_choice_fallback", "run_id": self.run_id})
+                    resp = None
+            if resp is None:
+                try:
+                    resp = self.adapter.chat(
+                        messages=[dict(m) for m in messages],
+                        tools=tools,
+                    )
+                    self._track_usage(resp)
+                except Exception as exc:  # INV-4
+                    err = f"Provider call failed: {exc}"
+                    self._emit({"type": "error", "error": err})
+                    # 1.10: also surface a plain-words incident card with recovery
+                    # options -- a founder should never see a bare error string.
+                    try:
+                        from .provider_adapter import classify_error_scenario
+                        from .incidents import build_incident_card
+                        scenario = classify_error_scenario(exc) or "unclassified-provider-error"
+                        self._emit(build_incident_card(scenario, detail=str(exc)).to_dict())
+                    except Exception:
+                        pass
+                    self._persist_state(messages, tool_calls_made, status="error")
+                    return LoopResult(
+                        run_id=self.run_id,
+                        status="error",
+                        final_text=final_text,
+                        tool_calls_made=tool_calls_made,
+                        messages=messages,
+                        error=err,
+                    )
 
             if resp.content:
                 final_text = resp.content
                 self._emit({"type": "text", "text": resp.content})
 
-            if resp.stop_reason != "tool_use" or not resp.tool_calls:
-                # end_turn / max_tokens — hand back to orchestrator (Q4/2.7).
-                messages.append(
-                    {"role": "assistant", "content": resp.content or ""}
+            # TRUNCATION (max_tokens) is NOT a finished turn: the model was cut
+            # off mid-thought / before its tool call. Continue it (bounded) so it
+            # can finish, rather than accepting the cut-off as "completed".
+            if resp.stop_reason == "max_tokens":
+                messages.append({"role": "assistant", "content": resp.content or ""})
+                if continues_used < MAX_TRUNCATION_CONTINUES:
+                    continues_used += 1
+                    messages.append({"role": "user", "content": _CONTINUE_NUDGE})
+                    self._emit({"type": "truncated_continue",
+                                "run_id": self.run_id, "attempt": continues_used})
+                    self._persist_state(messages, tool_calls_made, status="running")
+                    continue
+                # Out of continue budget -> hand back honestly as truncated.
+                self._persist_state(messages, tool_calls_made, status="max_tokens")
+                self._emit({"type": "max_tokens", "run_id": self.run_id})
+                return LoopResult(
+                    run_id=self.run_id,
+                    status="max_tokens",
+                    final_text=final_text,
+                    tool_calls_made=tool_calls_made,
+                    messages=messages,
+                    text_only=tool_calls_made == 0,
+                    error="model response was truncated (max_tokens) and did not "
+                          "finish within the continue budget",
                 )
+
+            # Refinement 1: split tool calls into well-formed vs invalid /
+            # placeholder (empty write/edit args, unknown tool). A provider
+            # forced by tool_choice="required" may emit a placeholder just to
+            # satisfy the constraint -- never execute that garbage, and if the
+            # turn has NO well-formed call, treat it as a no-tool turn below.
+            valid_tool_calls: list[ToolCall] = []
+            rejected: list[tuple[ToolCall, str]] = []
+            for tc in (resp.tool_calls or []):
+                defect = _tool_call_defect(tc)
+                if defect is None:
+                    valid_tool_calls.append(tc)
+                else:
+                    rejected.append((tc, defect))
+            for tc, why in rejected:
+                self._emit({"type": "tool_call_rejected", "run_id": self.run_id,
+                            "tool": tc.name, "reason": why})
+
+            has_real_tool_call = (
+                resp.stop_reason == "tool_use" and bool(valid_tool_calls))
+
+            if not has_real_tool_call:
+                # No well-formed tool call this turn (bare narration, or only
+                # placeholder/invalid calls). Record the narration either way.
+                messages.append({"role": "assistant", "content": resp.content or ""})
+                work_expecting = self.execution_context != "conversation"
+                did_tool_work = tool_calls_made > 0
+                if work_expecting:
+                    # Refinement 2: log/emit a compact diagnostic of the raw
+                    # provider turn so a no-tool narration (suspected reasoning-
+                    # channel leak) is diagnosable. Logging only; never crashes.
+                    self._emit_no_tool_diagnostic(resp, rejected)
+                # "Narrated a plan, wrote nothing": in a work-expecting run where
+                # the model has done NO tool work yet, re-prompt (bounded) to
+                # force real action instead of accepting the bare turn as done.
+                if (work_expecting and not did_tool_work
+                        and reprompts_used < MAX_NO_TOOL_REPROMPTS):
+                    reprompts_used += 1
+                    messages.append({"role": "user", "content": _NO_TOOL_NUDGE})
+                    self._emit({"type": "reprompt", "run_id": self.run_id,
+                                "reason": "no_tool_call", "attempt": reprompts_used})
+                    self._persist_state(messages, tool_calls_made, status="running")
+                    escalate_next = True
+                    continue
+                if work_expecting and not did_tool_work:
+                    # Gave up after the reprompt budget with zero tool work: this
+                    # is NOT a success -- do not report "completed".
+                    self._persist_state(
+                        messages, tool_calls_made, status="stalled_no_tool")
+                    self._emit({"type": "stalled_no_tool", "run_id": self.run_id})
+                    return LoopResult(
+                        run_id=self.run_id,
+                        status="stalled_no_tool",
+                        final_text=final_text,
+                        tool_calls_made=tool_calls_made,
+                        messages=messages,
+                        text_only=True,
+                        error="model narrated but never called a tool; no files "
+                              "were written",
+                    )
+                # Legitimate end_turn (conversation Q&A, or the model already did
+                # tool work and is signing off) — hand back (Q4/2.7).
                 self._persist_state(messages, tool_calls_made, status="completed")
                 self._emit({"type": "end_turn", "run_id": self.run_id})
                 return LoopResult(
@@ -905,10 +1215,11 @@ class AgentLoop:
                     messages=messages,
                 )
 
-            # Record the assistant turn carrying the tool calls.
-            messages.append(self._assistant_tool_msg(resp.content, resp.tool_calls))
+            # Record the assistant turn carrying the WELL-FORMED tool calls
+            # (placeholder/invalid calls are dropped -- never executed).
+            messages.append(self._assistant_tool_msg(resp.content, valid_tool_calls))
 
-            for tc in resp.tool_calls:
+            for tc in valid_tool_calls:
                 if tool_calls_made >= self.tool_call_limit:
                     return self._budget_exhausted_result(
                         messages,
@@ -928,6 +1239,23 @@ class AgentLoop:
                 )
 
             self._persist_state(messages, tool_calls_made, status="running")
+
+    def _emit_no_tool_diagnostic(
+        self, resp: Any, rejected: list[tuple[ToolCall, str]]
+    ) -> None:
+        """Emit + log a compact diagnostic of a no-tool provider turn
+        (Refinement 2). Best-effort: diagnostics must never affect the run."""
+        try:
+            diag = _no_tool_diagnostic(resp)
+            diag["type"] = "no_tool_diagnostic"
+            diag["run_id"] = self.run_id
+            if rejected:
+                diag["rejected_tool_calls"] = [
+                    {"tool": tc.name, "reason": why} for tc, why in rejected]
+            self._emit(diag)
+            _LOGGER.info("agent-loop no-tool turn diagnostic: %s", diag)
+        except Exception:  # pragma: no cover - diagnostics never break the run
+            pass
 
     def _budget_exhausted_result(
         self,
@@ -1193,7 +1521,7 @@ class AgentLoop:
                 )
             if enf.rule_enabled("trust-tier"):
                 allow = enf.tier_paths("execute")
-                if not _command_matches(command, allow):
+                if not _command_matches(command, allow, self.repo_root):
                     raise ToolPolicyError(
                         f"Command '{command}' is not in the {enf.trust_tier} "
                         f"execute allowlist.",
@@ -1400,6 +1728,7 @@ class AgentLoop:
                 before = ""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        self._wrote_file_this_run = True
         if _is_test_path(rel_path):
             self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.
@@ -1428,6 +1757,7 @@ class AgentLoop:
         updated = original.replace(old, new, 1)
         warnings = self._scan_write_content(rel_path, updated)
         target.write_text(updated, encoding="utf-8")
+        self._wrote_file_this_run = True
         if _is_test_path(rel_path):
             self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.

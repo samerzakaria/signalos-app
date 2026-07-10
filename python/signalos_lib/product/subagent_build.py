@@ -1002,6 +1002,22 @@ def _default_run_agent(
                 usage["in"] = (usage.get("in") or 0) + res.tokens_in
             if res.tokens_out is not None:
                 usage["out"] = (usage.get("out") or 0) + res.tokens_out
+        # Fix: do NOT silently swallow a "narrated, wrote nothing" / truncated
+        # outcome. The loop now refuses to call a no-tool narration turn (or a
+        # cut-off max_tokens turn) "completed"; surface that here so a step that
+        # described work instead of performing it is distinguishable from real
+        # work. Roles that are supposed to change files (implementer/fixer) also
+        # flag a run that landed no write; reviewers legitimately emit only text.
+        writes_expected = role in ("implementer", "fixer")
+        if res.status in ("stalled_no_tool", "max_tokens"):
+            emit({"type": "system",
+                  "text": f"The {role} step did not perform tool work "
+                          f"(outcome: {res.status}); it described the work "
+                          "instead of doing it. Treating the step as incomplete."})
+        elif writes_expected and res.wrote_no_files:
+            emit({"type": "system",
+                  "text": f"The {role} step made no file changes -- no product "
+                          "was written this pass."})
         return res.final_text or ""
     return run
 
@@ -1010,11 +1026,18 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
                      project_id: str = "default") -> "tuple[bool, str]":
     """Run ONE test file via the stack adapter's single-test command (the
     per-task green gate). Test-runner-agnostic result parsing: exit code rules;
-    failure lines are extracted best-effort for the fixer. Returns (True, '')
-    when the adapter has no single-test runner -- the integration phase (full
-    suite) then provides the objective coverage."""
+    failure lines are extracted best-effort for the fixer.
+
+    When the adapter has NO single-test runner we must NOT fake green: returning
+    (True, '') here made the caller stamp the task "pre-existing-green" and skip
+    the implementer, so a task could be marked done with nothing built. Instead
+    we return an honest "cannot verify" (False, <reason>) so the caller proceeds
+    to implement rather than treating an unverified test as already-passing; the
+    real gate is the full-suite validation in PHASE 2 (run_validation)."""
     if stack.test_file_command is None:
-        return True, ""
+        return False, ("no per-test runner for this stack; cannot confirm this "
+                       "test is green -- proceeding to implement (the full-suite "
+                       "validation is the real gate)")
     # Resolve the canonical rel_path to its physical location (project
     # namespacing) and hand the command a repo-root-relative path.
     phys = _workspace_path(repo_root, test_path, project_id)

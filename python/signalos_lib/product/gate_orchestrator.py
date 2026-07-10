@@ -430,6 +430,11 @@ class GateOrchestrator:
         double-biased self-review). The _verify_g4_build hard wall is
         unchanged: it still runs the REAL build+test on disk and refuses to
         sign a stub."""
+        # Scaffold-first (FIX 2): before the build runs, materialize the
+        # SELECTED stack's shell on a greenfield repo so G4 is not deadlocked
+        # bootstrapping the root entry/config files governance denies. Strictly
+        # idempotent -- a no-op when the shell already exists on disk.
+        self._scaffold_shell_if_greenfield()
         from .subagent_build import run_subagent_driven_build
         result = run_subagent_driven_build(
             self.repo_root,
@@ -449,6 +454,63 @@ class GateOrchestrator:
             self.emit({"type": "system",
                        "text": f"G4 build not verified yet: {self._g4_verify.get('reason', '')}"})
         return result
+
+    def _scaffold_shell_if_greenfield(self) -> None:
+        """FIX 2: materialize the SELECTED stack's shell before the BUILD gate
+        on a GREENFIELD repo, so G4 does not deadlock-by-policy trying to
+        bootstrap the root entry/config files governance denies. Strictly
+        IDEMPOTENT and SAFE:
+
+          * Resolves the stack from the (profile.json-aware) ``detect_profile``,
+            then scaffolds via that profile's adapter.
+          * NO-OP when the shell already exists on disk (marker files present):
+            it never re-scaffolds and never overwrites an already-scaffolded
+            repo. The benchmark fixture ships package.json + a full React/Vitest
+            shell, so this does NOTHING there.
+          * NO-OP for profiles without a materializable framework shell
+            (generic / existing-repo / agent-selected) or an unknown profile.
+          * Never raises: a scaffold hiccup is reported and swallowed, so it can
+            never fail the walk.
+        """
+        try:
+            from .stacks import (
+                adapter_has_greenfield_shell,
+                detect_profile,
+                get_adapter,
+                stack_shell_present,
+            )
+        except Exception:
+            return
+        try:
+            profile = detect_profile(self.repo_root)
+            if not adapter_has_greenfield_shell(profile):
+                self.emit({"type": "system",
+                           "text": f"Scaffold-first: profile '{profile}' has no stack "
+                                   "shell to materialize -- skipped."})
+                return
+            if stack_shell_present(self.repo_root):
+                self.emit({"type": "system",
+                           "text": f"Scaffold-first: the '{profile}' shell already exists "
+                                   "on disk -- skipped (no files changed)."})
+                return
+            adapter = get_adapter(profile)
+            scaffold = getattr(adapter, "scaffold", None)
+            if not callable(scaffold):
+                self.emit({"type": "system",
+                           "text": f"Scaffold-first: adapter '{profile}' provides no "
+                                   "scaffold -- skipped."})
+                return
+            intent = {"product_name": self.repo_root.name, "prompt": self.state.prompt}
+            result = scaffold(self.repo_root, intent)
+            created = result.get("created", []) if isinstance(result, dict) else []
+            self.emit({"type": "progress",
+                       "gate": "G4",
+                       "text": f"Scaffolded the {profile} stack shell before build "
+                               f"({len(created)} file(s)).",
+                       "created": list(created)})
+        except Exception as exc:  # never fail the walk on a scaffold hiccup
+            self.emit({"type": "system",
+                       "text": f"Scaffold-first skipped ({type(exc).__name__}: {exc})."})
 
     def _verify_g4_build(self, agent_result: Any) -> dict:
         """Independently verify G4 built a real, working product — the walk must

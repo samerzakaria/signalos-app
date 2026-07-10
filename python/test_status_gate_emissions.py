@@ -255,7 +255,17 @@ class BuildStatusJsonGateEmissions(unittest.TestCase):
             trust_only = get_wave_status(root)
             self.assertFalse(trust_only["gates"]["G4"])
 
-            # A signed BUILD_EVIDENCE.md is what turns G4 green.
+            # Even a SIGNED TRUST_TIER.md is not enough on its own: BUILD_EVIDENCE
+            # is a required G4 artifact, and a gate is passed only when EVERY
+            # required artifact is signed (matches build preflight).
+            seed_signed_artifact(
+                root, "core/execution/TRUST_TIER.md", "G4",
+                "# Trust Tier\n\nT2 tier declared for this build.\n",
+            )
+            self.assertFalse(get_wave_status(root)["gates"]["G4"])
+
+            # A signed BUILD_EVIDENCE.md alongside the signed TRUST_TIER.md is
+            # what finally turns G4 green (all required artifacts signed).
             seed_signed_artifact(
                 root, "core/execution/BUILD_EVIDENCE.md", "G4",
                 "# Build Evidence\n\nTests passed.\n",
@@ -275,6 +285,105 @@ class BuildStatusJsonGateEmissions(unittest.TestCase):
         for entry in gd:
             self.assertEqual(entry["activities"], [])
             self.assertEqual(entry["criteria"], [])
+
+
+class GatePassedRequiresAllRequiredArtifacts(unittest.TestCase):
+    """FIX: a gate reads "passed" only when EVERY required artifact is signed.
+
+    Previously `_detect_gates` used `any(signed)`, so ONE signed artifact marked
+    the whole gate passed -- but build preflight (validate_build_readiness)
+    requires EVERY prior-gate artifact signed. A partially-signed project then
+    showed the gate green here, advanced, and dead-ended at G4 preflight. Status
+    and preflight now read the SAME sign.check_gate manifest, so they agree.
+    """
+
+    def _seed_gate(self, root: Path, gate: str, *, only_first: bool = False,
+                   content: str | None = None) -> None:
+        from signalos_lib.artifacts import expected_gate_artifacts
+        rows = expected_gate_artifacts(gate)
+        if only_first:
+            rows = rows[:1]
+        for row in rows:
+            seed_signed_artifact(
+                root, row.rel_path, gate,
+                content=content if content is not None
+                else f"# {row.label}\n\nReal filled content line.\n"
+                     "Second real content line.\nThird real content line.\n",
+            )
+
+    def test_all_required_artifacts_signed_gate_passed(self):
+        # G1 has two required artifacts (Belief + Role Activation Card): both
+        # signed -> passed.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            self._seed_gate(root, "G1")
+            self.assertTrue(get_wave_status(root)["gates"]["G1"])
+
+    def test_only_some_required_artifacts_signed_gate_not_passed(self):
+        # Only the first of G1's two required artifacts signed -> NOT passed
+        # (this is exactly the state that preflight would still block on).
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            self._seed_gate(root, "G1", only_first=True)
+            self.assertFalse(get_wave_status(root)["gates"]["G1"])
+
+    def test_g0_template_only_not_passed_even_when_signed(self):
+        # G0 keeps its non-template check: a signed-but-template Soul Document
+        # (contains a scaffold placeholder marker) does not count as onboarded.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            self._seed_gate(root, "G0")                 # all real -> would pass
+            self.assertTrue(get_wave_status(root)["gates"]["G0"])
+            # Re-seed the Soul Document as template-only (still signed).
+            seed_signed_artifact(
+                root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0",
+                content="{product-name}\n",             # placeholder marker
+            )
+            self.assertFalse(get_wave_status(root)["gates"]["G0"])
+
+    def test_status_agrees_with_build_preflight(self):
+        from signalos_lib.product.preflight import validate_build_readiness
+
+        prior = ("G0", "G1", "G2", "G3")
+
+        # (a) Fully signed prior gates + a react-vite stack: status shows every
+        #     prior gate passed AND preflight raises no gate-signature problem.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            for gate in prior:
+                self._seed_gate(root, gate)
+            (root / "package.json").write_text(
+                '{"dependencies": {"react": "18", "vite": "5"}, '
+                '"scripts": {"build": "x", "test": "x"}}', encoding="utf-8")
+            (root / "src").mkdir(exist_ok=True)
+
+            gates = get_wave_status(root)["gates"]
+            problems = validate_build_readiness(root)
+            for gate in prior:
+                self.assertTrue(gates[gate], f"{gate} should read passed")
+                self.assertFalse(
+                    any(p.startswith(f"{gate}:") for p in problems),
+                    f"preflight should not flag {gate}: {problems}",
+                )
+
+        # (b) A partially-signed prior gate: status shows it NOT passed AND
+        #     preflight flags it -- the two surfaces agree, no dead-end.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            self._seed_gate(root, "G0")
+            self._seed_gate(root, "G1", only_first=True)   # ROLE card unsigned
+
+            self.assertFalse(get_wave_status(root)["gates"]["G1"])
+            problems = validate_build_readiness(root)
+            self.assertTrue(
+                any(p.startswith("G1:") for p in problems),
+                f"preflight should flag G1's unsigned/missing artifact: {problems}",
+            )
 
 
 class CollectHelpersDirect(unittest.TestCase):

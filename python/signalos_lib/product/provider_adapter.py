@@ -343,6 +343,7 @@ class LiteLLMAgentProvider:
         model: str,
         tools: list[dict[str, Any]] | None = None,
         stream: bool = False,
+        tool_choice: str | None = None,
     ) -> AgentResponse:
         litellm = self.litellm
         kwargs: dict[str, Any] = {
@@ -352,7 +353,11 @@ class LiteLLMAgentProvider:
         }
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            # Default remains "auto"; the agent loop may escalate to "required"
+            # on a reprompt turn to force a narration-only model to act. If a
+            # provider rejects "required" the loop catches the error and retries
+            # without the override (see AgentLoop._run_tool_loop).
+            kwargs["tool_choice"] = tool_choice or "auto"
         if stream:
             kwargs["stream"] = True
 
@@ -600,16 +605,37 @@ class ProviderAdapter:
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         stream: bool = False,
+        tool_choice: str | None = None,
     ) -> AgentResponse:
         """Delegate to the wrapped provider.
 
         If the provider cannot do tool calls, tools are dropped before the
         call (INV-7: no fake tool calls — the loop handles text-only mode).
+
+        `tool_choice` is an optional override the agent loop uses to escalate a
+        reprompt turn to "required" (force a tool call). It is only forwarded
+        when tools are actually in play. A wrapped provider that predates the
+        `tool_choice` keyword (e.g. the CI AgentTestProvider) raises TypeError
+        on the extra kwarg; we catch that and retry without it so the escalation
+        never crashes the run — the loop's firm text nudge still drives the
+        reprompt.
         """
         effective_tools = tools if self.supports_tool_calls else None
+        stream = stream and self.supports_streaming
+        if tool_choice is not None and effective_tools is not None:
+            try:
+                return self._provider.chat(
+                    messages=messages,
+                    model=model or self.model,
+                    tools=effective_tools,
+                    stream=stream,
+                    tool_choice=tool_choice,
+                )
+            except TypeError:
+                pass  # provider has no tool_choice kwarg -> fall through
         return self._provider.chat(
             messages=messages,
             model=model or self.model,
             tools=effective_tools,
-            stream=stream and self.supports_streaming,
+            stream=stream,
         )

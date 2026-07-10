@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from conftest import seed_signed_artifact
+from conftest import seed_signed_gate
 from signalos_lib.audit_replay import _REVERSE_MARKERS, load_audit_trail, replay_state
 from signalos_lib.harness import AgentResponse, TokenUsage
 from signalos_lib.product.enforcement_state import StaticEnforcementProvider
@@ -486,25 +486,33 @@ _SOUL = (
 
 
 def _mk_workspace(*, soul=True, g2=False, g3=False) -> Path:
-    # Gate detection is signature-based (fail-closed): every artifact seeded
-    # here to simulate a passed gate is signed via seed_signed_artifact.
+    # Gate detection is signature-based and fail-closed on the WHOLE manifest:
+    # each simulated gate is fully seeded+signed via seed_signed_gate (every
+    # required artifact), the primary artifact carrying the drift-relevant body.
     root = Path(tempfile.mkdtemp(prefix="signalos-gate-reopen-"))
     (root / ".signalos").mkdir()
     if soul:
-        seed_signed_artifact(
-            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", _SOUL,
+        seed_signed_gate(
+            root, "G0",
+            bodies={"core/governance/Governance/SOUL-DOCUMENT.md": _SOUL},
         )
     if g2:
-        seed_signed_artifact(
-            root, "core/strategy/EXPECTATION_MAP.md", "G2",
-            "Milestone plan: ship the onboarding intake first, "
-            "then the routing loop, monolith architecture.\n",
+        seed_signed_gate(
+            root, "G2",
+            bodies={
+                "core/strategy/EXPECTATION_MAP.md":
+                    "Milestone plan: ship the onboarding intake first, "
+                    "then the routing loop, monolith architecture.\n",
+            },
         )
     if g3:
-        seed_signed_artifact(
-            root, "core/strategy/DESIGN_NOTE.md", "G3",
-            "Design note: light theme, single-page intake form, "
-            "two screens total.\n",
+        seed_signed_gate(
+            root, "G3",
+            bodies={
+                "core/strategy/DESIGN_NOTE.md":
+                    "Design note: light theme, single-page intake form, "
+                    "two screens total.\n",
+            },
         )
     return root
 

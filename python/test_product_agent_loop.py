@@ -27,6 +27,10 @@ from signalos_lib.harness import (
 )
 from signalos_lib.product.agent_loop import (
     AgentLoop,
+    ToolPolicyError,
+    _command_matches,
+    _no_tool_diagnostic,
+    _tool_call_defect,
     build_tool_definitions,
     redact_secrets,
 )
@@ -678,7 +682,13 @@ class TestGovernance(unittest.TestCase):
         """Regression: provider turns with finish_reason='error' are normalized
         away by litellm (logged as a warning) -- transport noise silently eats
         model attempts. The loop now attributes the count per run so a flaky
-        provider can't read as model weakness in comparisons."""
+        provider can't read as model weakness in comparisons.
+
+        Run in CONVERSATION context so the single bare end_turn is a legitimate
+        completion: in a work-expecting (delivery) context a no-tool narration
+        turn now triggers the anti-deadlock reprompt (which would make several
+        provider calls). Turn-error accounting is context-independent, so this
+        isolates it to exactly one noisy turn."""
         import logging
 
         class _NoisyProvider(AgentTestProvider):
@@ -691,8 +701,9 @@ class TestGovernance(unittest.TestCase):
             root = Path(d)
             seed_trust_tier_paths(root)
             provider = _NoisyProvider(script=[_end_resp()])
-            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            loop = _loop(root, provider, execution_context="conversation")
             result = loop.run("sys", "one noisy turn")
+            self.assertEqual(result.status, "completed")
             self.assertEqual(result.provider_turn_errors, 1)
             self.assertEqual(result.as_dict()["provider_turn_errors"], 1)
 
@@ -1317,3 +1328,355 @@ class TestListDirectoryAndSeed(unittest.TestCase):
             # second call is a no-op (does not raise, file still valid)
             seed_trust_tier_paths(root)
             self.assertTrue(p.is_file())
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 — a no-tool narration turn (or a truncated turn) is NOT "completed"
+# ---------------------------------------------------------------------------
+
+
+def _trunc_resp(text: str = "half a plan...") -> AgentResponse:
+    """A turn cut off by the output-token limit (finish_reason length)."""
+    return AgentResponse(
+        content=text,
+        tool_calls=None,
+        stop_reason="max_tokens",
+        usage=TokenUsage(1, 1),
+    )
+
+
+class _ToolChoiceProvider:
+    """Fake AgentProvider that records the tool_choice it was called with and
+    replays a script (like AgentTestProvider, but tool_choice-aware so the
+    reprompt escalation to 'required' is observable)."""
+
+    def __init__(self, script, reject_required: bool = False):
+        self._script = list(script)
+        self.reject_required = reject_required
+        self.tool_choices: list = []
+        self.calls = 0
+
+    def chat(self, messages, model, tools=None, stream=False, tool_choice=None):
+        self.calls += 1
+        self.tool_choices.append(tool_choice)
+        if tool_choice == "required" and self.reject_required:
+            raise RuntimeError("this model does not support tool_choice=required")
+        if self._script:
+            return self._script.pop(0)
+        return _end_resp("(still narrating, no tool call)")
+
+
+class TestNoToolNarrationIsNotSuccess(unittest.TestCase):
+    def test_repeated_narration_reprompts_then_stalls_not_completed(self):
+        # A model that narrates with ZERO tool calls in a work-expecting run must
+        # be re-prompted (bounded), then reported as stalled_no_tool -- NEVER as
+        # a successful completed turn that wrote nothing.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = _ToolChoiceProvider(
+                script=[_end_resp("Here is my detailed plan: first I will..."),
+                        _end_resp("Restating the plan again in prose...")]
+            )
+            loop = _loop(root, provider, emit=events.append)
+            result = loop.run("sys", "build the app")
+
+            self.assertEqual(result.status, "stalled_no_tool")
+            self.assertNotEqual(result.status, "completed")
+            self.assertTrue(result.text_only)
+            self.assertTrue(result.wrote_no_files)
+            self.assertEqual(result.tool_calls_made, 0)
+            # initial turn + 2 bounded reprompts = 3 provider calls
+            self.assertEqual(provider.calls, 3)
+            # escalation: first turn default (auto), reprompts force 'required'
+            self.assertEqual(provider.tool_choices, [None, "required", "required"])
+            self.assertEqual(sum(1 for e in events if e.get("type") == "reprompt"), 2)
+            self.assertTrue(any(e.get("type") == "stalled_no_tool" for e in events))
+
+    def test_reprompt_recovers_when_model_then_calls_a_tool(self):
+        # If the reprompt works and the model finally emits a tool call, the run
+        # completes normally and a file is actually written.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = _ToolChoiceProvider(
+                script=[
+                    _end_resp("I will now build it (but no tool call yet)."),
+                    _tool_resp("write_file",
+                               {"path": "src/App.tsx", "content": "export default 1"},
+                               "c1"),
+                    _end_resp("done"),
+                ]
+            )
+            loop = _loop(root, provider)
+            result = loop.run("sys", "build the app")
+
+            self.assertEqual(result.status, "completed")
+            self.assertFalse(result.wrote_no_files)
+            self.assertEqual(result.tool_calls_made, 1)
+            self.assertTrue((root / "src" / "App.tsx").is_file())
+            # turn 1 auto, turn 2 escalated to required (recovered), turn 3 auto
+            self.assertEqual(provider.tool_choices[:2], [None, "required"])
+
+    def test_required_escalation_rejection_falls_back_and_never_crashes(self):
+        # A provider that ERRORS on tool_choice='required' must not crash the run:
+        # the loop catches it, falls back to 'auto', and the run still proceeds.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = _ToolChoiceProvider(
+                script=[
+                    _end_resp("narration, no tool call"),
+                    _tool_resp("write_file",
+                               {"path": "src/App.tsx", "content": "export default 1"},
+                               "c1"),
+                    _end_resp("done"),
+                ],
+                reject_required=True,
+            )
+            loop = _loop(root, provider, emit=events.append)
+            result = loop.run("sys", "build the app")  # must not raise
+
+            self.assertEqual(result.status, "completed")
+            self.assertTrue((root / "src" / "App.tsx").is_file())
+            self.assertTrue(
+                any(e.get("type") == "tool_choice_fallback" for e in events))
+
+    def test_conversation_context_narration_is_a_legit_completion(self):
+        # In conversation (Q&A) context a no-tool turn is a normal answer, not a
+        # deadlock -- it must NOT be reprompted or marked stalled.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = _ToolChoiceProvider(script=[_end_resp("Here is my answer.")])
+            loop = _loop(root, provider, execution_context="conversation")
+            result = loop.run("sys", "what is 2+2?")
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(provider.calls, 1)  # no reprompt
+
+    def test_normal_tool_use_happy_path_unchanged(self):
+        # Sanity: a normal write-then-end run still completes and is honestly
+        # flagged as having written a file.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(script=[
+                _tool_resp("write_file", {"path": "out.txt", "content": "hi"}),
+                _end_resp(),
+            ])
+            loop = _loop(root, provider)
+            result = loop.run("sys", "write out.txt")
+            self.assertEqual(result.status, "completed")
+            self.assertFalse(result.wrote_no_files)
+            self.assertEqual((root / "out.txt").read_text(encoding="utf-8"), "hi")
+
+
+class TestTruncationIsNotSuccess(unittest.TestCase):
+    def test_truncated_turn_continues_then_completes(self):
+        # A max_tokens (cut-off) turn must be CONTINUED, not accepted as done.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = AgentTestProvider(script=[
+                _trunc_resp("I'm halfway through writing the plan"),
+                _tool_resp("write_file",
+                           {"path": "src/App.tsx", "content": "export default 1"},
+                           "c1"),
+                _end_resp("done"),
+            ])
+            loop = _loop(root, provider, emit=events.append)
+            result = loop.run("sys", "build the app")
+            self.assertEqual(result.status, "completed")
+            self.assertTrue((root / "src" / "App.tsx").is_file())
+            self.assertTrue(
+                any(e.get("type") == "truncated_continue" for e in events))
+
+    def test_persistent_truncation_reports_max_tokens_not_completed(self):
+        # If the model keeps getting cut off past the continue budget, the run is
+        # reported as max_tokens (truncated) -- NEVER completed.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(script=[
+                _trunc_resp(), _trunc_resp(), _trunc_resp(),
+            ])
+            loop = _loop(root, provider)
+            result = loop.run("sys", "build the app")
+            self.assertEqual(result.status, "max_tokens")
+            self.assertNotEqual(result.status, "completed")
+            self.assertEqual(result.tool_calls_made, 0)
+            self.assertTrue(result.wrote_no_files)
+
+
+# ---------------------------------------------------------------------------
+# FIX 2 — compound commands (`cd frontend && npm test`) are not falsely denied
+# ---------------------------------------------------------------------------
+
+
+class TestCompoundCommandAllowlist(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.allow = list(DEFAULT_TRUST_TIER_PATHS["T2"]["execute"])
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_unit_every_segment_must_match(self):
+        m = lambda cmd: _command_matches(cmd, self.allow, self.root)
+        self.assertTrue(m("cd frontend && npm test"))
+        self.assertTrue(m("cd frontend && npm run build && npm test"))
+        self.assertTrue(m("npm test"))                      # bare, unchanged
+        self.assertTrue(m("npx vitest run src/x.test.ts"))  # single, unchanged
+        self.assertFalse(m("npm test && rm -rf /"))         # 2nd segment denied
+        self.assertFalse(m("cd ../../../etc && cat passwd"))  # cd escapes
+        self.assertFalse(m("wget http://example.test"))     # still-denied stays denied
+
+    def test_check_governance_allows_and_denies_compound_commands(self):
+        seed_trust_tier_paths(self.root)
+        loop = AgentLoop(
+            adapter=_adapter(AgentTestProvider()),
+            repo_root=self.root,
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T2"),
+            run_id="cmd-run",
+        )
+        self.assertIsNone(loop._load_enforcement())
+        # allowed compound commands do not raise
+        loop._check_governance("run_command", {"command": "cd frontend && npm test"})
+        loop._check_governance(
+            "run_command", {"command": "cd frontend && npm run build && npm test"})
+        loop._check_governance("run_command", {"command": "npm test"})
+        # a disallowed 2nd segment is denied (trust-tier)
+        with self.assertRaises(ToolPolicyError):
+            loop._check_governance(
+                "run_command", {"command": "npm test && git commit -m x"})
+        # a denylisted 2nd segment is denied
+        with self.assertRaises(ToolPolicyError):
+            loop._check_governance("run_command", {"command": "npm test && rm -rf /"})
+        # a cd that escapes the workspace is denied
+        with self.assertRaises(ToolPolicyError):
+            loop._check_governance(
+                "run_command", {"command": "cd ../../../etc && cat passwd"})
+
+
+# ---------------------------------------------------------------------------
+# REFINEMENT 1 — placeholder/empty tool-call args are NOT valid work
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallDefect(unittest.TestCase):
+    def test_well_formed_calls_pass(self):
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "write_file", {"path": "a.ts", "content": "x"})))
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "edit_file",
+                     {"path": "a.ts", "old_string": "o", "new_string": "n"})))
+        # an edit that DELETES text (empty new_string) is still valid work
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "edit_file",
+                     {"path": "a.ts", "old_string": "o", "new_string": ""})))
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "read_file", {"path": "a.ts"})))
+        # list_directory root ('') is valid
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "list_directory", {"path": ""})))
+
+    def test_placeholder_and_unknown_calls_are_defective(self):
+        self.assertIn("empty content", _tool_call_defect(
+            ToolCall("i", "write_file", {"path": "a.ts", "content": ""})))
+        self.assertIn("empty path", _tool_call_defect(
+            ToolCall("i", "write_file", {"path": "", "content": "x"})))
+        self.assertIn("empty old_string", _tool_call_defect(
+            ToolCall("i", "edit_file",
+                     {"path": "a.ts", "old_string": "", "new_string": "n"})))
+        self.assertIn("unknown tool", _tool_call_defect(
+            ToolCall("i", "delete_everything", {})))
+
+    def test_parse_error_calls_keep_existing_dispatch_path(self):
+        # A JSON parse error is NOT flagged here (it keeps its arg-parse audit
+        # path in _dispatch_tool) -- behavior unchanged for that case.
+        self.assertIsNone(_tool_call_defect(
+            ToolCall("i", "write_file", {"__parse_error__": "bad json"})))
+
+
+class TestPlaceholderToolCallDuringEscalation(unittest.TestCase):
+    def test_empty_content_write_is_not_executed_and_run_stalls(self):
+        # The panel's warning: a provider forced by tool_choice="required" emits
+        # write_file with EMPTY content just to satisfy the constraint. It must
+        # NOT be executed (no garbage file), must not count as work, and the run
+        # ends stalled_no_tool -- never completed.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = _ToolChoiceProvider(script=[
+                _end_resp("I'll build it now."),
+                _tool_resp("write_file", {"path": "src/App.tsx", "content": ""}, "c1"),
+                _tool_resp("write_file", {"path": "src/App.tsx", "content": ""}, "c2"),
+            ])
+            loop = _loop(root, provider, emit=events.append)
+            result = loop.run("sys", "build the app")
+
+            self.assertEqual(result.status, "stalled_no_tool")
+            self.assertNotEqual(result.status, "completed")
+            self.assertEqual(result.tool_calls_made, 0)      # placeholder not dispatched
+            self.assertTrue(result.wrote_no_files)
+            self.assertFalse((root / "src" / "App.tsx").exists())  # no garbage file
+            rejects = [e for e in events if e.get("type") == "tool_call_rejected"]
+            self.assertTrue(rejects)
+            self.assertTrue(any("empty content" in e["reason"] for e in rejects))
+            # escalation was still requested on the reprompt turns
+            self.assertIn("required", provider.tool_choices)
+
+
+# ---------------------------------------------------------------------------
+# REFINEMENT 2 — no-tool turns are diagnosable (reasoning-channel observability)
+# ---------------------------------------------------------------------------
+
+
+class TestNoToolDiagnostic(unittest.TestCase):
+    def test_diagnostic_reads_reasoning_fields_from_raw(self):
+        import types
+        raw = types.SimpleNamespace(
+            provider="glm-5.2",
+            choices=[types.SimpleNamespace(
+                message=types.SimpleNamespace(
+                    content=None, reasoning="R" * 1200,
+                    reasoning_content=None, reasoning_details=None),
+                finish_reason="stop",
+                native_finish_reason="stop")],
+        )
+        resp = AgentResponse(content="", tool_calls=None, stop_reason="end_turn",
+                             usage=TokenUsage(1, 1), raw=raw)
+        diag = _no_tool_diagnostic(resp)
+        self.assertTrue(diag["reasoning_present"])
+        self.assertEqual(diag["reasoning_len"], 1200)
+        self.assertFalse(diag["reasoning_content_present"])
+        self.assertEqual(diag["finish_reason"], "stop")
+        self.assertEqual(diag["native_finish_reason"], "stop")
+        self.assertEqual(diag["provider"], "glm-5.2")
+        self.assertFalse(diag["has_tool_calls"])
+
+    def test_diagnostic_does_not_crash_without_raw_or_reasoning(self):
+        resp = AgentResponse(content="hi", tool_calls=None, stop_reason="end_turn",
+                             usage=TokenUsage(1, 1))  # raw is None
+        diag = _no_tool_diagnostic(resp)
+        self.assertEqual(diag["content_len"], 2)
+        self.assertFalse(diag["has_tool_calls"])
+        self.assertIsNone(diag["provider"])
+        self.assertFalse(diag["reasoning_present"])
+
+    def test_no_tool_turn_emits_diagnostic_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            events: list[dict] = []
+            provider = _ToolChoiceProvider(script=[_end_resp("prose, no tool call")])
+            loop = _loop(root, provider, emit=events.append)
+            loop.run("sys", "build the app")
+            diags = [e for e in events if e.get("type") == "no_tool_diagnostic"]
+            self.assertTrue(diags, "a work-expecting no-tool turn must be diagnosable")
+            self.assertIn("content_len", diags[0])

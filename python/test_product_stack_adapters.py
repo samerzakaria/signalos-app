@@ -31,9 +31,11 @@ from signalos_lib.product.stacks import (
     SpringBootApiAdapter,
     StackAdapter,
     VueViteAdapter,
+    adapter_has_greenfield_shell,
     detect_profile,
     get_adapter,
     list_adapters,
+    stack_shell_present,
 )
 
 
@@ -687,6 +689,87 @@ class TestDetectProfile:
         )
         (tmp_path / "src" / "main" / "java").mkdir(parents=True)
         assert detect_profile(tmp_path) == "spring-boot-api"
+
+
+class TestDetectProfileHonorsSelection:
+    """FIX 1: a founder's EXPLICIT stack selection in ``.signalos/profile.json``
+    wins over on-disk inference, so a greenfield repo whose shell has not been
+    materialized yet is still built with the chosen stack (not 'generic')."""
+
+    def _write_profile_json(self, root: Path, data: dict) -> None:
+        (root / ".signalos").mkdir(parents=True, exist_ok=True)
+        (root / ".signalos" / "profile.json").write_text(
+            json.dumps(data), encoding="utf-8")
+
+    def test_profile_key_honored_without_markers(self, tmp_path: Path) -> None:
+        # {"profile": "react-vite"} + NO package.json -> react-vite (not generic)
+        self._write_profile_json(tmp_path, {"profile": "react-vite"})
+        assert detect_profile(tmp_path) == "react-vite"
+
+    def test_profile_id_key_honored_without_markers(self, tmp_path: Path) -> None:
+        # init.py schema {"profile_id": "react-vite"} -> same
+        self._write_profile_json(tmp_path, {"profile_id": "react-vite"})
+        assert detect_profile(tmp_path) == "react-vite"
+
+    def test_selection_wins_over_conflicting_markers(self, tmp_path: Path) -> None:
+        self._write_profile_json(tmp_path, {"profile": "vue-vite"})
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"vite": "^5"}}), encoding="utf-8")
+        assert detect_profile(tmp_path) == "vue-vite"
+
+    def test_marker_fallback_intact_when_no_profile_json(self, tmp_path: Path) -> None:
+        # No profile.json + package.json with vite -> react-vite (unchanged fallback)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"vite": "^5"}}), encoding="utf-8")
+        assert detect_profile(tmp_path) == "react-vite"
+
+    def test_garbage_profile_falls_back_to_markers(self, tmp_path: Path) -> None:
+        self._write_profile_json(tmp_path, {"profile": "not-a-real-stack"})
+        (tmp_path / "package.json").write_text(
+            json.dumps({"dependencies": {"express": "^4"}}), encoding="utf-8")
+        assert detect_profile(tmp_path) == "node-api"
+
+    def test_garbage_profile_and_no_markers_is_generic(self, tmp_path: Path) -> None:
+        self._write_profile_json(tmp_path, {"profile": "not-a-real-stack"})
+        assert detect_profile(tmp_path) == "generic"
+
+    def test_malformed_profile_json_falls_back(self, tmp_path: Path) -> None:
+        (tmp_path / ".signalos").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".signalos" / "profile.json").write_text("{ not json", encoding="utf-8")
+        assert detect_profile(tmp_path) == "generic"
+
+    def test_non_dict_profile_json_falls_back(self, tmp_path: Path) -> None:
+        (tmp_path / ".signalos").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".signalos" / "profile.json").write_text("[1, 2, 3]", encoding="utf-8")
+        assert detect_profile(tmp_path) == "generic"
+
+
+class TestGreenfieldShellHelpers:
+    """FIX 2 support: the helpers the scaffold-first step relies on to stay a
+    strict no-op on an already-scaffolded repo."""
+
+    def test_shell_present_true_for_package_json(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"devDependencies": {"vite": "^5"}}), encoding="utf-8")
+        assert stack_shell_present(tmp_path) is True
+
+    def test_shell_present_false_for_empty_repo(self, tmp_path: Path) -> None:
+        assert stack_shell_present(tmp_path) is False
+
+    def test_shell_present_ignores_profile_json(self, tmp_path: Path) -> None:
+        # profile.json alone is NOT a materialized shell.
+        (tmp_path / ".signalos").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".signalos" / "profile.json").write_text(
+            json.dumps({"profile": "react-vite"}), encoding="utf-8")
+        assert stack_shell_present(tmp_path) is False
+
+    def test_greenfield_shell_membership(self) -> None:
+        assert adapter_has_greenfield_shell("react-vite") is True
+        assert adapter_has_greenfield_shell("nextjs-app") is True
+        assert adapter_has_greenfield_shell("generic") is False
+        assert adapter_has_greenfield_shell("existing-repo") is False
+        assert adapter_has_greenfield_shell("agent-selected") is False
+        assert adapter_has_greenfield_shell("not-a-real-stack") is False
 
 
 class TestGetAdapter:

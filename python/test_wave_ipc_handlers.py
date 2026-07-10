@@ -20,7 +20,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 import signalos_ipc_server as ipc
-from conftest import seed_signed_artifact
+from conftest import seed_signed_gate
 
 
 @contextmanager
@@ -35,10 +35,12 @@ def _in_workspace(soul_text: str | None = None):
                 soul_text.rstrip("\n")
                 + "\nOwner: PO.\nReviewer: lead engineer.\nReady when signed.\n"
             )
-        # Gate detection is signature-based (fail-closed): sign the Soul
-        # so it counts as a passed G0, not just a drafted file.
-        seed_signed_artifact(
-            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", soul_text,
+        # Gate detection is signature-based and fail-closed on the whole G0
+        # manifest: seed+sign ALL four G0 artifacts (Soul carries the body)
+        # so it counts as a passed G0, not just a drafted/partly-signed file.
+        seed_signed_gate(
+            root, "G0",
+            bodies={"core/governance/Governance/SOUL-DOCUMENT.md": soul_text},
         )
     os.chdir(str(root))
     try:

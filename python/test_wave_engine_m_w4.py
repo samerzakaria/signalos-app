@@ -13,7 +13,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from conftest import seed_signed_artifact
+from conftest import seed_signed_gate
 from signalos_lib.agent_loader import load_agent
 from signalos_lib.wave_engine import GATE_ORDER, WaveEngine, WaveState
 
@@ -28,44 +28,35 @@ def _pad(text: str) -> str:
 
 def _mk_workspace_signed_through(gate_signed_through: str) -> Path:
     """Make a temp workspace with artifacts seeded AND SIGNED so all gates
-    up to and including *gate_signed_through* are detected as signed
-    (gate detection is signature-based, fail-closed)."""
+    up to and including *gate_signed_through* are detected as signed.
+
+    Gate detection is signature-based and fail-closed on the WHOLE manifest,
+    so seed_signed_gate signs EVERY required artifact of each gate (not just
+    the primary). The primary artifact of each gate carries a flavour body;
+    every other required artifact gets neutral signed content."""
     root = Path(tempfile.mkdtemp(prefix="signalos-m-w4-"))
     (root / ".signalos").mkdir()
 
-    artifacts = [
-        ("G0", [
-            (("core", "governance", "Governance", "SOUL-DOCUMENT.md"),
-             _pad("Customer onboarding helper for the team.")),
-        ]),
-        ("G1", [
-            (("core", "strategy", "BELIEF.md"),
-             _pad("Belief: customer ingestion improves by 20%.")),
-        ]),
-        ("G2", [
-            (("core", "strategy", "EXPECTATION_MAP.md"),
-             _pad("Expectation Map: 10 tickets/day.")),
-        ]),
-        ("G3", [
-            (("core", "strategy", "DESIGN_NOTE.md"),
-             _pad("Design Note: chosen approach.")),
-        ]),
-        ("G4", [
-            (("core", "execution", "TRUST_TIER.md"), _pad("Trust Tier: T2.")),
-            (("core", "execution", "BUILD_EVIDENCE.md"),
-             _pad("Build Evidence: tests passed.")),
-        ]),
-        ("G5", [
-            (("core", "governance", "QUALITY_CHECK.md"),
-             _pad("Quality Check: passed.")),
-        ]),
-    ]
+    # Flavour body for each gate's PRIMARY manifest artifact.
+    primary_body = {
+        "G0": ("core/governance/Governance/SOUL-DOCUMENT.md",
+               _pad("Customer onboarding helper for the team.")),
+        "G1": ("core/strategy/BELIEF.md",
+               _pad("Belief: customer ingestion improves by 20%.")),
+        "G2": ("core/strategy/EXPECTATION_MAP.md",
+               _pad("Expectation Map: 10 tickets/day.")),
+        "G3": ("core/strategy/DESIGN_NOTE.md",
+               _pad("Design Note: chosen approach.")),
+        "G4": ("core/execution/BUILD_EVIDENCE.md",
+               _pad("Build Evidence: tests passed.")),
+        "G5": ("core/governance/QUALITY_CHECK.md",
+               _pad("Quality Check: passed.")),
+    }
 
     target_idx = GATE_ORDER.index(gate_signed_through)
-    for i, (gate, entries) in enumerate(artifacts):
-        if i <= target_idx:
-            for parts, body in entries:
-                seed_signed_artifact(root, "/".join(parts), gate, body)
+    for gate in GATE_ORDER[:target_idx + 1]:
+        rel, body = primary_body[gate]
+        seed_signed_gate(root, gate, bodies={rel: body})
     return root
 
 

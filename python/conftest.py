@@ -30,6 +30,16 @@ _PROVIDER_ENV = (
     "DEEPSEEK_API_KEY",
     "XAI_API_KEY",
     "PERPLEXITY_API_KEY",
+    # OpenRouter + the remaining first-class providers the product auto-detects.
+    # These were missing, so a repo-root .env carrying OPENROUTER_API_KEY (loaded
+    # into os.environ by test_postgres_task_store._load_dotenv at import) leaked
+    # past this hermetic guard and made downstream deliveries route to a REAL
+    # provider -- non-deterministic, slow, order-dependent failures in the
+    # offline suite. Clearing every provider key keeps the unit suite hermetic.
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_API_BASE",
+    "CEREBRAS_API_KEY",
+    "DASHSCOPE_API_KEY",
     "SIGNALOS_LLM_PROVIDER",
     "SIGNALOS_LLM_MODEL",
 )
@@ -107,3 +117,44 @@ def seed_signed_artifact(
     path.write_text(content, encoding="utf-8")
     sign_artifact(path, signer or f"Test {role}", role, gate, "APPROVED")
     return path
+
+
+def seed_signed_gate(
+    base: Path | str,
+    gate: str,
+    *,
+    bodies: dict[str, str] | None = None,
+    default_content: str = _SEED_CONTENT,
+    role: str | None = None,
+    signer: str | None = None,
+) -> list[Path]:
+    """Seed AND sign EVERY required artifact of *gate* — a full-gate seed.
+
+    Gate detection is fail-closed on the WHOLE manifest: status._detect_gates
+    and product.preflight both count a gate as passed only when ALL its
+    required artifacts exist and carry a signature (sign.check_gate). Seeding
+    only the primary artifact therefore does NOT mark a gate passed — this
+    mirrors the signing over every manifest artifact of the gate, exactly as
+    test_product_preflight._ready_repo does via expected_gate_artifacts.
+
+    *bodies* optionally maps an artifact rel_path OR its manifest label to the
+    content to write for that specific artifact (e.g. a Soul body a test asserts
+    a snippet from); every other required artifact gets *default_content*.
+    Returns the signed Paths in manifest order.
+    """
+    from signalos_lib.artifacts import expected_gate_artifacts
+
+    gate = gate.upper()
+    bodies = bodies or {}
+    signed: list[Path] = []
+    for artifact in expected_gate_artifacts(gate):
+        content = bodies.get(
+            artifact.rel_path, bodies.get(artifact.label, default_content)
+        )
+        signed.append(
+            seed_signed_artifact(
+                base, artifact.rel_path, gate, content,
+                role=role, signer=signer,
+            )
+        )
+    return signed

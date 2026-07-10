@@ -3527,13 +3527,90 @@ def list_adapters() -> list[dict[str, str]]:
     ]
 
 
+def _profile_from_meta(repo_root: Path) -> str | None:
+    """The stack the founder EXPLICITLY selected, read from
+    ``.signalos/profile.json``.
+
+    Two schemas exist in the wild: ``commands/init.py`` writes
+    ``{"profile_id": "..."}`` while the adapters' :func:`_write_profile_meta`
+    writes ``{"profile": "..."}``. BOTH keys are accepted. Returns the selected
+    profile id ONLY when it names a known adapter in the registry; returns
+    ``None`` when the file is absent, unreadable, malformed, or names an
+    unknown profile -- so the caller falls back to on-disk marker detection
+    rather than trusting an arbitrary string.
+    """
+    path = Path(repo_root) / ".signalos" / "profile.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("profile", "profile_id"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip() in _ADAPTERS:
+            return value.strip()
+    return None
+
+
 def detect_profile(repo_root: Path) -> str:
     """Auto-detect which profile best fits a repository.
 
-    Returns the profile id string.  Falls back to ``"generic"`` when
-    nothing specific is detected.
+    Honors the founder's EXPLICIT stack selection FIRST: a
+    ``.signalos/profile.json`` naming a known adapter WINS over on-disk
+    inference. This is what lets a greenfield repo -- selected as (say)
+    ``react-vite`` but whose stack shell has not been materialized yet -- be
+    built with the chosen stack instead of being mis-detected as ``"generic"``
+    and handed Python compile/unittest commands.
+
+    Falls back to on-disk marker detection when profile.json is absent or names
+    an unknown profile, and to ``"generic"`` when nothing specific is detected.
     """
     root = Path(repo_root)
+    selected = _profile_from_meta(root)
+    if selected is not None:
+        return selected
+    return _detect_profile_from_markers(root)
+
+
+# Profiles whose adapter owns a concrete framework "shell" (build tooling,
+# entry points, config files) that GateOrchestrator materializes on a
+# greenfield repo BEFORE the build gate -- so G4 does not deadlock trying to
+# bootstrap root files governance denies. Excluded: ``generic`` (a bare stdlib
+# repo, no framework shell), ``existing-repo`` (preserves the repo as-is), and
+# ``agent-selected`` (the agent chooses and creates its own tooling).
+_GREENFIELD_SHELL_EXCLUDED = frozenset({"generic", "existing-repo", "agent-selected"})
+
+
+def adapter_has_greenfield_shell(profile_id: str) -> bool:
+    """True iff ``profile_id`` names a registered adapter that materializes a
+    concrete framework shell worth pre-scaffolding before a greenfield build."""
+    return profile_id in _ADAPTERS and profile_id not in _GREENFIELD_SHELL_EXCLUDED
+
+
+def stack_shell_present(repo_root: Path) -> bool:
+    """True iff the repo already has a recognizable build shell on disk
+    (marker files such as package.json / pyproject.toml / go.mod / ...).
+
+    Purely on-disk -- it deliberately IGNORES ``.signalos/profile.json`` and
+    answers only "is there already a project shell here that scaffolding could
+    overwrite?". This is the idempotency guard for the scaffold-first step: an
+    already-scaffolded repo (most importantly one with an existing
+    ``package.json``) reports present, so scaffold-first is a strict no-op and
+    never touches the existing shell.
+    """
+    return _detect_profile_from_markers(Path(repo_root)) != "generic"
+
+
+def _detect_profile_from_markers(root: Path) -> str:
+    """Infer the profile purely from on-disk marker files (package.json,
+    pyproject.toml, Cargo.toml, go.mod, pom.xml, dotnet markers,
+    ``_PROJECT_MARKERS``). The filesystem fallback for :func:`detect_profile`;
+    returns ``"generic"`` when nothing specific is detected.
+    """
+    root = Path(root)
 
     # Check for vite/react first (most specific)
     pkg_path = root / "package.json"

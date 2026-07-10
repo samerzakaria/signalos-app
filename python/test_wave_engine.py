@@ -14,7 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from conftest import seed_signed_artifact
+from conftest import seed_signed_gate
 from signalos_lib.wave_engine import (
     GATE_ORDER,
     WaveEngine,
@@ -32,8 +32,9 @@ def _mk_workspace_with_soul(soul_text: str | None = None) -> Path:
     lines for an artifact to count as filled. The helper pads short soul
     bodies with neutral stakeholder/success lines so test intent stays
     focused on the body text rather than scaffolding lines. Gate detection
-    is signature-based and fail-closed, so the Soul is also SIGNED (G0)
-    via conftest.seed_signed_artifact — a bare file would not count.
+    is signature-based and fail-closed on the WHOLE G0 manifest, so ALL four
+    G0 artifacts are seeded and SIGNED via conftest.seed_signed_gate (the Soul
+    carrying the caller's body) — signing the Soul alone would not count.
     """
     root = Path(tempfile.mkdtemp(prefix="signalos-wave-engine-"))
     (root / ".signalos").mkdir()
@@ -45,8 +46,9 @@ def _mk_workspace_with_soul(soul_text: str | None = None) -> Path:
                 + "\n"
                 + "Owner: PO.\nReviewer: lead engineer.\nReady when signed.\n"
             )
-        seed_signed_artifact(
-            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", soul_text,
+        seed_signed_gate(
+            root, "G0",
+            bodies={"core/governance/Governance/SOUL-DOCUMENT.md": soul_text},
         )
     return root
 

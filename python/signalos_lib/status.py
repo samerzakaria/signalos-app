@@ -121,12 +121,20 @@ def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
     content check: a template-only Soul Document does not count as onboarded.
     *project_id* namespaces the artifact base per §3.2.
     """
-    # A gate counts as passed only when an artifact EXISTS *and carries a
-    # signature* (sign.check_gate reads the in-file signature blocks). Bare
-    # existence was fail-open: an honest not-green BUILD_EVIDENCE.md made G4
-    # read "done", so a resumed walk mis-seeded its signed set and skipped the
-    # build. Uniform rule for every gate -- no per-gate special case; G0
-    # additionally keeps its non-template content check.
+    # A gate counts as passed only when EVERY required artifact EXISTS *and
+    # carries a signature* (sign.check_gate reads the in-file signature blocks).
+    # Two prior bugs this closes:
+    #   * Bare existence was fail-open: an honest not-green BUILD_EVIDENCE.md
+    #     made G4 read "done".
+    #   * `any(signed)` was fail-open the other way: ONE signed artifact marked
+    #     the whole gate passed, so a partially-signed project advanced here and
+    #     was then blocked at G4 preflight (preflight requires EVERY prior-gate
+    #     artifact signed -- validate_build_readiness). Requiring `all` makes the
+    #     board agree with preflight: the SAME sign.check_gate manifest is the
+    #     source of truth for "required" on both sides.
+    # G0 additionally keeps its non-template content check (a template-only Soul
+    # Document is not onboarded). An empty status list (unknown gate / read
+    # error) is fail-closed, not vacuously passed.
     from . import sign as _sign
     g = {}
     for gate in gate_detection_paths():
@@ -134,11 +142,14 @@ def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
             statuses = _sign.check_gate(root, gate, project_id=project_id)
         except Exception:
             statuses = []
+        if not statuses:
+            g[gate] = False
+            continue
         if gate == "G0":
-            g[gate] = any(st.exists and st.has_signatures and _is_non_template(st.path)
+            g[gate] = all(st.exists and st.has_signatures and _is_non_template(st.path)
                           for st in statuses)
         else:
-            g[gate] = any(st.exists and st.has_signatures for st in statuses)
+            g[gate] = all(st.exists and st.has_signatures for st in statuses)
     return g
 
 

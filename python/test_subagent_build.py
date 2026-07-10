@@ -8,6 +8,7 @@ INDEPENDENT reviewer adapter when one is configured.
 """
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -394,6 +395,94 @@ class TestOrchestration(unittest.TestCase):
         spec = sb._reviewer_system_prompt("spec")
         self.assertIn("VERDICT: PASS", spec)
         self.assertIn("Do Not Trust the Report", spec)  # bundled spec-reviewer content
+
+
+# ---------------------------------------------------------------------------
+# FIX 3 — a stack WITHOUT a per-test runner must not fake green
+# ---------------------------------------------------------------------------
+
+
+class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
+    def test_no_runner_stack_returns_false_not_fake_green(self):
+        from signalos_lib.product.subagent_build import _run_single_test, _StackContext
+        d = Path(tempfile.mkdtemp())
+        stack = _StackContext()  # test_file_command is None (no per-test runner)
+        ok, reason = _run_single_test(d, "core/execution/tests/T1.test.ts", stack)
+        self.assertFalse(ok)                          # NOT fake-green
+        self.assertNotEqual((ok, reason), (True, ""))  # the old bug
+        self.assertTrue(reason.strip())               # honest, non-empty reason
+
+    def test_real_runner_pass_and_fail_unchanged(self):
+        # The React/vitest-style path (test_file_command IS set) still returns a
+        # real pass/fail from the runner's exit code.
+        from signalos_lib.product.subagent_build import _run_single_test, _StackContext
+        d = Path(tempfile.mkdtemp())
+        tpath = "core/execution/tests/T1.test.ts"
+        (d / "core" / "execution" / "tests").mkdir(parents=True, exist_ok=True)
+        (d / tpath).write_text("test('x', () => {})", encoding="utf-8")
+        stack_pass = _StackContext(
+            test_file_command=lambda repo, rel: [sys.executable, "-c", "raise SystemExit(0)"])
+        self.assertEqual(_run_single_test(d, tpath, stack_pass), (True, ""))
+        stack_fail = _StackContext(
+            test_file_command=lambda repo, rel: [
+                sys.executable, "-c", "print('FAIL: boom'); raise SystemExit(1)"])
+        ok, reason = _run_single_test(d, tpath, stack_fail)
+        self.assertFalse(ok)
+        self.assertIn("FAIL", reason)
+
+    def test_no_runner_stack_does_not_stamp_pre_existing_green(self):
+        # Caller path (CONTROL DECISION 2): with the honest no-runner result the
+        # per-task pre-check is NOT green, so the implementer IS dispatched and
+        # no task is stamped "pre-existing-green". Contrast with
+        # test_already_green_task_is_skipped_not_paid (fake-green -> 0 implementers).
+        from signalos_lib.product.subagent_build import _default_build_check, _StackContext
+        d = _repo_with_plan()
+        no_tfc = _StackContext()
+
+        def check(r, only_test=None):
+            return _default_build_check(r, only_test, stack=no_tfc)
+
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertGreaterEqual(rec.roles().count("implementer"), 1)
+        self.assertNotIn("pre-existing", res.final_text)
+
+
+# ---------------------------------------------------------------------------
+# FIX 1 (part 6) — the run wrapper surfaces a "narrated, wrote nothing" outcome
+# ---------------------------------------------------------------------------
+
+
+class TestRunWrapperSurfacesNoWork(unittest.TestCase):
+    def test_stalled_no_tool_run_emits_system_event(self):
+        from signalos_lib.product.subagent_build import _default_run_agent
+        from signalos_lib.harness import AgentResponse, AgentTestProvider, TokenUsage
+        from signalos_lib.product.provider_adapter import (
+            ProviderAdapter, ProviderCapabilities)
+        from signalos_lib.product.enforcement_state import (
+            StaticEnforcementProvider, seed_trust_tier_paths)
+
+        d = Path(tempfile.mkdtemp())
+        seed_trust_tier_paths(d)
+        events: list[dict] = []
+        narration = AgentResponse(
+            content="I will build it now (prose only, no tool call).",
+            tool_calls=None, stop_reason="end_turn", usage=TokenUsage(1, 1))
+        provider = AgentTestProvider(script=[narration])
+        caps = ProviderCapabilities(
+            model="m", supports_tool_calls=True, supports_streaming=True,
+            context_length=200_000)
+        adapter = ProviderAdapter(model="m", provider=provider, capabilities=caps)
+        run = _default_run_agent(
+            d, StaticEnforcementProvider(trust_tier="T3"), events.append,
+            "default", [0, 1, 2, 3])
+
+        report = run("implementer", adapter, "sys", "build it")  # must not raise
+
+        system_texts = [e.get("text", "") for e in events if e.get("type") == "system"]
+        self.assertTrue(any("incomplete" in t.lower() for t in system_texts),
+                        f"no no-work signal surfaced; got {system_texts}")
 
 
 if __name__ == "__main__":

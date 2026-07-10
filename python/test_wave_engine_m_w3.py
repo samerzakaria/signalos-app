@@ -14,7 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from conftest import seed_signed_artifact
+from conftest import seed_signed_gate
 from signalos_lib.agent_loader import (
     GATE_AGENT_FILES,
     list_available_agents,
@@ -38,10 +38,12 @@ def _mk_workspace_with_soul(soul_text: str | None = None) -> Path:
                 soul_text.rstrip("\n")
                 + "\n" + "Owner: PO.\nReviewer: lead engineer.\nReady when signed.\n"
             )
-        # Gate detection is signature-based (fail-closed): sign the Soul
-        # so it counts as a passed G0, not just a drafted file.
-        seed_signed_artifact(
-            root, "core/governance/Governance/SOUL-DOCUMENT.md", "G0", soul_text,
+        # Gate detection is signature-based and fail-closed on the whole G0
+        # manifest: seed+sign ALL four G0 artifacts (Soul carries the body)
+        # so it counts as a passed G0, not just a drafted/partly-signed file.
+        seed_signed_gate(
+            root, "G0",
+            bodies={"core/governance/Governance/SOUL-DOCUMENT.md": soul_text},
         )
     return root
 
