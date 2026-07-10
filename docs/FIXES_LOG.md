@@ -8,6 +8,19 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Durable direction — runtime containment, cassette replay, near-miss tier (2026-07-10)
+
+The endgame layers the panels named: replace static command policy with a real OS boundary, turn funded-run transcripts into a free offline corpus, and restore benchmark signal without re-opening the vacuous-satisfaction trap. Full suite green.
+
+| # | Item | What | Location | Verified | Commit |
+|---|------|------|----------|----------|--------|
+| 78 | **Runtime containment (boundary endgame)** | Opt-in `ContainerRunner` (docker/podman/wsl) runs commands in a throwaway container — only the workspace bind-mounted rw, `--network none`, cpu/mem/pid caps, env forwarded as an overlay (no host-env leak). In-code path/allowlist policy demoted to a backstop. Default `InProcessRunner` byte-identical. | `product/sandbox.py` (new), `product/agent_loop.py` | test (27+107); **real containment verified on a Docker host**: network blocked, host paths absent, env didn't leak. WSL argv offline-only; `--read-only` rootfs is a follow-up | (this push) |
+| 79 | **Cassette replay (Layer 2)** | Offline replay of recorded provider payloads through the real litellm/adapter path (`CassetteTransport` at the httpx seam) — tests tool-call parse, reasoning-channel leak, streamed-delta assembly for $0. URL-aware so litellm's cost-map GET doesn't desync (also fixed a pre-existing isolation bug). Capture-OFF byte-identical (+163/−0). | `product/provider_adapter.py`, `test_cassette_replay.py` (new) | test (15+64) | (this push) |
+| 80 | **Near-miss grade tier (Fable-5 decision)** | A near-complete-but-non-compiling build no longer scores identically to nothing. Strictly gated (≥5 impl files & ≥150 LOC AND hidden-gold ≥90% AND full-suite ≥90% AND ≤3 tsc errors all unused-symbol family); `min()` ceiling of 50, still letter **F**. Anchored on the un-fakeable hidden-gold oracle. Vacuous/empty and plausible-but-broken builds still floor to 20. | benchmark grader (scratchpad: `measure_360.py`) | test (90); re-grade gpt-oss 20→50/F, glm 92.5/A unchanged | scratchpad |
+| — | **Benchmark repair budget** | tightened to 3 cycles (panel: 2–3, and now logged) — benchmark-harness env only; production/desktop keep the default 8 | benchmark harness (`prove_g4.py` env) | — | scratchpad |
+
+---
+
 ## Engine profiles + panel-validated service design (2026-07-10)
 
 WS-E's conservative Claim-2 convergence deferred four services (repair/proof/security/review) because turning them on would change benchmark behavior. A cross-vendor panel resolved them via **one engine, config-gated profiles** — benchmark stays deterministic, production adds release-safety. Implemented additively; **benchmark path byte-identical, full suite 2470/0**.
