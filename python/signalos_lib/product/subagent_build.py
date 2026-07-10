@@ -973,7 +973,7 @@ def _evidence_rel_path(repo_root: Path, project_id: str) -> str:
 
 
 def _evidence_message(repo_root: Path, project_id: str, stack: _StackContext,
-                      green: bool) -> str:
+                      green: bool, repair_metrics: Optional[dict] = None) -> str:
     rel = _evidence_rel_path(repo_root, project_id)
     target = f"`{rel}`" if rel else "the Build Evidence gate artifact"
     status_line = (
@@ -982,7 +982,7 @@ def _evidence_message(repo_root: Path, project_id: str, stack: _StackContext,
         "The objective build+test run is NOT green -- the evidence MUST say so. "
         "Do not claim success; record the failing state exactly as it is."
     )
-    return "\n".join([
+    lines = [
         "# Record the build evidence",
         status_line,
         "Run the project's build and test commands "
@@ -991,8 +991,19 @@ def _evidence_message(repo_root: Path, project_id: str, stack: _StackContext,
         "files created or changed, the exact commands run, whether the build is "
         "clean (yes/no), and the test result as pass/total. Record honestly -- "
         "including failures. No TBD/TODO/placeholders, no `{{...}}`, no `[DATE]`.",
-        f"Work from: {repo_root}",
-    ])
+    ]
+    if repair_metrics:
+        p = repair_metrics.get("repairs_by_phase", {}) or {}
+        lines.append(
+            "Also record the build's self-repair effort under a "
+            "`Repair attempts:` line, verbatim -- total "
+            f"{repair_metrics.get('repair_attempts', 0)} "
+            f"(per-task fixes {p.get('per_task', 0)}, integration fixes "
+            f"{p.get('integration', 0)}, review fixes {p.get('review', 0)}). "
+            "A build that reached green with 0 repairs is stronger than one that "
+            "needed several -- write the real count, never round it down.")
+    lines.append(f"Work from: {repo_root}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1286,38 @@ def run_subagent_driven_build(
 
     summary: list[str] = []
     calls = 0
+
+    # Self-repair accounting (panel ask): make "converged in 0 repairs"
+    # distinguishable from "needed N", so a retry-heavy (shaky) build cannot hide
+    # behind a green outcome. A FIXER dispatch is a repair; the initial
+    # implementer draft is NOT. Counted per phase, totaled into repair_attempts,
+    # and surfaced in three places a downstream grader can read: the machine-
+    # readable traceability snapshot, the run summary / final_text, and
+    # BUILD_EVIDENCE. Informational ONLY -- it never changes control flow, and a
+    # build that is green after its tasks does zero extra work (every counter
+    # stays 0, no extra dispatch, no extra check).
+    per_task_repairs = 0
+    integration_repairs = 0
+    review_repairs = 0
+
+    def _repair_metrics() -> dict:
+        return {
+            "repair_attempts": (per_task_repairs + integration_repairs
+                                + review_repairs),
+            "repairs_by_phase": {
+                "per_task": per_task_repairs,
+                "integration": integration_repairs,
+                "review": review_repairs,
+            },
+        }
+
+    def _repair_summary_line() -> str:
+        m = _repair_metrics()
+        p = m["repairs_by_phase"]
+        return (f"repair_attempts={m['repair_attempts']} "
+                f"(per_task={p['per_task']}, integration={p['integration']}, "
+                f"review={p['review']})")
+
     matrix = _TraceMatrix(repo_root, tasks)
 
     # PHASE 0a -- deterministic spec repair: a plan test may ship with a wrong
@@ -1360,6 +1403,7 @@ def run_subagent_driven_build(
                     _implementer_message(task, context, repo_root, stack,
                                          project_id, fix_feedback=feedback))
                 calls += 1
+                per_task_repairs += 1  # a per-task FIX pass (not the draft)
                 matrix.bump_attempts(task.id)
                 ok, errs = check(repo_root, task.test)
             if ok:
@@ -1402,10 +1446,12 @@ def run_subagent_driven_build(
     failed_tasks = matrix.ids_with_status("failed")
     blocked_tasks = matrix.ids_with_status("blocked")
     if failed_tasks or blocked_tasks:
-        matrix.persist(phase="stopped-red", integration_green=False)
+        matrix.persist(phase="stopped-red", integration_green=False,
+                       **_repair_metrics())
         # FAIL FAST at the PHASE level: with any task red/blocked the build can
         # never sign, so integration/review/evidence would be paid spend on a
         # refused build. Every attemptable task was still attempted above.
+        summary.append(_repair_summary_line())
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
         return LoopResult(
@@ -1450,18 +1496,23 @@ def run_subagent_driven_build(
             fixer_adapter = reviewer  # different model on the same evidence
         run("fixer", fixer_adapter, impl_sys, msg)
         calls += 1
+        integration_repairs += 1  # a final full-suite / integration FIX pass
         green, last_errors = check(repo_root)
     emit({"type": "system",
           "text": "The product compiles and all tests pass."
                   if green else "Build still has errors after the repair budget — "
                                 "stopping (fail-fast)."})
     summary.append(f"integration_green={green}")
-    matrix.persist(phase="integration", integration_green=green)
+    matrix.persist(phase="integration", integration_green=green,
+                   **_repair_metrics())
 
     if not green:
         # FAIL FAST: integration definitively failed its budget. Review and
         # evidence would be spend on a build the gate must refuse anyway; the
-        # missing Build Evidence artifact keeps the sign fail-closed.
+        # missing Build Evidence artifact keeps the sign fail-closed. The build
+        # stays NOT-verified here -- the repair budget is exhausted, never forced
+        # green; the logged repair count records how hard it tried.
+        summary.append(_repair_summary_line())
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
         return LoopResult(
@@ -1489,6 +1540,7 @@ def run_subagent_driven_build(
                     _fixer_message("Independent reviewer feedback:\n" + verdict,
                                    repo_root, stack))
                 calls += 1
+                review_repairs += 1  # an independent-review FIX pass
                 green, _ = check(repo_root)  # a review fix must not break the build
             summary.append(f"{kind}_review={parse_verdict(verdict)}")
 
@@ -1514,10 +1566,19 @@ def run_subagent_driven_build(
 
     # PHASE 4 -- record the Build Evidence artifact with the real numbers,
     # honestly: a not-green build is recorded as not green (the sign gate will
-    # refuse it; evidence must never claim otherwise).
+    # refuse it; evidence must never claim otherwise). The self-repair count is
+    # handed to the evidence pass so BUILD_EVIDENCE.md states how many repairs
+    # the build needed (0 == converged cleanly).
     run("evidence", adapter, impl_sys,
-        _evidence_message(repo_root, project_id, stack, green))
+        _evidence_message(repo_root, project_id, stack, green,
+                          repair_metrics=_repair_metrics()))
     calls += 1
+
+    # Final machine-readable snapshot: the traceability artifact now carries the
+    # total + per-phase repair_attempts (including any review-triggered fix), so
+    # a downstream grader reads the definitive count from disk.
+    matrix.persist(phase="complete", integration_green=green, **_repair_metrics())
+    summary.append(_repair_summary_line())
 
     if usage.get("in") is not None or usage.get("out") is not None:
         summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")

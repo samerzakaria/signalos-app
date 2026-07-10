@@ -8,6 +8,7 @@ INDEPENDENT reviewer adapter when one is configured.
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -583,6 +584,117 @@ class TestCanonicalPlanTasks(unittest.TestCase):
         _write_canonical_plan(d, "tasks: []\n")  # no 'wave' -> load_tasks raises
         tasks = decompose_tasks(d, "x")
         self.assertEqual([t.id for t in tasks], ["T1", "T2"])  # markdown fallback
+
+
+# ---------------------------------------------------------------------------
+# Self-repair accounting (panel ask): "converged in 0 repairs" must be
+# distinguishable from "needed N", logged to a machine-readable field a grader
+# reads, and BENCHMARK-SAFE (a clean/green build does zero extra work and its
+# behaviour is unchanged).
+# ---------------------------------------------------------------------------
+
+
+def _trace(repo_root: Path) -> dict:
+    """The build's machine-readable traceability snapshot (grader-visible)."""
+    p = repo_root / ".signalos" / "traceability.json"
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+class TestRepairAccounting(unittest.TestCase):
+    def test_green_build_logs_zero_repairs_and_is_behavior_unchanged(self):
+        """A build green after its tasks records repair_attempts=0 (per-task 0,
+        integration 0, review 0) AND does zero extra work: the dispatch sequence
+        is identical to the pre-change happy path -- no added fixer, no forced
+        rerun."""
+        d = _repo()
+        rec = Recorder()
+        res = run_subagent_driven_build(
+            d, adapter="A", reviewer_adapter="B", prompt="build a thing",
+            run_agent=rec, build_check=_green,
+        )
+        self.assertEqual(res.status, "completed")
+        # behaviour-unchanged: exact same roles as test_happy_path_phases
+        self.assertEqual(
+            rec.roles(),
+            ["implementer", "spec-reviewer", "code-reviewer", "evidence"],
+        )
+        self.assertNotIn("fixer", rec.roles())  # a green build never repairs
+        # logged in the run summary / final_text ...
+        self.assertIn("repair_attempts=0", res.final_text)
+        self.assertIn("per_task=0, integration=0, review=0", res.final_text)
+        # ... and in the machine-readable traceability snapshot the grader reads
+        tr = _trace(d)
+        self.assertEqual(tr["repair_attempts"], 0)
+        self.assertEqual(tr["repairs_by_phase"],
+                         {"per_task": 0, "integration": 0, "review": 0})
+
+    def test_green_build_evidence_pass_gets_the_repair_count(self):
+        """The evidence dispatch is told the (zero) repair count so
+        BUILD_EVIDENCE.md can state it -- surfaced, not hidden."""
+        rec = Recorder()
+        run_subagent_driven_build(_repo(), adapter="A", prompt="x",
+                                  run_agent=rec, build_check=_green)
+        evidence_msgs = [m for (role, _), m in zip(rec.calls, rec.messages)
+                         if role == "evidence"]
+        self.assertEqual(len(evidence_msgs), 1)
+        self.assertIn("Repair attempts:", evidence_msgs[0])
+        self.assertIn("total 0", evidence_msgs[0])
+
+    def test_per_task_repairs_are_counted(self):
+        """A plan task that goes red->green via a fixer records a per-task
+        repair (the initial implementer draft is NOT a repair)."""
+        state = {"n": 2}  # red on pre-check + post-implementer, green after 1 fix
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts") and state["n"] > 0:
+                state["n"] -= 1
+                return (False, "T1 assertion failed")
+            return (True, "")
+        d = _repo_with_plan()
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "completed")
+        tr = _trace(d)
+        self.assertEqual(tr["repairs_by_phase"]["per_task"], 1)  # one fix pass
+        self.assertEqual(tr["repairs_by_phase"]["integration"], 0)
+        self.assertEqual(tr["repair_attempts"], 1)
+        self.assertIn("repair_attempts=1", res.final_text)
+
+    def test_red_integration_logs_bounded_repairs_and_stays_unverified(self):
+        """Integration red after the bounded budget: the attempts are made and
+        COUNTED, and the build stays NOT-verified -- never forced green."""
+        d = _repo()
+        rec = Recorder()
+        res = run_subagent_driven_build(
+            d, adapter="A", prompt="x", run_agent=rec,
+            build_check=lambda r, only_test=None: (False, "still broken"),
+            repair_cycles=3,
+        )
+        # NOT verified: bounded budget exhausted, no forced green
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(rec.roles().count("fixer"), 3)  # bounded at the budget
+        self.assertNotIn("evidence", rec.roles())        # a red build cannot sign
+        # count logged in final_text ...
+        self.assertIn("repair_attempts=3", res.final_text)
+        self.assertIn("integration=3", res.final_text)
+        # ... and in the machine-readable snapshot, with the honest red state
+        tr = _trace(d)
+        self.assertEqual(tr["repairs_by_phase"]["integration"], 3)
+        self.assertEqual(tr["repair_attempts"], 3)
+        self.assertFalse(tr["integration_green"])
+
+    def test_review_fix_counts_as_a_repair(self):
+        """A FAIL from an independent reviewer triggers one fixer pass; that is
+        a review-phase repair and is counted."""
+        d = _repo()
+        rec = Recorder(script={"spec-reviewer": ["VERDICT: FAIL: missing delete"]})
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=_green)
+        self.assertEqual(res.status, "completed")
+        tr = _trace(d)
+        self.assertEqual(tr["repairs_by_phase"]["review"], 1)
+        self.assertGreaterEqual(tr["repair_attempts"], 1)
 
 
 if __name__ == "__main__":
