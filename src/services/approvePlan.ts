@@ -79,7 +79,9 @@ async function autoStartPreviewAfterWave(): Promise<void> {
   // Read package.json to check it's a runnable web project.
   let pkgRaw: string;
   try {
-    pkgRaw = await tauriInvoke<string>('read_workspace_file', { path: 'package.json' });
+    // The Rust command binds `relative_path` (ipc.rs read_workspace_file);
+    // passing `path` rejected, so the auto-preview never saw package.json.
+    pkgRaw = await tauriInvoke<string>('read_workspace_file', { relative_path: 'package.json' });
   } catch {
     return; // No package.json -> not a Node web project; skip silently.
   }

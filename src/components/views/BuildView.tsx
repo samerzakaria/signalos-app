@@ -10,6 +10,7 @@ import { Markdown, CodeBlock } from '../markdown';
 import { ToolCallBubble } from '../ToolCallBubble';
 import { FileDiffBubble } from '../FileDiffBubble';
 import { GateReviewCard, type GateReviewSubmission } from '../GateReviewCard';
+import { submitGateVerdict } from '../../services/agentEvents';
 import { UxFrictionCard } from '../UxFrictionCard';
 import { ChatPreviewBubble } from '../ChatPreviewBubble';
 import { isGovernedCommand } from '../../services/governedShell';
@@ -17,6 +18,12 @@ import { BUSINESS_STAGES } from '../../services/deliveryFlow';
 import { voiceState } from '../../services/voiceInput';
 import { CompetitorPanel } from '../CompetitorPanel';
 import { viewClass } from '../viewShell';
+
+function newBubbleId(): string {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : String(Date.now()) + Math.random();
+}
 
 function fileLanguage(path: string, fallback?: string): string {
   if (fallback) return fallback;
@@ -221,15 +228,39 @@ export function BuildView() {
                     resolved={gr.resolvedVerdict ?? null}
                     signingAs={roleLabel(requiredRoleForGate(gr.gate))}
                     onVerdict={(submission: GateReviewSubmission) => {
-                      // Mark resolved locally; Phase 3 wires this to agent:verdict.
-                      chatBubbles.value = chatBubbles.value.map((cb: ChatBubble) =>
-                        cb.id === b.id && cb.gateReview
-                          ? { ...cb, gateReview: { ...cb.gateReview, resolvedVerdict: submission.verdict } }
-                          : cb,
-                      );
-                      try {
-                        window.submitGateVerdict?.(b.id, submission.verdict, submission.feedback);
-                      } catch { /* not wired yet (Phase 3) */ }
+                      const setVerdict = (v: GateReviewSubmission['verdict'] | null) => {
+                        chatBubbles.value = chatBubbles.value.map((cb: ChatBubble) =>
+                          cb.id === b.id && cb.gateReview
+                            ? { ...cb, gateReview: { ...cb.gateReview, resolvedVerdict: v } }
+                            : cb,
+                        );
+                      };
+                      // Optimistically lock the card so a second click can't
+                      // double-submit while the verdict is in flight — then
+                      // revert on a backend refusal so the user can retry
+                      // (Claim 10: the old code marked resolved unconditionally
+                      // and fire-and-forgot, so a rejection could never undo it,
+                      // leaving the card permanently locked).
+                      setVerdict(submission.verdict);
+                      Promise.resolve(submitGateVerdict(b.id, submission.verdict, submission.feedback))
+                        .then((res) => {
+                          if (res && res.ok === false) {
+                            setVerdict(null);
+                            chatBubbles.value = [...chatBubbles.value, {
+                              id: newBubbleId(),
+                              kind: 'error',
+                              text: `Gate verdict not accepted: ${res.error || 'unknown error'} — the gate is still open, adjust and submit again.`,
+                            }];
+                          }
+                        })
+                        .catch((err: unknown) => {
+                          setVerdict(null);
+                          chatBubbles.value = [...chatBubbles.value, {
+                            id: newBubbleId(),
+                            kind: 'error',
+                            text: `Gate verdict failed to send: ${err instanceof Error ? err.message : String(err)} — the gate is still open, try again.`,
+                          }];
+                        });
                     }}
                   >
                     {b.text ? <Markdown text={b.text} /> : null}

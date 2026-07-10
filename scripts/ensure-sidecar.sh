@@ -60,21 +60,104 @@ SIDECAR_PATH="$BIN_DIR/$SIDECAR_NAME"
 echo "[ensure-sidecar] target triple: $TARGET_TRIPLE"
 echo "[ensure-sidecar] expected:      $SIDECAR_PATH"
 
-if [[ -f "$SIDECAR_PATH" ]]; then
-  echo "[ensure-sidecar] ✓ exists; nothing to do"
-  exit 0
-fi
-
 MODE="${1:-stub}"
 
-if [[ "$MODE" == "--build" ]]; then
+# ─── Freshness helpers (Claim 1b) ───────────────────────────────────────────
+# "Exists" is NOT sufficient. A committed-but-stale binary (the shipped 0.0.9
+# sidecar reports "Unknown command: agent:deliver") would otherwise be accepted
+# forever. A fresh sidecar answers the `capabilities` handshake with a command
+# list that includes agent:deliver; a stale one does not.
+
+# The lint stub written below is a few bytes; a real PyInstaller onefile is tens
+# of MB. Anything under 100 KB is treated as a stub, not a real binary, and the
+# freshness probe is skipped for it (stubs are never executed).
+sidecar_looks_like_stub() {
+  local size
+  size="$(wc -c < "$1" 2>/dev/null | tr -d '[:space:]')"
+  [[ -z "$size" ]] && size=0
+  [[ "$size" -lt 102400 ]]
+}
+
+# Probe the binary's capability handshake. Returns 0 only when agent:deliver is
+# reported. The sidecar exits on stdin EOF, so one piped line is enough.
+sidecar_reports_agent_deliver() {
+  local out probe='{"id":"__ensure_probe__","command":"capabilities","args":[]}'
+  if command -v timeout >/dev/null 2>&1; then
+    out="$(printf '%s\n' "$probe" | timeout 60 "$1" 2>/dev/null)" || true
+  else
+    out="$(printf '%s\n' "$probe" | "$1" 2>/dev/null)" || true
+  fi
+  case "$out" in
+    *'"agent:deliver"'*) return 0 ;;
+    *)                    return 1 ;;
+  esac
+}
+
+# Best-effort source version for the loud "rebuild required" message (no jq/node
+# dependency).
+source_version() {
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$REPO_ROOT/package.json" 2>/dev/null | head -1
+}
+
+rebuild_sidecar() {
   echo "[ensure-sidecar] building real sidecar via PyInstaller…"
   bash "$REPO_ROOT/scripts/bundle-sidecar.sh"
   if [[ ! -f "$SIDECAR_PATH" ]]; then
     echo "[ensure-sidecar] FAIL: build did not produce $SIDECAR_NAME"
     exit 1
   fi
+  if ! sidecar_reports_agent_deliver "$SIDECAR_PATH"; then
+    echo "[ensure-sidecar] FAIL: rebuilt sidecar still does not report agent:deliver."
+    exit 1
+  fi
+  echo "[ensure-sidecar] ✓ rebuilt and verified fresh (agent:deliver present)."
   exit 0
+}
+
+print_stale_message() {
+  echo "[ensure-sidecar] ✗ STALE sidecar: it does not report agent:deliver."
+  echo "[ensure-sidecar]   on-disk binary : $SIDECAR_PATH"
+  local sv; sv="$(source_version)"
+  [[ -n "$sv" ]] && echo "[ensure-sidecar]   source version : $sv (package.json)"
+  echo "[ensure-sidecar]   The bundled engine is too old — rebuild required:"
+  echo "[ensure-sidecar]     bash scripts/ensure-sidecar.sh --build   (or scripts/bundle-sidecar.sh)"
+}
+
+if [[ -f "$SIDECAR_PATH" ]]; then
+  if sidecar_looks_like_stub "$SIDECAR_PATH"; then
+    if [[ "$MODE" == "--build" ]]; then
+      echo "[ensure-sidecar] existing file is a lint stub; building the real sidecar…"
+      rebuild_sidecar
+    fi
+    if [[ "$MODE" == "--check" ]]; then
+      echo "[ensure-sidecar] ✗ existing file is a lint stub, not a real sidecar."
+      exit 1
+    fi
+    echo "[ensure-sidecar] existing file looks like a lint stub (<100KB); skipping freshness probe."
+    exit 0
+  fi
+  if sidecar_reports_agent_deliver "$SIDECAR_PATH"; then
+    echo "[ensure-sidecar] ✓ real sidecar reports agent:deliver; fresh — nothing to do."
+    exit 0
+  fi
+  # A real but stale binary: rebuild when asked, otherwise fail loudly so the
+  # staleness cannot be silently accepted.
+  print_stale_message
+  if [[ "$MODE" == "--build" ]]; then
+    rebuild_sidecar
+  fi
+  exit 1
+fi
+
+# ─── Missing binary ─────────────────────────────────────────────────────────
+if [[ "$MODE" == "--build" ]]; then
+  rebuild_sidecar
+fi
+
+if [[ "$MODE" == "--check" ]]; then
+  echo "[ensure-sidecar] ✗ missing sidecar: $SIDECAR_PATH (run with --build)."
+  exit 1
 fi
 
 # Lint/check mode: write a minimal stub. Tauri only checks the file's

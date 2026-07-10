@@ -432,6 +432,57 @@ export function handle(evt: AgentEvent): void {
       break;
     }
 
+    case 'system': {
+      // Free-text progress from the gate agents — most of G4's build/test
+      // narration arrives as `system` events. These previously fell through to
+      // the default case and were dropped from the transcript (Claim 11a). The
+      // gate-reopen flow ALSO emits a plain `system` mirror of its structured
+      // `gate_reopened` event (rendered above); skip that one so a reopen isn't
+      // double-bubbled.
+      const text = typeof evt.text === 'string' && evt.text
+        ? evt.text
+        : (typeof evt.message === 'string' ? evt.message : '');
+      if (!text) break;
+      if (/\breopened by\b/i.test(text)) break;
+      pushBubble({ id: nowId(), kind: 'system', text });
+      break;
+    }
+
+    case 'gate_signed': {
+      // A gate signature landed. Surfaced as visible completion state in the
+      // transcript (Claim 11a) in addition to the notification bell. Keyed per
+      // (run, gate) so a sidecar replay upserts instead of duplicating.
+      const gate = typeof evt.gate === 'string' && evt.gate ? evt.gate : 'Gate';
+      upsertBubble({
+        id: `agent-gate-signed-${runId}-${gate}`,
+        kind: 'system',
+        text: `${gate} signed.`,
+      });
+      break;
+    }
+
+    case 'delivery_complete': {
+      // The governed delivery finished the G0->G5 walk. Surfaced as visible
+      // completion state (Claim 11a) and clears the working indicator. Keyed
+      // per run so a replay upserts.
+      const ready = evt.ready === true;
+      const waived = Array.isArray(evt.waived)
+        ? (evt.waived as unknown[]).filter((g): g is string => typeof g === 'string' && !!g)
+        : [];
+      let text = ready
+        ? 'Delivery complete — all gates signed and the build is verified.'
+        : 'Delivery complete.';
+      if (waived.length > 0) text += ` Waived: ${waived.join(', ')}.`;
+      upsertBubble({
+        id: `agent-delivery-${runId}`,
+        kind: 'system',
+        text,
+      });
+      busy.value = false;
+      resumableRunId.value = null;
+      break;
+    }
+
     default:
       // Unknown event types are ignored (forward-compatible).
       break;
@@ -458,13 +509,145 @@ function sendAgentCommand(command: string, payload: Record<string, unknown>): vo
   }
 }
 
-/** Send the user's gate verdict to the paused agent loop (agent:verdict). */
-export function submitGateVerdict(_bubbleId: string, verdict: string, feedback: string): void {
-  if (!lastRunId) {
-    pushBubble({ id: nowId(), kind: 'error', text: 'No active agent run to submit a verdict to.' });
-    return;
+// Parse the runId + gate a gate bubble encodes. The id is minted in handle()'s
+// `gate` case as `agent-gate-${runId}-${gate || 'g'}`. The gate is the final
+// dash-delimited segment; the runId is everything between the fixed prefix and
+// that segment (runIds themselves contain dashes, e.g. "agent-run-<uuid>").
+function parseGateBubbleId(bubbleId: string): { runId: string; gate: string } | null {
+  const prefix = 'agent-gate-';
+  if (typeof bubbleId !== 'string' || !bubbleId.startsWith(prefix)) return null;
+  const rest = bubbleId.slice(prefix.length);
+  const lastDash = rest.lastIndexOf('-');
+  if (lastDash <= 0) return null;
+  const runId = rest.slice(0, lastDash);
+  const gate = rest.slice(lastDash + 1);
+  if (!runId || !gate) return null;
+  return { runId, gate };
+}
+
+// apply_verdict (gate_orchestrator.py) returns a status envelope. These
+// statuses mean the verdict was REFUSED — the gate stays open, so the card
+// must revert to un-resolved and let the user retry. Anything else (advanced /
+// complete / reworked / rejected / advanced-waived / recorded) means the
+// verdict was accepted.
+const VERDICT_FAILURE_STATUSES = new Set<string>([
+  'build-not-verified',
+  'sign-failed',
+  'max-rework',
+  'max-rejections',
+  'max_cycles_reached',
+  'max_rejections_reached',
+  'unknown-verdict',
+]);
+
+const VERDICT_REFUSAL_TEXT: Record<string, string> = {
+  'build-not-verified': 'This gate cannot be signed until the build is independently verified.',
+  'sign-failed': 'The signature could not be recorded.',
+  'max-rework': 'This gate has used up its change-request budget and cannot take more.',
+  'max-rejections': 'This gate has used up its rejection budget.',
+  'max_cycles_reached': 'This gate has used up its change-request budget.',
+  'max_rejections_reached': 'This gate has used up its rejection budget.',
+  'unknown-verdict': 'The engine did not recognize that verdict.',
+};
+
+function refusalMessage(status: string, r: Record<string, unknown>): string {
+  const reason = typeof r.reason === 'string' && r.reason
+    ? r.reason
+    : (typeof r.error === 'string' && r.error ? r.error : '');
+  const base = VERDICT_REFUSAL_TEXT[status] || `Verdict refused (${status}).`;
+  return reason ? `${base} ${reason}` : base;
+}
+
+export interface GateVerdictResult {
+  ok: boolean;
+  error?: string;
+}
+
+// Inspect the sidecar's agent:verdict response. A resolved promise carries the
+// data envelope; a rejected one is a transport/engine failure. Both must be
+// treated as "gate still open" so the card reverts.
+function interpretVerdictAck(result: unknown): GateVerdictResult {
+  if (result && typeof result === 'object') {
+    const r = result as Record<string, unknown>;
+    if (r.ok === false) {
+      return { ok: false, error: typeof r.error === 'string' && r.error ? r.error : 'Verdict was rejected by the engine.' };
+    }
+    if (typeof r.status === 'string' && VERDICT_FAILURE_STATUSES.has(r.status)) {
+      return { ok: false, error: refusalMessage(r.status, r) };
+    }
+    // Standalone (non-delivery) verdicts nest the outcome under `handled`.
+    const handled = r.handled;
+    if (handled && typeof handled === 'object') {
+      const hs = (handled as Record<string, unknown>).status;
+      if (typeof hs === 'string' && VERDICT_FAILURE_STATUSES.has(hs)) {
+        return { ok: false, error: refusalMessage(hs, handled as Record<string, unknown>) };
+      }
+    }
   }
-  sendAgentCommand('agent:verdict', { run_id: lastRunId, verdict, feedback: feedback || '' });
+  return { ok: true };
+}
+
+// Awaited variant of the sidecar command channel: prefers runAndWait (so a
+// backend refusal comes back to us) and falls back to the fire-and-forget run
+// when no awaited transport is available (older shells / tests).
+async function sendAgentCommandAwaited(
+  command: string,
+  payload: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<GateVerdictResult> {
+  const sig = (ipc as unknown as {
+    signal?: {
+      run?: (c: string, a: string[]) => Promise<unknown>;
+      runAndWait?: (c: string, a: string[], t?: number) => Promise<unknown>;
+    };
+  }).signal;
+  const args = [JSON.stringify(payload)];
+  try {
+    if (sig?.runAndWait) {
+      return interpretVerdictAck(await sig.runAndWait(command, args, timeoutMs));
+    }
+    if (sig?.run) {
+      return interpretVerdictAck(await sig.run(command, args));
+    }
+    return { ok: false, error: 'Engine transport unavailable.' };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Send the user's gate verdict to the paused agent loop (agent:verdict).
+ *
+ * Two bugs fixed here (Claim 10):
+ *  - Run-id routing: the verdict now carries the runId (+ gate) parsed from
+ *    THIS gate bubble's id, not the module-global `lastRunId` (which every
+ *    inbound event overwrites — an older gate card could otherwise submit
+ *    against a newer run). Falls back to `lastRunId` only when the id can't
+ *    be parsed (keeps legacy callers working).
+ *  - Awaited result: the call is awaited so a backend refusal
+ *    (build-not-verified / signing failure / rework budget exhausted) comes
+ *    back to the caller, which reverts the optimistic "resolved" so the user
+ *    can retry. A governed advance can run the next gate agent inline (a full
+ *    build/test), so no transport timeout is imposed — we rely on the
+ *    response, and on the streamed agent events for progress.
+ */
+export function submitGateVerdict(
+  bubbleId: string,
+  verdict: string,
+  feedback: string,
+): Promise<GateVerdictResult> {
+  const parsed = parseGateBubbleId(bubbleId);
+  const runId = parsed?.runId || lastRunId;
+  if (!runId) {
+    const error = 'No active agent run to submit a verdict to.';
+    pushBubble({ id: nowId(), kind: 'error', text: error });
+    return Promise.resolve({ ok: false, error });
+  }
+  const payload: Record<string, unknown> = { run_id: runId, verdict, feedback: feedback || '' };
+  if (parsed?.gate) payload.gate_id = parsed.gate;
+  // 0 => no transport timeout (ipc.js): a legitimate gate advance can build on
+  // disk for minutes before the response lands.
+  return sendAgentCommandAwaited('agent:verdict', payload, 0);
 }
 
 /** The run id a reopen would target: the active run if one has been seen,

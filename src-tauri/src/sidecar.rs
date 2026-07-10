@@ -5,11 +5,117 @@
 /// responses are emitted back to the frontend as Tauri events.
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
+
+/// Special request id used for the startup capability handshake. Responses
+/// carrying this id are intercepted in the stdout reader and validated rather
+/// than surfaced as a normal `sidecar:response`.
+const HANDSHAKE_ID: &str = "__capabilities_handshake__";
+
+/// Commands the sidecar MUST support for the desktop Build flow to function.
+/// `agent:deliver` is the exact command the Build UI sends; a bundled binary
+/// that does not report it (e.g. the shipped stale 0.0.9 sidecar, which answers
+/// "Unknown command: agent:deliver") is refused loudly instead of silently
+/// accepted.
+const REQUIRED_SIDECAR_COMMANDS: &[&str] = &["agent:deliver"];
+
+/// How long to wait for the sidecar to answer the capability handshake before
+/// declaring it incompatible. The live sidecar prints its init line and answers
+/// `capabilities` in well under a second; 20s is a generous ceiling that only a
+/// missing/dead/hung binary would blow past.
+const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
+
+/// Validate a `capabilities` handshake response from the sidecar.
+///
+/// Returns `Ok(version)` when the sidecar reports a version string and every
+/// required command; `Err(reason)` explains why the bundled binary is unusable
+/// (too old to implement `capabilities`, or missing `agent:deliver`).
+fn validate_handshake(value: &serde_json::Value) -> Result<String, String> {
+    if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let detail = value.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(format!(
+            "sidecar does not implement the capability handshake{} — the bundled engine is too old. Rebuild required.",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            }
+        ));
+    }
+    let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let version = data
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let commands: Vec<String> = data
+        .get("commands")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let missing: Vec<&str> = REQUIRED_SIDECAR_COMMANDS
+        .iter()
+        .copied()
+        .filter(|req| !commands.iter().any(|c| c == req))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "bundled engine (version {}) is missing required command(s): {}. Rebuild required.",
+            if version.is_empty() {
+                "unknown"
+            } else {
+                version.as_str()
+            },
+            missing.join(", ")
+        ));
+    }
+    Ok(version)
+}
+
+/// Process the sidecar's handshake response: mark the handshake as answered,
+/// then either confirm readiness or fail loudly (log + `sidecar:incompatible`
+/// / `sidecar:error` events + status.last_error) so the UI can show a clear
+/// "sidecar too old — rebuild required" state rather than running blind.
+fn handle_handshake_response(
+    value: &serde_json::Value,
+    generation: u64,
+    app: &AppHandle,
+    handshake_done: &AtomicBool,
+) {
+    handshake_done.store(true, Ordering::Relaxed);
+    match validate_handshake(value) {
+        Ok(version) => {
+            let label = if version.is_empty() {
+                "Engine ready — agent:deliver supported".to_string()
+            } else {
+                format!("Engine ready — v{version}, agent:deliver supported")
+            };
+            update_status(generation, |status| {
+                status.last_event = label;
+                status.last_error = None;
+            });
+            let _ = app.emit("sidecar:status", get_sidecar_status());
+        }
+        Err(reason) => {
+            eprintln!("[sidecar] capability handshake failed: {reason}");
+            update_status(generation, |status| {
+                status.last_event = "Engine incompatible".into();
+                status.last_error = Some(reason.clone());
+            });
+            let _ = app.emit("sidecar:incompatible", &reason);
+            let _ = app.emit("sidecar:error", &reason);
+            let _ = app.emit("sidecar:status", get_sidecar_status());
+        }
+    }
+}
 
 #[derive(Serialize, Debug)]
 pub struct SidecarRequest {
@@ -173,6 +279,12 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
     let _ = app.emit("sidecar:status", get_sidecar_status());
     let app_emit = app.clone();
 
+    // Claim 1a: shared flag so the handshake-timeout guard can tell whether the
+    // sidecar answered the `capabilities` probe. Set by the stdout reader when
+    // the handshake response (success OR failure) arrives.
+    let handshake_done = Arc::new(AtomicBool::new(false));
+    let handshake_done_reader = handshake_done.clone();
+
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
         let mut stdout_buf = String::new();
@@ -195,6 +307,19 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
                         // final responses. Progress carries kind="progress";
                         // a final response is everything else.
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                            // Claim 1a: the startup capability handshake response is
+                            // intercepted here (matched by its reserved id) and
+                            // validated instead of being surfaced as a normal
+                            // sidecar:response.
+                            if value.get("id").and_then(|v| v.as_str()) == Some(HANDSHAKE_ID) {
+                                handle_handshake_response(
+                                    &value,
+                                    generation,
+                                    &app_emit,
+                                    &handshake_done_reader,
+                                );
+                                continue;
+                            }
                             match classify_sidecar_stdout(&value) {
                                 SidecarStdoutKind::Progress => {
                                     if let Ok(prog) =
@@ -292,6 +417,43 @@ async fn start_python_sidecar(app: &AppHandle, replace_existing: bool) -> Result
         }
     });
 
+    // Claim 1a: issue the capability handshake now that the stdin writer is
+    // live. The freshly-spawned sidecar must report a version AND support
+    // agent:deliver (the exact command the Build UI sends). A stale bundled
+    // binary answers "Unknown command: capabilities" (or omits agent:deliver);
+    // handle_handshake_response then flags it via sidecar:incompatible so the
+    // UI shows "sidecar too old — rebuild required" instead of silently running
+    // against a dead engine.
+    if let Some(handshake_tx) = manager().tx.lock().unwrap().clone() {
+        let _ = handshake_tx.try_send(SidecarControl::Request(SidecarRequest {
+            id: HANDSHAKE_ID.to_string(),
+            command: "capabilities".to_string(),
+            args: Vec::new(),
+            cwd: None,
+        }));
+    }
+
+    // Handshake-timeout guard: a missing/dead/hung binary never answers the
+    // probe. If no handshake response has arrived within HANDSHAKE_TIMEOUT_SECS,
+    // surface the same incompatible state so the app does not run blind.
+    let handshake_done_timeout = handshake_done.clone();
+    let app_timeout = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(HANDSHAKE_TIMEOUT_SECS)).await;
+        if !handshake_done_timeout.load(Ordering::Relaxed) {
+            let msg = format!(
+                "Engine did not answer the capability handshake within {HANDSHAKE_TIMEOUT_SECS}s — the bundled engine may be missing or too old. Rebuild required."
+            );
+            eprintln!("[sidecar] {msg}");
+            update_status(generation, |status| {
+                status.last_event = "Engine handshake timeout".into();
+                status.last_error = Some(msg.clone());
+            });
+            let _ = app_timeout.emit("sidecar:incompatible", &msg);
+            let _ = app_timeout.emit("sidecar:status", get_sidecar_status());
+        }
+    });
+
     Ok(())
 }
 
@@ -365,8 +527,50 @@ pub fn tree_kill(pid: u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_sidecar_stdout, SidecarStdoutKind};
+    use super::{classify_sidecar_stdout, validate_handshake, SidecarStdoutKind};
     use serde_json::json;
+
+    #[test]
+    fn handshake_accepts_fresh_sidecar_reporting_agent_deliver() {
+        let resp = json!({
+            "id": "__capabilities_handshake__",
+            "ok": true,
+            "data": {
+                "version": "3.3.0-internal.1",
+                "protocol": 1,
+                "commands": ["ping", "agent:run", "agent:deliver", "agent:cancel"]
+            }
+        });
+        assert_eq!(validate_handshake(&resp).unwrap(), "3.3.0-internal.1");
+    }
+
+    #[test]
+    fn handshake_rejects_stale_sidecar_without_capabilities_command() {
+        // The shipped 0.0.9 binary answers exactly this for `capabilities`.
+        let resp = json!({
+            "id": "__capabilities_handshake__",
+            "ok": false,
+            "error": "Unknown command: capabilities"
+        });
+        let err = validate_handshake(&resp).unwrap_err();
+        assert!(err.contains("too old"), "unexpected reason: {err}");
+        assert!(err.contains("Rebuild required"), "unexpected reason: {err}");
+    }
+
+    #[test]
+    fn handshake_rejects_sidecar_missing_agent_deliver() {
+        let resp = json!({
+            "id": "__capabilities_handshake__",
+            "ok": true,
+            "data": {
+                "version": "0.0.9",
+                "commands": ["ping", "help"]
+            }
+        });
+        let err = validate_handshake(&resp).unwrap_err();
+        assert!(err.contains("agent:deliver"), "unexpected reason: {err}");
+        assert!(err.contains("0.0.9"), "unexpected reason: {err}");
+    }
 
     #[test]
     fn classifies_agent_event_stdout_for_tauri_passthrough() {

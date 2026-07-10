@@ -175,6 +175,7 @@ describe('agentEvents', () => {
     const { mod } = await loadHarness();
 
     emit({ kind: 'agent-event', run_id: 'run-4', type: 'gate', gate: 'G1' });
+    // An unparseable bubble id falls back to the last-seen run (legacy path).
     mod.submitGateVerdict('bubble-1', 'approve-with-conditions', 'ship only after tests');
 
     expect(run).toHaveBeenCalledWith('agent:verdict', [
@@ -184,6 +185,54 @@ describe('agentEvents', () => {
         feedback: 'ship only after tests',
       }),
     ]);
+  });
+
+  it('submits a verdict against the gate bubble\'s own run, not the latest global run (Claim 10)', async () => {
+    const { mod } = await loadHarness();
+
+    // Two gate cards from two runs; run-B is the most recent, so lastRunId is
+    // run-B. Submitting on run-A's card must still target run-A.
+    emit({ kind: 'agent-event', run_id: 'run-A', type: 'gate', gate: 'G1' });
+    emit({ kind: 'agent-event', run_id: 'run-B', type: 'gate', gate: 'G1' });
+
+    await mod.submitGateVerdict('agent-gate-run-A-G1', 'approve', '');
+
+    expect(run).toHaveBeenCalledWith('agent:verdict', [
+      JSON.stringify({ run_id: 'run-A', verdict: 'approve', feedback: '', gate_id: 'G1' }),
+    ]);
+  });
+
+  it('reports a backend refusal so the card can revert (Claim 10)', async () => {
+    vi.resetModules();
+    const runAndWait = vi.fn(async () => ({ status: 'build-not-verified', gate: 'G4', reason: 'stub only' }));
+    vi.doMock('../js/ipc.js', () => ({ signal: { run: vi.fn(), runAndWait } }));
+    (window as any).__TAURI__ = {
+      event: { listen: vi.fn(async () => () => undefined) },
+    };
+    const mod = await import('./agentEvents');
+
+    const res = await mod.submitGateVerdict('agent-gate-run-Z-G4', 'approve', '');
+
+    expect(runAndWait).toHaveBeenCalledWith(
+      'agent:verdict',
+      [JSON.stringify({ run_id: 'run-Z', verdict: 'approve', feedback: '', gate_id: 'G4' })],
+      0,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/independently verified/i);
+  });
+
+  it('treats an accepted verdict (advanced) as success', async () => {
+    vi.resetModules();
+    const runAndWait = vi.fn(async () => ({ status: 'advanced', gate: 'G2' }));
+    vi.doMock('../js/ipc.js', () => ({ signal: { run: vi.fn(), runAndWait } }));
+    (window as any).__TAURI__ = {
+      event: { listen: vi.fn(async () => () => undefined) },
+    };
+    const mod = await import('./agentEvents');
+
+    const res = await mod.submitGateVerdict('agent-gate-run-Q-G1', 'approve', '');
+    expect(res.ok).toBe(true);
   });
 
   it('marks cancelled runs as resumable and sends cancel/resume IPC commands', async () => {
@@ -239,16 +288,42 @@ describe('agentEvents', () => {
       kind: 'delivery',
       text: 'Delivery complete — G5 signed',
     });
-    // gate_signed has no bubble rendering — the chat stays untouched.
-    expect(state.chatBubbles.value).toEqual([]);
+    // gate_signed now ALSO renders visible completion state in the transcript
+    // (Claim 11a) — one system bubble, keyed per (run, gate).
+    expect(state.chatBubbles.value).toMatchObject([
+      { id: 'agent-gate-signed-run-g5-G5', kind: 'system', text: 'G5 signed.' },
+    ]);
 
-    // Re-delivered event (sidecar replay) must not double-notify…
+    // Re-delivered event (sidecar replay) must not double-notify or double-bubble…
     emit({ kind: 'agent-event', run_id: 'run-g5', type: 'gate_signed', gate: 'G5', verdict: 'approve' });
     expect(notif.unreadCount.value).toBe(1);
+    expect(state.chatBubbles.value.filter((b) => b.kind === 'system')).toHaveLength(1);
 
     // …and the orchestrator's follow-up delivery_complete for the same run
-    // is folded into the same single completion notification.
+    // is folded into the same single completion notification, and adds its own
+    // visible completion bubble.
     emit({ kind: 'agent-event', run_id: 'run-g5', type: 'delivery_complete', ready: true });
     expect(notif.unreadCount.value).toBe(1);
+    expect(state.chatBubbles.value.some(
+      (b) => b.id === 'agent-delivery-run-g5' && /Delivery complete/.test(b.text),
+    )).toBe(true);
+    expect(state.busy.value).toBe(false);
+  });
+
+  it('renders system progress events into the transcript, skipping the reopen mirror (Claim 11a)', async () => {
+    const { state } = await loadHarness();
+
+    emit({ kind: 'agent-event', run_id: 'run-sys', type: 'system', text: 'Building: auth module' });
+    // `message` is the alternate field some emitters use.
+    emit({ kind: 'agent-event', run_id: 'run-sys', type: 'system', message: 'Getting it to pass its test.' });
+    // The reopen flow emits a plain-system mirror of its structured
+    // gate_reopened event — that one must be skipped to avoid a double bubble.
+    emit({ kind: 'agent-event', run_id: 'run-sys', type: 'system', text: 'G3 reopened by user: rework.' });
+
+    const systems = state.chatBubbles.value.filter((b) => b.kind === 'system');
+    expect(systems.map((b) => b.text)).toEqual([
+      'Building: auth module',
+      'Getting it to pass its test.',
+    ]);
   });
 });

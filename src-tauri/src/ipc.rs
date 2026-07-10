@@ -720,6 +720,13 @@ pub struct WorkspaceEntry {
     pub modified_ms: Option<u128>,
 }
 
+/// List one directory level inside the workspace sandbox. Accepts an optional
+/// workspace-relative sub-path so the front-end file tree can lazily expand a
+/// child folder on demand (the UI calls this per-expanded folder). Preserves
+/// the workspace-containment guard: the resolved directory must stay within the
+/// canonicalized workspace root, so a sub-path escaping via `..` — or an
+/// absolute path — is rejected. This deliberately does NOT recurse; returning
+/// the whole tree in one call is not the design.
 #[tauri::command]
 pub fn list_workspace_dir(
     relative_path: Option<String>,
@@ -731,11 +738,17 @@ pub fn list_workspace_dir(
         .unwrap()
         .clone()
         .ok_or("No workspace selected")?;
+    list_workspace_entries(&workspace, relative_path.as_deref())
+}
+
+fn list_workspace_entries(
+    workspace: &Path,
+    relative_path: Option<&str>,
+) -> Result<Vec<WorkspaceEntry>, String> {
     let root = workspace
         .canonicalize()
         .map_err(|e| format!("Cannot resolve workspace: {e}"))?;
     let rel = relative_path
-        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(".");
@@ -2602,6 +2615,51 @@ mod tests {
         assert!(normalize_workspace_file_path("../escape.js").is_err());
         assert!(is_reserved_generated_path(".signalos/state.json"));
         assert!(is_reserved_generated_path(".env.local"));
+    }
+
+    #[test]
+    fn list_workspace_entries_lists_a_nested_subpath() {
+        // Fix 2b: the file tree expands one folder at a time. Listing a nested
+        // child path must return that directory's entries (not recurse), while
+        // containment holds.
+        let root = std::env::temp_dir().join(format!("signalos-listdir-{}", uuid()));
+        std::fs::create_dir_all(root.join("src").join("components")).unwrap();
+        std::fs::write(root.join("src").join("app.js"), "x").unwrap();
+        std::fs::write(root.join("src").join("components").join("Button.jsx"), "y").unwrap();
+
+        // Root level.
+        let top = list_workspace_entries(&root, None).unwrap();
+        assert!(top.iter().any(|e| e.name == "src" && e.kind == "dir"));
+
+        // One level down: the child folder's own entries, addressed by sub-path.
+        let src = list_workspace_entries(&root, Some("src")).unwrap();
+        let names: Vec<&str> = src.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"app.js"));
+        assert!(names.contains(&"components"));
+        // Not recursive: the grandchild file is not surfaced at this level.
+        assert!(!names.contains(&"Button.jsx"));
+
+        // Two levels down still works and reports the correct relative path.
+        let comps = list_workspace_entries(&root, Some("src/components")).unwrap();
+        assert!(comps
+            .iter()
+            .any(|e| e.name == "Button.jsx" && e.path == "src/components/Button.jsx"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_workspace_entries_rejects_escape_paths() {
+        // A sub-path that climbs out of the workspace is rejected before any
+        // read_dir — the containment guard must hold on the lazy-expand path.
+        let root = std::env::temp_dir().join(format!("signalos-listesc-{}", uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert!(list_workspace_entries(&root, Some("../")).is_err());
+        assert!(list_workspace_entries(&root, Some("../../etc")).is_err());
+        assert!(list_workspace_entries(&root, Some("src/../../..")).is_err());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

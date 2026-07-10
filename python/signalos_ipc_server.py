@@ -8,8 +8,10 @@ import sys
 
 import datetime
 import os
+import queue
 import shlex
 import subprocess
+import threading
 import traceback
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
@@ -24,6 +26,85 @@ from signalos_secret_guard import (
     scan_secret_files,
 )
 from signalos_attachments import analyze_payload
+
+
+# All stdout writes (init line, progress events, agent events, and command
+# responses) must be serialized. With the Claim-11 cancel fast-path (below),
+# two threads write to stdout: the worker thread emits progress/agent/response
+# lines while inside a long-running handle(), and the stdin-reader thread emits
+# the agent:cancel acknowledgement. Without a lock their writes can interleave
+# and corrupt a newline-delimited JSON line that the Rust multiplexer parses.
+_STDOUT_LOCK = threading.Lock()
+
+
+def _emit_line(payload: Any) -> None:
+    """Write one NDJSON message to stdout atomically under _STDOUT_LOCK.
+
+    Accepts either a pre-serialized string or a JSON-serializable object.
+    """
+    text = payload if isinstance(payload, str) else json.dumps(payload)
+    with _STDOUT_LOCK:
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
+
+
+# Commands the IPC server routes directly. The capability handshake on the
+# Rust side (sidecar.rs) probes `capabilities` at startup and refuses to trust
+# a bundled binary that does not report agent:deliver in this list — the exact
+# staleness signature of the shipped 0.0.9 sidecar.
+AGENT_COMMANDS = (
+    "agent:run",
+    "agent:deliver",
+    "agent:launch",
+    "agent:verdict",
+    "agent:cancel",
+    "agent:resume",
+    "agent:reopen-gate",
+)
+
+ROUTED_COMMANDS = (
+    "help",
+    "ping",
+    "capabilities",
+    "phase:contract",
+    "state:wave",
+    "state:gates",
+    "gate:sign",
+    "brain:search",
+    "brain:add",
+    "audit:list",
+    "audit:append",
+    "audit:replay-timeline",
+    "cost:summary",
+    "policy:get",
+    "policy:set",
+    "security:secrets",
+    "attachment:analyze",
+    "wave:begin",
+    "wave:reply",
+    "wave:scope-drift-resolve",
+    "wave:translate-external",
+    "wave:violation-request",
+    "wave:violation-confirm",
+    "wave:g5-handoff",
+    "project:list",
+    "project:create",
+    "project:switch",
+    "share:export",
+    "brownfield:audit",
+    "competitor:analyze",
+    "voice:transcribe",
+    *AGENT_COMMANDS,
+)
+
+
+def _capabilities_payload() -> dict:
+    """Version + supported-command list for the startup capability handshake."""
+    return {
+        "version": _app_version(),
+        "protocol": 1,
+        "commands": list(ROUTED_COMMANDS),
+    }
 
 
 GATE_NAMES = {
@@ -89,7 +170,7 @@ class ProgressEmitter:
             "detail": redact_text(detail) if detail else None,
             "ts": int(_time.time() * 1000),
         }
-        print(json.dumps(payload), flush=True)
+        _emit_line(payload)
 
 
 # Standard phase contracts used by Builder and wired commands. Externally
@@ -193,7 +274,7 @@ def handle(req: dict) -> dict:
     # Phase 3 Stream A: agent:* commands take a SINGLE JSON object argument,
     # not the legacy redacted string list. Route them off the raw payload so
     # the structured object (prompt, run_id, etc.) survives intact.
-    if command in ("agent:run", "agent:deliver", "agent:launch", "agent:verdict", "agent:cancel", "agent:resume", "agent:reopen-gate"):
+    if command in AGENT_COMMANDS:
         try:
             return route_agent(req_id, command, raw_args, project_id=project_id)
         except Exception as exc:
@@ -382,6 +463,14 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
 
     if command == "ping":
         return ok(req_id, data={"pong": True, "version": _app_version()})
+
+    # Capability handshake (Claim 1): report the version AND the routed
+    # command list so the desktop host can verify a freshly-spawned sidecar
+    # supports agent:deliver before trusting it. A stale binary that predates
+    # this command answers "Unknown command: capabilities" and is flagged
+    # incompatible by the Rust client.
+    if command == "capabilities":
+        return ok(req_id, data=_capabilities_payload())
 
     # Wave 2 / G1-7: phase contract lookup. The UI calls this to know
     # how many substeps a given command will emit so the progress strip
@@ -623,7 +712,7 @@ def _agent_emit(run_id: str):
             if k == "run_id":
                 continue
             envelope[k] = v
-        print(json.dumps(redact_response(envelope)), flush=True)
+        _emit_line(redact_response(envelope))
     return emit_cb
 
 
@@ -2481,14 +2570,68 @@ def err(req_id, message):
     return {"id": req_id, "ok": False, "error": redact_text(message)}
 
 
-def main() -> None:
-    sys.stdout.write(json.dumps({"id": "init", "ok": True, "data": {"ready": True}}) + "\n")
-    sys.stdout.flush()
+def _try_intercept_cancel(line: str) -> bool:
+    """Fast-path an agent:cancel request on the stdin-reader thread.
 
-    for raw_line in sys.stdin:
-        line = raw_line.replace("\x00", "").lstrip("\ufeff").strip()
-        if not line:
-            continue
+    Claim 11: the worker thread runs handle(req) to completion before the next
+    stdin line is read, so an agent:cancel sent DURING a long agent:deliver
+    would sit unread until the delivery finished. Cancellation is cooperative
+    (agent_cancel sets an in-memory flag + writes a marker; the AgentLoop polls
+    it between tool calls), so honoring the flag promptly is enough to stop an
+    in-flight delivery.
+
+    This runs on the reader thread and handles ONLY agent:cancel \u2014 every other
+    line (and anything unparseable) returns False and is queued for the worker
+    thread, preserving the existing in-order response contract. The in-memory
+    _AGENT_CANCEL_FLAGS entry is process-global and cwd-independent, so setting
+    it here (without the worker's per-request chdir) still cancels the delivery.
+    """
+    try:
+        req = json.loads(line)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(req, dict) or req.get("command") != "agent:cancel":
+        return False
+    req_id = req.get("id", "unknown")
+    try:
+        resp = agent_cancel(req_id, req.get("args", []))
+    except Exception as exc:  # never let the reader thread die on a cancel
+        resp = err(req_id, f"agent:cancel failed: {type(exc).__name__}: {exc}")
+    _emit_line(resp)
+    return True
+
+
+def main() -> None:
+    _emit_line({"id": "init", "ok": True, "data": {"ready": True}})
+
+    # The worker (main) thread processes requests serially from this queue,
+    # preserving response ordering. The reader thread below feeds it every line
+    # except agent:cancel, which it handles inline so a cancel is honored while
+    # the worker is blocked inside a long-running handle().
+    request_queue: "queue.Queue[str | None]" = queue.Queue()
+
+    def _stdin_reader() -> None:
+        try:
+            for raw_line in sys.stdin:
+                line = raw_line.replace("\x00", "").lstrip("\ufeff").strip()
+                if not line:
+                    continue
+                if _try_intercept_cancel(line):
+                    continue
+                request_queue.put(line)
+        finally:
+            # Sentinel: unblock the worker so it exits when stdin closes.
+            request_queue.put(None)
+
+    reader = threading.Thread(
+        target=_stdin_reader, name="signalos-stdin-reader", daemon=True
+    )
+    reader.start()
+
+    while True:
+        line = request_queue.get()
+        if line is None:
+            break
 
         try:
             req = json.loads(line)
@@ -2498,7 +2641,7 @@ def main() -> None:
         except Exception as exc:
             resp = err("runtime-error", f"Unhandled exception: {exc}")
 
-        print(json.dumps(resp), flush=True)
+        _emit_line(resp)
 
 
 if __name__ == "__main__":

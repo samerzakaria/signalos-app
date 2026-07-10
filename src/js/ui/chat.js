@@ -22,13 +22,22 @@ function nowId() {
 // `agent:run` turn. The classifier stays broad on product-change verbs and
 // product artifacts, while pure questions remain conversational.
 const _DELIVERY_ACTION = /\b(build|create|make|develop|scaffold|generate|ship|implement|add|change|update|modify|edit|fix|repair|redesign|polish|improve|write)\b/i;
-const _DELIVERY_ARTIFACT = /\b(app|application|system|tool|product|site|website|web\s*page|html|css|javascript|typescript|component|page|screen|view|form|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot|workflow|ui|ux|file|code)\b/i;
-const _PRODUCT_OUTCOME = /\b(i\s+want|i\s+need|we\s+need|let'?s|please)\b[\s\S]*\b(app|application|system|tool|site|website|dashboard|game|tracker|manager|portal|store|bot|workflow|ui|page)\b/i;
+// The artifact vocabulary is deliberately broad: a non-technical founder says
+// "app" but an engineer says "module / endpoint / migration". Both are build
+// requests. Omitting the software-noun vocabulary routed "Create an
+// authentication module" / "Add login" to the write-forbidden conversation
+// mode (agent:run), so every file write was refused. (Claim 8.)
+const _DELIVERY_ARTIFACT = /\b(app|application|system|tool|product|site|website|web\s*page|html|css|javascript|typescript|component|page|screen|view|form|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot|workflow|ui|ux|file|code|module|library|package|auth|authentication|login|signup|logout|endpoint|route|router|hook|model|schema|migration|cli|script|integration|middleware|worker|job|queue|database|function|class|widget|plugin)\b/i;
+const _PRODUCT_OUTCOME = /\b(i\s+want|i\s+need|we\s+need|let'?s|please)\b[\s\S]*\b(app|application|system|tool|site|website|dashboard|game|tracker|manager|portal|store|bot|workflow|ui|page|module|library|package|auth|authentication|login|endpoint|route|api|feature|integration)\b/i;
 const _PURE_QUESTION = /^(what|why|how|when|where|who|which|explain|tell me|describe|show me|can you tell)\b/i;
-function isDeliveryIntent(text) {
+// A trailing "?" alone must NOT force conversational: "Can you build me an
+// app?" is a build request phrased politely. Only a genuine leading-
+// interrogative question ("what is X?", "how does Y work?") stays
+// conversational, via _PURE_QUESTION. (Claim 8.)
+export function isDeliveryIntent(text) {
   const t = (text || '').trim();
   if (!t || t.startsWith('/')) return false;
-  if (_PURE_QUESTION.test(t) || t.endsWith('?')) return false;
+  if (_PURE_QUESTION.test(t)) return false;
   return (_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t);
 }
 
@@ -235,7 +244,16 @@ async function sendMsg() {
         buildPrecheckComplete = true;
       }
       const command = isDelivery ? 'agent:deliver' : 'agent:run';
-      await ipc.signal.runAndWait(command, [JSON.stringify(activeAgentPayload({ prompt: val }))], 600000);
+      // A governed delivery walks G0->G5 and each gate agent builds/tests on
+      // disk, so it can legitimately run far longer than a chat turn. The old
+      // hard 10-min cap abandoned the awaited call (surfacing a spurious
+      // "Agent run failed") while the backend kept working. Pass 0 to disable
+      // the transport timeout for delivery (ipc.js: timeoutMs<=0 => no timer);
+      // the terminal agent events (end_turn / delivery_complete / error /
+      // cancelled) clear `busy` and settle the run. A normal turn keeps its
+      // bound so a dead backend on a plain chat message still fails fast.
+      const commandTimeoutMs = isDelivery ? 0 : 600000;
+      await ipc.signal.runAndWait(command, [JSON.stringify(activeAgentPayload({ prompt: val }))], commandTimeoutMs);
     } catch (e) {
       const raw = e && e.message ? e.message : String(e);
       // Safety net: if the sidecar/Rust side reports no workspace despite the

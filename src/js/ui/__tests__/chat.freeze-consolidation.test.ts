@@ -228,7 +228,9 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
       [JSON.stringify({ prompt: 'build a task management system', provider: 'openai', model: 'gpt-test' })],
-      600000,
+      // A governed delivery runs with no transport timeout (0); the terminal
+      // agent events settle it. See chat.js (Claim 11d).
+      0,
     );
   });
 
@@ -259,7 +261,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
       [JSON.stringify({ prompt, provider: 'openai', model: 'gpt-test' })],
-      600000,
+      0,
     );
   });
 
@@ -275,7 +277,7 @@ describe('chat /signal-freeze dual-write (AMD-CORE-107)', () => {
     expect(runAndWait).toHaveBeenCalledWith(
       'agent:deliver',
       [JSON.stringify({ prompt, provider: 'openai', model: 'gpt-test' })],
-      600000,
+      0,
     );
   });
 });

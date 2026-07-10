@@ -13,6 +13,7 @@ import {
   sbTab,
   tab,
   mobileNavOpen,
+  type WorkspaceEntry,
 } from '../state';
 import { gateCode, gateUiState } from './GateTimeline';
 import { TestDebtPanel } from './TestDebtPanel';
@@ -67,6 +68,109 @@ function ensureTestDebtProbed(ws: string) {
   }
 }
 
+// ── Lazy, expandable file tree (Claim 11b) ──────────────────────────────────
+// Directory rows previously rendered as static divs with no click handler, so
+// nested generated files were unbrowsable. Now a directory expands on click
+// and lazily fetches its own children via list_workspace_dir(childPath); nested
+// entries render indented. State lives at module scope so it survives the
+// Sidebar's re-renders (the component re-runs on every signal change).
+const expandedDirs = signal<Set<string>>(new Set());
+const dirChildren = signal<Record<string, WorkspaceEntry[]>>({});
+const loadingDirs = signal<Set<string>>(new Set());
+
+/** Reset the browse state — call when the workspace changes so stale children
+ *  from a previous project don't linger. */
+function resetFileTreeBrowse() {
+  expandedDirs.value = new Set();
+  dirChildren.value = {};
+  loadingDirs.value = new Set();
+}
+
+let _lastBrowseWs = '';
+function ensureBrowseWsFresh(ws: string) {
+  if (ws !== _lastBrowseWs) {
+    _lastBrowseWs = ws;
+    resetFileTreeBrowse();
+  }
+}
+
+async function toggleDir(path: string): Promise<void> {
+  const expanded = new Set(expandedDirs.value);
+  if (expanded.has(path)) {
+    expanded.delete(path);
+    expandedDirs.value = expanded;
+    return;
+  }
+  expanded.add(path);
+  expandedDirs.value = expanded;
+  // Fetch children once, then cache.
+  if (path in dirChildren.value) return;
+  const loading = new Set(loadingDirs.value);
+  loading.add(path);
+  loadingDirs.value = loading;
+  let children: WorkspaceEntry[] = [];
+  try {
+    const res = await project.listDir(path);
+    if (Array.isArray(res)) children = res as WorkspaceEntry[];
+  } catch {
+    children = [];
+  } finally {
+    dirChildren.value = { ...dirChildren.value, [path]: children };
+    const done = new Set(loadingDirs.value);
+    done.delete(path);
+    loadingDirs.value = done;
+  }
+}
+
+function FileTreeRows({ entries, depth, flashed }: {
+  entries: WorkspaceEntry[];
+  depth: number;
+  flashed: Set<string>;
+}) {
+  return (
+    <>
+      {entries.map((entry) => {
+        const isDir = entry.kind === 'dir';
+        const isOpen = isDir && expandedDirs.value.has(entry.path);
+        const isLoading = isDir && loadingDirs.value.has(entry.path);
+        const children = dirChildren.value[entry.path];
+        const cls = 'ftree-item' + (isDir ? ' dir' : '');
+        const icon = isDir ? (isOpen ? 'ti-folder-open' : 'ti-folder') : 'ti-file-code';
+        const recently = flashed.has(entry.path) || flashed.has(entry.name);
+        const childIndent = { paddingLeft: `${8 + (depth + 1) * 14}px` };
+        return (
+          <div key={entry.path || entry.name}>
+            <div
+              className={cls}
+              style={{ paddingLeft: `${8 + depth * 14}px`, cursor: isDir ? 'pointer' : 'default' }}
+              onClick={isDir ? () => { void toggleDir(entry.path); } : undefined}
+              role={isDir ? 'button' : undefined}
+              aria-expanded={isDir ? isOpen : undefined}
+              data-testid={isDir ? 'ftree-dir' : 'ftree-file'}
+              data-path={entry.path}
+            >
+              {isDir ? (
+                <i className={`ti ${isOpen ? 'ti-chevron-down' : 'ti-chevron-right'}`} style={{ fontSize: '11px' }}></i>
+              ) : null}
+              <i className={`ti ${icon}`}></i> {entry.name}
+              {recently ? <span className="diff-badge new">NEW</span> : null}
+            </div>
+            {isOpen ? (
+              isLoading && children === undefined ? (
+                <div className="ftree-item" style={{ ...childIndent, color: 'var(--ink-3)', fontSize: '11px' }}>Loading…</div>
+              ) : children && children.length > 0 ? (
+                <FileTreeRows entries={children} depth={depth + 1} flashed={flashed} />
+              ) : children ? (
+                <div className="ftree-item" style={{ ...childIndent, color: 'var(--ink-3)', fontSize: '11px' }}>(empty)</div>
+              ) : null
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function Sidebar() {
   const tree = fileTreeEntries.value;
   const flashed = recentlyChangedFiles.value;
@@ -77,6 +181,8 @@ export function Sidebar() {
   ensureTestDebtProbed(ws);
   // Load the project-namespace registry (#19) whenever workspace changes
   ensureProjectsLoaded(ws);
+  // Drop cached file-tree expansion state when the workspace changes.
+  ensureBrowseWsFresh(ws);
 
   const switchPanel = (id: string) => {
     // Panel-open freshness: switching TO the projects panel is observed by
@@ -203,18 +309,7 @@ export function Sidebar() {
             Workspace empty. Build something to populate it.
           </div>
         ) : (
-          tree.map((entry) => {
-            const isDir = entry.kind === 'dir';
-            const cls = 'ftree-item' + (isDir ? ' dir' : '');
-            const icon = isDir ? 'ti-folder' : 'ti-file-code';
-            const recently = flashed.has(entry.path) || flashed.has(entry.name);
-            return (
-              <div className={cls} key={entry.path || entry.name}>
-                <i className={`ti ${icon}`}></i> {entry.name}
-                {recently ? <span className="diff-badge new">NEW</span> : null}
-              </div>
-            );
-          })
+          <FileTreeRows entries={tree} depth={0} flashed={flashed} />
         )}
       </div>
     </div>

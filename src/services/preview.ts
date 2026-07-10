@@ -25,7 +25,9 @@ async function reconcileMissingDeps(): Promise<string[]> {
   let raw: string;
   try {
     raw = await tauriInvoke<string>('read_workspace_file', {
-      path: '.signalos/missing-deps.json',
+      // The Rust command binds `relative_path` (see ipc.rs read_workspace_file);
+      // passing `path` rejected, silently no-oping the auto-deps repair.
+      relative_path: '.signalos/missing-deps.json',
     });
   } catch {
     return []; // file doesn't exist -> nothing to reconcile
@@ -42,7 +44,7 @@ async function reconcileMissingDeps(): Promise<string[]> {
 
   let pkgRaw: string;
   try {
-    pkgRaw = await tauriInvoke<string>('read_workspace_file', { path: 'package.json' });
+    pkgRaw = await tauriInvoke<string>('read_workspace_file', { relative_path: 'package.json' });
   } catch {
     return []; // no package.json -> not a Node workspace; skip silently
   }
