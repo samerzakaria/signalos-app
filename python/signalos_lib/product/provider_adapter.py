@@ -187,15 +187,26 @@ def detect_capabilities(model: str, litellm_module: Any | None = None) -> Provid
     context_length = _lookup_context_length(model)
     model_list: list[str] = []
 
+    # Name heuristic: True (tool-capable) unless the model name marks it tool-less
+    # (embedding/base/etc. via _NO_TOOL_FRAGMENTS). Used as the fallback below.
+    _heuristic_tool_calls = not any(
+        frag in (model or "").lower() for frag in _NO_TOOL_FRAGMENTS
+    )
     if litellm is not None:
-        # supports_function_calling — preferred source of truth.
+        # supports_function_calling is only trustworthy when it says True. Its
+        # static registry FALSE-NEGATIVES on newer models (e.g. z-ai/glm-5.2,
+        # qwen/qwen3.7-max, openai/gpt-oss-120b without the openrouter/ prefix)
+        # that DO support tool-calling per the provider's own API -- and a False
+        # here silently denies a capable model its tools, forcing it to narrate
+        # (no build). So trust a True, but treat False/unknown/raises as "unknown"
+        # and defer to the name heuristic instead of hard-disabling tools.
         try:
-            supports_tool_calls = bool(litellm.supports_function_calling(model=model))
-        except Exception:
-            # litellm raises for unknown models; fall back to name heuristic.
-            supports_tool_calls = not any(
-                frag in (model or "").lower() for frag in _NO_TOOL_FRAGMENTS
+            supports_tool_calls = (
+                True if litellm.supports_function_calling(model=model)
+                else _heuristic_tool_calls
             )
+        except Exception:
+            supports_tool_calls = _heuristic_tool_calls
         try:
             info = litellm.get_model_info(model=model) or {}
             ctx = info.get("max_input_tokens") or info.get("max_tokens")
