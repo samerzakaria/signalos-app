@@ -133,6 +133,13 @@ jobs:
       - name: cargo test --lib
         working-directory: src-tauri
         run: cargo test --lib
+      - name: Harness readiness gate ($0 -- capability contract + wire-level golden path)
+        working-directory: python
+        shell: bash
+        # Fail-fast, visible check for the class of bug that used to cost a funded
+        # LLM build to find: capability detection false-negatives (models get no
+        # tools) + the real litellm/tool-call wire path. Offline, seconds.
+        run: python -m pytest test_capability_contract.py test_golden_path_e2e.py test_transcript_capture.py -q
       - name: python tests
         working-directory: python
         shell: bash
