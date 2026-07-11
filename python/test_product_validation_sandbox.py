@@ -13,6 +13,7 @@ Docker/Podman is needed to prove the wiring.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from signalos_lib.product import validation as V
+from signalos_lib.product.sandbox import CommandOutput, ContainerRunner
 
 _CONTAINER_ARGV = ["docker", "run", "--rm", "-i", "node:lts", "npm", "test"]
 
@@ -67,6 +69,111 @@ class TestValidationContainerFallback(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("not installed on the host", result["output"])
         self.assertIn("container runtime", result["output"])
+
+
+class _RecordingRunner:
+    """Duck-typed SandboxRunner: records each run() and returns a canned result."""
+
+    name = "container:fake"
+
+    def __init__(self, exit_code=0, stdout="ok", stderr="", timed_out=False):
+        self._exit = exit_code
+        self._out = CommandOutput(stdout, stderr, timed_out)
+        self.calls: list[dict] = []
+
+    def run(self, cmd, cwd, timeout, env):
+        self.calls.append(
+            {"cmd": cmd, "cwd": str(cwd), "timeout": timeout, "env": dict(env)}
+        )
+        return self._exit, self._out
+
+
+class TestVerifierContainerRouting(unittest.TestCase):
+    """STEP 2 -- the gate's INDEPENDENT verification routes through the selected
+    hardened SandboxRunner when SIGNALOS_SANDBOX opts in, and falls back to the
+    host path (byte-identical) when it does not. Runtime-free: the runner is a
+    duck-typed fake, so no real Docker is needed to prove the wiring."""
+
+    def test_sandbox_unset_runs_on_host(self):
+        # No SIGNALOS_SANDBOX -> no verifier container; host path is used.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            env = {k: v for k, v in os.environ.items() if k != "SIGNALOS_SANDBOX"}
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertIsNone(V._select_verifier_runner(root))
+
+    def test_sandbox_docker_selects_hardened_container_runner(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.dict(os.environ, {"SIGNALOS_SANDBOX": "docker"}), \
+                mock.patch(
+                    "signalos_lib.product.sandbox.container_engine_available",
+                    return_value=True,
+                ):
+                runner = V._select_verifier_runner(root)
+            self.assertIsInstance(runner, ContainerRunner)
+            self.assertEqual(runner.engine, "docker")
+            # digest-pin / offline: the verifier never pulls.
+            self.assertEqual(runner.pull, "never")
+
+    def test_passing_build_routes_through_runner_not_host(self):
+        rec = _RecordingRunner(exit_code=0, stdout="built ok")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(V, "_select_verifier_runner", return_value=rec), \
+                mock.patch.object(V, "_run_shell_command") as host:
+                result = V._run_commands(root, ["npm run build", "npm test"])
+        host.assert_not_called()  # the raw host subprocess is never touched
+        # behavior-identical result shape for a passing build
+        self.assertEqual(result["status"], "passed")
+        self.assertIn("built ok", result["output"])
+        self.assertIn("duration_s", result)
+        self.assertEqual(
+            [c["cmd"] for c in rec.calls], ["npm run build", "npm test"]
+        )
+        # cwd handed to the runner is the workspace root (mount derives -w).
+        self.assertEqual(rec.calls[0]["cwd"], str(root))
+
+    def test_container_nonzero_exit_is_failed(self):
+        rec = _RecordingRunner(exit_code=1, stdout="", stderr="tsc error TS1005")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(V, "_select_verifier_runner", return_value=rec):
+                result = V._run_commands(root, ["npm run build"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("tsc error TS1005", result["output"])
+
+    def test_container_timeout_is_blocked(self):
+        rec = _RecordingRunner(exit_code=124, timed_out=True)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(V, "_select_verifier_runner", return_value=rec):
+                result = V._run_commands(root, ["npm test"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("timed out", result["output"])
+
+    def test_install_command_gets_the_larger_budget_in_container(self):
+        rec = _RecordingRunner(exit_code=0, stdout="added 300 packages")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(V, "_select_verifier_runner", return_value=rec):
+                V._run_commands(
+                    root, ["npm install --legacy-peer-deps", "npm test"]
+                )
+        by_cmd = {c["cmd"]: c["timeout"] for c in rec.calls}
+        # the install carve-out is preserved: install gets the larger budget.
+        self.assertGreater(
+            by_cmd["npm install --legacy-peer-deps"], by_cmd["npm test"]
+        )
+
+    def test_env_overlay_is_ci_only(self):
+        # Only CI/FORCE_COLOR cross the boundary -- no host env leaks in.
+        rec = _RecordingRunner()
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.object(V, "_select_verifier_runner", return_value=rec):
+                V._run_commands(root, ["npm test"])
+        self.assertEqual(rec.calls[0]["env"], {"CI": "1", "FORCE_COLOR": "0"})
 
 
 if __name__ == "__main__":

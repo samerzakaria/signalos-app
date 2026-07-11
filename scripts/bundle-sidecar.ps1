@@ -49,7 +49,19 @@ $entry = Join-Path $root "python\signalos_ipc_server.py"
 $pythonPath = Join-Path $root "python"
 
 $dataSpec = "$vendoredCorePath;signalos_lib"
+# Bundle package.json at the archive root so the frozen sidecar can report its
+# version via _MEIPASS even when the Tauri host didn't inject SIGNALOS_APP_VERSION.
+$versionDataSpec = "$(Join-Path $root 'package.json');."
 
+# PyInstaller streams INFO/WARNING to stderr. Under $ErrorActionPreference='Stop'
+# (set above), PowerShell 5.1 converts a native command's stderr into a
+# terminating NativeCommandError whenever that stderr is captured -- CI, a tool
+# host, or any 2>&1/*>&1 -- aborting the build on the very FIRST INFO line even
+# though PyInstaller exits 0. Relax the preference around the native call and
+# gate on the real exit code, so ordinary INFO output never masquerades as a
+# build failure.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $venvPython -m PyInstaller `
   --onefile `
   --name $binaryName `
@@ -60,6 +72,7 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --noconfirm `
   --paths $pythonPath `
   --add-data $dataSpec `
+  --add-data $versionDataSpec `
   --hidden-import signalos_lib.cli `
   --hidden-import anthropic `
   --hidden-import openai `
@@ -74,6 +87,11 @@ $dataSpec = "$vendoredCorePath;signalos_lib"
   --collect-all tiktoken_ext `
   --runtime-hook (Join-Path $PSScriptRoot "pyi-rthook-tiktoken.py") `
   $entry
+$piExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+if ($piExit -ne 0) {
+  throw "PyInstaller failed with exit code $piExit"
+}
 
 $built = Join-Path $outDir $expectedFile
 if (-not (Test-Path $built)) {

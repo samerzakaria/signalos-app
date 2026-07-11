@@ -28,7 +28,8 @@
 #                            READ-ONLY root filesystem, ONLY the workspace
 #                            bind-mounted (read-write), size-capped writable
 #                            tmpfs at /tmp (and the HOME cache dir), the network
-#                            disabled (--network none), and cpu/mem/pids/time
+#                            disabled (--network none), a digest-pinned image it
+#                            never pulls (--pull=never), and cpu/mem/pids/time
 #                            caps. The runtime containment boundary.
 #   * select_runner()     -- reads SIGNALOS_SANDBOX and returns the backend
 #                            (default InProcess). Falls back to InProcess with a
@@ -79,6 +80,14 @@ DEFAULT_CPUS = "2"
 DEFAULT_MEMORY = "2g"
 DEFAULT_PIDS = "512"
 DEFAULT_NETWORK = "none"  # the containment win: no network from the workload.
+
+# Image pull policy. `never` is the containment floor: the workload gets NO
+# network (--network none), so the image must be PRE-PRESENT -- a digest-pinned,
+# already-cached image. --pull=never makes `run` fail FAST when the image is
+# absent (a clear infra signal) instead of silently reaching the host network to
+# pull, or hanging. For a truly pinned verifier set SIGNALOS_SANDBOX_IMAGE to a
+# `name@sha256:...` reference. Docker accepts always|missing|never.
+DEFAULT_PULL = "never"
 
 # Rootfs hardening: the container root filesystem is mounted READ-ONLY
 # (--read-only) so the ONLY writable surface is the explicit list below. Anything
@@ -213,6 +222,7 @@ def build_container_argv(
     read_only: bool = DEFAULT_READ_ONLY,
     tmpfs: Mapping[str, str] | None = None,
     tmpfs_size: str = DEFAULT_TMPFS_SIZE,
+    pull: str | None = DEFAULT_PULL,
 ) -> list[str]:
     """Construct the container CLI argv that runs *command* inside a throwaway
     container with a READ-ONLY root filesystem, ONLY *workspace* bind-mounted
@@ -230,8 +240,9 @@ def build_container_argv(
       * ``/tmp`` + ``/root`` (or *tmpfs* keys) -- size-capped tmpfs, discarded
         with the container. See ``_default_tmpfs``.
 
-    Pass ``read_only=False`` to drop the immutable rootfs, or ``tmpfs=`` to
-    override the writable tmpfs surface.
+    Pass ``read_only=False`` to drop the immutable rootfs, ``tmpfs=`` to
+    override the writable tmpfs surface, or ``pull=None`` to omit ``--pull``
+    (the default ``never`` keeps the run offline/digest-pinned).
 
     The argv is built (and assertable) WITHOUT a running daemon, so it is unit
     testable offline; executing it needs a docker/podman/WSL host.
@@ -246,6 +257,13 @@ def build_container_argv(
         *_ENGINE_CLI[engine],
         "run",
         "--rm",                 # throwaway: no state survives the command.
+    ]
+    if pull:
+        # Digest-pin / offline determinism: never reach the network to pull. The
+        # image must be pre-present (consistent with --network none); `run` then
+        # fails fast on a missing image instead of pulling over the host network.
+        argv += ["--pull", pull]
+    argv += [
         "--network", network,   # 'none' -> the workload has NO network.
         "--cpus", cpus,
         "--memory", memory,
@@ -389,6 +407,7 @@ class ContainerRunner(SandboxRunner):
         network: str = DEFAULT_NETWORK,
         read_only: bool = DEFAULT_READ_ONLY,
         tmpfs_size: str = DEFAULT_TMPFS_SIZE,
+        pull: str | None = DEFAULT_PULL,
         runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         if engine not in _ENGINE_CLI:
@@ -402,6 +421,7 @@ class ContainerRunner(SandboxRunner):
         self.network = network
         self.read_only = read_only
         self.tmpfs_size = tmpfs_size
+        self.pull = pull
         self._runner = runner
         self.name = f"container:{engine}"
 
@@ -420,6 +440,7 @@ class ContainerRunner(SandboxRunner):
             network=self.network,
             read_only=self.read_only,
             tmpfs_size=self.tmpfs_size,
+            pull=self.pull,
             workdir_rel=_rel_subdir(self.workspace, cwd),
         )
 
@@ -480,8 +501,10 @@ def select_runner(
     ``SIGNALOS_SANDBOX_IMAGE``, ``SIGNALOS_SANDBOX_CPUS``,
     ``SIGNALOS_SANDBOX_MEMORY``, ``SIGNALOS_SANDBOX_PIDS``,
     ``SIGNALOS_SANDBOX_NETWORK``, ``SIGNALOS_SANDBOX_TMPFS_SIZE`` (writable tmpfs
-    cap), and ``SIGNALOS_SANDBOX_READONLY`` (set falsey to drop the immutable
-    rootfs -- an escape hatch; the read-only default is the safe floor).
+    cap), ``SIGNALOS_SANDBOX_READONLY`` (set falsey to drop the immutable rootfs
+    -- an escape hatch; the read-only default is the safe floor), and
+    ``SIGNALOS_SANDBOX_PULL`` (image pull policy always|missing|never; default
+    ``never`` -- digest-pinned/offline, consistent with --network none).
     """
     env = os.environ if environ is None else environ
     raw = (env.get("SIGNALOS_SANDBOX") or "").strip().lower()
@@ -534,6 +557,7 @@ def select_runner(
         network=env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK,
         read_only=read_only,
         tmpfs_size=env.get("SIGNALOS_SANDBOX_TMPFS_SIZE") or DEFAULT_TMPFS_SIZE,
+        pull=(env.get("SIGNALOS_SANDBOX_PULL") or DEFAULT_PULL),
     )
     _LOGGER.info("runtime containment active: %s", runner.name)
     _emit({"type": "sandbox_selected", "engine": raw, "backend": runner.name})

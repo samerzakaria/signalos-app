@@ -120,21 +120,133 @@ def _bundle_root():
         ) from exc
 
 
+# Bundle entries we never scaffold into a user's project: Python bytecode
+# caches and OS cruft that can appear in the source tree before packaging.
+# Applied identically in BOTH copy paths so the fast path and the importlib
+# fallback stay byte-for-byte equivalent.
+_BUNDLE_EXCLUDE_DIRS = {"__pycache__"}
+_BUNDLE_EXCLUDE_SUFFIXES = (".pyc", ".pyo")
+_BUNDLE_EXCLUDE_NAMES = {".DS_Store"}
+
+
+def _is_bundle_cruft(rel: str) -> bool:
+    """True for a bundle-relative POSIX path that must never be scaffolded
+    (bytecode caches, OS cruft)."""
+    parts = rel.split("/")
+    if any(p in _BUNDLE_EXCLUDE_DIRS for p in parts):
+        return True
+    name = parts[-1]
+    return name in _BUNDLE_EXCLUDE_NAMES or name.endswith(_BUNDLE_EXCLUDE_SUFFIXES)
+
+
+def _bundle_copy_target(rel: str, target: Path, force: bool) -> Path | None:
+    """Shared copy decision for both bundle-copy paths: return the destination to
+    write, or None to skip (protected file, cruft, or an existing file we must
+    preserve). Keeping this single predicate is what stops the fast path and the
+    importlib fallback from silently diverging on skip/force/preserve semantics.
+    *rel* is always POSIX so the `_PROTECTED_FILES` compare is stable on Windows.
+    """
+    if rel in _PROTECTED_FILES or _is_bundle_cruft(rel):
+        return None
+    dst = target / rel
+    if dst.is_file() and not force:
+        # Existing file in target — preserve user content.
+        return None
+    return dst
+
+
+def _bundle_fs_root(bundle) -> Path | None:
+    """A concrete on-disk directory for the packaged bundle, or None when the
+    bundle is served from a non-materialized resource (e.g. a zipimported
+    wheel).
+
+    Real for editable checkouts, unpacked wheels, AND PyInstaller-frozen
+    binaries (bundle-sidecar.* ships the package as ``--add-data`` under
+    ``_MEIPASS/signalos_lib/``). Preferring the concrete path lets _copy_bundle
+    walk it with plain filesystem ops: the importlib.resources Traversable path
+    (``as_file()`` per file) is O(minutes) when frozen — each call
+    re-materializes the resource through PyInstaller's reader — which silently
+    left a real install's ``.signalos/`` only PARTIALLY initialized (5 of 479
+    files before the onboarding timeout).
+    """
+    # 1. The Traversable itself may already be a real directory (editable /
+    #    unpacked wheel, and often the frozen reader too).
+    try:
+        p = Path(os.fspath(bundle))
+        if p.is_dir():
+            return p
+    except (TypeError, ValueError):
+        pass
+    # 2. A MultiplexedPath (frozen: the package is discoverable in BOTH the PYZ
+    #    and the _MEIPASS data tree) isn't fspath-able, but exposes its concrete
+    #    member paths — take the first real directory. This survives an
+    #    --add-data destination rename with no hard-coded subpath.
+    for member in getattr(bundle, "_paths", ()) or ():
+        try:
+            mp = Path(os.fspath(member))
+        except (TypeError, ValueError):
+            continue
+        if mp.is_dir():
+            return mp
+    # 3. Frozen last-resort: the bundle ships as data under _MEIPASS mirroring
+    #    the dotted package path. Guard with a sentinel (`core/`) so a future
+    #    --add-data change fails LOUD — falling to the slow resource path, which
+    #    the frozen regression test catches — instead of silently copying a
+    #    wrong/empty directory.
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        cand = Path(base).joinpath(*_BUNDLE_PACKAGE.split("."))
+        if cand.is_dir() and (cand / "core").is_dir():
+            return cand
+    return None
+
+
 def _copy_bundle(target: Path, force: bool) -> int:
     """Copy every file from the packaged bundle into *target*.
 
-    Returns the count of files written.
+    Returns the count of files written. Uses a concrete-directory fast path
+    (plain os.walk) whenever the bundle resolves to a real path; falls back to
+    the per-file importlib.resources copy only for a non-materialized resource.
     """
     bundle = _bundle_root()
+    root = _bundle_fs_root(bundle)
+    if root is not None:
+        return _copy_bundle_tree(root, target, force)
+    return _copy_bundle_resources(bundle, target, force)
+
+
+def _copy_bundle_tree(root: Path, target: Path, force: bool) -> int:
+    """Fast path: copy from a concrete directory with plain filesystem walks
+    (no per-file importlib.resources materialization). Prunes excluded dirs,
+    copies in deterministic order, and defers every skip/preserve decision to
+    the shared ``_bundle_copy_target`` predicate."""
+    written = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune excluded dirs in-place (don't descend into __pycache__) and walk
+        # deterministically so logs/behavior are stable across platforms.
+        dirnames[:] = sorted(d for d in dirnames if d not in _BUNDLE_EXCLUDE_DIRS)
+        for name in sorted(filenames):
+            src = Path(dirpath) / name
+            rel = src.relative_to(root).as_posix()
+            dst = _bundle_copy_target(rel, target, force)
+            if dst is None:
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            written += 1
+    return written
+
+
+def _copy_bundle_resources(bundle, target: Path, force: bool) -> int:
+    """Fallback path: per-file copy through importlib.resources, for a bundle
+    with no real on-disk directory (zipimported wheel). Correct but slow when
+    frozen — only reached when _bundle_fs_root() finds no concrete path. Uses
+    the same ``_bundle_copy_target`` predicate as the fast path."""
     written = 0
     for src in _iter_bundle_files(bundle):
         rel = _bundle_relpath(bundle, src)
-        if rel in _PROTECTED_FILES:
-            continue
-        dst = target / rel
-        if dst.is_file() and not force:
-            # Existing file in target — preserve user content. (Only
-            # reachable when --force is off + a previous init left files.)
+        dst = _bundle_copy_target(rel, target, force)
+        if dst is None:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         with importlib.resources.as_file(src) as src_path:
@@ -521,6 +633,7 @@ def _git_init(target: Path) -> None:
             ["git", "init", "--quiet"],
             cwd=str(target), check=False,
             timeout=15,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except (OSError, FileNotFoundError):  # pragma: no cover — git missing
@@ -572,6 +685,7 @@ def _resolve_bash() -> str | None:
         try:
             proc = subprocess.run(
                 [candidate, "-c", "echo ok"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -645,6 +759,7 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
                 [bash_cmd, register_script.relative_to(target).as_posix()],
                 cwd=str(target), check=False,
                 timeout=15,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         except (OSError, FileNotFoundError, subprocess.TimeoutExpired):  # pragma: no cover
@@ -673,7 +788,13 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
                 ],
                 cwd=str(target),
                 check=False,
-                capture_output=True,
+                # Children must NOT inherit the caller's stdio. When init runs
+                # inside the IPC sidecar (stdin/stdout are OS pipes), a child (or
+                # its grandchild IDE emitters) inheriting those pipes deadlocks:
+                # capture_output's read blocks past `timeout` because a grandchild
+                # still holds the pipe's write end. We only need the return code.
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=15,
             )
             if proc.returncode != 0:
@@ -766,6 +887,47 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default="generic", choices=list_profile_ids(),
                         help="Factory stack/profile to embed in .signalos/profile.json")
     return parser
+
+
+def _write_init_complete(target: Path, file_count: int, profile_id: str) -> None:
+    """Write the init-completion marker as the FINAL scaffolding step.
+
+    Its presence is the only reliable signal that init finished. A partial or
+    timed-out init (the frozen `_copy_bundle` pathology that shipped a
+    half-initialized `.signalos/`) leaves this ABSENT, so a host / next launch
+    can detect an incomplete project and re-run instead of silently continuing.
+    """
+    from datetime import datetime, timezone
+
+    marker = target / ".signalos" / "INIT_COMPLETE.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": "signalos.init_complete.v1",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "bundle_files": file_count,
+                "profile": profile_id,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def is_init_complete(target: Path) -> bool:
+    """True when *target* holds a valid init-completion marker — i.e. a previous
+    `signalos init` finished fully. A host uses this to detect a half-initialized
+    workspace (marker absent/corrupt) and re-run init."""
+    marker = Path(target) / ".signalos" / "INIT_COMPLETE.json"
+    if not marker.is_file():
+        return False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("schema_version") == "signalos.init_complete.v1"
 
 
 def main(argv: list[str]) -> int:
@@ -890,4 +1052,10 @@ def main(argv: list[str]) -> int:
     print("  auto-detected from whichever key is present, or pin it with")
     print("  SIGNALOS_LLM_PROVIDER; the model is discovered from the provider")
     print("  (override with SIGNALOS_LLM_MODEL).\n")
+
+    # 7. Completion marker — the FINAL write. Its presence is the ONLY reliable
+    # signal that scaffolding finished; a partial/timed-out init (e.g. the frozen
+    # _copy_bundle pathology) leaves it ABSENT, so the host can detect a
+    # half-initialized project and re-run rather than silently proceeding.
+    _write_init_complete(target, file_count, profile_metadata["profile_id"])
     return 0

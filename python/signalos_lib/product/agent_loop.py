@@ -787,6 +787,30 @@ def _command_denied(command: str, denylist: list[str]) -> str | None:
     return None
 
 
+# #3a — a cmd.exe short flag (`cd /d`, `dir /s`, `/b`, `/q`) begins with a
+# forward slash, so os.path.isabs() reads it as an ABSOLUTE path and the Git-Bash
+# collapse turns `/d` into the drive root `d:/` -- which then false-denies
+# `cd /d src && npm test` as "outside the workspace". A leading-slash token of
+# ONE or TWO letters with NO further separator is a flag, not a path. A genuine
+# absolute path (`/etc/passwd`, `/home/x`) has 3+ chars or a second separator, so
+# it never matches here and is still caught. The existence guard keeps it safe:
+# if the token really names a path on disk we do NOT treat it as a flag.
+_CMD_SHORTFLAG_RE = re.compile(r"^/[A-Za-z]{1,2}$")
+
+
+def _is_cmd_shortflag(token: str) -> bool:
+    """True when *token* is a bare cmd.exe short flag (`/d`, `/s`) rather than a
+    path: a leading slash + 1-2 letters, no other separator, and NOT an existing
+    filesystem path (so a real `/e`-style path stays subject to the escape
+    check -- fail closed)."""
+    if not _CMD_SHORTFLAG_RE.match(token):
+        return False
+    try:
+        return not os.path.exists(token)
+    except OSError:
+        return False
+
+
 def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
     """Return the first command token that names a filesystem path OUTSIDE
     *repo_root*, or None when every path stays within the workspace.
@@ -823,6 +847,11 @@ def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
         is_home = token.startswith("~")
         # Bare words / globs without a separator-escape are always in-workspace.
         if not (has_sep or is_abs or has_dotdot or is_home):
+            continue
+        # #3a: a cmd.exe short flag (`/d`, `/s`) reads as absolute but is a FLAG,
+        # not a path -- skip it (a real path in the same command is a separate
+        # token and still checked).
+        if _is_cmd_shortflag(token):
             continue
         # Canonical containment: None means it resolves outside the workspace
         # (or is unresolvable -> fail closed) and is reported as escaping.

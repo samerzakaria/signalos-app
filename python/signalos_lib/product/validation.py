@@ -555,8 +555,80 @@ def _collect_violations(
     return violations
 
 
+def _select_verifier_runner(repo_root: Path):
+    """The gate's INDEPENDENT verification runs in a hardened container when a
+    container backend is opted in via ``SIGNALOS_SANDBOX`` (docker|podman|wsl);
+    otherwise this returns None and verification runs on the host default
+    (byte-identical to before).
+
+    This is the *verifier-only* containment seam: the gate re-runs the
+    build/test commands in a clean, pinned Linux container (network off,
+    read-only rootfs, ``--pull=never`` -- see ``product.sandbox``) with the same
+    toolchain the build used. It is a deterministic, one-shot, NO-model-access
+    verification, so it carries no split-brain risk. The model's own build
+    commands stay on the host default (deferred).
+    """
+    from .sandbox import ContainerRunner, select_runner
+
+    runner = select_runner(repo_root)
+    return runner if isinstance(runner, ContainerRunner) else None
+
+
+def _run_commands_in_container(repo_root: Path, cmds: list[str], runner) -> dict[str, Any]:
+    """Run the validation commands through a hardened ``SandboxRunner``.
+
+    Mirrors ``_run_commands``' aggregation and result shape EXACTLY (status /
+    output / duration_s) so downstream diagnostics and closure logic are
+    unchanged -- a passing build is behavior-identical to the host path. The
+    per-command install-vs-compile timeout carve-out is preserved. ``CI=1`` is
+    forwarded as an env overlay (run-once, no watch mode) and is the ONLY host
+    env that crosses the container boundary.
+    """
+    outputs: list[str] = []
+    start = time.perf_counter()
+    timeout_s = _validation_command_timeout_s()
+    install_timeout_s = _validation_install_timeout_s()
+    env = {"CI": "1", "FORCE_COLOR": "0"}
+    for cmd in cmds:
+        if not cmd or not cmd.strip():
+            continue
+        cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
+        exit_code, out = runner.run(cmd, repo_root, cmd_timeout, env)
+        combined = out.stdout or ""
+        if out.stderr:
+            combined += "\n" + out.stderr
+        outputs.append(combined)
+        if out.timed_out:
+            elapsed = time.perf_counter() - start
+            return {
+                "status": "blocked",
+                "output": f"command timed out after {cmd_timeout}s: {cmd}",
+                "duration_s": round(elapsed, 3),
+            }
+        if exit_code != 0:
+            elapsed = time.perf_counter() - start
+            return {
+                "status": "failed",
+                "output": "\n".join(outputs),
+                "duration_s": round(elapsed, 3),
+            }
+    elapsed = time.perf_counter() - start
+    return {
+        "status": "passed",
+        "output": "\n".join(outputs),
+        "duration_s": round(elapsed, 3),
+    }
+
+
 def _run_commands(repo_root: Path, cmds: list[str]) -> dict[str, Any]:
     """Run a list of shell commands, returning aggregated result."""
+    # Verifier-only containment: when SIGNALOS_SANDBOX opts in, the gate's
+    # independent verification runs in a clean pinned container instead of the
+    # raw host subprocess. Unset -> host path below, unchanged.
+    verifier = _select_verifier_runner(repo_root)
+    if verifier is not None:
+        return _run_commands_in_container(repo_root, cmds, verifier)
+
     outputs: list[str] = []
     start = time.perf_counter()
     timeout_s = _validation_command_timeout_s()

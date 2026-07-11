@@ -121,6 +121,32 @@ class CommandContainmentTest(unittest.TestCase):
     def test_home_dir_reference_escapes(self):
         self.assertEqual(self._check("cat ~/.ssh/id_rsa"), "~/.ssh/id_rsa")
 
+    # --- #3a: cmd.exe short flags (`/d`, `/s`) are FLAGS, not absolute paths ---
+    # `/d` starts with '/', so os.path.isabs reads it as absolute and the
+    # Git-Bash collapse turns it into the drive root `d:/` -- which false-denied
+    # `cd /d src && npm test`. A 1-2 letter leading-slash token with no further
+    # separator (and no real path behind it) must be treated as a flag.
+
+    def test_cd_slash_d_flag_is_allowed(self):
+        # The reported regression: cmd.exe `cd /d <dir>` must not be denied.
+        self.assertIsNone(self._check("cd /d src && npm test"))
+
+    def test_bare_short_flag_is_allowed(self):
+        self.assertIsNone(self._check("dir /s"))
+        self.assertIsNone(self._check("xcopy /e /i src dst"))
+
+    def test_short_flag_does_not_weaken_abs_path_escape(self):
+        # Real absolute paths are longer / have a second separator -> still caught.
+        self.assertEqual(self._check("cat /etc/passwd"), "/etc/passwd")
+        self.assertEqual(self._check("cat /home/x"), "/home/x")
+
+    def test_real_path_argument_beside_a_flag_still_escapes(self):
+        # Skipping `/d` as a flag must NOT let an escaping path token through:
+        # the path is a separate token and is still checked.
+        self.assertEqual(
+            self._check("cd /d /etc/passwd"), "/etc/passwd"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

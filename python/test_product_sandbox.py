@@ -315,6 +315,59 @@ class TestReadOnlyHardening:
 
 
 # ---------------------------------------------------------------------------
+# Image pull policy — digest-pin / offline determinism: --pull=never by default
+# so the workload never reaches the network to pull (consistent with
+# --network none). The image must be pre-present.
+# ---------------------------------------------------------------------------
+
+
+class TestPullPolicy:
+    def test_pull_never_is_the_default(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker")
+        assert "--pull" in argv
+        assert argv[argv.index("--pull") + 1] == "never"
+
+    def test_pull_can_be_omitted(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker", pull=None)
+        assert "--pull" not in argv
+
+    def test_pull_policy_is_overridable(self):
+        argv = build_container_argv("ls", Path("/ws"), engine="docker", pull="missing")
+        assert argv[argv.index("--pull") + 1] == "missing"
+
+    def test_pull_does_not_disturb_the_argv_tail_or_head(self):
+        # --pull sits after --rm; the fixed head/tail the other tests rely on hold.
+        argv = build_container_argv("npm test", Path("/ws"), engine="docker",
+                                    image="node:20-bookworm")
+        assert argv[:3] == ["docker", "run", "--rm"]
+        assert argv[-4:] == ["node:20-bookworm", "sh", "-lc", "npm test"]
+
+    def test_runner_threads_pull_into_argv(self):
+        with tempfile.TemporaryDirectory() as d:
+            ws = Path(d)
+            r = ContainerRunner(ws, engine="docker")
+            assert r.pull == "never"
+            argv = r.build_argv("ls", ws, {})
+        assert argv[argv.index("--pull") + 1] == "never"
+
+    def test_select_runner_defaults_pull_to_never(self):
+        r = select_runner(
+            "/ws",
+            environ={"SIGNALOS_SANDBOX": "docker"},
+            which=lambda n: "/usr/bin/docker",
+        )
+        assert r.pull == "never"
+
+    def test_select_runner_reads_pull_from_env(self):
+        r = select_runner(
+            "/ws",
+            environ={"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_PULL": "missing"},
+            which=lambda n: "/usr/bin/docker",
+        )
+        assert r.pull == "missing"
+
+
+# ---------------------------------------------------------------------------
 # ContainerRunner.run — drives the (mocked) container CLI and shapes the result.
 # ---------------------------------------------------------------------------
 

@@ -215,7 +215,17 @@ def _app_version() -> str:
         if value:
             return value
 
-    for start in (Path(__file__).resolve(), Path.cwd().resolve()):
+    # Frozen (PyInstaller) build: __file__ resolves inside the throwaway
+    # _MEIPASS extraction dir and cwd may be a bare workspace, so neither walk
+    # finds a manifest -> "unknown" whenever the Tauri host didn't inject
+    # SIGNALOS_APP_VERSION (e.g. the CLI/benchmark path or a bare spawn).
+    # package.json is bundled at the _MEIPASS root (see bundle-sidecar.*), so
+    # consult that dir too.
+    search_starts = [Path(__file__).resolve(), Path.cwd().resolve()]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        search_starts.append(Path(meipass).resolve())
+    for start in search_starts:
         for base in (start, *start.parents):
             package_path = base / "package.json"
             if package_path.is_file():

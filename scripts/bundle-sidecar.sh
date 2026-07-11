@@ -43,6 +43,9 @@ if [[ ! -f "$IPC_ENTRY" ]]; then
 fi
 
 DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
+# Bundle package.json at the archive root so the frozen sidecar can report its
+# version via _MEIPASS even when the Tauri host didn't inject SIGNALOS_APP_VERSION.
+VERSION_DATA_SPEC="$ROOT_DIR/package.json:."
 
 "$VENV_PYTHON" -m PyInstaller \
   --onefile \
@@ -54,6 +57,7 @@ DATA_SPEC="$VENDORED_CORE_PATH:signalos_lib"
   --noconfirm \
   --paths "$ROOT_DIR/python" \
   --add-data "$DATA_SPEC" \
+  --add-data "$VERSION_DATA_SPEC" \
   --hidden-import signalos_lib.cli \
   --hidden-import anthropic \
   --hidden-import openai \
