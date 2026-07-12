@@ -286,6 +286,21 @@ class EnforcementState:
     def rule_enabled(self, rule: str) -> bool:
         return self.rule_mode(rule) != "off"
 
+    def rule_action(self, rule: str) -> str:
+        """Collapse a rule's mode into the enforcement ACTION the agent loop
+        applies: ``"block"`` (hard-deny -- ``strict`` or any unknown mode, so an
+        unrecognized value fails CLOSED), ``"warn"`` (log + allow, never deny),
+        or ``"off"`` (do nothing). This is the observe/warn/block ladder the
+        review gate already honors; the agent loop keys every tunable governance
+        denial off it so a ``warn`` rule logs-and-allows instead of hard-denying,
+        while the default ``strict`` keeps the current deny behavior."""
+        mode = self.rule_mode(rule)
+        if mode == "off":
+            return "off"
+        if mode == "warn":
+            return "warn"
+        return "block"
+
     def tier_paths(self, kind: str) -> list[str]:
         """Allowlist for `kind` ("read"|"write"|"execute") at the active tier."""
         tier = self.trust_tier_paths.get(self.trust_tier, {})

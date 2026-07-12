@@ -522,10 +522,85 @@ def _is_plan_test_path(path: str) -> bool:
                  or "/test_" in normed or normed.endswith("_test.py")))
 
 
+def _keep_dot_rel(path: str) -> str:
+    """Forward-slash a path and drop a single leading `./` WITHOUT eating the
+    leading dot of a dotfile/dotdir. `_norm`'s ``lstrip("./")`` strips ANY run of
+    `.`/`/` chars, so `.signalos/x` collapses to `signalos/x` -- which silently
+    defeated every ``.signalos/`` prefix test. Governance-path detection uses
+    this instead so the `.signalos/` guard actually fires."""
+    normed = path.replace("\\", "/")
+    if normed.startswith("./"):
+        normed = normed[2:]
+    return normed
+
+
 def _is_governance_path(path: str) -> bool:
-    """No direct governance-file edits (2.5): anything under .signalos/."""
-    normed = _norm(path)
+    """No direct governance-file edits (2.5): anything under .signalos/. Uses
+    dot-preserving normalization (see _keep_dot_rel) so the leading `.` is not
+    stripped -- without this the guard never matched a real `.signalos/…` path."""
+    normed = _keep_dot_rel(path)
     return normed == ".signalos" or normed.startswith(".signalos/")
+
+
+# The three tools that MUTATE the workspace. Wave-freeze and the command-write
+# governance both key off this set (a read/search/list never mutates state).
+_MUTATING_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "edit_file", "run_command"}
+)
+
+# G3 (UX Designer) declares `.signalos/designs/**` as a per-gate OUTPUT: the
+# design agent writes DESIGN_DECISIONS.yaml + screenshots there. Everything else
+# under `.signalos/` stays governance-protected; only this declared subtree is
+# carved out, and only while the design gate is the active gate.
+_DESIGN_OUTPUT_PREFIX = ".signalos/designs"
+
+
+# ---------------------------------------------------------------------------
+# Post-command filesystem-diff scope (FIX: command-writes are governed too)
+# ---------------------------------------------------------------------------
+#
+# run_command runs shell=True, so a permitted evaluator (`python -c`, `node -e`,
+# `npm test`) can WRITE files that never pass write_file governance. The loop
+# snapshots the governed workspace subtree BEFORE the command and diffs AFTER,
+# so a command that guts a signed plan test, drops a secrets file, or tampers
+# with `.signalos/` is caught, reverted, and audited exactly like a write_file.
+#
+# The diff is scoped to governed/product SOURCE, never build output: these
+# directory names (VCS, dependency, and build/cache trees) are pruned so a
+# legitimate `npm install` / `npm run build` that churns node_modules/dist is
+# NOT flagged. The loop's own run bookkeeping (`.signalos/agent-runs/`) is
+# pruned too so command auditing never trips over the ledger it just wrote.
+_DIFF_PRUNE_DIRS: frozenset[str] = frozenset({
+    ".git", "node_modules", "dist", "build", "out", "coverage",
+    ".next", ".nuxt", ".svelte-kit", ".vite", ".turbo", ".cache",
+    ".parcel-cache", "target", "bin", "obj", "__pycache__",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".gradle",
+    ".dart_tool", ".expo", "vendor", ".venv", "venv",
+    ".angular", ".vercel", ".output", "tmp",
+})
+# Per-file cap for storing pre-command CONTENT (for revert). A file larger than
+# this keeps only its hash (still diffable); source files are far smaller. The
+# whole snapshot is bounded by a file-count cap so a pathological tree can never
+# make a single command walk unboundedly.
+_DIFF_CONTENT_CAP_BYTES = 2_000_000
+_DIFF_MAX_FILES = 6_000
+# Cap on the number of command-induced file changes AUDITED per command (a
+# codegen step could touch many source files). Beyond this we audit a summary
+# row rather than one-per-file, so the ledger can't be flooded.
+_DIFF_MAX_AUDIT_ROWS = 500
+
+
+def _dig_json(obj: Any, key_path: tuple[str, ...]) -> Any:
+    """Return the value at *key_path* inside a parsed-JSON *obj*, or None when
+    any segment is missing / not a dict. Used to compare a FROZEN key (e.g.
+    ``scripts.test``) between an old and a new config without caring about the
+    rest of the document."""
+    cur = obj
+    for k in key_path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
 
 
 # WAVE-ENGINE-DESIGN §3.2 — the three canonical subtrees the gate-artifact
@@ -1577,10 +1652,168 @@ class AgentLoop:
             return str(args.get("new_string", ""))
         return None
 
+    # --- observe / warn / block ladder (FIX 5) ------------------------------
+
+    def _rule_action(self, rule: str | None) -> str:
+        """"block" | "warn" | "off" for *rule* under the cached policy. A
+        rule with no mode (or before enforcement is loaded) fails CLOSED to
+        "block". Containment BOUNDARIES (path-escape, write-to-root) are NOT
+        routed through here -- they always hard-deny regardless of any mode."""
+        enf = self._enforcement
+        if rule is None or enf is None:
+            return "block"
+        return enf.rule_action(rule)
+
+    def _governance_verdict(self, rule: str, reason: str) -> None:
+        """Apply the observe/warn/block ladder to a violated *rule*.
+
+        * block (strict/default) -> raise ToolPolicyError (hard deny, unchanged).
+        * warn                   -> LOG + emit a governance_warning + ALLOW the
+                                     work (recorded, never hard-denied).
+        * off                    -> allow silently.
+
+        Every tunable governance denial in the loop funnels through here, so a
+        rule flipped to ``warn`` in the app logs-and-allows instead of blocking
+        (matching review_gate's findings-not-block semantics), while the default
+        ``strict`` preserves the current deny behavior byte-for-byte."""
+        action = self._rule_action(rule)
+        if action == "block":
+            raise ToolPolicyError(reason, rule=rule)
+        if action == "warn":
+            self._emit({
+                "type": "governance_warning",
+                "run_id": self.run_id,
+                "rule": rule,
+                "reason": reason,
+            })
+            _LOGGER.warning("governance warn [%s]: %s", rule, reason)
+        # warn / off -> allow (work proceeds).
+
+    def _is_allowed_gate_output(self, rel: str) -> bool:
+        """True when *rel* is a DECLARED per-gate output the active gate may
+        write even though it lives under an otherwise-protected tree. Currently
+        only the design gate (G3) writing under `.signalos/designs/**` -- the
+        rest of `.signalos/` stays governance-protected."""
+        normed = _keep_dot_rel(rel)  # dot-preserving: `.signalos/…` must survive
+        if self.active_gate == "G3" and (
+            normed == _DESIGN_OUTPUT_PREFIX
+            or normed.startswith(_DESIGN_OUTPUT_PREFIX + "/")
+        ):
+            return True
+        return False
+
+    # --- signed-artifact immutability (FIX 2) -------------------------------
+
+    def _signed_core_artifacts(self) -> set[str]:
+        """Canonical rel_paths of gate artifacts under core/** that are SIGNED
+        (a non-DRAFT signature present). Such an artifact is the frozen output
+        of a passed gate; an agent may not overwrite it unless the gate is
+        reopened (a reopen strips the signatures, so this set naturally shrinks
+        and the artifact becomes writable again).
+
+        Read once per run and cached: signing happens in the orchestrator
+        BETWEEN gate runs, never mid-run, so the set is stable for a run. Fails
+        OPEN (empty set) if signature state can't be read -- the base path /
+        forbidden / trust-tier guards still apply; only this ADDITIONAL freeze
+        is skipped, so a transient read error never bricks the whole build."""
+        cached = getattr(self, "_signed_core_cache", None)
+        if cached is not None:
+            return cached
+        signed: set[str] = set()
+        try:
+            from .. import sign
+            from ..artifacts import list_gates
+
+            for gate in list_gates():
+                for st in sign.check_gate(self.repo_root, gate, self.project_id):
+                    rel = _norm(st.rel_path)
+                    if (st.exists and st.has_signatures and not st.is_draft
+                            and _is_gate_artifact_rel_path(rel)):
+                        signed.add(rel)
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOGGER.warning("could not read signed-artifact state: %s", exc)
+            signed = set()
+        self._signed_core_cache = signed
+        return signed
+
+    # --- G4 verification-contract freeze (FIX 3) ----------------------------
+
+    def _verification_contract_violation(
+        self, rel: str, new_text: str | None, old_text: str | None
+    ) -> str | None:
+        """At G4, the commands verification RUNS (`scripts.test`/`scripts.build`)
+        and the test-DISCOVERY config (tsconfig include/exclude) are the exam.
+        A model must not neuter them (`"test": "exit 0"`, or excluding the frozen
+        plan tests) and then "pass". Freeze the specific keys: creating them when
+        absent is fine, but CHANGING an established value is a violation.
+
+        Returns a reason string when *new_text* changes a frozen key relative to
+        *old_text*, else None. Only fires at G4; unparseable content is ignored
+        (an intermediate half-write is not a governance event -- verification
+        will still run the real command)."""
+        if self.active_gate != "G4" or new_text is None or old_text is None:
+            return None
+        base = _norm(rel).rsplit("/", 1)[-1].lower()
+        if base == "package.json":
+            frozen = [("scripts", "test"), ("scripts", "build")]
+            label = "package.json build/test scripts"
+        elif base.startswith("tsconfig") and base.endswith(".json"):
+            frozen = [("include",), ("exclude",)]
+            label = "tsconfig test-discovery globs"
+        else:
+            return None
+        try:
+            old_obj = json.loads(old_text)
+            new_obj = json.loads(new_text)
+        except (ValueError, TypeError):
+            return None
+        for kp in frozen:
+            ov = _dig_json(old_obj, kp)
+            nv = _dig_json(new_obj, kp)
+            if ov is not None and nv != ov:
+                return (
+                    f"'{rel}' would change a FROZEN G4 verification key "
+                    f"({label}: {'.'.join(kp)}) from {ov!r} to {nv!r}. The "
+                    "verification contract is immutable during the build -- make "
+                    "the exam pass by implementing the product, not by rewriting "
+                    "the command that runs it or excluding the frozen tests."
+                )
+        return None
+
+    def _edit_preview_text(self, rel: str, args: dict[str, Any]) -> str | None:
+        """The content an edit_file WOULD produce, for a pre-flight freeze check.
+        Returns None when the edit can't be previewed (file missing, old_string
+        absent or non-unique) -- the real edit will surface that error, and there
+        is nothing to freeze-compare against."""
+        target = self._resolve_in_workspace(rel)
+        if target is None or not target.is_file():
+            return None
+        try:
+            original = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        old = str(args.get("old_string", ""))
+        new = str(args.get("new_string", ""))
+        if old == "" or original.count(old) != 1:
+            return None
+        return original.replace(old, new, 1)
+
     def _check_governance(self, name: str, args: dict[str, Any]) -> None:
         """Cached-rule governance check (Q2). Raises ToolPolicyError if denied."""
         enf = self._enforcement
         assert enf is not None  # set in run()
+
+        # wave-freeze (FIX 4): a frozen wave blocks EVERY mutation (write / edit /
+        # command) -- an in-flight delivery or direct IPC must not keep writing
+        # while the wave is frozen. Honors the observe/warn/block ladder; default
+        # strict denies, warn logs-and-allows. (UI-only enforcement was the bug:
+        # wave_frozen was loaded but never consulted here.)
+        if name in _MUTATING_TOOLS and enf.wave_frozen:
+            self._governance_verdict(
+                "wave-freeze",
+                f"This wave is FROZEN; {name} is blocked until the wave is "
+                "unfrozen.",
+            )
 
         if name in ("write_file", "edit_file"):
             raw_path = str(args.get("path", "")).strip()
@@ -1616,6 +1849,40 @@ class AgentLoop:
                     "implementing the product, not by editing the test.",
                     rule="spec-immutable",
                 )
+            # Signed-artifact immutability (FIX 2): a SIGNED governance artifact
+            # under core/** is the frozen output of a passed gate. An agent (any
+            # gate, incl. a later/earlier one) cannot overwrite it unless the
+            # gate is reopened (which strips the signature, so it drops out of
+            # this set). This is a safety gate -> hard deny (fails closed).
+            # INTEGRATE: a STRICTER validator that re-checks the signed
+            # artifact_hash / audit chain belongs in sign.py (owned elsewhere);
+            # this guard keys off the current signature presence.
+            if path in self._signed_core_artifacts():
+                raise ToolPolicyError(
+                    f"'{path}' is a SIGNED governance artifact and is immutable; "
+                    "reopen the gate (which strips its signature) before changing "
+                    "it.",
+                    rule="signed-immutable",
+                )
+            # G4 verification-contract freeze (FIX 3): the commands verification
+            # RUNS (scripts.test/build) and the test-discovery config (tsconfig
+            # include/exclude) are the exam -- frozen so the model can't neuter
+            # `test` to `exit 0` or exclude the frozen plan tests and "pass".
+            if self.active_gate == "G4":
+                target = self._resolve_in_workspace(path)
+                old_text: str | None = None
+                if target is not None and target.is_file():
+                    try:
+                        old_text = target.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        old_text = None
+                new_text = (
+                    str(args.get("content", "")) if name == "write_file"
+                    else self._edit_preview_text(path, args)
+                )
+                vc = self._verification_contract_violation(path, new_text, old_text)
+                if vc is not None:
+                    raise ToolPolicyError(vc, rule="verification-frozen")
             is_impl_write = _is_implementation_path(path)
             if self.execution_context == "conversation":
                 raise ToolPolicyError(
@@ -1642,10 +1909,10 @@ class AgentLoop:
             if enf.rule_enabled("plan-gating") and is_impl_write and self.active_gate:
                 signed = set(enf.signed_gates) | self._context_signed_gates
                 if 2 not in signed:
-                    raise ToolPolicyError(
+                    self._governance_verdict(
+                        "plan-gating",
                         f"Implementation write '{path}' is blocked until the plan "
                         "gate (G2 Expectation Map) is signed.",
-                        rule="plan-gating",
                     )
             if required_gates and is_impl_write:
                 signed = set(enf.signed_gates) | self._context_signed_gates
@@ -1663,24 +1930,29 @@ class AgentLoop:
                         "policy; write or update a matching test first.",
                         rule="test-first",
                     )
-            if _is_governance_path(path):
-                raise ToolPolicyError(
+            # `.signalos/` is governance-protected -- EXCEPT a declared per-gate
+            # output (G3 design writes under `.signalos/designs/**`). Everything
+            # else under `.signalos/` stays blocked.
+            if _is_governance_path(path) and not self._is_allowed_gate_output(path):
+                self._governance_verdict(
+                    "secret-block",
                     f"Writing to governance path '{path}' is forbidden (.signalos/).",
-                    rule="secret-block",
                 )
             if _matches_forbidden_path(path, enf.forbidden_paths):
-                raise ToolPolicyError(
+                self._governance_verdict(
+                    "secret-block",
                     f"Path '{path}' is in the always-forbidden list.",
-                    rule="secret-block",
                 )
-            # trust-tier write allowlist (only enforced if rule enabled)
-            if enf.rule_enabled("trust-tier"):
+            # trust-tier write allowlist (only enforced if rule enabled). A
+            # declared per-gate output (G3 designs) is exempt -- it is an allowed
+            # target that the general allowlist deliberately does not enumerate.
+            if enf.rule_enabled("trust-tier") and not self._is_allowed_gate_output(path):
                 allow = enf.tier_paths("write")
                 if not _matches_glob(path, allow):
-                    raise ToolPolicyError(
+                    self._governance_verdict(
+                        "trust-tier",
                         f"Path '{path}' is not in the {enf.trust_tier} write "
                         f"allowlist.",
-                        rule="trust-tier",
                     )
 
         elif name == "run_command":
@@ -1711,10 +1983,10 @@ class AgentLoop:
             if enf.rule_enabled("trust-tier"):
                 allow = enf.tier_paths("execute")
                 if not _command_matches(command, allow, self.repo_root):
-                    raise ToolPolicyError(
+                    self._governance_verdict(
+                        "trust-tier",
                         f"Command '{command}' is not in the {enf.trust_tier} "
                         f"execute allowlist.",
-                        rule="trust-tier",
                     )
 
         elif name == "read_file":
@@ -1734,10 +2006,10 @@ class AgentLoop:
             if enf.rule_enabled("trust-tier"):
                 allow = enf.tier_paths("read")
                 if not _matches_glob(path, allow):
-                    raise ToolPolicyError(
+                    self._governance_verdict(
+                        "trust-tier",
                         f"Path '{path}' is not in the {enf.trust_tier} read "
                         f"allowlist.",
-                        rule="trust-tier",
                     )
         elif name == "list_directory":
             raw_path = str(args.get("path", "")).strip()
@@ -1756,10 +2028,10 @@ class AgentLoop:
             if enf.rule_enabled("trust-tier") and path not in ("", "."):
                 allow = enf.tier_paths("read")
                 if not _matches_glob(path, allow):
-                    raise ToolPolicyError(
+                    self._governance_verdict(
+                        "trust-tier",
                         f"Path '{path}' is not in the {enf.trust_tier} read "
                         f"allowlist.",
-                        rule="trust-tier",
                     )
         # search_files has no governance restriction (read-only metadata).
 
@@ -2059,10 +2331,25 @@ class AgentLoop:
         #
         # FIX 2: cwd is jailed to the workspace root (or a contained subdir a
         # leading `cd` names), so a compound `cd <abs> && x` is never required.
+        original_command = command
         run_cwd, command = self._resolve_run_cwd(command)
         env = {"CI": "1", "FORCE_COLOR": "0"}
         runner = self._get_sandbox_runner()
+        # FIX 1: command-writes are governed too. Snapshot the governed source
+        # subtree BEFORE the command so we can diff it AFTER -- a `python -c` /
+        # `node -e` / test script that writes files never passed write_file
+        # governance, so a snapshot+diff is the only way to catch (and audit) it.
+        # Prime the signed-artifact set from the PRE-command state first: a
+        # command that overwrites a signed artifact strips its signature block,
+        # so reading it AFTER would wrongly see it as unsigned/writable.
+        self._signed_core_artifacts()
+        before = self._snapshot_governed_tree()
         exit_code, output = runner.run(command, run_cwd, COMMAND_TIMEOUT_S, env)
+        # Audit every file the command changed + revert/deny any write to a
+        # forbidden / immutable / secret path (raises ToolPolicyError on a
+        # block-level violation, after reverting the offending change). Runs even
+        # on timeout: a killed command may still have written a secret first.
+        self._enforce_command_writes(original_command, before)
         if output.timed_out:
             return (
                 f"ERROR: command timed out after {COMMAND_TIMEOUT_S}s and was "
@@ -2079,6 +2366,216 @@ class AgentLoop:
         if stderr.strip():
             parts.append("stderr:\n" + _cap_command_output(stderr))
         return "\n".join(parts)
+
+    # --- command-write governance (FIX 1) -----------------------------------
+
+    def _snapshot_governed_tree(self) -> dict[str, tuple[str, bytes | None]]:
+        """Snapshot the governed source subtree as ``{rel_posix: (sha256, bytes)}``.
+
+        Build/dependency/VCS trees (see ``_DIFF_PRUNE_DIRS``) and the loop's own
+        `.signalos/agent-runs/` bookkeeping are pruned so a legitimate build that
+        churns node_modules/dist is never flagged and command auditing never
+        trips over the ledger it just wrote. Content bytes are kept (for revert)
+        up to a per-file cap; larger files keep hash-only (still diffable). The
+        whole walk is bounded by a file-count cap."""
+        snap: dict[str, tuple[str, bytes | None]] = {}
+        try:
+            root = self.repo_root.resolve()
+        except (OSError, RuntimeError):
+            root = self.repo_root
+        run_dir: Path | None = None
+        try:
+            run_dir = (self.repo_root / ".signalos" / "agent-runs").resolve()
+        except (OSError, RuntimeError):
+            run_dir = None
+        root_str = str(root)
+        count = 0
+        for dirpath, dirnames, filenames in os.walk(root_str):
+            kept: list[str] = []
+            for d in dirnames:
+                if d in _DIFF_PRUNE_DIRS:
+                    continue
+                if run_dir is not None:
+                    try:
+                        if (Path(dirpath) / d).resolve() == run_dir:
+                            continue
+                    except (OSError, RuntimeError):
+                        pass
+                kept.append(d)
+            dirnames[:] = kept
+            for fn in filenames:
+                if count >= _DIFF_MAX_FILES:
+                    return snap
+                full = os.path.join(dirpath, fn)
+                relp = os.path.relpath(full, root_str).replace("\\", "/")
+                try:
+                    data = Path(full).read_bytes()
+                except OSError:
+                    continue
+                count += 1
+                sha = hashlib.sha256(data).hexdigest()
+                content = data if len(data) <= _DIFF_CONTENT_CAP_BYTES else None
+                snap[relp] = (sha, content)
+        return snap
+
+    def _governed_write_violation(
+        self, rel: str, new_text: str | None, old_text: str | None
+    ) -> tuple[str, str] | None:
+        """Classify a command-induced file change against the SAME governance a
+        write_file would face. Returns ``(rule, reason)`` for a forbidden /
+        immutable / secret write, else None. Path-based checks (governance path,
+        forbidden path, plan-test, signed artifact) also fire on a DELETE (a
+        command that removes a signed artifact / plan test is a violation too)."""
+        enf = self._enforcement
+        normed = _norm(rel)
+        if _is_governance_path(rel) and not self._is_allowed_gate_output(rel):
+            return ("secret-block",
+                    f"wrote to governance path '{_keep_dot_rel(rel)}' (.signalos/)")
+        if enf is not None and _matches_forbidden_path(normed, enf.forbidden_paths):
+            return ("secret-block",
+                    f"wrote to always-forbidden path '{normed}'")
+        if self.active_gate == "G4" and _is_plan_test_path(normed):
+            return ("spec-immutable",
+                    f"modified plan-authored acceptance test '{normed}' (the "
+                    "signed spec is read-only during the build)")
+        if normed in self._signed_core_artifacts():
+            return ("signed-immutable",
+                    f"overwrote SIGNED governance artifact '{normed}'")
+        vc = self._verification_contract_violation(normed, new_text, old_text)
+        if vc is not None:
+            return ("verification-frozen", vc)
+        if new_text is not None:
+            try:
+                findings = _scan_write_secrets(normed, new_text)
+            except Exception:  # pragma: no cover - defensive
+                findings = []
+            if findings:
+                return ("secret-block",
+                        f"wrote secret-like content to '{normed}' ({findings[0]})")
+        return None
+
+    def _enforce_command_writes(
+        self, command: str, before: dict[str, tuple[str, bytes | None]]
+    ) -> None:
+        """Diff the governed tree against *before*, AUDIT every change, and
+        revert + DENY any write to a forbidden / immutable / secret path.
+
+        (a) block-mode violations are REVERTED (new file deleted, modified/deleted
+            protected file restored from the pre-command bytes) then surfaced as a
+            ToolPolicyError -- command-writes are as governed as write_file.
+        (b) EVERY changed file is audited with its content hash, so a command
+            write is as tamper-evident as a write_file (the bug: the audit row
+            logged the command with content_sha256=None and the file change was
+            invisible)."""
+        after = self._snapshot_governed_tree()
+        changed: list[tuple[str, str, str | None, bytes | None]] = []
+        for rel, (nsha, ncontent) in after.items():
+            old = before.get(rel)
+            if old is None:
+                changed.append((rel, "added", nsha, ncontent))
+            elif old[0] != nsha:
+                changed.append((rel, "modified", nsha, ncontent))
+        for rel, _old in before.items():
+            if rel not in after:
+                changed.append((rel, "deleted", None, None))
+        if not changed:
+            return
+
+        violations: list[tuple[str, str]] = []  # (rel, reason)
+        first_rule: str | None = None
+        audited = 0
+        for rel, ctype, nsha, ncontent in changed:
+            if audited < _DIFF_MAX_AUDIT_ROWS:
+                self._audit_command_change(command, rel, ctype, nsha)
+                audited += 1
+            new_text: str | None = None
+            if ncontent is not None:
+                try:
+                    new_text = ncontent.decode("utf-8")
+                except UnicodeDecodeError:
+                    new_text = None
+            old_entry = before.get(rel)
+            old_text: str | None = None
+            if old_entry is not None and old_entry[1] is not None:
+                try:
+                    old_text = old_entry[1].decode("utf-8")
+                except UnicodeDecodeError:
+                    old_text = None
+            verdict = self._governed_write_violation(rel, new_text, old_text)
+            if verdict is None:
+                continue
+            rule, reason = verdict
+            action = self._rule_action(rule)
+            if action == "block":
+                self._revert_command_change(rel, ctype, old_entry)
+                violations.append((rel, reason))
+                first_rule = first_rule or rule
+            elif action == "warn":
+                self._emit({
+                    "type": "governance_warning",
+                    "run_id": self.run_id,
+                    "rule": rule,
+                    "reason": f"command {ctype} {rel}: {reason}",
+                })
+                _LOGGER.warning("governance warn [%s]: command %s %s: %s",
+                                rule, ctype, rel, reason)
+        if audited >= _DIFF_MAX_AUDIT_ROWS and len(changed) > audited:
+            self._audit_command_change(
+                command, f"<{len(changed) - audited} more changes>", "summary", None)
+        if not violations:
+            return
+        detail = "; ".join(f"{rel} ({reason})" for rel, reason in violations[:5])
+        more = "" if len(violations) <= 5 else f" (+{len(violations) - 5} more)"
+        raise ToolPolicyError(
+            f"Command wrote to protected path(s); the change was reverted and "
+            f"denied -- {detail}{more}. Do not have a command write governance / "
+            "secret / signed / frozen files; write product source via write_file.",
+            rule=first_rule or "secret-block",
+        )
+
+    def _revert_command_change(
+        self, rel: str, ctype: str, old_entry: tuple[str, bytes | None] | None
+    ) -> None:
+        """Undo one governed command write: delete a newly-created file, or
+        restore a modified/deleted file from its pre-command bytes. Best-effort:
+        a revert failure is logged, never raised (the denial still stands)."""
+        target = self._resolve_in_workspace(rel)
+        if target is None:
+            return
+        try:
+            if ctype == "added":
+                if target.is_file():
+                    target.unlink()
+            else:  # modified / deleted -> restore the pre-command bytes
+                if old_entry is not None and old_entry[1] is not None:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(old_entry[1])
+        except OSError as exc:  # pragma: no cover - defensive
+            _LOGGER.warning("could not revert command write to %s: %s", rel, exc)
+
+    def _audit_command_change(
+        self, command: str, rel: str, change_type: str, content_sha: str | None
+    ) -> None:
+        """Append a tamper-evident ledger row for one command-induced file change
+        (FIX 1b). Same shape as _audit so existing ledger readers keep working;
+        the command is redacted like any other audited arg."""
+        self._seq += 1
+        entry = {
+            "seq": self._seq,
+            "run_id": self.run_id,
+            "ts": _now_iso(),
+            "tool": "run_command",
+            "tool_call_id": None,
+            "args": {"command": redact_secrets(command)[:2000], "path": rel},
+            "content_sha256": content_sha,
+            "status": "command-file-change",
+            "detail": f"command {change_type} {rel}",
+            "rule": "command-write-audit",
+            "change_type": change_type,
+        }
+        self._ensure_run_dir()
+        with open(self.ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _tool_search_files(self, pattern: str) -> str:
         if not pattern:
@@ -2148,16 +2645,21 @@ class AgentLoop:
         return "\n".join(entries)
 
     def _scan_write_content(self, rel_path: str, content: str) -> list[str]:
-        """Run secret and injection scans on write content (2.9)."""
+        """Run secret and injection scans on write content (2.9).
+
+        secret-block honors the observe/warn/block ladder (FIX 5): strict/default
+        DENIES a secret-bearing write (raise), warn LOGS + records the finding but
+        ALLOWS the write, off skips. When enforcement is not yet loaded we fail
+        CLOSED (block)."""
         warnings: list[str] = []
-        secret_block_enabled = (
-            self._enforcement is None
-            or self._enforcement.rule_enabled("secret-block")
+        secret_action = (
+            "block" if self._enforcement is None
+            else self._enforcement.rule_action("secret-block")
         )
         try:
             secret_findings = _scan_write_secrets(rel_path, content)
         except Exception as exc:
-            if secret_block_enabled:
+            if secret_action == "block":
                 raise ToolPolicyError(
                     f"Write denied: secret scan unavailable for '{rel_path}' "
                     f"({type(exc).__name__}: {exc}).",
@@ -2165,13 +2667,19 @@ class AgentLoop:
                 ) from exc
             warnings.append(f"secret scan error: {exc}")
         else:
-            if secret_findings and secret_block_enabled:
+            if secret_findings and secret_action == "block":
                 preview = "; ".join(secret_findings[:3])
                 more = "" if len(secret_findings) <= 3 else " ..."
                 raise ToolPolicyError(
                     f"Write denied: secret-like content detected in '{rel_path}' "
                     f"({preview}{more}). Rule: secret-block.",
                     rule="secret-block",
+                )
+            if secret_findings and secret_action == "warn":
+                self._governance_verdict(
+                    "secret-block",
+                    f"secret-like content detected in '{rel_path}' "
+                    f"({'; '.join(secret_findings[:3])})",
                 )
             warnings.extend(secret_findings)
 
