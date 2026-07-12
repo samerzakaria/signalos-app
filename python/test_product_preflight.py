@@ -104,7 +104,10 @@ class TestPreflightGatesTheBuild(unittest.TestCase):
 
         def recorder(role, adapter, system_prompt, user_message):
             calls.append(role)
-            return "Status: DONE"
+            # Reviewers must clearly PASS (the reviewer hard wall requires it);
+            # implementers report DONE. A bare non-verdict from a reviewer is
+            # fail-closed by parse_verdict, so emit a realistic verdict here.
+            return "VERDICT: PASS" if role.endswith("reviewer") else "Status: DONE"
 
         res = run_subagent_driven_build(
             root, adapter="A", prompt="x", run_agent=recorder,

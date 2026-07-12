@@ -30,15 +30,36 @@ const _DELIVERY_ACTION = /\b(build|create|make|develop|scaffold|generate|ship|im
 const _DELIVERY_ARTIFACT = /\b(app|application|system|tool|product|site|website|web\s*page|html|css|javascript|typescript|component|page|screen|view|form|dashboard|api|service|platform|feature|prototype|mvp|game|tracker|manager|portal|store|bot|workflow|ui|ux|file|code|module|library|package|auth|authentication|login|signup|logout|endpoint|route|router|hook|model|schema|migration|cli|script|integration|middleware|worker|job|queue|database|function|class|widget|plugin)\b/i;
 const _PRODUCT_OUTCOME = /\b(i\s+want|i\s+need|we\s+need|let'?s|please)\b[\s\S]*\b(app|application|system|tool|site|website|dashboard|game|tracker|manager|portal|store|bot|workflow|ui|page|module|library|package|auth|authentication|login|endpoint|route|api|feature|integration)\b/i;
 const _PURE_QUESTION = /^(what|why|how|when|where|who|which|explain|tell me|describe|show me|can you tell)\b/i;
+// Imperative edit/implementation follow-ups whose object is the CURRENT product
+// or a pronoun ("fix it", "refactor this", "undo that", "make it dark mode",
+// "remove the login page"). Statelessly these look conversational -- no artifact
+// noun to pair with an action -- so they routed to the write-forbidden
+// conversation mode (agent:run, execution_context="conversation") and the
+// user's change was silently dropped. Against an EXISTING product they ARE build
+// work and must reach the write-capable path. Genuine questions are excluded by
+// _PURE_QUESTION before this ever runs.
+const _IMPERATIVE_EDIT = /\b(fix|change|remove|delete|drop|refactor|rename|replace|undo|revert|redo|add|update|modify|edit|redesign|restyle|rework|tweak|adjust|improve|polish|simplify|make\s+it|turn\s+it\s+into|convert\s+it)\b/i;
 // A trailing "?" alone must NOT force conversational: "Can you build me an
 // app?" is a build request phrased politely. Only a genuine leading-
 // interrogative question ("what is X?", "how does Y work?") stays
 // conversational, via _PURE_QUESTION. (Claim 8.)
-export function isDeliveryIntent(text) {
+//
+// `context.hasProduct` (a product/workspace is already open) turns an imperative
+// edit into a build request -- the context-aware routing the backend also
+// enforces as a safety net. Callers without context stay backward-compatible
+// (a bare imperative with no product is left conversational, since there is
+// nothing to change yet).
+export function isDeliveryIntent(text, context = {}) {
   const t = (text || '').trim();
   if (!t || t.startsWith('/')) return false;
   if (_PURE_QUESTION.test(t)) return false;
-  return (_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t);
+  if ((_DELIVERY_ACTION.test(t) && _DELIVERY_ARTIFACT.test(t)) || _PRODUCT_OUTCOME.test(t)) {
+    return true;
+  }
+  // Context-aware: an imperative edit/implementation command against an existing
+  // product is build work, even without an explicit artifact noun.
+  if (context && context.hasProduct && _IMPERATIVE_EDIT.test(t)) return true;
+  return false;
 }
 
 async function buildEntrypointAllowed() {
@@ -215,13 +236,18 @@ async function sendMsg() {
   // wave-engine + LLM-stream code remains below but is unreachable for NL.)
   {
     let buildPrecheckComplete = false;
+    // An open workspace means there is already a product to change, so an
+    // imperative edit ("fix it", "remove the login page", "make it dark mode")
+    // is build work -- route it to the write-capable path, not conversational
+    // agent:run where writes are refused. (The backend re-checks this too.)
+    const hasProduct = !!String(state.workspace || '').trim();
     try {
       // A build/delivery request ("build a task manager", "create an app
       // that...") starts the governed G0->G5 delivery via `agent:deliver`
       // (GateOrchestrator). Any other message is a normal `agent:run` turn.
       // Both stream via the "agent:event" channel; gate pauses, verdicts,
       // and cancel/resume are driven by agentEvents.ts.
-      const isDelivery = isDeliveryIntent(val);
+      const isDelivery = isDeliveryIntent(val, { hasProduct });
       if (isDelivery) {
         // Guard before the precheck: a build with no active project would fail
         // the Rust precheck with "No workspace selected". Route to New Project.
@@ -263,7 +289,7 @@ async function sendMsg() {
         state.busy = false;
         return;
       }
-      const message = isDeliveryIntent(val) && !buildPrecheckComplete
+      const message = isDeliveryIntent(val, { hasProduct }) && !buildPrecheckComplete
         ? `Build precheck failed: ${raw}`
         : providerConnectionMessage(e, state.ai || 'AI provider');
       state.chatBubbles = [...state.chatBubbles, {

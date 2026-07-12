@@ -260,3 +260,83 @@ def test_wave_begin_persists_into_active_project_namespace(workspace: Path) -> N
     resp = _handle("wave:begin", ["Build a todo app"], project_id="default")
     assert resp["ok"], resp
     assert default_state.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Backend-owned, context-aware agent routing (agent:run vs agent:deliver).
+#
+# The hole: an imperative product-change follow-up ("remove the login page",
+# "fix it", "refactor this") arriving as a conversational agent:run runs in
+# execution_context="conversation" where writes are DENIED -- so the user's
+# change is silently dropped. Against an EXISTING product these must re-route
+# to the write-capable governed build (agent:deliver). Genuine questions, and
+# a bare workspace with no product yet, stay conversational.
+# ---------------------------------------------------------------------------
+
+
+def _seed_product_src(root: Path) -> None:
+    src = root / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "App.tsx").write_text("export function App(){ return null }\n", encoding="utf-8")
+
+
+def test_is_product_change_request_imperatives_vs_questions() -> None:
+    change = ["fix it", "remove the login page", "delete the login page",
+              "refactor this", "make it dark mode", "undo that",
+              "rename the component", "revert the last change"]
+    for p in change:
+        assert ipc._is_product_change_request(p), p
+    keep = ["how does the auth flow work?", "what is a closure?",
+            "why does removing login break the build?", "explain the store",
+            "", "/signal-status", "does it support dark mode?"]
+    for p in keep:
+        assert not ipc._is_product_change_request(p), p
+
+
+def test_has_prior_delivery_true_with_product_false_when_empty(workspace: Path) -> None:
+    # bare workspace fixture: only an empty .signalos/ -> no product yet
+    assert ipc._has_prior_delivery(workspace) is False
+    _seed_product_src(workspace)
+    assert ipc._has_prior_delivery(workspace) is True
+
+
+def test_imperative_edit_against_existing_product_reroutes_to_deliver(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_product_src(workspace)  # a product exists to change
+    called: dict = {}
+    monkeypatch.setattr(ipc, "agent_run",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "run"))
+    monkeypatch.setattr(ipc, "agent_deliver",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "deliver"))
+    ipc.route_agent("r1", "agent:run",
+                    [json.dumps({"prompt": "remove the login page", "provider": "p", "model": "m"})])
+    assert called["cmd"] == "deliver"  # write-capable build path
+
+
+def test_imperative_edit_with_no_product_stays_conversational(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No product on disk yet -> nothing to change -> normal conversational turn.
+    called: dict = {}
+    monkeypatch.setattr(ipc, "agent_run",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "run"))
+    monkeypatch.setattr(ipc, "agent_deliver",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "deliver"))
+    ipc.route_agent("r1", "agent:run",
+                    [json.dumps({"prompt": "fix it", "provider": "p", "model": "m"})])
+    assert called["cmd"] == "run"
+
+
+def test_genuine_question_stays_conversational_even_with_product(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_product_src(workspace)  # product exists, but this is a question
+    called: dict = {}
+    monkeypatch.setattr(ipc, "agent_run",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "run"))
+    monkeypatch.setattr(ipc, "agent_deliver",
+                        lambda req, args, project_id="default": called.setdefault("cmd", "deliver"))
+    ipc.route_agent("r1", "agent:run",
+                    [json.dumps({"prompt": "how does the auth flow work?", "provider": "p", "model": "m"})])
+    assert called["cmd"] == "run"

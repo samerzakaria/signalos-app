@@ -46,7 +46,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 }));
 
 const { isDeliveryIntent } = await import('../chat.js') as unknown as {
-  isDeliveryIntent: (t: string) => boolean;
+  isDeliveryIntent: (t: string, ctx?: { hasProduct?: boolean }) => boolean;
 };
 
 describe('isDeliveryIntent — build vs. conversation routing', () => {
@@ -93,5 +93,45 @@ describe('isDeliveryIntent — build vs. conversation routing', () => {
     // Same sentence with/without the "?" must classify the same way.
     expect(isDeliveryIntent('build a dashboard')).toBe(true);
     expect(isDeliveryIntent('build a dashboard?')).toBe(true);
+  });
+});
+
+describe('isDeliveryIntent — imperative edit follow-ups against an existing product', () => {
+  // The hole: imperative edits with no artifact noun ("fix it", "refactor this",
+  // "undo that", "make it dark mode") and change verbs missing from the action
+  // list ("remove"/"delete") all fell through to conversational agent:run, where
+  // writes are refused -- so the user's change was silently dropped.
+  const imperativeEdits = [
+    'fix it',
+    'remove the login page',
+    'delete the login page',
+    'refactor this',
+    'make it dark mode',
+    'undo that',
+    'rename the component',
+    'change the header color',
+    'revert the last change',
+    'simplify this function',
+  ];
+  for (const prompt of imperativeEdits) {
+    it(`routes "${prompt}" to the build path WHEN a product exists`, () => {
+      expect(isDeliveryIntent(prompt, { hasProduct: true })).toBe(true);
+    });
+    it(`leaves "${prompt}" conversational when NO product exists yet`, () => {
+      // Nothing to change yet -> not a silent drop; stays a normal turn.
+      expect(isDeliveryIntent(prompt, { hasProduct: false })).toBe(false);
+      expect(isDeliveryIntent(prompt)).toBe(false); // no context == no product
+    });
+  }
+
+  it('keeps genuine questions conversational even with a product open', () => {
+    expect(isDeliveryIntent('how does the auth flow work?', { hasProduct: true })).toBe(false);
+    expect(isDeliveryIntent('what is a closure?', { hasProduct: true })).toBe(false);
+    expect(isDeliveryIntent('why does removing login break the build?', { hasProduct: true })).toBe(false);
+  });
+
+  it('still routes explicit build requests to delivery regardless of context', () => {
+    expect(isDeliveryIntent('build a dashboard', { hasProduct: false })).toBe(true);
+    expect(isDeliveryIntent('Create a login page', { hasProduct: true })).toBe(true);
   });
 });

@@ -682,10 +682,11 @@ def _reviewer_system_prompt(kind: str) -> str:
             else "code-quality reviewer")
     return "\n".join([
         f"You are the {role} subagent in a SignalOS-governed build. You have "
-        "read tools (read_file, search_files, list_directory) and may run "
-        "read-only commands. You are a REVIEWER: do NOT modify code -- the "
-        "implementer fixes any issues you find. Verify by READING the actual "
-        "code on disk, never by trusting the implementer's report.",
+        "READ-ONLY tools only (read_file, search_files, list_directory) -- no "
+        "write, edit, or command tools exist for you. You are a REVIEWER: you "
+        "cannot and must not modify code -- the implementer fixes any issues you "
+        "find. Verify by READING the actual code on disk, never by trusting the "
+        "implementer's report.",
         "",
         body,
         "",
@@ -1088,6 +1089,93 @@ class _TraceMatrix:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Reviewer read-only tool set (enforced by the tool schema, not prompt text)
+#
+# A REVIEWER must never modify code -- the implementer fixes what it finds. But
+# AgentLoop advertises the FULL AGENT_TOOLS (write_file / edit_file /
+# run_command) to every loop it runs, so "read-only" lived only in the
+# reviewer's prompt text and a reviewer COULD write. AgentLoop builds its tool
+# list from the module-global AGENT_TOOLS and exposes no per-loop tool override,
+# so the smallest surface we own is the ADAPTER: wrap the reviewer's adapter and
+# strip every non-read-only tool from the advertised set BEFORE the model sees
+# it. The reviewer is then physically unable to call write_file / edit_file /
+# run_command -- those tools do not exist in the schema it receives.
+#
+# INTEGRATION FLAG: a truly restricted, verification-ONLY run_command for
+# reviewers (rather than dropping run_command entirely) needs an agent_loop
+# capability we do not own -- a per-loop tool set, or a read-only execution mode
+# on AgentLoop. Until then reviewers verify by READING the code on disk
+# (read_file / search_files / list_directory), which is exactly what the
+# reviewer contract asks for; command execution stays with the write-capable
+# implementer/fixer loops.
+_REVIEWER_READONLY_TOOLS: frozenset = frozenset(
+    {"read_file", "search_files", "list_directory"})
+
+
+def _tool_name(tool: Any) -> str:
+    """Function name of an OpenAI-shaped tool dict (best-effort, '' on shape
+    mismatch so an unrecognized tool is filtered OUT, fail-closed)."""
+    if isinstance(tool, dict):
+        fn = tool.get("function")
+        if isinstance(fn, dict):
+            return str(fn.get("name") or "")
+        return str(tool.get("name") or "")
+    return ""
+
+
+def _filter_readonly_tools(tools: Optional[list]) -> Optional[list]:
+    """Keep only read-only tools from an advertised tool list; None stays None
+    (a text-only turn advertises no tools)."""
+    if not tools:
+        return tools
+    return [t for t in tools if _tool_name(t) in _REVIEWER_READONLY_TOOLS]
+
+
+class _ReadOnlyReviewerAdapter:
+    """Adapter proxy that hands a reviewer's AgentLoop ONLY read-only tools.
+
+    Delegates every attribute/behaviour to the wrapped adapter, but intercepts
+    chat() to strip write/command tools from the advertised set. This enforces
+    the reviewer's read-only contract through the actual tool schema the model
+    receives -- not prompt text alone -- so a reviewer cannot write files or run
+    commands even if it tries."""
+
+    def __init__(self, inner: Any) -> None:
+        object.__setattr__(self, "_inner", inner)
+
+    @property
+    def supports_tool_calls(self) -> bool:
+        return bool(getattr(self._inner, "supports_tool_calls", True))
+
+    def chat(self, *, messages, tools=None, tool_choice=None, **kwargs):
+        readonly = _filter_readonly_tools(tools)
+        if tool_choice is not None:
+            return self._inner.chat(messages=messages, tools=readonly,
+                                    tool_choice=tool_choice, **kwargs)
+        return self._inner.chat(messages=messages, tools=readonly, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for attributes not defined on this proxy (e.g. model,
+        # supports_streaming) -> delegate to the real adapter.
+        return getattr(object.__getattribute__(self, "_inner"), name)
+
+
+def _is_reviewer_role(role: str) -> bool:
+    """Reviewer roles get the read-only tool set. Mirrors the reviewer tool
+    budget's own role test (role ends with 'reviewer')."""
+    return role.endswith("reviewer")
+
+
+def _loop_adapter_for_role(role: str, adapter: Any) -> Any:
+    """The adapter handed to the AgentLoop for *role*: reviewers get a read-only
+    proxy (no write_file / edit_file / run_command); implementers, fixers, and
+    the evidence pass keep the real write-capable adapter."""
+    if _is_reviewer_role(role):
+        return _ReadOnlyReviewerAdapter(adapter)
+    return adapter
+
+
 def _default_run_agent(
     repo_root: Path,
     enforcement_provider: Any,
@@ -1107,7 +1195,10 @@ def _default_run_agent(
     def run(role: str, adapter: Any, system_prompt: str, user_message: str) -> str:
         limit = rev_budget if role.endswith("reviewer") else impl_budget
         loop = AgentLoop(
-            adapter=adapter,
+            # Reviewers get a READ-ONLY tool set (no write_file / edit_file /
+            # run_command) via the adapter proxy -- enforced by the schema the
+            # model receives, not just the reviewer prompt.
+            adapter=_loop_adapter_for_role(role, adapter),
             repo_root=repo_root,
             enforcement_provider=enforcement_provider,
             emit=emit,
@@ -1528,21 +1619,78 @@ def run_subagent_driven_build(
         )
 
     # PHASE 3 -- independent review on the GREEN product (spec, then quality).
+    # The reviewer is a HARD WALL, not an advisory pass: a reviewer FAIL is NOT
+    # cleared by running one fixer and re-confirming the MECHANICAL build is
+    # green. The reviewer must RE-RUN and return PASS -- an unresolved FAIL
+    # blocks completion (green tests must never override an open reviewer
+    # finding). The re-review/fix cycle is bounded (per-task fix budget) so a
+    # stubborn FAIL cannot spin forever; when the budget is spent still-red, the
+    # build fails-fast BEFORE the evidence pass, exactly like the integration
+    # wall -- the missing Build Evidence artifact keeps the sign fail-closed.
+    review_blocked: list[str] = []
+    review_budget = max(1, per_task_cycles)
     if green:
         for kind, sys_prompt in (("spec", spec_sys), ("code", cq_sys)):
             verdict = run(f"{kind}-reviewer", reviewer, sys_prompt,
                           _final_review_message(kind, prompt, stack))
             calls += 1
-            if parse_verdict(verdict) == "FAIL":
+            v = parse_verdict(verdict)
+            attempts = 0
+            while v == "FAIL" and green and attempts < review_budget:
+                attempts += 1
                 label = "requirements" if kind == "spec" else "quality"
-                emit({"type": "system", "text": f"Applying independent {label} review feedback."})
+                emit({"type": "system",
+                      "text": f"Applying independent {label} review feedback, then "
+                              "re-reviewing (a reviewer PASS is required to finish)."})
                 run("fixer", adapter, impl_sys,
                     _fixer_message("Independent reviewer feedback:\n" + verdict,
                                    repo_root, stack))
                 calls += 1
                 review_repairs += 1  # an independent-review FIX pass
-                green, _ = check(repo_root)  # a review fix must not break the build
-            summary.append(f"{kind}_review={parse_verdict(verdict)}")
+                green, last_errors = check(repo_root)  # a review fix must not break the build
+                if not green:
+                    break  # the fix broke the mechanical build -> handled below
+                # HARD WALL: re-run the SAME reviewer on the reworked product and
+                # require a final PASS. Green tests alone must not clear a FAIL.
+                verdict = run(f"{kind}-reviewer", reviewer, sys_prompt,
+                              _final_review_message(kind, prompt, stack))
+                calls += 1
+                v = parse_verdict(verdict)
+            summary.append(f"{kind}_review={v}")
+            if v == "FAIL":
+                # Persist the blocking finding (its last, most-specific line).
+                last_line = next((l.strip() for l in reversed(verdict.splitlines())
+                                  if l.strip()), "unresolved reviewer FAIL")
+                review_blocked.append(f"{kind}: {last_line}")
+            if not green:
+                break  # a broken build during rework: stop reviewing, fail below
+
+    # Reviewer HARD WALL: an unresolved reviewer FAIL (or a review fix that broke
+    # the mechanical build) blocks completion. Fail-fast BEFORE the evidence
+    # pass so no BUILD_EVIDENCE artifact is written -- its absence keeps the sign
+    # fail-closed, mirroring the integration fail-fast. Green mechanical tests do
+    # NOT override an open reviewer finding.
+    if not green or review_blocked:
+        matrix.persist(phase="review-blocked", integration_green=green,
+                       review_blocked=list(review_blocked), **_repair_metrics())
+        summary.append(_repair_summary_line())
+        if usage.get("in") is not None or usage.get("out") is not None:
+            summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
+        detail = ("the mechanical build broke during review rework"
+                  if not green else "; ".join(review_blocked))
+        return LoopResult(
+            run_id="g4-subagent-build",
+            status="budget_exhausted",
+            final_text=("Subagent-driven build STOPPED (fail-fast): an independent "
+                        "reviewer finding is unresolved and blocks completion "
+                        "(green tests do not override it).\n" + detail + "\n"
+                        + "\n".join(summary)),
+            tool_calls_made=calls,
+            messages=[],
+            error=f"reviewer hard wall: {detail}",
+            tokens_in=usage.get("in"),
+            tokens_out=usage.get("out"),
+        )
 
     # PHASE 3b -- WIRING advisory lint (informational, NEVER pass/fail). The
     # old in-loop "wiring reviewer" subagent pass was DELETED: wiring is now

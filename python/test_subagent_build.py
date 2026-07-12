@@ -697,5 +697,165 @@ class TestRepairAccounting(unittest.TestCase):
         self.assertGreaterEqual(tr["repair_attempts"], 1)
 
 
+# ---------------------------------------------------------------------------
+# Reviewer HARD WALL: a reviewer FAIL must gate completion. Running one fixer
+# and re-confirming the mechanical build is green does NOT clear an unresolved
+# reviewer finding -- the reviewer must RE-RUN and return PASS. And a reviewer
+# must be constructed READ-ONLY (no write tools), enforced by the tool set, not
+# just prompt text.
+# ---------------------------------------------------------------------------
+
+
+class TestReviewerHardWall(unittest.TestCase):
+    def test_persistent_reviewer_fail_blocks_completion_even_when_tests_green(self):
+        """RED-FIRST: with the pre-fix code a spec-review FAIL runs ONE fixer,
+        re-checks green, and the build still COMPLETES + writes evidence -- the
+        verdict never gates. The wall: an unresolved FAIL must NOT complete and
+        must NOT reach the paid evidence pass."""
+        rec = Recorder(script={"spec-reviewer": ["VERDICT: FAIL: missing delete"] * 12})
+        res = run_subagent_driven_build(_repo(), adapter="A", prompt="x",
+                                        run_agent=rec, build_check=_green)
+        self.assertNotEqual(res.status, "completed")   # unresolved FAIL -> not done
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertNotIn("evidence", rec.roles())      # fail-fast before paid evidence
+        self.assertIn("reviewer hard wall", res.error or "")
+        # the reviewer was actually RE-RUN (not judged once) -- more than one call
+        self.assertGreater(rec.roles().count("spec-reviewer"), 1)
+
+    def test_reviewer_fail_then_pass_on_rerun_completes(self):
+        """A FAIL the fixer resolves: the RE-RUN reviewer PASSES, so the build
+        completes and reaches evidence. This locks the required re-run+PASS."""
+        rec = Recorder(script={"spec-reviewer": ["VERDICT: FAIL: missing delete",
+                                                 "VERDICT: PASS"]})
+        res = run_subagent_driven_build(_repo(), adapter="A", prompt="x",
+                                        run_agent=rec, build_check=_green)
+        self.assertEqual(res.status, "completed")
+        roles = rec.roles()
+        # spec: FAIL -> fixer -> re-run spec (PASS) -> code-review -> evidence
+        self.assertEqual(roles.count("spec-reviewer"), 2)  # re-ran to confirm PASS
+        self.assertIn("fixer", roles)
+        self.assertIn("evidence", roles)
+
+    def test_review_blocked_finding_is_persisted_to_traceability(self):
+        """The blocking finding is written to the machine-readable trace so a
+        grader/audit can see WHY the build stopped."""
+        rec = Recorder(script={"code-reviewer": ["VERDICT: FAIL: God object in App.tsx"] * 12})
+        d = _repo()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=_green)
+        self.assertEqual(res.status, "budget_exhausted")
+        tr = _trace(d)
+        self.assertEqual(tr.get("phase"), "review-blocked")
+        blocked = tr.get("review_blocked") or []
+        self.assertTrue(any("code:" in b for b in blocked), blocked)
+
+
+class TestReviewerReadOnlyTools(unittest.TestCase):
+    def test_reviewer_roles_are_readonly_wrapped_writers_are_not(self):
+        """RED-FIRST: the read-only wrapper/selector did not exist, so reviewers
+        ran with the full write-capable adapter. Reviewers must be wrapped;
+        implementer/fixer/evidence must keep the real adapter."""
+        from signalos_lib.product.subagent_build import (
+            _ReadOnlyReviewerAdapter, _loop_adapter_for_role)
+        base = object()
+        self.assertIsInstance(_loop_adapter_for_role("spec-reviewer", base),
+                              _ReadOnlyReviewerAdapter)
+        self.assertIsInstance(_loop_adapter_for_role("code-reviewer", base),
+                              _ReadOnlyReviewerAdapter)
+        # writers keep the real, write-capable adapter (identity preserved)
+        self.assertIs(_loop_adapter_for_role("implementer", base), base)
+        self.assertIs(_loop_adapter_for_role("fixer", base), base)
+        self.assertIs(_loop_adapter_for_role("evidence", base), base)
+
+    def test_readonly_adapter_strips_write_and_command_tools(self):
+        """The reviewer's AgentLoop is handed a tool set WITHOUT write_file /
+        edit_file / run_command -- enforced by the schema, not the prompt."""
+        from signalos_lib.product.agent_loop import AGENT_TOOLS
+        from signalos_lib.product.subagent_build import _ReadOnlyReviewerAdapter
+
+        class _RecordingInner:
+            supports_tool_calls = True
+
+            def __init__(self):
+                self.tools_seen = None
+                self.tool_choice_seen = "unset"
+
+            def chat(self, *, messages, tools=None, tool_choice=None, **kw):
+                self.tools_seen = tools
+                self.tool_choice_seen = tool_choice
+                return "resp"
+
+        inner = _RecordingInner()
+        wrapped = _ReadOnlyReviewerAdapter(inner)
+        all_tools = [t.as_openai_tool() for t in AGENT_TOOLS]
+        self.assertTrue(any(t["function"]["name"] == "write_file" for t in all_tools))
+
+        wrapped.chat(messages=[], tools=all_tools)
+        names = {t["function"]["name"] for t in inner.tools_seen}
+        self.assertNotIn("write_file", names)
+        self.assertNotIn("edit_file", names)
+        self.assertNotIn("run_command", names)
+        self.assertEqual(names, {"read_file", "search_files", "list_directory"})
+        # delegation + escalation path intact
+        self.assertTrue(wrapped.supports_tool_calls)
+        wrapped.chat(messages=[], tools=all_tools, tool_choice="required")
+        self.assertEqual(inner.tool_choice_seen, "required")
+        # a text-only turn (tools=None) stays None
+        wrapped.chat(messages=[], tools=None)
+        self.assertIsNone(inner.tools_seen)
+
+    def test_default_run_agent_runs_reviewer_with_only_readonly_tools(self):
+        """End-to-end through _default_run_agent: a reviewer role's real loop
+        only ever advertises read-only tools to the model."""
+        from signalos_lib.product.subagent_build import _default_run_agent
+        from signalos_lib.harness import AgentResponse, TokenUsage
+        from signalos_lib.harness import ToolCall
+        from signalos_lib.product.provider_adapter import (
+            ProviderAdapter, ProviderCapabilities)
+        from signalos_lib.product.enforcement_state import (
+            StaticEnforcementProvider, seed_trust_tier_paths)
+
+        d = Path(tempfile.mkdtemp())
+        seed_trust_tier_paths(d)
+
+        class _RecordingProvider:
+            supports_tool_calls = True
+            supports_streaming = False
+
+            def __init__(self):
+                self.tools_seen: list = []
+                self._script = [
+                    AgentResponse(content="", tool_calls=[
+                        ToolCall(id="c1", name="list_directory", arguments={"path": "."})],
+                        stop_reason="tool_use", usage=TokenUsage(1, 1)),
+                    AgentResponse(content="VERDICT: PASS", tool_calls=None,
+                                  stop_reason="end_turn", usage=TokenUsage(1, 1)),
+                ]
+
+            def chat(self, *, messages, model=None, tools=None, stream=False, tool_choice=None):
+                self.tools_seen.append(tools)
+                return self._script.pop(0)
+
+        provider = _RecordingProvider()
+        caps = ProviderCapabilities(model="m", supports_tool_calls=True,
+                                    supports_streaming=False, context_length=200_000)
+        adapter = ProviderAdapter(model="m", provider=provider, capabilities=caps)
+        run = _default_run_agent(
+            d, StaticEnforcementProvider(trust_tier="T3"), lambda _e: None,
+            "default", [0, 1, 2, 3])
+
+        report = run("spec-reviewer", adapter, "sys", "review it")
+        self.assertIn("VERDICT: PASS", report)
+        # every advertised tool set the reviewer saw excluded writes
+        for tools in provider.tools_seen:
+            if not tools:
+                continue
+            names = {t["function"]["name"] for t in tools}
+            self.assertNotIn("write_file", names)
+            self.assertNotIn("edit_file", names)
+            self.assertNotIn("run_command", names)
+            self.assertIn("read_file", names)
+
+
 if __name__ == "__main__":
     unittest.main()
