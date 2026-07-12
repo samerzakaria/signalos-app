@@ -9,6 +9,7 @@ import sys
 import datetime
 import os
 import queue
+import re
 import shlex
 import subprocess
 import threading
@@ -588,6 +589,88 @@ def route(req_id: str, command: str, args: list[str], project_id: str = "default
     return err(req_id, f"Unknown command: {command}")
 
 
+# Imperative product-change verbs: an edit/implementation command whose object
+# is the CURRENT product ("fix it", "remove the login page", "refactor this",
+# "make it dark mode", "undo that"). These need a WRITE-capable execution
+# context; routing them to the conversational agent:run silently drops the
+# change (writes are denied there).
+_PRODUCT_CHANGE_RE = re.compile(
+    r"\b(fix|change|remove|delete|drop|refactor|rename|replace|undo|revert|redo|"
+    r"add|update|modify|edit|redesign|restyle|rework|tweak|adjust|improve|polish|"
+    r"simplify|make\s+it|turn\s+it\s+into|convert\s+it)\b", re.I)
+# A genuine leading-interrogative question stays conversational even if it also
+# mentions a change verb ("why does removing login break the build?").
+_QUESTION_LEAD_RE = re.compile(
+    r"^\s*(what|why|how|when|where|who|which|is|are|does|do|did|should|could|"
+    r"would|explain|tell\s+me|describe|show\s+me)\b", re.I)
+
+_PRODUCT_SOURCE_DIRS = ("src", "app", "components", "pages", "lib")
+_PRODUCT_CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go",
+                          ".rs", ".cs", ".java", ".kt", ".dart", ".rb", ".php",
+                          ".html", ".css", ".scss")
+
+
+def _is_product_change_request(prompt: str) -> bool:
+    """True when *prompt* is an imperative edit/implementation command (not a
+    question). Statelessly it may look conversational; combined with an existing
+    product (below) it is a build request that must reach a write-capable loop."""
+    t = (prompt or "").strip()
+    if not t or t.startswith("/"):
+        return False
+    if _QUESTION_LEAD_RE.match(t):
+        return False
+    return bool(_PRODUCT_CHANGE_RE.search(t))
+
+
+def _has_prior_delivery(repo_root: Path) -> bool:
+    """Context signal for routing: does a product already exist to change?
+    True when a prior build left product source or a traceability trace on disk.
+    A bare/empty workspace (no product yet) returns False so a first-time
+    imperative like 'fix it' is NOT force-routed into a delivery."""
+    try:
+        if (repo_root / ".signalos" / "traceability.json").is_file():
+            return True
+        for d in _PRODUCT_SOURCE_DIRS:
+            base = repo_root / d
+            if not base.is_dir():
+                continue
+            for p in base.rglob("*"):
+                if not p.is_file() or p.suffix not in _PRODUCT_CODE_SUFFIXES:
+                    continue
+                n = p.name.lower()
+                if ".test." in n or ".spec." in n or n.startswith("test_"):
+                    continue
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _resolve_agent_command(command: str, raw_args: Any, repo_root: Path) -> str:
+    """Backend-owned, context-aware routing safety net (agent:run vs deliver).
+
+    The desktop classifies intent from message text, but an imperative
+    product-change follow-up ("remove the login page", "fix it", "refactor
+    this") can still arrive as a conversational agent:run -- where writes are
+    DENIED (execution_context="conversation"), so the change is silently lost.
+    When such a request lands AND a product already exists on disk to change,
+    re-route it to the write-capable governed build (agent:deliver), whose gate
+    walk pauses for the user's verdict (an explicit confirmation, never a silent
+    apply). A genuine question, or a bare workspace with no product yet, is left
+    untouched as agent:run."""
+    if command != "agent:run":
+        return command
+    try:
+        prompt = str(_coerce_agent_args(raw_args).get("prompt") or "").strip()
+    except (TypeError, ValueError):
+        return command
+    if not _is_product_change_request(prompt):
+        return command
+    if not _has_prior_delivery(repo_root):
+        return command
+    return "agent:deliver"
+
+
 def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "default") -> dict:
     """Dispatch Phase 3 Stream A agent:* commands.
 
@@ -598,6 +681,12 @@ def route_agent(req_id: str, command: str, raw_args: Any, project_id: str = "def
     summary. raw_args is a SINGLE JSON object (not the legacy string list).
     """
     if command == "agent:run":
+        # Safety net: an imperative product-change request against an existing
+        # product must reach the write-capable build path, not conversational
+        # agent:run (which refuses writes). Re-route when both hold.
+        resolved = _resolve_agent_command(command, raw_args, Path(os.getcwd()))
+        if resolved == "agent:deliver":
+            return agent_deliver(req_id, raw_args, project_id=project_id)
         return agent_run(req_id, raw_args, project_id=project_id)
     if command == "agent:deliver":
         return agent_deliver(req_id, raw_args, project_id=project_id)
