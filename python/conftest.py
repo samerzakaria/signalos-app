@@ -65,11 +65,16 @@ def _hermetic_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 # Gate-artifact seeding (fail-closed gate detection)
 #
-# status._detect_gates counts a gate as passed only when its artifact EXISTS
-# *and carries a signature* (read via signalos_lib.sign.check_gate; signatures
-# are the YAML blocks appended by signalos_lib.sign.sign_artifact). A bare
-# seeded file is honest "drafted, not approved" state and no longer counts,
-# so fixtures that simulate already-passed gates must sign what they seed.
+# status._detect_gates counts a gate as passed only when it is VALIDLY signed
+# per the single strict validator (signalos_lib.sign.is_gate_signed_strict):
+# every required artifact exists, carries a non-draft APPROVED signature from an
+# authorized role with a valid current hash, is AUDIT-LINKED in the workspace
+# AUDIT_TRAIL.jsonl, and is non-revoked. A bare seeded file is honest "drafted,
+# not approved" state and does not count; a seeded file with only an in-file
+# signature block (no audit row) is likewise NOT signed under the strict
+# validator. Fixtures that simulate already-passed gates therefore mirror the
+# real `signalos sign` CLI path: write the signature block AND append a matching
+# audit row (sign._append_audit) to the workspace-global trail.
 # ---------------------------------------------------------------------------
 
 # One plausible signing role per gate, from the gate manifest
@@ -101,22 +106,50 @@ def seed_signed_artifact(
     role: str | None = None,
     signer: str | None = None,
 ) -> Path:
-    """Write a gate artifact under *base* AND sign it for *gate*.
+    """Write a gate artifact under *base*, sign it, AND audit-link it for *gate*.
 
     Use this (not a bare write_text) whenever a fixture seeds an artifact
-    file to simulate a passed gate — gate detection is signature-based and
-    fail-closed. Returns the artifact Path.
+    file to simulate a passed gate — gate detection is strict and fail-closed
+    (see the section comment above). Returns the artifact Path.
+
+    The AUDIT_TRAIL.jsonl is workspace-global (never per-project), so when *base*
+    is a namespaced governance dir (.signalos/projects/<id>/governance) the audit
+    row is written to the WORKSPACE root's .signalos/, exactly where the strict
+    validator (validate_gate) reads it.
     """
-    from signalos_lib.sign import sign_artifact
+    from signalos_lib.sign import sign_artifact, _append_audit
 
     gate = gate.upper()
     if role is None:
         role = GATE_SEED_ROLES[gate]
-    path = Path(base).joinpath(*rel_path.replace("\\", "/").split("/"))
+    base = Path(base)
+    path = base.joinpath(*rel_path.replace("\\", "/").split("/"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    sign_artifact(path, signer or f"Test {role}", role, gate, "APPROVED")
+    signer = signer or f"Test {role}"
+    sign_artifact(path, signer, role, gate, "APPROVED")
+    _append_audit(
+        _audit_trail_root(base) / ".signalos" / "AUDIT_TRAIL.jsonl",
+        signer, role, gate, rel_path, path, "APPROVED",
+    )
     return path
+
+
+def _audit_trail_root(base: Path) -> Path:
+    """Workspace root that owns the global AUDIT_TRAIL.jsonl for *base*.
+
+    For a namespaced governance base (.signalos/projects/<id>/governance) the
+    workspace root is four parents up; otherwise *base* IS the workspace root.
+    """
+    parts = base.parts
+    if (
+        len(parts) >= 4
+        and parts[-1] == "governance"
+        and parts[-3] == "projects"
+        and parts[-4] == ".signalos"
+    ):
+        return base.parents[3]
+    return base
 
 
 def seed_signed_gate(
