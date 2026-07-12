@@ -15,6 +15,7 @@ __all__ = [
     "parse_build_diagnostics",
     "parse_test_diagnostics",
     "run_validation",
+    "verify_frozen_tests_collected",
     "write_validation_plan",
     "write_validation_result",
 ]
@@ -465,16 +466,57 @@ def build_validation_plan(
 # Execution
 # ------------------------------------------------------------------
 
+def verify_frozen_tests_collected(
+    output: str,
+    frozen_tests: list[str],
+) -> list[str]:
+    """Return the frozen tests that were NOT collected/executed by the test run.
+
+    The G4 verification contract is the FROZEN plan-authored acceptance tests.
+    A model can "pass" without running the exam by neutering the test command
+    (``"test": "exit 0"``) or excluding the frozen tests from discovery
+    (vitest ``exclude``). Both leave the frozen test's path ABSENT from the test
+    runner's output. A frozen test counts as collected when its path — or its
+    bare basename — appears in the (ANSI-stripped) output; anything missing is
+    returned so the caller can FAIL verification. Empty result == all collected.
+    """
+    if not frozen_tests:
+        return []
+    haystack = _strip_ansi(output or "").replace("\\", "/")
+    missing: list[str] = []
+    for entry in frozen_tests:
+        norm = str(entry).replace("\\", "/").strip()
+        if not norm:
+            continue
+        base = norm.rsplit("/", 1)[-1]
+        if norm in haystack or (base and base in haystack):
+            continue
+        missing.append(str(entry))
+    return missing
+
+
 def run_validation(
     repo_root: Path,
     plan: dict[str, Any],
     dry_run: bool = False,
+    frozen_tests: list[str] | None = None,
 ) -> dict[str, Any]:
     """Execute the validation plan.
 
     For each command category, run the commands and capture results.
     If *dry_run* is ``True``, check that commands exist but do not
     execute them.
+
+    *frozen_tests* is the G4 verification contract: the plan-authored acceptance
+    tests that MUST actually run. When provided (real run), after the test
+    command executes we confirm each frozen test was collected/executed; if any
+    is missing (the command was neutered or the tests were excluded), the test
+    category is FAILED so a neutered exam can never close delivery. Default None
+    keeps the historical behavior byte-identical.
+
+    INTEGRATE: the G4 caller (gate_orchestrator._verify_g4_build /
+    subagent_build, owned elsewhere) should pass the frozen plan-test paths as
+    ``frozen_tests`` so the collection check runs on the real gate verification.
     """
     profile = plan.get("profile", "unknown")
     parse_diagnostics = profile in _JS_DIAGNOSTIC_PROFILES and not dry_run
@@ -491,6 +533,32 @@ def run_validation(
         results[cat] = _run_commands(repo_root, cmds)
         if parse_diagnostics and results[cat].get("status") == "failed":
             _attach_diagnostics(cat, results[cat])
+
+    # Frozen-test collection gate (G4 verification contract). Only meaningful for
+    # a real run where the test command actually executed (passed or failed).
+    frozen_uncollected: list[str] = []
+    if not dry_run and frozen_tests:
+        test_result = results.get("test", {})
+        if test_result.get("status") in ("passed", "failed"):
+            output = test_result.get("output", "") or ""
+            frozen_uncollected = verify_frozen_tests_collected(output, frozen_tests)
+            if frozen_uncollected:
+                results["test"] = {
+                    **test_result,
+                    "status": "failed",
+                    "output": (
+                        output
+                        + "\n\nFROZEN TEST VERIFICATION FAILED: these frozen "
+                        "acceptance tests were NOT collected/executed by the test "
+                        "command (excluded from discovery, or the command was "
+                        "neutered): "
+                        + ", ".join(frozen_uncollected)
+                        + ". The verification contract is immutable during the "
+                        "build -- run the frozen tests; do not exclude them or "
+                        "replace the test command."
+                    ),
+                    "frozen_tests_uncollected": list(frozen_uncollected),
+                }
 
     violations = _collect_violations(results)
 
@@ -521,6 +589,10 @@ def run_validation(
         # Structured, per-file failures for the repair loop (empty for
         # profiles/runs without diagnostic parsing).
         "violations": violations,
+        # Frozen plan tests the test run did NOT collect/execute (empty when the
+        # contract held or no frozen tests were supplied). A non-empty list means
+        # the exam was neutered -- the test category is failed above.
+        "frozen_tests_uncollected": frozen_uncollected,
     }
 
 
