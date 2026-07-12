@@ -107,6 +107,12 @@ def _orch(root, events, signed, *, max_rework=None):
     # the faked sign_fn. The REAL _verify_g4_build enforcement is covered in
     # TestG4BuildVerification below.
     orch._verify_g4_build = lambda *a, **k: {"ok": True}
+    # Fix 1: the _EndAdapter never calls a tool, so the AgentLoop honestly
+    # reports `stalled_no_tool` -- which the new outcome gate refuses to open
+    # for review. These walk-mechanics tests simulate a SUCCESSFUL agent, so
+    # stub the outcome gate open (mirrors the _verify_g4_build stub). The REAL
+    # _gate_review_ready enforcement is covered in TestAgentOutcomeGate below.
+    orch._gate_review_ready = lambda *a, **k: {"ok": True}
     return orch
 
 
@@ -403,6 +409,25 @@ class TestDeliveryIPC(unittest.TestCase):
             srv._ACTIVE_DELIVERIES.clear()
 
 
+def _seed_g0_artifacts(root: Path) -> Path:
+    """Seed ALL FOUR real G0 manifest artifacts with signable, non-placeholder
+    content. Fix 2 fail-closed: _default_sign now requires every required
+    artifact present, so a real-sign G0 test must materialize all of them (the
+    old tests seeded just SOUL-DOCUMENT -- which encoded the 1-of-4 fail-open).
+    Returns the SOUL-DOCUMENT path for tests that assert on it."""
+    gov = root / "core" / "governance" / "Governance"
+    gov.mkdir(parents=True, exist_ok=True)
+    files = {
+        "SOUL-DOCUMENT.md": "# Soul Document\n\nThe product purpose.\n",
+        "CONSTITUTION.md": "# Constitution\n\nThe operating rules.\n",
+        "SURFACE_INVENTORY.md": "# Surface Inventory\n\nThe surfaces.\n",
+        "PERMANENTLY_T3.md": "# Permanently T3\n\nThe permanent tier notes.\n",
+    }
+    for name, text in files.items():
+        (gov / name).write_text(text, encoding="utf-8")
+    return gov / "SOUL-DOCUMENT.md"
+
+
 class TestRealSignAuditAndWaive(unittest.TestCase):
     """T38: the REAL sign.py path writes the audit trail (no fake signer).
     T37: a waived gate makes the delivery close not-'ready' (INV-1)."""
@@ -410,10 +435,8 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
     def test_real_sign_writes_audit_trail(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            # Seed a real G0 artifact (SOUL-DOCUMENT, signable by PE).
-            soul = root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md"
-            soul.parent.mkdir(parents=True, exist_ok=True)
-            soul.write_text("# Soul Document\n\nThe product purpose.\n", encoding="utf-8")
+            # Seed ALL FOUR real G0 artifacts (Fix 2: all required present).
+            soul = _seed_g0_artifacts(root)
             signalos_dir = root / ".signalos"
             signalos_dir.mkdir(parents=True, exist_ok=True)
             (signalos_dir / "worktree-state.json").write_text(
@@ -427,6 +450,12 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
                 prompt="build it",
             )
+            # Fix 1: the _EndAdapter stalls (no tool calls), so the outcome gate
+            # would keep G0 blocked. This test exercises the real SIGN path, not
+            # the outcome gate, so simulate a successful agent (as with the fake
+            # sign_fn in the walk-mechanics tests). Outcome-gate enforcement is
+            # covered by TestAgentOutcomeGate.
+            orch._gate_review_ready = lambda *a, **k: {"ok": True}
             orch.start()
             res = orch.apply_verdict("approve")
             self.assertEqual(res["status"], "advanced")
@@ -449,8 +478,10 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
         hash over placeholder text is not a valid artifact."""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            soul = root / "core" / "governance" / "Governance" / "SOUL-DOCUMENT.md"
-            soul.parent.mkdir(parents=True, exist_ok=True)
+            # All four G0 artifacts present (Fix 2), but SOUL-DOCUMENT still
+            # carries unresolved template placeholders -> the sign path must
+            # refuse on the placeholder, not on a missing artifact.
+            soul = _seed_g0_artifacts(root)
             soul.write_text(
                 "# Soul Document\n\nPurpose: {{fill this in}}\nTODO: write it\n",
                 encoding="utf-8",
@@ -462,6 +493,7 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
                 prompt="build it",
             )
+            orch._gate_review_ready = lambda *a, **k: {"ok": True}  # isolate the sign path
             orch.start()
             res = orch.apply_verdict("approve")
             self.assertEqual(res["status"], "sign-failed")       # placeholder blocked
@@ -483,6 +515,10 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
                 prompt="build it",
             )
+            # Isolate _default_sign's all-artifacts check: simulate a successful
+            # agent so we reach the sign path (which must still refuse on the
+            # missing artifacts).
+            orch._gate_review_ready = lambda *a, **k: {"ok": True}
             orch.start()
             res = orch.apply_verdict("approve")
             self.assertEqual(res["status"], "sign-failed")       # did not sign
@@ -1256,6 +1292,369 @@ class TestEngineProfiles(unittest.TestCase):
             # No benchmark-profile leak of the production evidence events.
             self.assertFalse(any(e.get("type") == "security_gate" for e in events))
             self.assertFalse(any(e.get("type") == "proof" for e in events))
+
+
+class _Result:
+    """Minimal LoopResult stand-in for unit-testing the outcome gate."""
+    def __init__(self, status="completed", wrote_no_files=False):
+        self.status = status
+        self.wrote_no_files = wrote_no_files
+
+
+def _fresh(orch):
+    """Mark the current gate run as having started well in the past so any
+    already-seeded artifact counts as freshly-written-this-run."""
+    orch._gate_run_started_at = __import__("time").time() - 1000.0
+
+
+def _seed_g2_plan_contract(root: Path, *, tasks_yaml=True, red_skeleton=True,
+                           acceptance=True, plan_md=True, in_parity=True) -> None:
+    """Seed the G2 plan-gate contract: Expectation Map + rendered PLAN.md +
+    ACCEPTANCE_CRITERIA + machine PLAN.tasks.yaml + a per-task RED test
+    skeleton. Flags omit pieces to build the RED (incomplete-contract) cases."""
+    exe = root / "core" / "execution"
+    strat = root / "core" / "strategy"
+    exe.mkdir(parents=True, exist_ok=True)
+    strat.mkdir(parents=True, exist_ok=True)
+    (strat / "EXPECTATION_MAP.md").write_text(
+        "# Expectation Map\n\nWhat the founder expects.\n", encoding="utf-8")
+    if acceptance:
+        (exe / "ACCEPTANCE_CRITERIA.md").write_text(
+            "# Acceptance Criteria\n\n- AC-1: the expense list renders.\n",
+            encoding="utf-8")
+    title = "Build the expense list"
+    if plan_md:
+        body = f"# Plan\n\n## {title}\n\nImplement it.\n" if in_parity else \
+            "# Plan\n\n## Something unrelated\n"
+        (exe / "PLAN.md").write_text(body, encoding="utf-8")
+    if tasks_yaml:
+        (exe / "PLAN.tasks.yaml").write_text(
+            "wave: W1\n"
+            "tasks:\n"
+            "  - id: T1\n"
+            f"    title: {title}\n"
+            "    status: pending\n"
+            "    tier: T3\n"
+            "    files:\n"
+            "      - src/ExpenseList.tsx\n"
+            "      - src/ExpenseList.test.tsx\n",
+            encoding="utf-8")
+    if red_skeleton:
+        skel = root / "src" / "ExpenseList.test.tsx"
+        skel.parent.mkdir(parents=True, exist_ok=True)
+        skel.write_text("test('renders', () => { expect(false).toBe(true); });\n",
+                        encoding="utf-8")
+
+
+def _seed_react_product(root: Path) -> None:
+    """Seed a react-vite shell + a real product source file so the stack
+    profile resolves to react-vite (source dir 'src') and
+    _repo_has_real_product_src() detects a genuine built product."""
+    (root / "package.json").write_text(json.dumps({
+        "dependencies": {"react": "^18.3.1"},
+        "devDependencies": {"vite": "^5.4.0", "vitest": "^3.2.0"},
+        "scripts": {"build": "tsc && vite build", "test": "vitest run"},
+    }) + "\n", encoding="utf-8")
+    (root / "src" / "components").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "components" / "ExpenseList.tsx").write_text(
+        "export const ExpenseList = () => null;\n", encoding="utf-8")
+
+
+def _bare_orch(root, **kw):
+    """A GateOrchestrator on the PRODUCTION sign path (no sign_fn), driven by a
+    real _EndAdapter (which honestly stalls). No outcome-gate stub -- these
+    tests exercise the outcome gate itself."""
+    events = kw.pop("events", None)
+    emit = events.append if events is not None else (lambda e: None)
+    return GateOrchestrator(
+        Path(root), _EndAdapter(), emit,
+        enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+        prompt="build an expense tracker", **kw)
+
+
+class TestAgentOutcomeGate(unittest.TestCase):
+    """Fix 1 (fail-closed): the walk CONSUMES the agent's structured outcome.
+    A gate whose agent refused/errored/stalled/wrote-nothing must NOT open for
+    review, and on the production sign path must NOT be approvable."""
+
+    def test_stalled_agent_does_not_open_review(self):
+        # RED against the old walk: it discarded the LoopResult and always set
+        # 'awaiting-verdict'. The _EndAdapter never calls a tool -> the loop
+        # honestly reports stalled_no_tool, so the gate must be 'blocked'.
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch = _bare_orch(d, events=events)
+            res = orch.start()
+            self.assertNotEqual(orch.state.status, "awaiting-verdict")
+            self.assertEqual(orch.state.status, "blocked")
+            self.assertEqual(res["gate"], "G0")
+            self.assertTrue(any(e.get("type") == "gate_blocked" for e in events))
+            # the honest outcome is retained on the state
+            self.assertFalse(orch.state.last_outcome["ok"])
+            self.assertEqual(orch.state.last_outcome["loop_status"], "stalled_no_tool")
+
+    def test_stalled_agent_not_approvable_even_with_artifacts_present(self):
+        # STRONGEST fail-open proof: seed ALL FOUR G0 artifacts so the old
+        # _default_sign would happily sign + advance a gate whose agent actually
+        # stalled. The new outcome gate refuses to approve it.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g0_artifacts(root)
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            orch = _bare_orch(d)
+            orch.start()
+            res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "not-reviewable")
+            self.assertNotIn("G0", orch.state.signed)
+            self.assertEqual(orch.state.current_gate, "G0")
+
+    def test_completed_agent_with_fresh_artifacts_opens_review(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g0_artifacts(root)
+            orch = _bare_orch(d)
+            _fresh(orch)
+            outcome = orch._gate_review_ready("G0", _Result("completed", False))
+            self.assertTrue(outcome["ok"], outcome)
+
+    def test_review_ready_rejects_each_bad_outcome(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g0_artifacts(root)
+            orch = _bare_orch(d)
+            _fresh(orch)
+            for bad in ("error", "cancelled", "budget_exhausted",
+                        "stalled_no_tool", "max_tokens", "text_only"):
+                self.assertFalse(
+                    orch._gate_review_ready("G0", _Result(bad, False))["ok"], bad)
+            # completed but wrote nothing this run -> narration only, not ready
+            self.assertFalse(
+                orch._gate_review_ready("G0", _Result("completed", True))["ok"])
+
+    def test_review_ready_requires_current_run_artifacts(self):
+        # artifacts on disk but written BEFORE this run (stale) -> not reviewable
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g0_artifacts(root)
+            orch = _bare_orch(d)
+            orch._gate_run_started_at = __import__("time").time() + 1000.0  # future
+            outcome = orch._gate_review_ready("G0", _Result("completed", False))
+            self.assertFalse(outcome["ok"])
+            self.assertIn("stale", outcome["reason"])
+
+    def test_g4_outcome_gate_defers_to_build_verification(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = _bare_orch(d)
+            orch._g4_verify = {"ok": False, "reason": "no real product source"}
+            self.assertFalse(orch._gate_review_ready("G4", None)["ok"])
+            orch._g4_verify = {"ok": True}
+            self.assertTrue(orch._gate_review_ready("G4", None)["ok"])
+
+
+class TestG0AllArtifactsFailClosed(unittest.TestCase):
+    """Fix 2: _default_sign must require EVERY manifest-required artifact, not
+    just >=1. A gate with 3 of its 4 required artifacts cannot be signed."""
+
+    def test_default_sign_refuses_three_of_four_g0_artifacts(self):
+        # RED against old _default_sign: it signed once ANY artifact existed.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            gov = root / "core" / "governance" / "Governance"
+            gov.mkdir(parents=True, exist_ok=True)
+            # Only 3 of the 4 required G0 artifacts (omit PERMANENTLY_T3).
+            for name in ("SOUL-DOCUMENT.md", "CONSTITUTION.md", "SURFACE_INVENTORY.md"):
+                (gov / name).write_text(f"# {name}\n\nreal content\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx:
+                go_mod._default_sign(root, "G0", "signer", "PE", "APPROVED", "")
+            self.assertIn("PERMANENTLY_T3", str(ctx.exception))
+
+    def test_default_sign_allows_all_four_g0_artifacts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g0_artifacts(root)
+            signed = go_mod._default_sign(root, "G0", "signer", "PE", "APPROVED", "")
+            self.assertTrue(signed)
+
+
+class TestG2PlanContract(unittest.TestCase):
+    """Fix 3: G2 (the Plan gate) requires an EXECUTABLE + TESTABLE plan --
+    PLAN.tasks.yaml + rendered PLAN.md parity + ACCEPTANCE_CRITERIA + per-task
+    RED skeletons -- not just the Expectation Map."""
+
+    def _orch(self, root):
+        return _bare_orch(root)
+
+    def test_g2_not_reviewable_with_only_expectation_map(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "core" / "strategy").mkdir(parents=True, exist_ok=True)
+            (root / "core" / "strategy" / "EXPECTATION_MAP.md").write_text(
+                "# Expectation Map\n\nexpectations\n", encoding="utf-8")
+            orch = self._orch(root)
+            _fresh(orch)
+            outcome = orch._gate_review_ready("G2", _Result("completed", False))
+            self.assertFalse(outcome["ok"])
+            self.assertIn("PLAN.tasks.yaml", outcome["reason"])
+
+    def test_g2_reviewable_with_full_plan_contract(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g2_plan_contract(root)
+            orch = self._orch(root)
+            _fresh(orch)
+            outcome = orch._gate_review_ready("G2", _Result("completed", False))
+            self.assertTrue(outcome["ok"], outcome)
+
+    def test_g2_not_reviewable_without_red_skeleton(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g2_plan_contract(root, red_skeleton=False)
+            orch = self._orch(root)
+            _fresh(orch)
+            problems = orch._validate_g2_plan_contract()
+            self.assertTrue(any("RED test skeleton" in p for p in problems), problems)
+
+    def test_g2_not_reviewable_without_acceptance(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g2_plan_contract(root, acceptance=False)
+            orch = self._orch(root)
+            problems = orch._validate_g2_plan_contract()
+            self.assertTrue(any("ACCEPTANCE_CRITERIA" in p for p in problems), problems)
+
+    def test_g2_flags_plan_md_out_of_parity(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_g2_plan_contract(root, in_parity=False)
+            orch = self._orch(root)
+            problems = orch._validate_g2_plan_contract()
+            self.assertTrue(any("parity" in p for p in problems), problems)
+
+
+class TestG5ReleaseReadiness(unittest.TestCase):
+    """Fix 4: readiness at G5 reflects a real release verification, never just
+    'no waivers'. No built product / unresolved condition / waiver -> not ready
+    (the delivery still COMPLETES, but is honestly reported not-ready)."""
+
+    def test_not_ready_without_built_product(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = _bare_orch(d)
+            rel = orch._verify_g5_release()
+            self.assertFalse(rel["ok"])
+            self.assertTrue(any("built product" in r for r in rel["reasons"]))
+
+    def test_ready_with_built_product_and_no_waivers(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_react_product(root)
+            orch = _bare_orch(root)
+            self.assertTrue(orch._verify_g5_release()["ok"])
+
+    def test_waiver_blocks_readiness(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_react_product(root)
+            orch = _bare_orch(root)
+            orch.state.waived.append("G1")
+            rel = orch._verify_g5_release()
+            self.assertFalse(rel["ok"])
+            self.assertTrue(any("waived" in r for r in rel["reasons"]))
+
+    def test_production_requires_runtime_proof(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_react_product(root)
+            orch = _bare_orch(root, profile="production")
+            orch._last_runtime_ok = False
+            self.assertFalse(orch._verify_g5_release()["ok"])
+            orch._last_runtime_ok = True
+            self.assertTrue(orch._verify_g5_release()["ok"])
+
+
+class TestWaiverAndConditions(unittest.TestCase):
+    """Fix 5: waivers require a written reason; approve-with-conditions records
+    an UNRESOLVED condition that blocks readiness -- never completes silently."""
+
+    def test_blank_waiver_reason_is_refused(self):
+        # RED against old: waive advanced the gate with 'no reason given'.
+        with tempfile.TemporaryDirectory() as d:
+            events, signed = [], []
+            orch = _orch(d, events, signed)
+            orch.start()
+            res = orch.apply_verdict("waive", "   ")
+            self.assertEqual(res["status"], "waive-needs-reason")
+            self.assertEqual(orch.state.current_gate, "G0")   # did not advance
+            self.assertNotIn("G0", orch.state.waived)
+
+    def test_blank_condition_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            events, signed = [], []
+            orch = _orch(d, events, signed)
+            orch.start()
+            res = orch.apply_verdict("approve-with-conditions", "")
+            self.assertEqual(res["status"], "conditions-need-text")
+            self.assertNotIn("G0", orch.state.signed)
+
+    def test_approve_with_conditions_blocks_readiness_to_the_end(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            events, signed = [], []
+            orch = _orch(root, events, signed)
+            # Isolate the blocker: pretend a real product was built, so ONLY the
+            # unresolved condition can keep the delivery from being ready.
+            orch._repo_has_real_product_src = lambda: True
+            orch.start()
+            # approve G0 WITH a condition, then approve the rest through to G5
+            r0 = orch.apply_verdict("approve-with-conditions", "add rate limiting before ship")
+            self.assertEqual(r0["status"], "advanced")
+            self.assertIn("G0", orch.state.conditions)
+            res = None
+            for _ in range(5):
+                res = orch.apply_verdict("approve")
+            self.assertEqual(res["status"], "complete")
+            self.assertFalse(res["ready"])                 # unresolved condition blocks
+            self.assertIn("G0", res["conditions"])
+
+
+class TestPersistBeforeDispatch(unittest.TestCase):
+    """Fix 6: the freshly-signed state is persisted DURABLY before the next
+    gate is dispatched, and a failed persist surfaces (is not swallowed)."""
+
+    def _read_state(self, root, run_id):
+        sf = Path(root) / ".signalos" / "agent-runs" / run_id / "delivery.json"
+        return json.loads(sf.read_text(encoding="utf-8"))
+
+    def test_signature_persisted_before_next_gate_dispatch(self):
+        # RED against old: it dispatched the next gate BEFORE persisting the
+        # signature, so a crash mid-next-gate left delivery.json showing the
+        # PRIOR gate unsigned. Simulate the crash by making the next _run_gate
+        # raise, then prove the signed state was already on disk.
+        with tempfile.TemporaryDirectory() as d:
+            events, signed = [], []
+            orch = _orch(d, events, signed)
+            orch.start()                                   # G0 opened
+            run_id = orch.state.run_id
+
+            def _boom(gate):
+                raise RuntimeError(f"crash while dispatching {gate}")
+            orch._run_gate = _boom
+            with self.assertRaises(RuntimeError):
+                orch.apply_verdict("approve")              # sign G0 -> dispatch G1 (crash)
+
+            data = self._read_state(d, run_id)
+            self.assertIn("G0", data["signed"])            # signature durable
+            self.assertEqual(data["current_gate"], "G1")   # advanced pre-dispatch
+
+    def test_persist_failure_surfaces(self):
+        # RED against old: _persist swallowed OSError.
+        with tempfile.TemporaryDirectory() as d:
+            events, signed = [], []
+            orch = _orch(d, events, signed)
+            blocker = Path(d) / "blocker"
+            blocker.write_text("i am a file, not a dir\n", encoding="utf-8")
+            orch._state_dir = lambda: blocker / "sub"       # mkdir under a file -> OSError
+            with self.assertRaises(OSError):
+                orch._persist()
 
 
 if __name__ == "__main__":

@@ -756,8 +756,84 @@ def _looks_like_missing_remote_repo(stderr: str) -> bool:
     )
 
 
+def _record_g5_commit_outcome(root: Path, status: str, reason: str = "") -> None:
+    """Append a g5-commit-result row to AUDIT_TRAIL.jsonl. Silent on failure.
+
+    Distinct `action` from the push row so callers reading g5-push-result see
+    only the push outcome."""
+    trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    try:
+        trail.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "action": "g5-commit-result",
+            "status": status,
+            "reason": reason,
+        }
+        with trail.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _stage_and_commit_for_release(root: Path) -> tuple[str, str]:
+    """`git add -A` + commit the generated product so the G5 push ships REAL
+    bytes, not zero. Returns ``(outcome, detail)`` where outcome is one of
+    ``committed`` / ``nothing-to-commit`` / ``add-failed`` / ``commit-failed``.
+    Best-effort -- never raises. Uses ``--no-verify`` so a host pre-commit hook
+    cannot block the release, and falls back to an inline SignalOS identity only
+    if the repo has no configured committer (so a bare CI checkout still commits
+    without clobbering a real author when one is set)."""
+    def _run(args: list[str], timeout: int = 60):
+        return subprocess.run(
+            args, cwd=str(root), capture_output=True, text=True,
+            check=False, timeout=timeout,
+        )
+    try:
+        add = _run(["git", "add", "-A"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "add-failed", f"subprocess-error: {exc}"
+    if add.returncode != 0:
+        return "add-failed", (add.stderr or add.stdout or "git add failed").strip()[:300]
+    # Nothing staged -> no product bytes to commit (already committed / clean).
+    try:
+        diff = _run(["git", "diff", "--cached", "--quiet"])
+    except (OSError, subprocess.SubprocessError):
+        diff = None
+    if diff is not None and diff.returncode == 0:
+        return "nothing-to-commit", ""
+    msg = ("chore(release): ship G5-approved product\n\n"
+           "Auto-committed by SignalOS Foundry at G5 sign so the release push "
+           "carries the built product, not zero bytes.")
+    try:
+        commit = _run(["git", "commit", "--no-verify", "-m", msg])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "commit-failed", f"subprocess-error: {exc}"
+    if commit.returncode != 0:
+        # Retry with an inline committer identity for bare CI checkouts that
+        # have no user.name/user.email configured.
+        try:
+            commit = _run([
+                "git",
+                "-c", "user.name=SignalOS Foundry",
+                "-c", "user.email=foundry@signalos.local",
+                "commit", "--no-verify", "-m", msg,
+            ])
+        except (OSError, subprocess.SubprocessError) as exc:
+            return "commit-failed", f"subprocess-error: {exc}"
+    if commit.returncode != 0:
+        return "commit-failed", (commit.stderr or commit.stdout or "git commit failed").strip()[:300]
+    return "committed", ""
+
+
 def _auto_push_on_g5(root: Path) -> None:
-    """Run `git push origin HEAD` after a G5 sign. Best-effort.
+    """Commit the generated product, then run `git push origin HEAD` after a G5
+    sign. Best-effort.
+
+    A G5 sign means the founder approved the work for shipping, so the built
+    product must actually be committed BEFORE the push -- previously this ran a
+    bare `git push origin HEAD` with no `git add`/`git commit`, shipping zero
+    product bytes whenever the walk had not already committed them.
 
     On success: record status=ok.
     On no-remote + no SIGNALOS_GH_CLIENT_ID: record status=deferred with
@@ -772,6 +848,11 @@ def _auto_push_on_g5(root: Path) -> None:
     if not (root / ".git").exists():
         _record_g5_push_outcome(root, "deferred", "no-git-dir")
         return
+
+    # Ship real bytes: stage + commit the generated product BEFORE pushing.
+    commit_outcome, commit_detail = _stage_and_commit_for_release(root)
+    if commit_outcome != "nothing-to-commit":
+        _record_g5_commit_outcome(root, commit_outcome, commit_detail)
 
     # Look up origin via the helper in git_remote so tests can monkeypatch
     # a single seam.

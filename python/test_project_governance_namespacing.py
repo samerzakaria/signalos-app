@@ -454,6 +454,14 @@ class DeliveryBridgeCreationNamespacingTests(unittest.TestCase):
             enforcement_provider=StaticEnforcementProvider(),  # T2, all strict
             prompt="build task management", project_id=project_id,
         )
+        # This suite proves WHERE gate artifacts land + get signed (namespacing),
+        # not the G2 plan contract. The scripted adapter writes only the
+        # Expectation Map, so the new G2 outcome gate (which also requires an
+        # executable/testable plan: PLAN.tasks.yaml + RED skeletons) would keep
+        # G2 blocked. Simulate a successful, plan-complete agent so the sign
+        # path runs -- outcome-gate + G2 plan enforcement are covered in
+        # test_product_gate_orchestrator.TestAgentOutcomeGate / TestG2PlanContract.
+        orch._gate_review_ready = lambda *a, **k: {"ok": True}
         return orch, events
 
     def test_non_default_delivery_generates_and_signs_in_its_namespace(self) -> None:
