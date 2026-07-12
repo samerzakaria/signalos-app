@@ -11,6 +11,7 @@ __all__ = [
     "VALID_ROLES",
     "VALID_VERDICTS",
     "ArtifactStatus",
+    "StrictGateResult",
     "check_gate",
     "sign_artifact",
     "sign_gate",
@@ -18,6 +19,12 @@ __all__ = [
     "_append_audit",
     "verify_audit_chain",
     "_parse_signers",
+    "_parse_signatures",
+    "check_gate_signed_strict",
+    "is_gate_signed_strict",
+    "revoke_gate",
+    "clear_gate_revocation",
+    "is_gate_revoked",
 ]
 
 import hashlib
@@ -102,6 +109,263 @@ def _parse_signers(path: Path) -> tuple[list[str], bool, bool | None]:
         hash_valid = None
 
     return signers, is_draft, hash_valid
+
+
+def _parse_signatures(path: Path) -> list[dict]:
+    """Parse each entry of the ## Signatures block into a structured record.
+
+    Unlike ``_parse_signers`` (which only extracts non-DRAFT signer *names*),
+    this returns per-signature fields the strict validator needs to reject
+    forgeries: the declared ``role``, ``verdict`` (upper-cased), the declared
+    ``artifact_hash``, and whether the entry is a DRAFT placeholder.
+
+    Returns [] when there is no ## Signatures block.
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"^## Signatures", text, re.MULTILINE)
+    if not m:
+        return []
+    block = text[m.start():]
+
+    def _field(chunk: str, name: str) -> str:
+        fm = re.search(rf"(?m)^\s*{name}:\s*(.+)$", chunk)
+        return fm.group(1).strip() if fm else ""
+
+    sigs: list[dict] = []
+    # Each entry starts with a top-level "- signer:" list item; splitting on
+    # that boundary gives one chunk per signature (fields until the next entry).
+    for chunk in re.split(r"(?m)^\s*-\s+signer:\s*", block)[1:]:
+        first_line = chunk.splitlines()[0].strip() if chunk.strip() else ""
+        sigs.append({
+            "signer": first_line,
+            "role": _field(chunk, "role"),
+            "verdict": _field(chunk, "verdict").upper(),
+            "artifact_hash": _field(chunk, "artifact_hash"),
+            "is_draft": "DRAFT" in chunk.upper(),
+        })
+    return sigs
+
+
+# ---------------------------------------------------------------------------
+# Durable gate revocation (minimal, fail-closed marker)
+# ---------------------------------------------------------------------------
+#
+# Reopening a signed gate must survive a process restart: the orchestrator's
+# in-memory reopen state is invisible to a fresh status board, so a reopened
+# gate would keep reading "signed" off its still-present (now stale) signature
+# block -- a fail-open. A tiny durable marker closes it: the strict validator
+# treats any gate named in `.signalos/gate-revocations.json` as NOT signed
+# until it is legitimately re-signed (sign_gate clears the marker on a fresh
+# signature). This is the minimal marker the design calls for; a full
+# append-only revocation ledger is a later epoch.
+#
+# The marker lives in the per-project state dir (projects.project_state_dir),
+# so a revocation in one project never bleeds into another.
+
+def _gate_revocations_path(root: Path, project_id: str = "default") -> Path:
+    from .projects import project_state_dir
+
+    return project_state_dir(root, project_id) / "gate-revocations.json"
+
+
+def _load_revocations(root: Path, project_id: str = "default") -> dict:
+    p = _gate_revocations_path(root, project_id)
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_revocations(root: Path, data: dict, project_id: str = "default") -> None:
+    p = _gate_revocations_path(root, project_id)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError:
+        pass  # best-effort persistence; the caller still mutated in memory
+
+
+def is_gate_revoked(repo_root: Path, gate: str, project_id: str = "default") -> bool:
+    """True when *gate* carries a durable revocation marker for *project_id*."""
+    return str(gate).strip().upper() in _load_revocations(Path(repo_root), project_id)
+
+
+def revoke_gate(
+    repo_root: Path,
+    gate: str,
+    project_id: str = "default",
+    *,
+    reason: str = "",
+    actor: str = "",
+) -> None:
+    """Durably mark *gate* revoked/reopened so every gating surface reads it as
+    NOT signed until it is legitimately re-signed.
+
+    This is the authoritative hook the gate-reopen path should call (the
+    orchestrator's in-memory reopen alone does not survive a fresh process).
+    """
+    root = Path(repo_root)
+    gate_id = str(gate).strip().upper()
+    data = _load_revocations(root, project_id)
+    data[gate_id] = {
+        "ts": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "reason": reason,
+        "actor": actor,
+    }
+    _write_revocations(root, data, project_id)
+
+
+def clear_gate_revocation(
+    repo_root: Path, gate: str, project_id: str = "default"
+) -> None:
+    """Remove the revocation marker for *gate* (called after a fresh re-sign)."""
+    root = Path(repo_root)
+    gate_id = str(gate).strip().upper()
+    data = _load_revocations(root, project_id)
+    if gate_id in data:
+        del data[gate_id]
+        _write_revocations(root, data, project_id)
+
+
+# ---------------------------------------------------------------------------
+# Canonical STRICT gate validator — the single source of truth
+# ---------------------------------------------------------------------------
+#
+# Every gating surface (status board, wave_engine.inspect, build preflight)
+# routes its "is this gate signed?" question through here so a forged, rejected,
+# hashless, wrong-role, tampered, or revoked signature can never read as signed.
+# It converges on the dedicated `commands.validate_gate` strong checks (artifact
+# present + signed + not-draft + current-hash-valid + audit-trail-linked with an
+# APPROVED verdict and a matching hash) and ADDS the two guarantees that path
+# does not yet cover: signer-role authorization and durable revocation.
+
+@dataclass
+class StrictGateResult:
+    """Verdict of the strict gate validator plus the reasons a gate is unsigned."""
+    gate: str
+    signed: bool
+    reasons: list[str] = field(default_factory=list)
+
+
+def _gate_authorized_roles(
+    root: Path, gate: str, project_id: str = "default"
+) -> set[str]:
+    """Roles authorized to sign *gate* — the union of every artifact's
+    required_roles, exactly the expectation ``sign_gate`` enforces at sign time.
+    """
+    roles: set[str] = set()
+    for artifact in resolve_gate_artifacts(root, gate, project_id=project_id):
+        roles.update(artifact.required_roles)
+    return roles
+
+
+def _unauthorized_signature_reasons(
+    root: Path, gate: str, project_id: str = "default"
+) -> list[str]:
+    """Reasons any present artifact lacks an APPROVED, current-hash signature
+    from a role authorized for the gate. Empty list == every artifact is
+    properly signed by an authorized role.
+
+    validate_gate anchors the verdict/hash in the AUDIT ROW; this additionally
+    pins them on the IN-FILE signature block so an APPROVED-audit-row paired
+    with a REJECTED / hashless / wrong-role in-file block cannot pass.
+    """
+    from .commands.validate_gate import _APPROVED_VERDICTS
+
+    allowed = _gate_authorized_roles(root, gate, project_id=project_id)
+    reasons: list[str] = []
+    for artifact in resolve_gate_artifacts(root, gate, project_id=project_id):
+        p = artifact.path
+        if not p.exists():
+            continue  # presence is enforced upstream by validate_gate
+        current_hash = _compute_hash(p)
+        authorized = any(
+            (not s["is_draft"])
+            and s["verdict"] in _APPROVED_VERDICTS
+            and s["role"] in allowed
+            and s["artifact_hash"]
+            and s["artifact_hash"] == current_hash
+            for s in _parse_signatures(p)
+        )
+        if not authorized:
+            reasons.append(
+                f"{gate}: {artifact.rel_path} lacks an APPROVED, current-hash "
+                f"signature from an authorized role (allowed: {sorted(allowed)})"
+            )
+    return reasons
+
+
+def check_gate_signed_strict(
+    repo_root: Path,
+    gate: str,
+    project_id: str = "default",
+    *,
+    wave: str | int | None = None,
+) -> StrictGateResult:
+    """Return whether *gate* is validly signed, with reasons when it is not.
+
+    Signed only when ALL hold:
+      * NON-REVOKED   — no durable revocation marker for the gate;
+      * present + signed (non-draft) + VALID CURRENT artifact hash +
+        AUDIT-LINKED with an APPROVED verdict and a matching hash — reused
+        verbatim from ``commands.validate_gate.validate_gate`` (the same strong
+        path the ``signalos validate-gate`` command enforces);
+      * AUTHORIZED ROLE — every present artifact carries an APPROVED, current-
+        hash in-file signature from a role authorized for the gate.
+    """
+    root = Path(repo_root)
+    gate_id = str(gate).strip().upper()
+
+    # (1) Durable revocation is authoritative — even a still-present, otherwise
+    #     valid signature block reads NOT signed once the gate is reopened.
+    if is_gate_revoked(root, gate_id, project_id=project_id):
+        return StrictGateResult(
+            gate_id, False,
+            [f"{gate_id}: revoked/reopened (durable revocation marker)"],
+        )
+
+    # (2) Strong checks — reuse the dedicated validator (single source of truth
+    #     for present/signed/hash/audit-link). Deferred import breaks the
+    #     validate_gate -> sign import cycle. write_evidence=False keeps the
+    #     board render side-effect-free.
+    try:
+        from .commands.validate_gate import validate_gate as _validate_gate
+        payload = _validate_gate(
+            root, gate_id, wave=wave, write_evidence=False, project_id=project_id,
+        )
+    except Exception as exc:  # never let a gating surface crash on a check
+        return StrictGateResult(
+            gate_id, False,
+            [f"{gate_id}: strict validation error: {type(exc).__name__}: {exc}"],
+        )
+    if not payload.get("ok"):
+        reasons = [f"{b['id']}: {b['message']}" for b in payload.get("blockers", [])]
+        return StrictGateResult(
+            gate_id, False, reasons or [f"{gate_id}: gate is not validly signed"],
+        )
+
+    # (3) Role authorization — validate_gate does not check the signer's role.
+    role_reasons = _unauthorized_signature_reasons(root, gate_id, project_id=project_id)
+    if role_reasons:
+        return StrictGateResult(gate_id, False, role_reasons)
+
+    return StrictGateResult(gate_id, True, [])
+
+
+def is_gate_signed_strict(
+    repo_root: Path,
+    gate: str,
+    project_id: str = "default",
+    *,
+    wave: str | int | None = None,
+) -> bool:
+    """Boolean convenience wrapper over :func:`check_gate_signed_strict`."""
+    return check_gate_signed_strict(
+        repo_root, gate, project_id=project_id, wave=wave
+    ).signed
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +553,15 @@ def sign_gate(
             f"(required: {sorted(all_required)})"
         )
 
+    # A gate signature that is not recorded in the workspace audit trail is not
+    # verifiable -- and the strict validator (is_gate_signed_strict) treats such
+    # a gate as NOT signed. Default the audit log to the workspace-global trail
+    # so every sign_gate call is audit-linked by default, matching the CLI and
+    # orchestrator signing paths. AUDIT_TRAIL.jsonl is workspace-global (never
+    # per-project), so it is anchored at *root* regardless of project_id.
+    if audit_log is None:
+        audit_log = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+
     signed: list[str] = []
     for artifact in gate_entries:
         p = artifact.path
@@ -324,6 +597,12 @@ def sign_gate(
         if audit_log is not None:
             _append_audit(audit_log, signer, role, gate, artifact.rel_path, p, verdict, wave=wave)
         signed.append(artifact.rel_path)
+
+    # A fresh, authorized signature supersedes any prior reopen/revocation: the
+    # gate has just been legitimately re-signed, so clear its durable revocation
+    # marker (if any) rather than leaving the gate stuck reading NOT signed.
+    if signed:
+        clear_gate_revocation(root, gate, project_id=project_id)
 
     # M4: after a successful G5 sign, push the local commits to origin
     # so the user actually ships their work. Best-effort — a push

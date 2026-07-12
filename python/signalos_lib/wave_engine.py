@@ -221,6 +221,12 @@ def inspect(
     from .projects import project_governance_dir
     from .status import get_wave_status
 
+    # `gates` here is the STRICT signed-state from the status board
+    # (status._detect_gates -> sign.is_gate_signed_strict): a gate is signed
+    # only when validly signed (APPROVED + authorized role + valid current hash
+    # + audit-linked + non-revoked), never on mere signature presence. The
+    # engine therefore shares the single strict validator with the board and
+    # preflight -- a forged/rejected/reopened gate reads NOT signed here too.
     status = get_wave_status(repo_root, project_id=project_id)
     gates = status.get("gates") or {}
 

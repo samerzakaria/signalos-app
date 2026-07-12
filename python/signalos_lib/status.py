@@ -121,20 +121,18 @@ def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
     content check: a template-only Soul Document does not count as onboarded.
     *project_id* namespaces the artifact base per §3.2.
     """
-    # A gate counts as passed only when EVERY required artifact EXISTS *and
-    # carries a signature* (sign.check_gate reads the in-file signature blocks).
-    # Two prior bugs this closes:
-    #   * Bare existence was fail-open: an honest not-green BUILD_EVIDENCE.md
-    #     made G4 read "done".
-    #   * `any(signed)` was fail-open the other way: ONE signed artifact marked
-    #     the whole gate passed, so a partially-signed project advanced here and
-    #     was then blocked at G4 preflight (preflight requires EVERY prior-gate
-    #     artifact signed -- validate_build_readiness). Requiring `all` makes the
-    #     board agree with preflight: the SAME sign.check_gate manifest is the
-    #     source of truth for "required" on both sides.
+    # A gate counts as passed only when it is VALIDLY signed per the single
+    # strict validator (sign.is_gate_signed_strict): every required artifact
+    # exists, carries a non-draft APPROVED signature from an AUTHORIZED role
+    # with a VALID CURRENT hash, is AUDIT-LINKED, and the gate is NON-REVOKED.
+    # This closes a fail-open where mere signature *presence* (`has_signatures`)
+    # let a forged/rejected/hashless/wrong-role/tampered/reopened signature read
+    # as signed. The board now shares the exact strict check the preflight and
+    # wave engine use, so no gating surface can drift.
     # G0 additionally keeps its non-template content check (a template-only Soul
     # Document is not onboarded). An empty status list (unknown gate / read
-    # error) is fail-closed, not vacuously passed.
+    # error) is fail-closed, not vacuously passed; any strict-check error is
+    # fail-closed too.
     from . import sign as _sign
     g = {}
     for gate in gate_detection_paths():
@@ -145,11 +143,16 @@ def _detect_gates(root: Path, project_id: str = "default") -> dict[str, bool]:
         if not statuses:
             g[gate] = False
             continue
-        if gate == "G0":
-            g[gate] = all(st.exists and st.has_signatures and _is_non_template(st.path)
-                          for st in statuses)
-        else:
-            g[gate] = all(st.exists and st.has_signatures for st in statuses)
+        # G0: a template-only Soul Document is not onboarded even if signed.
+        if gate == "G0" and not all(
+            st.exists and _is_non_template(st.path) for st in statuses
+        ):
+            g[gate] = False
+            continue
+        try:
+            g[gate] = _sign.is_gate_signed_strict(root, gate, project_id=project_id)
+        except Exception:
+            g[gate] = False  # fail closed on any strict-check error
     return g
 
 

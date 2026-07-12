@@ -42,18 +42,31 @@ def validate_build_readiness(
     problems: list[str] = []
     repo_root = Path(repo_root)
 
-    # 1. Prior gates: every required artifact exists AND carries a signature
-    #    (the same sign.check_gate reader the walk's detection uses).
+    # 1. Prior gates must be VALIDLY signed per the single strict validator
+    #    (sign.check_gate_signed_strict) -- the SAME check the status board and
+    #    wave engine use. Presence of a signature block is not enough: a forged,
+    #    rejected, hashless, wrong-role, tampered, or reopened signature must
+    #    fail preflight here exactly as it fails the board. Missing / plainly-
+    #    unsigned artifacts keep their precise, actionable diagnostics; deeper
+    #    forgeries surface the strict validator's reasons.
     try:
         from .. import sign
         for gate in _PRIOR_GATES:
-            for st in sign.check_gate(repo_root, gate, project_id=project_id):
+            statuses = sign.check_gate(repo_root, gate, project_id=project_id)
+            before = len(problems)
+            for st in statuses:
                 if not st.exists:
                     problems.append(
                         f"{gate}: required artifact missing: {st.rel_path}")
                 elif not st.has_signatures:
                     problems.append(
                         f"{gate}: artifact exists but is UNSIGNED: {st.rel_path}")
+            if len(problems) > before:
+                continue  # plain presence/signature gaps already named exactly
+            result = sign.check_gate_signed_strict(
+                repo_root, gate, project_id=project_id)
+            if not result.signed:
+                problems.extend(result.reasons)
     except Exception as exc:
         problems.append(f"gate signature check failed: {type(exc).__name__}: {exc}")
 
