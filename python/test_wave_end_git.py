@@ -249,6 +249,56 @@ class AutoPushOnG5(unittest.TestCase):
             reason = entry.get("reason", "")
             self.assertIn("SIGNALOS_GH_CLIENT_ID", reason)
 
+    def test_auto_push_commits_generated_product_before_pushing(self):
+        """Fix 4b: the G5 push must `git add` + `git commit` the generated
+        product BEFORE `git push` -- previously it ran a bare `git push origin
+        HEAD` with no add/commit, shipping zero product bytes whenever the walk
+        had not already committed them. Prove a NEW commit lands, carrying the
+        previously-uncommitted product file, ahead of the (deferred) push.
+
+        RED against the old code: no commit is made, so the commit count and the
+        HEAD tree are unchanged.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _git_init_workspace(root)
+            # A seed commit so HEAD exists.
+            (root / "README.md").write_text("hello")
+            subprocess.run(["git", "add", "-A"], cwd=str(root), check=True)
+            subprocess.run(["git", "commit", "-m", "seed", "--no-verify"],
+                           cwd=str(root), check=True)
+            # The generated product -- UNCOMMITTED "built bytes".
+            (root / "src").mkdir()
+            (root / "src" / "App.tsx").write_text(
+                "export default function App() { return null; }\n", encoding="utf-8")
+
+            def _count() -> int:
+                r = subprocess.run(["git", "rev-list", "--count", "HEAD"],
+                                   cwd=str(root), capture_output=True, text=True, check=True)
+                return int(r.stdout.strip())
+
+            before = _count()
+            prev = os.environ.pop("SIGNALOS_GH_CLIENT_ID", None)
+            try:
+                _auto_push_on_g5(root)   # must add + commit BEFORE the push
+            finally:
+                if prev is not None:
+                    os.environ["SIGNALOS_GH_CLIENT_ID"] = prev
+
+            self.assertEqual(_count(), before + 1,
+                             "G5 push did not commit the generated product")
+            # The product file is now tracked in HEAD (it was shipped).
+            tracked = subprocess.run(
+                ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                cwd=str(root), capture_output=True, text=True, check=True).stdout
+            self.assertIn("src/App.tsx", tracked)
+            # The commit is audited, and the push was still attempted afterwards.
+            entries = _read_audit_trail(root)
+            commit_rows = [e for e in entries if e.get("action") == "g5-commit-result"]
+            self.assertTrue(commit_rows and commit_rows[0]["status"] == "committed",
+                            commit_rows)
+            self.assertTrue([e for e in entries if e.get("action") == "g5-push-result"])
+
 
 if __name__ == "__main__":
     unittest.main()

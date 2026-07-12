@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -58,6 +59,16 @@ _SIGN_VERDICT = {
     "approve-with-conditions": "APPROVED-WITH-CONDITIONS",
 }
 _KNOWN_VERDICTS = {"approve", "approve-with-conditions", "request-changes", "reject", "waive"}
+
+# Fix 1: AgentLoop LoopResult.status values that are NOT a successful, reviewable
+# outcome. A gate whose agent finished in any of these states (or wrote no files)
+# must NOT open for a verdict -- the walk previously DISCARDED the LoopResult and
+# opened review unconditionally, so a refused/errored/stalled/no-file gate was
+# still approvable. "completed" is the only success status the loop stamps.
+_UNREVIEWABLE_LOOP_STATUSES = frozenset({
+    "error", "cancelled", "budget_exhausted", "stalled_no_tool",
+    "max_tokens", "text_only",
+})
 
 # ---------------------------------------------------------------------------
 # Engine PROFILES (cross-vendor panel decision: ONE engine, config-gated
@@ -127,6 +138,16 @@ class DeliveryState:
     # Both are absent from older persisted states; resume_delivery defaults.
     reopens: dict = field(default_factory=dict)
     invalidated: list = field(default_factory=list)
+    # Fix 5: approve-with-conditions bookkeeping. Each recorded condition
+    # (gate -> condition text) is UNRESOLVED (there is no resolve API yet) and
+    # blocks delivery readiness at G5, so an "approve with conditions" can never
+    # complete-and-ship unconditionally. Absent from older persisted states;
+    # resume_delivery defaults to {}.
+    conditions: dict = field(default_factory=dict)
+    # Fix 1: the last gate agent's structured outcome, retained on the state so
+    # a founder/auditor can see WHY a gate did or did not open for review
+    # (status, ok, reason). Absent from older persisted states; defaults to {}.
+    last_outcome: dict = field(default_factory=dict)
 
 
 # High-confidence unfilled-template markers that block a gate signature (0.6).
@@ -167,16 +188,19 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
     wave = _current_wave_id(repo_root, project_id)
     expected = artifacts.resolve_gate_artifacts(repo_root, gate, project_id=project_id)
     present = [a for a in expected if a.path.is_file()]
-    # Fail-closed (0.1): a gate that declares required artifacts cannot be
-    # signed until at least one of them exists on disk. Previously an empty
-    # `present` signed nothing, raised nothing, and the gate advanced anyway
-    # -- a silent fail-open where a founder could approve a gate whose agent
-    # produced no artifact. Gates with no declared artifacts are unaffected.
-    if expected and not present:
+    # Fail-closed (0.1 + Fix 2): a gate that declares required artifacts cannot
+    # be signed until EVERY one of them exists on disk. The prior check only
+    # fail-closed on ZERO present, so a gate signed once >=1 artifact existed
+    # -- a founder could advance G0 with just 1 of its 4 required artifacts.
+    # Requiring ALL present closes that fail-open for every gate (a custom
+    # sign_fn seam still bypasses this, by design). Gates with no declared
+    # artifacts are unaffected.
+    missing = [a for a in expected if not a.path.is_file()]
+    if expected and missing:
         raise ValueError(
-            f"gate {gate} cannot be signed: none of its {len(expected)} "
-            "required artifact(s) exist yet ("
-            + ", ".join(a.rel_path for a in expected) + ")"
+            f"gate {gate} cannot be signed: {len(missing)} of its "
+            f"{len(expected)} required artifact(s) missing on disk ("
+            + ", ".join(a.rel_path for a in missing) + ")"
         )
     # Content check (0.6): a present artifact that is still unfilled template
     # boilerplate is not signable -- a valid hash over placeholder text is not a
@@ -278,6 +302,15 @@ class GateOrchestrator:
             self._sign = sign_fn
         else:
             self._sign = functools.partial(_default_sign, project_id=project_id)
+        # Fix 1: the production sign path (_default_sign, sign_fn is None) is
+        # where governance enforcement lives, so it also enforces the
+        # agent-outcome gate -- apply_verdict refuses to approve a gate whose
+        # agent did not actually complete reviewable work. An injected custom
+        # sign_fn (tests / alternative signers / IPC overrides) owns its own
+        # gating, exactly as it already bypasses _default_sign's all-artifacts
+        # and placeholder checks. In production _DELIVERY_SIGN_FN is None, so
+        # the gate is active on the real desktop/CLI delivery path.
+        self._enforce_outcome_gate = sign_fn is None
         self.max_rework = resolve_gate_rework_budget(max_rework)
         self.max_rejections = max_rejections
         self.max_reopens = resolve_gate_reopen_budget(max_reopens)
@@ -307,6 +340,16 @@ class GateOrchestrator:
         # sign a stub. Set after G4's AgentLoop runs; apply_verdict refuses to
         # sign G4 until this is ok. None = not yet verified.
         self._g4_verify: Optional[dict] = None
+        # Fix 1: the most recent gate agent's structured outcome (LoopResult or
+        # build result), retained so the outcome gate can be inspected/audited.
+        self._last_result: Any = None
+        # Fix 1: wall-clock at which the current gate run started, used to tell
+        # a freshly-written (current-run) required artifact from a stale one.
+        self._gate_run_started_at: float = 0.0
+        # Fix 4 (production profile): the last runtime proof outcome, consulted
+        # by the G5 release verifier so a production delivery is not reported
+        # ready-to-ship without passing runtime proof.
+        self._last_runtime_ok: bool = False
 
     def _current_gate(self) -> str:
         try:
@@ -419,7 +462,11 @@ class GateOrchestrator:
             if str(g).lstrip("G").isdigit()
         ]
         executor = self._gate_executor(gate)
+        # Fix 1: mark run start BEFORE the agent runs so we can tell an artifact
+        # written THIS run from a stale pre-existing one.
+        self._gate_run_started_at = time.time()
         result = executor(gate, system_prompt, signed_ints)
+        self._last_result = result
         if gate == "G3":
             self._emit_preview(gate)
         self.emit({
@@ -431,7 +478,29 @@ class GateOrchestrator:
         })
         self._emit_brief(gate)
         self._emit_completeness(gate)
-        self.state.status = "awaiting-verdict"
+        # Fix 1: CONSUME the agent's structured outcome. The gate only opens for
+        # a verdict ("awaiting-verdict") when the agent actually COMPLETED the
+        # work AND produced this gate's required artifacts this run (and, for
+        # G2, an executable/testable plan). A refusal/error/stall/budget-
+        # exhaustion/no-file outcome parks the gate as "blocked" instead -- it
+        # is NOT presented for approval. Previously the LoopResult was discarded
+        # and every gate opened for review unconditionally.
+        outcome = self._gate_review_ready(gate, result)
+        self.state.last_outcome = {
+            "gate": gate,
+            "ok": bool(outcome.get("ok")),
+            "reason": outcome.get("reason", ""),
+            "loop_status": str(getattr(result, "status", "") or ""),
+        }
+        if outcome.get("ok"):
+            self.state.status = "awaiting-verdict"
+        else:
+            self.state.status = "blocked"
+            # Surfaced as a dedicated NON-error event so callers that assert
+            # "no error events" (deterministic smoke walks) still hold, while
+            # the UI/founder learns the gate is not reviewable and why.
+            self.emit({"type": "gate_blocked", "gate": gate,
+                       "reason": outcome.get("reason", "")})
         self._persist()
         return result
 
@@ -770,6 +839,163 @@ class GateOrchestrator:
         except Exception:
             pass
 
+    # -- agent-outcome gate (Fix 1 + Fix 3) ---------------------------------
+
+    _UNREVIEWABLE_LOOP_STATUSES = _UNREVIEWABLE_LOOP_STATUSES
+
+    def _gate_review_ready(self, gate: str, result: Any) -> dict:
+        """Decide whether the gate agent's outcome is a SUCCESSFUL, reviewable
+        result, so `_run_gate` opens the gate for a verdict only when the agent
+        actually did the work. Returns ``{"ok": bool, "reason": str}``.
+
+        * G4 defers to the independent build verification (`_g4_verify`): the
+          build wall already proves a real, passing product this run.
+        * Every other gate requires a LoopResult that COMPLETED (not error /
+          cancelled / budget-exhausted / stalled / truncated / text-only) and
+          actually wrote files this run (not narration-only), PLUS every
+          manifest-required artifact present on disk and freshly written this
+          run (a stale pre-existing file cannot masquerade as this run's work).
+        * G2 additionally requires an executable + testable plan contract
+          (`_validate_g2_plan_contract`) -- an Expectation Map alone is not a
+          plan the Build gate can drive.
+        """
+        if gate == "G4":
+            g4 = self._g4_verify or {}
+            if g4.get("ok"):
+                return {"ok": True, "reason": ""}
+            return {"ok": False,
+                    "reason": g4.get("reason", "G4 build not independently verified")}
+        status = str(getattr(result, "status", "") or "")
+        if status in self._UNREVIEWABLE_LOOP_STATUSES:
+            return {"ok": False,
+                    "reason": f"agent did not complete the gate (outcome: {status})"}
+        if status and status != "completed":
+            return {"ok": False,
+                    "reason": f"agent outcome was not a success (outcome: {status})"}
+        if getattr(result, "wrote_no_files", False):
+            return {"ok": False,
+                    "reason": "agent produced no files this run (narration only)"}
+        missing, none_fresh = self._required_artifact_state(gate)
+        if missing:
+            return {"ok": False,
+                    "reason": "required artifact(s) missing on disk: " + ", ".join(missing)}
+        if none_fresh:
+            return {"ok": False,
+                    "reason": "no required artifact was written this run (stale outputs) -- "
+                              "the agent did not (re)produce the gate's artifacts"}
+        if gate == "G2":
+            problems = self._validate_g2_plan_contract()
+            if problems:
+                return {"ok": False,
+                        "reason": "G2 plan contract incomplete: " + "; ".join(problems)}
+        return {"ok": True, "reason": ""}
+
+    def _required_artifact_state(self, gate: str) -> "tuple[list, bool]":
+        """(missing_rel_paths, none_written_this_run) for *gate*'s manifest
+        artifacts. ``missing`` lists artifacts not on disk. ``none_written_this_
+        run`` is True when every required artifact predates this gate run (mtime
+        older than run start, with a small grace for filesystem resolution) --
+        i.e. the agent (re)wrote none of them. Never raises."""
+        missing: list[str] = []
+        fresh = 0
+        started = float(getattr(self, "_gate_run_started_at", 0.0) or 0.0)
+        try:
+            from .. import artifacts
+            resolved = artifacts.resolve_gate_artifacts(
+                self.repo_root, gate, project_id=self.project_id)
+        except Exception:
+            return missing, False
+        if not resolved:
+            return missing, False
+        for a in resolved:
+            try:
+                if not a.path.is_file():
+                    missing.append(a.rel_path)
+                    continue
+                if a.path.stat().st_mtime >= started - 2.0:
+                    fresh += 1
+            except OSError:
+                missing.append(a.rel_path)
+        none_fresh = started > 0.0 and not missing and fresh == 0
+        return missing, none_fresh
+
+    def _validate_g2_plan_contract(self) -> list:
+        """Fix 3 -- the G2 (Plan) gate's real contract: an EXECUTABLE + TESTABLE
+        plan, not merely an Expectation Map. Returns a list of human-readable
+        problems (empty == satisfied):
+
+          1. ``PLAN.tasks.yaml`` parses into >=1 canonical task (the machine
+             plan the Build gate consumes).
+          2. ``ACCEPTANCE_CRITERIA.md`` exists (the testable spec).
+          3. A rendered ``PLAN.md`` exists and is in parity with the machine
+             plan (each task surfaced in the rendered view).
+          4. Every task carries an acceptance-test path AND that RED test
+             skeleton exists on disk (test-first / TDD-at-plan-time).
+
+        # INTEGRATE: strict validator -- once sign.is_gate_signed_strict lands,
+        # the plan-contract check can also be asserted at signature time.
+        """
+        problems: list[str] = []
+        try:
+            from .. import artifacts
+        except Exception:
+            return ["cannot resolve plan artifact paths"]
+
+        def _ws(rel: str) -> Optional[Path]:
+            try:
+                return artifacts.resolve_workspace_path(
+                    self.repo_root, rel, project_id=self.project_id)
+            except Exception:
+                return None
+
+        acc = _ws("core/execution/ACCEPTANCE_CRITERIA.md")
+        plan_md = _ws("core/execution/PLAN.md")
+        tasks_yaml = _ws("core/execution/PLAN.tasks.yaml")
+        if acc is None or not acc.is_file():
+            problems.append("ACCEPTANCE_CRITERIA.md missing")
+        if plan_md is None or not plan_md.is_file():
+            problems.append("rendered PLAN.md missing")
+        try:
+            from .subagent_build import decompose_canonical_plan_tasks
+            tasks = decompose_canonical_plan_tasks(self.repo_root, self.project_id)
+        except Exception:
+            tasks = []
+        if not tasks:
+            if tasks_yaml is None or not tasks_yaml.is_file():
+                problems.append("PLAN.tasks.yaml missing (no executable task plan)")
+            else:
+                problems.append("PLAN.tasks.yaml has no valid tasks")
+            return problems  # cannot check RED skeletons without tasks
+        plan_text = ""
+        if plan_md is not None and plan_md.is_file():
+            try:
+                plan_text = plan_md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                plan_text = ""
+        no_test, missing_skel, unrendered = [], [], []
+        for t in tasks:
+            test = str(getattr(t, "test", "") or "").strip()
+            tid = str(getattr(t, "id", "") or "")
+            title = str(getattr(t, "name", "") or "")
+            if not test:
+                no_test.append(tid or title or "?")
+                continue
+            if not (self.repo_root / test).is_file():
+                missing_skel.append(test)
+            if plan_text and not (
+                    (title and title in plan_text) or (tid and tid in plan_text)):
+                unrendered.append(tid or title or "?")
+        if no_test:
+            problems.append("task(s) without an acceptance test: "
+                            + ", ".join(map(str, no_test[:5])))
+        if missing_skel:
+            problems.append("missing RED test skeleton(s): "
+                            + ", ".join(missing_skel[:5]))
+        if unrendered:
+            problems.append("PLAN.md not in parity with PLAN.tasks.yaml (missing: "
+                            + ", ".join(map(str, unrendered[:5])) + ")")
+        return problems
+
     def start(self) -> dict:
         gate = self.state.current_gate
         self._run_gate(gate)
@@ -786,6 +1012,30 @@ class GateOrchestrator:
                 reason = (self._g4_verify or {}).get("reason", "build not verified")
                 self.emit({"type": "error", "error": f"Gate G4 cannot be signed: {reason}"})
                 return {"status": "build-not-verified", "gate": gate, "reason": reason}
+            # Fix 1 (production sign path): never sign a gate the agent did not
+            # actually complete. `_run_gate` only opens a gate for review
+            # ("awaiting-verdict") when the agent's outcome was successful and
+            # this run's required artifacts (and, for G2, an executable/testable
+            # plan) are present; otherwise the gate is "blocked". Refuse to
+            # approve a gate that was never opened for review. G4 is gated above
+            # by its own build verification. A custom sign_fn (tests /
+            # alternative signers) owns its own gating -- see _enforce_outcome_gate.
+            if (self._enforce_outcome_gate and gate != "G4"
+                    and self.state.status not in ("awaiting-verdict", "reopened")):
+                reason = ((self.state.last_outcome or {}).get("reason")
+                          or "the gate is not open for review (agent did not "
+                             "complete reviewable work)")
+                self.emit({"type": "gate_blocked", "gate": gate, "reason": reason})
+                return {"status": "not-reviewable", "gate": gate, "reason": reason}
+            # Fix 5: an "approve with conditions" needs an actual condition to
+            # enforce -- a blank condition is just an approve, and cannot be
+            # tracked/resolved. Require the text so unresolved conditions can
+            # block readiness below.
+            if v == "approve-with-conditions" and not str(feedback or "").strip():
+                self.emit({"type": "error",
+                           "error": f"Gate {gate}: approve-with-conditions requires a "
+                                    "written condition."})
+                return {"status": "conditions-need-text", "gate": gate}
             # Production-profile POST-BUILD release-safety stages. Runs only for
             # the BUILD gate, only after its build is independently verified
             # (above), so it can NEVER change the verified-build outcome, the
@@ -803,16 +1053,36 @@ class GateOrchestrator:
                 self.emit({"type": "error", "error": f"Gate {gate} signing failed: {exc}"})
                 return {"status": "sign-failed", "gate": gate, "error": str(exc)}
             self.state.signed.append(gate)
+            # Fix 5: record the (unresolved) condition so it blocks readiness.
+            if v == "approve-with-conditions":
+                self.state.conditions[gate] = str(feedback or "").strip()
             self.emit({"type": "gate_signed", "gate": gate, "verdict": v})
             nxt = self._next_after(gate)
             if nxt is None:
                 self.state.status = "complete"
                 self._persist()
-                ready = len(self.state.waived) == 0
+                # Fix 4: readiness reflects a real release verification, not the
+                # mere absence of waivers.
+                release = self._verify_g5_release()
+                ready = bool(release.get("ok"))
+                self.emit({"type": "release_verified", "ready": ready,
+                           "reasons": release.get("reasons", [])})
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": ready, "waived": list(self.state.waived)})
                 self._finalize_closeout(ready=ready)
-                return {"status": "complete", "ready": ready, "waived": list(self.state.waived)}
+                return {"status": "complete", "ready": ready,
+                        "waived": list(self.state.waived),
+                        "conditions": dict(self.state.conditions)}
+            # Fix 6: persist the freshly-signed state DURABLY before dispatching
+            # the next gate. Previously the next gate ran (mutating state,
+            # running the agent) BEFORE any persist, so a crash mid-next-gate
+            # left a signature on disk while delivery.json still showed the prior
+            # gate awaiting -- an on-disk inconsistency. _persist now also raises
+            # on failure, so a failed checkpoint surfaces instead of silently
+            # continuing into the next gate.
+            self.state.current_gate = nxt
+            self.state.status = "active"
+            self._persist()
             self._run_gate(nxt)
             return {"status": "advanced", "gate": nxt}
 
@@ -852,6 +1122,13 @@ class GateOrchestrator:
             return {"status": "rejected", "gate": gate, "count": cnt}
 
         if v == "waive":
+            # Fix 5: a waiver is an audited, accountable act -- it advances the
+            # gate WITHOUT a signature and marks the delivery not-ready, so it
+            # must carry a real reason. A blank waiver is refused.
+            if not str(feedback or "").strip():
+                self.emit({"type": "error",
+                           "error": f"Gate {gate}: a waiver requires a written reason."})
+                return {"status": "waive-needs-reason", "gate": gate}
             if gate not in self.state.waived:
                 self.state.waived.append(gate)
             self._record_review(gate, v, feedback, 0, store=False)
@@ -875,11 +1152,12 @@ class GateOrchestrator:
     # -- gate reopen (#4) ---------------------------------------------------
 
     # Delivery statuses in which a reopen is safe: the walk is parked waiting
-    # on a human (awaiting-verdict), deadlocked (stopped), finished (complete)
-    # or already reopened. "active" means a gate agent is mid-run - reopening
-    # under it would race the run's own state writes, so it is refused.
+    # on a human (awaiting-verdict), parked because the agent did not produce
+    # reviewable work (blocked, Fix 1), deadlocked (stopped), finished
+    # (complete) or already reopened. "active" means a gate agent is mid-run -
+    # reopening under it would race the run's own state writes, so it is refused.
     _REOPEN_SAFE_STATUSES = frozenset(
-        {"awaiting-verdict", "stopped", "complete", "reopened"})
+        {"awaiting-verdict", "blocked", "stopped", "complete", "reopened"})
 
     def _reopen_roles_for(self, gate: str) -> set:
         """Roles authorised to reopen *gate* - the SAME authorisation set
@@ -1116,6 +1394,11 @@ class GateOrchestrator:
                 write_proof_artifacts(runtime, ux, self.repo_root)
             except OSError:
                 pass
+            # Fix 4: remember the runtime proof outcome so the G5 release
+            # verifier can refuse to report a PRODUCTION delivery ready-to-ship
+            # without a passing runtime proof (evidence-only, never a hard
+            # block at G4).
+            self._last_runtime_ok = passed
             self.emit({"type": "proof", "gate": "G4",
                        "runtime_status": runtime.get("status"),
                        "ux_status": ux.get("status")})
@@ -1147,6 +1430,47 @@ class GateOrchestrator:
                 if p.is_file() and p.suffix in self._CODE_SUFFIXES:
                     out.append(str(p.relative_to(self.repo_root)).replace("\\", "/"))
         return out
+
+    # -- G5 release verification (Fix 4 + Fix 5) ----------------------------
+
+    def _unresolved_conditions(self) -> list:
+        """(gate, text) for every approve-with-conditions still unresolved.
+        There is no resolve API yet, so any recorded condition is unresolved and
+        blocks readiness -- an "approve with conditions" cannot silently ship."""
+        return [(g, t) for g, t in self.state.conditions.items()]
+
+    def _verify_g5_release(self) -> dict:
+        """Fix 4: a DETERMINISTIC release verifier that decides delivery
+        READINESS at G5. Readiness must reflect real verification, never merely
+        the absence of waivers. Returns ``{"ok": bool, "reasons": [str]}``.
+
+        Not-ready (the delivery still COMPLETES, but is honestly reported as
+        not ready-to-ship) when ANY of:
+          * a gate was WAIVED (advanced without a signature); or
+          * an approve-with-conditions is UNRESOLVED (Fix 5); or
+          * there is no built product to ship (no real product source on disk
+            -- never report ready-to-ship over an empty/stub repo); or
+          * in the PRODUCTION profile, the runtime proof did not pass.
+
+        # INTEGRATE: strict validator -- when sign.is_gate_signed_strict lands,
+        # also require every G0..G5 signature to validate strictly here.
+        """
+        reasons: list[str] = []
+        if self.state.waived:
+            reasons.append("waived gate(s): " + ", ".join(map(str, self.state.waived)))
+        unresolved = self._unresolved_conditions()
+        if unresolved:
+            reasons.append("unresolved condition(s) on gate(s): "
+                           + ", ".join(g for g, _ in unresolved))
+        try:
+            has_product = self._repo_has_real_product_src()
+        except Exception:
+            has_product = False
+        if not has_product:
+            reasons.append("no built product source on disk to ship")
+        if self.profile == "production" and not getattr(self, "_last_runtime_ok", False):
+            reasons.append("production profile: runtime proof did not pass")
+        return {"ok": not reasons, "reasons": reasons}
 
     def _finalize_closeout(self, *, ready: bool) -> None:
         """CONVERGENCE (Claim 2): produce the delivery CLOSEOUT via the SAME
@@ -1192,13 +1516,16 @@ class GateOrchestrator:
         return self.repo_root / ".signalos" / "agent-runs" / self.state.run_id
 
     def _persist(self) -> None:
-        try:
-            d = self._state_dir()
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "delivery.json").write_text(
-                json.dumps(asdict(self.state), indent=2), encoding="utf-8")
-        except OSError:
-            pass
+        # Fix 6: persistence is a DURABILITY checkpoint the walk depends on
+        # (apply_verdict persists the freshly-signed state before dispatching the
+        # next gate). A failed write must SURFACE, not be silently swallowed --
+        # continuing past a failed checkpoint is exactly how an on-disk signature
+        # and delivery.json drift apart. Callers that must not fail the walk on a
+        # persist hiccup handle it explicitly; the checkpoint path does not.
+        d = self._state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "delivery.json").write_text(
+            json.dumps(asdict(self.state), indent=2), encoding="utf-8")
 
 
 def resume_delivery(
@@ -1242,6 +1569,9 @@ def resume_delivery(
     # Reopen bookkeeping (#4) - also absent from older persisted states.
     st.reopens = dict(data.get("reopens", {}))
     st.invalidated = list(data.get("invalidated", []))
+    # Fix 5 conditions + Fix 1 last_outcome - absent from older persisted states.
+    st.conditions = dict(data.get("conditions", {}))
+    st.last_outcome = dict(data.get("last_outcome", {}))
     return orch
 
 
