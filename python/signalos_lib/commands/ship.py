@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from signalos_lib.sign import check_gate
+from signalos_lib.sign import check_gate, check_gate_signed_strict
 
 SCHEMA_VERSION = "signalos.ship.v1"
 DEFAULT_TAG_FORMAT = "wave-{W}"
@@ -219,6 +219,19 @@ def _check_gate5_signed(root: Path) -> ShipCheck:
         agent_signers = [name for name in status.signers if _is_agent_signature(name)]
         if agent_signers:
             failures.append(f"{status.rel_path} self-signed by agent: {', '.join(agent_signers)}")
+    # Route the gate through the single strict signature validator so "signed"
+    # means the SAME thing here as on the primary board / preflight: verdict
+    # APPROVED, an authorized role, a valid CURRENT artifact hash, audit-chain
+    # linkage, and non-revoked. The per-artifact checks above catch unsigned /
+    # draft / hash-missing / agent-self-signer, but NOT a REJECTED verdict, a
+    # wrong role, a missing audit row, or a reopened (revoked) gate -- so a block
+    # with a valid hash and a real-looking signer could otherwise ship while the
+    # board correctly rejects it.
+    strict = check_gate_signed_strict(root, "G5")
+    if not strict.signed:
+        failures.extend(strict.reasons or ["Gate 5 is not validly signed"])
+    details["strict_signed"] = strict.signed
+    details["strict_reasons"] = strict.reasons
     return ShipCheck(
         id="gate-5-signed",
         status="PASS" if not failures else "FAIL",
