@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from signalos_lib.artifacts import expected_gate_artifacts, list_gates
-from signalos_lib.sign import check_gate
+from signalos_lib.sign import check_gate, check_gate_signed_strict
 from signalos_lib.validate_cmd import overall_exit_code, run_validators
 
 SCHEMA_VERSION = "signalos.release_readiness.v1"
@@ -235,16 +235,35 @@ def _check_gate_artifacts(root: Path) -> list[ReadinessCheck]:
     unsigned: list[str] = []
     drafts: list[str] = []
     hash_mismatch: list[str] = []
+    strict_invalid: list[str] = []
+    strict_reasons: list[str] = []
     for gate in list_gates():
-        for status in check_gate(root, gate):
+        statuses = check_gate(root, gate)
+        gate_claims_signature = False
+        for status in statuses:
             if not status.exists:
                 continue
-            if not status.has_signatures:
+            if status.has_signatures:
+                gate_claims_signature = True
+            else:
                 unsigned.append(status.rel_path)
             if status.is_draft:
                 drafts.append(status.rel_path)
             if status.hash_valid is False:
                 hash_mismatch.append(status.rel_path)
+        # Only run the strict validator on gates that CLAIM a signature, so a
+        # not-yet-reached gate stays an honest "missing"/"unsigned" — no redundant
+        # strict noise. For every gate that does claim a signature, require the
+        # SAME strict verdict the primary board enforces: verdict APPROVED, an
+        # authorized role, a valid CURRENT artifact hash, audit-chain linkage, and
+        # non-revoked. The unsigned/draft/hash-mismatch scan above misses a
+        # REJECTED verdict, a wrong role, a missing audit row, and a reopened
+        # (revoked) gate — all of which the board correctly rejects.
+        if gate_claims_signature:
+            strict = check_gate_signed_strict(root, gate)
+            if not strict.signed:
+                strict_invalid.append(gate)
+                strict_reasons.extend(strict.reasons)
 
     artifact_check = ReadinessCheck(
         id="required-governance-artifacts",
@@ -254,14 +273,21 @@ def _check_gate_artifacts(root: Path) -> list[ReadinessCheck]:
         evidence=present,
         details={"missing": missing, "required_count": len(expected)},
     )
-    signature_failures = unsigned + drafts + hash_mismatch
+    signature_failures = unsigned + drafts + hash_mismatch + strict_invalid
     gate_check = ReadinessCheck(
         id="required-gates-signed",
         status="PASS" if not signature_failures and not missing else "FAIL",
         severity="BLOCK_MERGE",
         message="required gate artifacts are signed" if not signature_failures and not missing else "one or more gate artifacts are unsigned or invalid",
         evidence=present,
-        details={"unsigned": unsigned, "draft_signatures": drafts, "hash_mismatch": hash_mismatch, "missing": missing},
+        details={
+            "unsigned": unsigned,
+            "draft_signatures": drafts,
+            "hash_mismatch": hash_mismatch,
+            "strict_invalid": strict_invalid,
+            "strict_reasons": strict_reasons,
+            "missing": missing,
+        },
     )
     return [artifact_check, gate_check]
 

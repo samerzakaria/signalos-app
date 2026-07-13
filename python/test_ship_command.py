@@ -8,7 +8,7 @@ from pathlib import Path
 
 from signalos_lib.cli import main as cli_main
 from signalos_lib.commands.ship import ship_wave
-from signalos_lib.sign import sign_artifact
+from signalos_lib.sign import _append_audit, revoke_gate, sign_artifact
 
 
 def _write(path: Path, text: str) -> None:
@@ -32,16 +32,31 @@ def _init_ready_repo(root: Path, *, signer: str = "QA User") -> None:
     _git(root, "config", "user.name", "QA User")
     _write(root / ".signalos" / "waves" / "W01" / ".keep", "\n")
     _write(root / ".signalos" / "AUDIT_TRAIL.jsonl", "")
+    quality_check = root / "core" / "governance" / "QUALITY_CHECK.md"
     _write(
-        root / "core" / "governance" / "QUALITY_CHECK.md",
+        quality_check,
         "# Quality Check\n\nSelf Assessment\n- Coverage integrity PASS\n- Human gate readiness PASS\n",
     )
+    # Sign G5 the REAL way: the in-file signature block AND a matching audit-trail
+    # row, so the strict validator (verdict + authorized role + current hash +
+    # audit linkage + non-revoked) treats this as a genuinely signed-ready gate.
+    # A bare sign_artifact writes only the in-file block (no audit row) and would
+    # read as NOT signed under the strict validator ship now enforces.
     sign_artifact(
-        root / "core" / "governance" / "QUALITY_CHECK.md",
+        quality_check,
         signer=signer,
         role="QA",
         gate="G5",
         verdict="APPROVED",
+    )
+    _append_audit(
+        root / ".signalos" / "AUDIT_TRAIL.jsonl",
+        signer,
+        "QA",
+        "G5",
+        "core/governance/QUALITY_CHECK.md",
+        quality_check,
+        "APPROVED",
     )
     _write(
         root / ".signalos" / "evidence" / "W01" / "release-readiness.json",
@@ -235,6 +250,54 @@ def test_ship_numeric_wave_normalizes_to_padded_segment(tmp_path: Path):
     assert payload["wave"] == "W01"
     assert payload["evidence_path"] == ".signalos/evidence/W01/ship.json"
     assert (tmp_path / ".signalos" / "evidence" / "W01" / "ship.json").is_file()
+
+
+def test_ship_blocks_g5_rejected_verdict_despite_valid_hash(tmp_path: Path):
+    # STRICT GAP: G5 is signed with a valid current artifact hash, a real
+    # (non-agent) QA signer, and an APPROVED audit row -- but the in-file
+    # signature verdict is REJECTED. The primary board correctly reads this gate
+    # as NOT signed. Ship must agree. Against the pre-fix code (which only ran
+    # the verdict-blind per-artifact check) this passed gate-5-signed and shipped;
+    # ship now routes through the strict validator and blocks it.
+    _init_ready_repo(tmp_path)
+    quality_check = tmp_path / "core" / "governance" / "QUALITY_CHECK.md"
+    text = quality_check.read_text(encoding="utf-8")
+    assert "verdict: APPROVED" in text
+    # Flipping the verdict lives BELOW the "## Signatures" heading, so the
+    # artifact hash (content above the heading) is unchanged and still valid.
+    quality_check.write_text(
+        text.replace("verdict: APPROVED", "verdict: REJECTED", 1), encoding="utf-8"
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "reject verdict in-file")
+
+    payload = ship_wave(tmp_path, wave=1, dry_run=True, write_evidence=False)
+
+    assert payload["ok"] is False
+    checks = {check["id"]: check for check in payload["checks"]}
+    assert checks["gate-5-signed"]["status"] == "FAIL"
+    assert checks["gate-5-signed"]["details"].get("strict_signed") is False
+    assert {b["id"] for b in payload["blockers"]} >= {"gate-5-signed"}
+
+
+def test_ship_blocks_revoked_g5_gate(tmp_path: Path):
+    # STRICT GAP: a genuinely signed G5 whose gate was later reopened carries a
+    # durable revocation marker. The in-file signature block is still present and
+    # otherwise valid, so the pre-fix per-artifact check passed it. Ship now reads
+    # the strict validator, which treats a revoked gate as NOT signed.
+    _init_ready_repo(tmp_path)
+
+    ready = ship_wave(tmp_path, wave=1, dry_run=True, write_evidence=False)
+    assert ready["ok"] is True  # genuinely ready before the reopen
+
+    revoke_gate(tmp_path, "G5", reason="reopened for rework")
+
+    payload = ship_wave(tmp_path, wave=1, dry_run=True, write_evidence=False)
+
+    assert payload["ok"] is False
+    checks = {check["id"]: check for check in payload["checks"]}
+    assert checks["gate-5-signed"]["status"] == "FAIL"
+    assert checks["gate-5-signed"]["details"].get("strict_signed") is False
 
 
 def test_ship_cli_json_dispatches_from_top_level(tmp_path: Path, capsys):

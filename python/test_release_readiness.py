@@ -17,7 +17,7 @@ sys.path.insert(0, str(HERE))
 from signalos_lib import cli
 from signalos_lib.artifacts import expected_gate_artifacts
 from signalos_lib.commands import release_readiness
-from signalos_lib.sign import sign_artifact
+from signalos_lib.sign import _append_audit, revoke_gate, sign_artifact
 from signalos_ipc_server import map_slash_command
 
 
@@ -51,6 +51,7 @@ def _make_ready_repo(root: Path) -> None:
         _write(root / rel, f"# {Path(rel).stem}\n")
     _write(root / "core" / "governance" / "Governance" / "DECISION-DNA.md", "# Decision DNA\n")
 
+    audit_trail = root / ".signalos" / "AUDIT_TRAIL.jsonl"
     for artifact in expected_gate_artifacts():
         target = root / artifact.rel_path
         content = f"# {artifact.label}\n\nRelease-ready fixture.\n"
@@ -58,12 +59,28 @@ def _make_ready_repo(root: Path) -> None:
         if "SOUL-DOCUMENT" in artifact.rel_path or "CONSTITUTION" in artifact.rel_path:
             content += "\nsecurity_surfaces:\n  - webview\n  - ipc\n"
         _write(target, content)
+        # Sign each gate artifact the REAL way: in-file signature block AND a
+        # matching audit-trail row from an authorized role, so the strict
+        # validator release-readiness now enforces (verdict APPROVED + authorized
+        # role + current hash + audit linkage + non-revoked) treats every gate as
+        # genuinely signed. A bare sign_artifact leaves no audit row and would
+        # read as NOT signed under the strict validator.
+        role = artifact.required_roles[0]
         sign_artifact(
             target,
             signer="Fixture User",
-            role=artifact.required_roles[0],
+            role=role,
             gate=artifact.gate,
             verdict="APPROVED",
+        )
+        _append_audit(
+            audit_trail,
+            "Fixture User",
+            role,
+            artifact.gate,
+            artifact.rel_path,
+            target,
+            "APPROVED",
         )
 
     evidence_dir = root / ".signalos" / "evidence" / "W1"
@@ -128,6 +145,50 @@ class ReleaseReadinessTests(unittest.TestCase):
         self.assertEqual(checks["layer1-valid"]["status"], "PASS")
         self.assertEqual(checks["required-gates-signed"]["status"], "PASS")
         self.assertEqual(checks["build-test-evidence"]["status"], "PASS")
+
+    def test_rejected_gate_signature_blocks_release(self) -> None:
+        # STRICT GAP: G2's artifact keeps a valid current hash and a real signer,
+        # but its in-file verdict is flipped to REJECTED. The primary board reads
+        # this gate as NOT signed. Release-readiness must agree. Against the
+        # pre-fix code (unsigned/draft/hash-mismatch only) required-gates-signed
+        # passed; it now routes each signed gate through the strict validator.
+        _make_ready_repo(self.tmp)
+        expectation_map = self.tmp / "core" / "strategy" / "EXPECTATION_MAP.md"
+        text = expectation_map.read_text(encoding="utf-8")
+        self.assertIn("verdict: APPROVED", text)
+        # The verdict lives below "## Signatures", so the artifact hash (content
+        # above the heading) stays valid -- only the strict verdict check fails.
+        expectation_map.write_text(
+            text.replace("verdict: APPROVED", "verdict: REJECTED", 1), encoding="utf-8"
+        )
+
+        payload = release_readiness.release_readiness(self.tmp)
+
+        self.assertFalse(payload["ok"], payload)
+        checks = {check["id"]: check for check in payload["checks"]}
+        gate_check = checks["required-gates-signed"]
+        self.assertEqual(gate_check["status"], "FAIL")
+        self.assertIn("G2", gate_check["details"]["strict_invalid"])
+        self.assertIn("required-gates-signed", {b["id"] for b in payload["blockers"]})
+
+    def test_revoked_gate_blocks_release(self) -> None:
+        # STRICT GAP: a genuinely signed gate that was later reopened carries a
+        # durable revocation marker. Its in-file signature block remains, so the
+        # pre-fix per-artifact check passed it. Release-readiness now reads the
+        # strict validator, which treats a revoked gate as NOT signed.
+        _make_ready_repo(self.tmp)
+        ready = release_readiness.release_readiness(self.tmp)
+        self.assertTrue(ready["ok"], ready)  # genuinely ready before the reopen
+
+        revoke_gate(self.tmp, "G3", reason="reopened for rework")
+
+        payload = release_readiness.release_readiness(self.tmp)
+
+        self.assertFalse(payload["ok"], payload)
+        checks = {check["id"]: check for check in payload["checks"]}
+        gate_check = checks["required-gates-signed"]
+        self.assertEqual(gate_check["status"], "FAIL")
+        self.assertIn("G3", gate_check["details"]["strict_invalid"])
 
     def test_failed_verification_evidence_blocks_release(self) -> None:
         _make_ready_repo(self.tmp)
