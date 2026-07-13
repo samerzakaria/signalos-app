@@ -963,13 +963,23 @@ def run_delivery(
         # #27: re-pin any @mantine/* skew a generation agent's self-written
         # package.json introduced BEFORE install/build sees it.
         _enforce_design_deps(repo_root, design_deps)
-        val_plan = build_validation_plan(repo_root, actual_profile)
-        val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
+        if generation_blocked:
+            # Generation produced no real product. A real tsc/vitest run would
+            # only exercise the trivially-building scaffold stub, and its verdict
+            # is overridden by _mark_generation_failed below -- so skip the
+            # expensive validation (and the repair loop) and synthesize a failed
+            # result. This keeps a determined-failed delivery fast instead of
+            # spending a full build+test cycle on a stub that will be rejected.
+            val_result = {"can_close_delivery": False, "checks": [], "status": "failed"}
+        else:
+            val_plan = build_validation_plan(repo_root, actual_profile)
+            val_result = run_validation(repo_root, val_plan, dry_run=dry_run)
         write_validation_result(val_result, signalos_dir)
 
         # Repair loop: if validation fails and agent_mode is active
         if (
             not dry_run
+            and not generation_blocked
             and not val_result.get("can_close_delivery", False)
             and agent_mode != "none"
         ):
@@ -1142,17 +1152,43 @@ def run_delivery(
     # ------------------------------------------------------------------
     # 6. PROOF phase
     # ------------------------------------------------------------------
-    _emit_progress("proof", "runtime", "running", "Running runtime proof")
-    try:
-        runtime_proof = run_runtime_proof(repo_root, actual_profile)
-        _emit_progress("proof", "runtime", "done", runtime_proof.get("status", "Runtime proof complete"))
-    except Exception as exc:
-        errors.append(f"runtime proof failed: {exc}")
-        _emit_progress("proof", "runtime", "error", str(exc))
-        runtime_proof = {"status": "blocked", "errors": [str(exc)]}
+    # When generation itself failed (failed dispatch / no files written) the
+    # closeout already carries that blocker with a failed build_status. There
+    # is no real product to serve, so skip the runtime + UX proofs rather than
+    # spin up a dev server against a trivially-building scaffold stub: it adds
+    # no evidence and, on a restricted network, can hang the delivery on health
+    # polling until the proof timeout elapses.
+    if generation_blocked:
+        runtime_proof = {
+            "status": "skipped",
+            "profile": actual_profile,
+            "preview_command": None,
+            "port": None,
+            "health_check": {
+                "url": None,
+                "status_code": None,
+                "responded": False,
+                "response_time_ms": None,
+            },
+            "server_log": "",
+            "duration_s": 0.0,
+            "errors": [
+                "Runtime proof skipped: generation failed (no real product to serve)"
+            ],
+        }
+        _emit_progress("proof", "runtime", "skipped", "Runtime proof skipped (generation failed)")
+    else:
+        _emit_progress("proof", "runtime", "running", "Running runtime proof")
+        try:
+            runtime_proof = run_runtime_proof(repo_root, actual_profile)
+            _emit_progress("proof", "runtime", "done", runtime_proof.get("status", "Runtime proof complete"))
+        except Exception as exc:
+            errors.append(f"runtime proof failed: {exc}")
+            _emit_progress("proof", "runtime", "error", str(exc))
+            runtime_proof = {"status": "blocked", "errors": [str(exc)]}
 
     requires_ux_proof = requires_browser_ux_proof(repo_root, actual_profile)
-    if requires_ux_proof:
+    if requires_ux_proof and not generation_blocked:
         _emit_progress("proof", "ux", "running", "Running UX proof")
         try:
             ux_port = (

@@ -8,6 +8,19 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Build-time UX/DoD gate cluster (b43a89a) — follow-ups + delivery fail-fast (2026-07-13)
+
+The build-time UX/behavioral acceptance HARD gate (G4) + per-task DoD gate landed at b43a89a ("enforce what you grade"). Two defects surfaced while validating that cluster end-to-end and running the full suite as the integration gate. Full suite **2901 passed / 5 skipped / 37 subtests** (14:26).
+
+| # | Issue | Root cause | Fix | Location | Verified |
+|---|---|---|---|---|---|
+| U-1 | The auto-authored UX-acceptance test would **fail `tsc --noEmit` in every real build** → build INVALID (would have broken the enforced GPT-5.5 re-run and every enforced build) | The authored `.test.tsx` template had untyped params (`noImplicitAny`), `.textContent.trim()` with no null-guard, and `el.style` on an `Element`-typed var | Typed the template (`collectControls`/`accessibleName`/`.map((id: string)`), null-guarded `textContent`, dropped `el.style` | `product/acceptance.py` `ux_acceptance_test_source()` | ✅ authored into a real build → `tsc --noEmit` **0 errors**; 44 acceptance tests pass |
+| U-2 | A **determined-failed delivery still ran the full runtime proof** (spin up dev server + poll health) and a real tsc/vitest validation on the scaffold stub → wasteful in prod, and on a restricted network **hung the whole test suite** (health-poll `socket.connect` never returns → pytest-timeout killed the session) | `run_delivery` PROOF + VALIDATION phases ignored `generation_blocked`; the failed-dispatch path (no files written) reached both | On `generation_blocked`: skip runtime + UX proofs (synthesize `skipped`); skip real tsc/vitest + the repair loop (synthesize failed validation — the `_mark_generation_failed` override already discards the stub's verdict). Fail-fast on a delivery already known failed | `product/delivery.py` (VALIDATION + PROOF phases) | ✅ `test_repair_convergence_honesty.py::…fails_delivery_closed` 80–186s+hang → **9s pass**; full suite green |
+
+**Benchmark durability:** the funded-run harness is now checked into the repo at `scripts/backend_matrix/` (driver + expense-tracker scenario + external browser oracle, honest scope disclaimer, `--acknowledge-key-exposure` gate), replacing the session-temp grader. It never auto-loads the repo `.env`, never puts the key in payloads/args, and runs the final product check clean-room (fresh install + lockfile). Model catalog is OpenRouter aliases only — no hardcoded key, no banned `gpt-4o-mini`.
+
+---
+
 ## Durable direction — runtime containment, cassette replay, near-miss tier (2026-07-10)
 
 The endgame layers the panels named: replace static command policy with a real OS boundary, turn funded-run transcripts into a free offline corpus, and restore benchmark signal without re-opening the vacuous-satisfaction trap. Full suite green.
