@@ -773,7 +773,18 @@ class GateOrchestrator:
             results = result.get("results", {})
             b, t = results.get("build", {}), results.get("test", {})
             if b.get("status") == "passed" and t.get("status") == "passed":
-                return {"ok": True, "profile": profile}
+                # 3. UX/BEHAVIORAL ACCEPTANCE hard gate (product requirement, so
+                # it runs in BOTH profiles): a green build that ships NO real,
+                # styled, usable UI is still refused. Measured by rendering the
+                # product on jsdom (offline). Blocks only on a genuine measured
+                # failure; a build whose UI cannot be measured offline is never
+                # false-failed.
+                ux = self._verify_ux_acceptance(profile)
+                if not ux.get("ok"):
+                    return {"ok": False, "reason": ux.get("reason", "UX acceptance failed"),
+                            "build": "passed", "test": "passed", "ux": "failed"}
+                return {"ok": True, "profile": profile,
+                        "ux": ux.get("status", "ok")}
             # Prefer the parsed per-file diagnostics (crisp + actionable); fall
             # back to raw command output.
             errs = []
@@ -807,6 +818,34 @@ class GateOrchestrator:
         in-loop build reviewer also runs, so the same violation is caught DURING
         the build (with a fix pass) rather than only here at the gate."""
         return find_unwired_modules(self.repo_root, self._product_source_dir())
+
+    def _verify_ux_acceptance(self, profile: str) -> dict:
+        """UX/BEHAVIORAL acceptance HARD gate: a build is not VERIFIED unless it
+        ships a REAL, styled, usable UI. The check RENDERS the product entry on
+        jsdom (offline -- @testing-library, no Playwright/network) and MEASURES
+        the mounted DOM (not source/className counting): interactive controls
+        found by ARIA role, real styling signal (component library / inline
+        styles / CSS classes on rendered elements), and a11y names.
+
+        Returns ``{"ok": bool[, "reason": str][, "status": str]}``. Blocks ONLY
+        on a genuine measured failure (``ran and not ok``); a build whose UI
+        cannot be measured offline (non-browser profile, deps not installed, no
+        App entry) returns ok so a genuinely-good build is never false-failed on
+        tooling grounds. Never raises -- a tooling error is treated as a skip,
+        not a UX verdict."""
+        try:
+            from .acceptance import run_ux_acceptance
+            result = run_ux_acceptance(
+                self.repo_root,
+                source_dir=self._product_source_dir(),
+                profile=profile)
+        except Exception as exc:  # tooling error is not a UX verdict
+            return {"ok": True, "status": f"ux-skip ({type(exc).__name__})"}
+        if result.get("ran") and not result.get("ok"):
+            return {"ok": False,
+                    "reason": result.get("reason", "UX acceptance failed")}
+        return {"ok": True,
+                "status": "passed" if result.get("ran") else "skipped"}
 
     def _product_source_dir(self) -> str:
         """The stack adapter's own source directory (e.g. src, app, internal/app

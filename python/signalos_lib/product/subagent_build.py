@@ -41,8 +41,11 @@ __all__ = [
     "parse_verdict",
     "parse_implementer_status",
     "run_subagent_driven_build",
+    "task_dod_violations",
+    "is_vacuous_test",
 ]
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -1311,6 +1314,319 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
         return False, f"build check error: {type(exc).__name__}: {exc}"
 
 
+# ---------------------------------------------------------------------------
+# Per-task DEFINITION-OF-DONE hard gate ("grade only what you enforce")
+# ---------------------------------------------------------------------------
+#
+# A task's test passing is necessary but NOT sufficient. The Definition of Done
+# also demands a quality bar, and this gate BLOCKS a task from being marked
+# "done" (green) until that bar is met -- it is not advisory lint. The checks
+# are deterministic (no LLM) and deliberately GENEROUS so genuine work is never
+# false-failed; they fire only on egregious violations:
+#
+#   * TEST RIGOR   -- the acceptance test actually asserts behaviour (a vacuous
+#                     always-true test proves nothing -> the task is not done).
+#   * DEAD CODE    -- a declared implementation file that NOTHING references is
+#                     unwired dead code (wire it in or remove it).
+#   * COMPLEXITY   -- no single function blows the complexity / length ceiling.
+#   * DUPLICATION  -- two declared files are not near-identical copies.
+#   * A11Y         -- blatantly unlabeled inputs / nameless buttons are refused.
+#
+# Test-rigor violations hard-block immediately (the signed test is read-only, a
+# fixer cannot rewrite it); the impl-quality violations are driven out by a
+# bounded fixer loop that must not break the test.
+
+def _dod_int_env(name: str, default: int) -> int:
+    try:
+        v = int(str(os.environ.get(name, "")).strip())
+        return v if v > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _dod_max_function_lines() -> int:
+    return _dod_int_env("SIGNALOS_DOD_MAX_FUNCTION_LINES", 200)
+
+
+def _dod_max_complexity() -> int:
+    return _dod_int_env("SIGNALOS_DOD_MAX_COMPLEXITY", 40)
+
+
+def _dod_dup_similarity() -> float:
+    try:
+        v = float(str(os.environ.get("SIGNALOS_DOD_DUP_SIMILARITY", "")).strip())
+        return v if 0.0 < v <= 1.0 else 0.95
+    except (TypeError, ValueError):
+        return 0.95
+
+
+_ASSERT_RE = re.compile(r"\b(?:expect|assert)\s*\(|\.\s*should\b")
+# An assertion whose subject AND expected are both literals -> proves nothing.
+_TRIVIAL_ASSERT_RE = re.compile(
+    r"expect\(\s*(?:true|false|null|undefined|-?\d+(?:\.\d+)?|"
+    r'"[^"]*"|\'[^\']*\')\s*\)\s*\.\s*(?:toBe|toEqual|toStrictEqual|'
+    r"toBeTruthy|toBeFalsy|toBeDefined|toBeNull|toBeGreaterThan|toBeLessThan)"
+    r"\(\s*(?:true|false|null|undefined|-?\d+(?:\.\d+)?|"
+    r'"[^"]*"|\'[^\']*\')?\s*\)')
+_TEST_BLOCK_RE = re.compile(r"\b(?:it|test)\s*\(")
+
+
+def _strip_noncode(src: str) -> str:
+    """Blank out comments and string/template literal CONTENTS so brace/branch
+    scans do not trip on punctuation inside strings or comments."""
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", " ", src)
+    src = re.sub(r'"(?:\\.|[^"\\])*"', '""', src)
+    src = re.sub(r"'(?:\\.|[^'\\])*'", "''", src)
+    src = re.sub(r"`(?:\\.|[^`\\])*`", "``", src)
+    return src
+
+
+_FUNC_HEAD_RE = re.compile(r"=>\s*\{|\bfunction\b|\)\s*\{")
+_BRANCH_RE = re.compile(r"\b(?:if|for|while|case|catch)\b|&&|\|\|")
+
+
+def is_vacuous_test(test_src: str) -> bool:
+    """True when a test has test blocks but NO genuine behavioural assertion:
+    zero assertions, or every assertion is a literal-vs-literal tautology
+    (``expect(true).toBe(true)``). Deterministic; a real assertion over a
+    variable/call subject is never flagged."""
+    if not test_src or not _TEST_BLOCK_RE.search(test_src):
+        return False  # not a test file (or no test blocks) -> not our concern
+    asserts = _ASSERT_RE.findall(test_src)
+    if not asserts:
+        return True
+    expect_calls = re.findall(r"expect\s*\([^;]*?\)\s*\.\s*[A-Za-z]", test_src)
+    if expect_calls:
+        trivial = _TRIVIAL_ASSERT_RE.findall(test_src)
+        if len(trivial) >= len(expect_calls):
+            return True  # every expect(...) is a literal tautology
+    return False
+
+
+def _function_complexity(src: str) -> "tuple[int, int]":
+    """(max_branches_in_a_function, max_function_line_count) via a brace-matched
+    scan. Overlapping matches (an ``if (...) {`` also matches) only ADD smaller
+    inner bodies; taking the MAX still yields the outermost function, so the
+    proxy is conservative (never over-reports the top function)."""
+    code = _strip_noncode(src)
+    n = len(code)
+    max_branch = 0
+    max_lines = 0
+    for m in _FUNC_HEAD_RE.finditer(code):
+        brace = code.find("{", m.start())
+        if brace == -1:
+            continue
+        depth = 0
+        j = brace
+        while j < n:
+            c = code[j]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        body = code[brace:j + 1]
+        branches = len(_BRANCH_RE.findall(body))
+        ternary = (body.count("?") - body.count("?.") - 2 * body.count("??"))
+        branches += max(0, ternary)
+        max_branch = max(max_branch, branches)
+        max_lines = max(max_lines, body.count("\n") + 1)
+    return max_branch, max_lines
+
+
+def _a11y_issues(src: str) -> list[str]:
+    """Blatant a11y violations in JSX: an input with no name/label mechanism, or
+    a button with no accessible name. Conservative -- a dynamic ``{...}`` child
+    or any labelling attribute clears it (the render-based UX acceptance test is
+    the thorough a11y check; this only catches obvious per-file misses)."""
+    issues: list[str] = []
+    for m in re.finditer(r"<input\b([^>]*?)/?>", src):
+        attrs = m.group(1)
+        if re.search(r"type\s*=\s*[\"'](?:hidden|submit|button)[\"']", attrs):
+            continue
+        if not re.search(r"\b(?:id|aria-label|aria-labelledby|placeholder|name)\b",
+                         attrs):
+            issues.append("an <input> has no label/id/aria-label (a11y)")
+            break
+    for m in re.finditer(r"<button\b([^>]*)>(.*?)</button>", src, re.S):
+        attrs, inner = m.group(1), m.group(2)
+        if re.search(r"aria-label|aria-labelledby|title", attrs):
+            continue
+        text = re.sub(r"<[^>]+>", "", inner)
+        if not text.strip() and "{" not in inner:
+            issues.append("a <button> has no accessible name (text/aria-label)")
+            break
+    return issues
+
+
+_IMPORT_PATH_TMPL = r"""(?:from|import|require)\s*\(?\s*[\"'][^\"']*%s[\"']"""
+
+
+def _dead_impl_files(repo_root: Path, impl_files: list, source_dir: str,
+                     project_id: str) -> list:
+    """Declared implementation files that NOTHING in the source tree references
+    -- neither by an import of their path nor by use of their module name. Zero
+    inbound references == dead/unwired code. Conservative on purpose: an
+    entry/index file or any referenced module is never flagged (the false-
+    positive class that got the old static wiring GATE demoted)."""
+    src = Path(repo_root) / source_dir
+    if not src.is_dir():
+        return []
+    corpus: dict = {}
+    for p in src.rglob("*"):
+        if p.is_file() and p.suffix in _CODE_SUFFIXES:
+            try:
+                corpus[p.resolve()] = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+    dead: list = []
+    for rel in impl_files:
+        p = _workspace_path(repo_root, rel, project_id)
+        if p is None or not p.is_file():
+            continue
+        target = p.resolve()
+        stem = Path(rel).stem
+        if stem in ("index", "main", "App", "app"):
+            continue  # entry/index files are referenced by the tool/host
+        path_re = re.compile(_IMPORT_PATH_TMPL % re.escape(stem))
+        name_re = re.compile(r"\b%s\b" % re.escape(stem))
+        referenced = False
+        for q, text in corpus.items():
+            if q == target:
+                continue
+            if path_re.search(text) or name_re.search(text):
+                referenced = True
+                break
+        if not referenced:
+            dead.append(rel)
+    return dead
+
+
+def _duplicate_module_violations(existing: list) -> list:
+    """Near-duplicate declared implementation files (line-set Jaccard over the
+    dup-similarity threshold). Catches a task that forked a parallel copy of a
+    module instead of reusing one."""
+    texts: list = []
+    for rel, p in existing:
+        try:
+            lines = [ln.strip() for ln in
+                     p.read_text(encoding="utf-8", errors="replace").splitlines()
+                     if ln.strip()]
+        except OSError:
+            continue
+        texts.append((rel, set(lines), len(lines)))
+    out: list = []
+    thresh = _dod_dup_similarity()
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            (ra, sa, na), (rb, sb, nb) = texts[i], texts[j]
+            if na < 8 or nb < 8:
+                continue
+            union = len(sa | sb)
+            jac = (len(sa & sb) / union) if union else 0.0
+            if jac > thresh:
+                out.append(f"{ra} and {rb} are near-duplicates "
+                           f"({int(jac * 100)}% identical) -- consolidate them")
+    return out
+
+
+def task_dod_violations(repo_root: Path, task: "Task", *, source_dir: str = "src",
+                        project_id: str = "default") -> list:
+    """Deterministic Definition-of-Done violations for a task's IMPLEMENTATION
+    files (dead code, complexity, duplication, a11y). Empty == the impl meets
+    the bar. Test rigor is checked separately (the test is read-only). Operates
+    only on files that exist on disk, so it is a no-op for a task whose declared
+    files were never written."""
+    impl_files = [f for f in (task.files or []) if not _is_test_path(f)]
+    existing: list = []
+    for rel in impl_files:
+        p = _workspace_path(repo_root, rel, project_id)
+        if p is not None and p.is_file():
+            existing.append((rel, p))
+
+    violations: list = []
+    max_lines_ceil = _dod_max_function_lines()
+    max_cx_ceil = _dod_max_complexity()
+    for rel, p in existing:
+        try:
+            code = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        branches, lines = _function_complexity(code)
+        if branches > max_cx_ceil:
+            violations.append(f"{rel}: a function is too complex (complexity "
+                              f"{branches} > {max_cx_ceil}) -- split it up")
+        if lines > max_lines_ceil:
+            violations.append(f"{rel}: a function is too long ({lines} lines > "
+                              f"{max_lines_ceil}) -- break it into smaller units")
+        for issue in _a11y_issues(code):
+            violations.append(f"{rel}: {issue}")
+
+    for rel in _dead_impl_files(repo_root, [r for r, _ in existing], source_dir,
+                                project_id):
+        violations.append(f"{rel}: dead/unwired code -- nothing imports or uses "
+                          "it. Wire it into the app, or remove it")
+    violations.extend(_duplicate_module_violations(existing))
+    return violations
+
+
+def _dod_fixer_message(task: "Task", violations: list, repo_root: Path,
+                       stack: "_StackContext") -> str:
+    src_hint = f"under {stack.source_dir}/**"
+    return "\n".join([
+        f"# Definition of Done not yet met for task {task.id}: {task.name}",
+        "The task's test passes, but the code does not yet meet the quality bar "
+        "required to mark it done. Fix these in the real implementation "
+        f"{src_hint} (the tests are the signed spec and are READ-ONLY -- never "
+        "edit, weaken, or delete them):",
+        *[f"- {v}" for v in violations],
+        "",
+        "Then re-run the task's test via run_command and confirm it still passes.",
+        f"Work from: {repo_root}",
+    ])
+
+
+def _enforce_task_dod(*, task: "Task", repo_root: Path, stack: "_StackContext",
+                      project_id: str, run: RunAgent, adapter: Any,
+                      impl_sys: str, check: BuildCheck, cycles: int,
+                      emit: Callable[[dict], None]) -> "tuple[bool, str, int]":
+    """Drive a task's Definition of Done to GREEN. Returns
+    ``(ok, detail, repairs_made)``. A vacuous acceptance test hard-blocks (the
+    read-only spec cannot be rewritten); impl-quality violations get a bounded
+    fixer loop that must not break the test."""
+    repairs = 0
+    test_src = _read_test(repo_root, task.test, project_id)
+    if test_src and is_vacuous_test(test_src):
+        return (False,
+                "the acceptance test is vacuous (no genuine behavioural "
+                "assertion) -- the task cannot be 'done' on a test that proves "
+                "nothing", repairs)
+    viol = task_dod_violations(repo_root, task, source_dir=stack.source_dir,
+                               project_id=project_id)
+    for _ in range(max(1, cycles)):
+        if not viol:
+            return True, "", repairs
+        emit({"type": "system",
+              "text": f"Meeting Definition of Done for “{task.name}”: "
+                      + "; ".join(viol[:4])})
+        run("fixer", adapter, impl_sys,
+            _dod_fixer_message(task, viol, repo_root, stack))
+        repairs += 1
+        if task.test:
+            ok_test, _ = check(repo_root, task.test)
+            if not ok_test:
+                return (False, "a Definition-of-Done fix broke the acceptance "
+                        "test", repairs)
+        viol = task_dod_violations(repo_root, task, source_dir=stack.source_dir,
+                                   project_id=project_id)
+    if viol:
+        return False, "; ".join(viol[:4]), repairs
+    return True, "", repairs
+
+
 def run_subagent_driven_build(
     repo_root: Path,
     adapter: Any,
@@ -1498,9 +1814,33 @@ def run_subagent_driven_build(
                 matrix.bump_attempts(task.id)
                 ok, errs = check(repo_root, task.test)
             if ok:
-                matrix.set(task.id, status="green")
-                summary.append(f"{task.id} test_green=True")
-            else:
+                # PER-TASK DEFINITION-OF-DONE hard gate: a passing test is
+                # necessary but not sufficient -- the task is not "done" until
+                # its code also meets the quality bar (genuine test rigor, no
+                # dead code, complexity/dup within bounds, a11y). Blocks the
+                # task (status failed) when the bar cannot be met, so a doomed
+                # DoD stops the build fail-fast (no evidence -> sign stays
+                # fail-closed), exactly like a red test.
+                dod_ok, dod_detail, dod_repairs = _enforce_task_dod(
+                    task=task, repo_root=repo_root, stack=stack,
+                    project_id=project_id, run=run, adapter=adapter,
+                    impl_sys=impl_sys, check=check, cycles=per_task_cycles,
+                    emit=emit)
+                calls += dod_repairs
+                per_task_repairs += dod_repairs
+                if dod_ok:
+                    matrix.set(task.id, status="green")
+                    summary.append(f"{task.id} test_green=True")
+                else:
+                    matrix.set(task.id, status="failed")
+                    summary.append(f"{task.id} dod_failed: {dod_detail}")
+                    emit({"type": "system",
+                          "text": f"“{task.name}” passed its test but did NOT "
+                                  f"meet the Definition of Done: {dod_detail}. "
+                                  "Blocking the task (a passing test alone is "
+                                  "not 'done')."})
+                continue
+            if not ok:
                 # ESCAPE VALVE (test-dispute): a red deadlock is NOT proof the
                 # CODE is wrong -- the plan-authored test itself may be broken/
                 # unpassable (a hallucinated assertion, or a literal always-fail
@@ -1560,6 +1900,26 @@ def run_subagent_driven_build(
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
         )
+
+    # PHASE 1b -- author the UX ACCEPTANCE test into the suite before
+    # integration, so the build is TOLD (the model reads the exact bar) and MADE
+    # (the full-suite integration check below must pass it) to ship a real,
+    # styled, usable UI -- not merely graded on it after the fact. The test is
+    # the signed UX spec (read-only to the model); a browser build that renders
+    # no interactive controls or bare unstyled HTML fails it and stays RED here.
+    # No-op for non-browser profiles / no App entry. Real path only.
+    if build_check is None:
+        try:
+            from .acceptance import ensure_ux_acceptance_test
+            authored = ensure_ux_acceptance_test(
+                repo_root, source_dir=stack.source_dir, profile=stack.profile)
+            if authored is not None:
+                emit({"type": "system",
+                      "text": "Authored the UX acceptance test: the build must "
+                              "render a real, styled, usable UI (interactive "
+                              "controls, real styling, a11y) to pass."})
+        except Exception:
+            pass
 
     # PHASE 2 -- INTEGRATION: full build + whole suite to green (cross-task).
     # Same input -> same model -> most likely the same failed output, so a
