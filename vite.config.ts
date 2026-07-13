@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
+import { configDefaults } from 'vitest/config';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -10,6 +11,17 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
+    // Local advisory-agent worktrees contain complete repository clones.  The
+    // default Vitest globs otherwise discover every cloned test again, making
+    // one suite run N+1 times and eventually hanging the worker pool.
+    exclude: [
+      ...configDefaults.exclude,
+      '**/.claude/worktrees/**',
+      // Generated products are separate dependency/runtime roots.  Their own
+      // tests run in delivery validation and the backend matrix clean room;
+      // importing them into the Preact desktop suite mixes React instances.
+      '**/.signalos/**',
+    ],
   },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   // prevent vite from obscuring rust errors
