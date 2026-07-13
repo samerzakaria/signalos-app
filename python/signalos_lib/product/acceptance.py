@@ -1067,15 +1067,15 @@ const INTERACTIVE_ROLES = [
 // an inline style, or a plain CSS class counts as a styling signal.
 const LIB_CLASS = /(^|\\s)(mantine-|chakra-|Mui[A-Z]|ant-|css-[a-z0-9]{{4,}}|chi-|sc-[a-zA-Z]|MuiBox)/;
 
-function collectControls(container) {{
-  let out = [];
+function collectControls(container: HTMLElement): Element[] {{
+  let out: Element[] = [];
   for (const role of INTERACTIVE_ROLES) {{
     out = out.concat(queryAllByRole(container, role));
   }}
   return out;
 }}
 
-function accessibleName(el) {{
+function accessibleName(el: Element): string {{
   const aria = (el.getAttribute('aria-label') || '').trim();
   if (aria) return aria;
   const doc = el.ownerDocument;
@@ -1083,7 +1083,7 @@ function accessibleName(el) {{
   if (labelledby) {{
     const t = labelledby
       .split(/\\s+/)
-      .map((id) => (doc.getElementById(id)?.textContent || '').trim())
+      .map((id: string) => (doc.getElementById(id)?.textContent || '').trim())
       .join(' ')
       .trim();
     if (t) return t;
@@ -1091,11 +1091,11 @@ function accessibleName(el) {{
   const id = el.getAttribute('id');
   if (id) {{
     const lbl = doc.querySelector(`label[for="${{id}}"]`);
-    if (lbl && (lbl.textContent || '').trim()) return lbl.textContent.trim();
+    if (lbl && (lbl.textContent || '').trim()) return (lbl.textContent || '').trim();
   }}
   let p = el.parentElement;
   while (p) {{
-    if (p.tagName === 'LABEL' && (p.textContent || '').trim()) return p.textContent.trim();
+    if (p.tagName === 'LABEL' && (p.textContent || '').trim()) return (p.textContent || '').trim();
     p = p.parentElement;
   }}
   const txt = (el.textContent || '').trim();
@@ -1132,8 +1132,7 @@ describe('UX acceptance: ships a real, styled, usable UI', () => {{
     let styled = 0;
     for (const el of all) {{
       const cls = (el.getAttribute('class') || '').trim();
-      const hasInline = (el.getAttribute('style') || '').trim().length > 0 ||
-        (el.style && el.style.length > 0);
+      const hasInline = (el.getAttribute('style') || '').trim().length > 0;
       // real (jsdom-computed) styling OR the rendered-DOM class fallback
       if (hasInline || LIB_CLASS.test(cls) || cls) styled += 1;
     }}
