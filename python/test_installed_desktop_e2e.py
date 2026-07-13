@@ -392,7 +392,17 @@ class TestGovernedDeliveryWalkDeterministic(unittest.TestCase):
         })
         self.assertTrue(d.get("ok"), msg=d)
         self.assertEqual((d.get("data") or {}).get("gate"), "G0")
-        self.assertEqual((d.get("data") or {}).get("status"), "awaiting-verdict")
+        # The scripted end-turn provider writes no gate artifacts, so the real
+        # outcome gate must surface this checkpoint as blocked.  This test
+        # injects its own signing seam below (which deliberately owns/bypasses
+        # normal reviewability enforcement) only so it can continue to G4 and
+        # exercise the independent anti-fake-green build wall.
+        self.assertEqual((d.get("data") or {}).get("status"), "blocked")
+        state_path = (Path(self._ws) / ".signalos" / "agent-runs"
+                      / "det-walk" / "delivery.json")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertFalse(state.get("last_outcome", {}).get("ok"))
+        self.assertIn("stalled_no_tool", state.get("last_outcome", {}).get("reason", ""))
 
         gates_seen = []
         last = None
