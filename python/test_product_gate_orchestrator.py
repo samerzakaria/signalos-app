@@ -8,9 +8,11 @@ gate artifacts on disk).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1655,6 +1657,202 @@ class TestPersistBeforeDispatch(unittest.TestCase):
             orch._state_dir = lambda: blocker / "sub"       # mkdir under a file -> OSError
             with self.assertRaises(OSError):
                 orch._persist()
+
+
+def _spawn_dead_pid() -> int:
+    """A pid that is guaranteed DEAD: spawn a trivial child, wait for it to exit
+    (code 0, never STILL_ACTIVE/259), and return its now-reaped pid. Used to
+    prove the liveness check reclaims a same-host, dead-pid lock."""
+    import subprocess
+    p = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    p.wait()
+    return p.pid
+
+
+class TestSingleActiveDeliveryLock(unittest.TestCase):
+    """Per-(repo_root, project_id) single-active-delivery lock: a SECOND
+    concurrent delivery on the SAME project is BLOCKED with a clear message,
+    while DIFFERENT projects are NEVER blocked. A stale lock (dead pid / past
+    TTL) and a RESUME of the same run reclaim the lock; a terminal status
+    releases it so the next delivery on that project starts fine. Driven on the
+    real start()/apply_verdict path (no lock mocks)."""
+
+    def _orch(self, root, *, project_id="default", run_id=None, events=None):
+        ev = events if events is not None else []
+        orch = GateOrchestrator(
+            Path(root), _EndAdapter(), ev.append,
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: ["x"], prompt="build task management",
+            project_id=project_id, run_id=run_id,
+        )
+        # Simulate a SUCCESSFUL gate agent so start() opens the gate for review
+        # (awaiting-verdict) instead of blocking on the stalled _EndAdapter --
+        # this isolates the LOCK behaviour from the agent-outcome gate. (Same
+        # spirit as the module-level _orch / TestCloseoutConvergence stubs.)
+        orch._verify_g4_build = lambda *a, **k: {"ok": True}
+        orch._execute_build_gate = lambda *a, **k: setattr(
+            orch, "_g4_verify", {"ok": True})
+        orch._gate_review_ready = lambda *a, **k: {"ok": True}
+        return orch, ev
+
+    @staticmethod
+    def _lock_path(root, project_id="default"):
+        return (Path(root) / ".signalos" / "projects" / project_id
+                / "delivery.lock")
+
+    # -- (a) two deliveries on the SAME project -> the second is blocked ----
+
+    def test_second_delivery_same_project_is_blocked(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, _ = self._orch(d, run_id="run-A")
+            self.assertEqual(a.start()["status"], "awaiting-verdict")
+
+            b, ev_b = self._orch(d, run_id="run-B")  # same repo + project
+            res_b = b.start()
+            self.assertEqual(res_b["status"], "blocked")
+            self.assertIn("already active for project 'default'", res_b["reason"])
+            self.assertIn("run-A", res_b["reason"])  # names the holder
+            self.assertTrue(any(e.get("type") == "delivery_blocked" for e in ev_b))
+            # blocked BEFORE running its own gate (no gate event emitted)
+            self.assertFalse(any(e.get("type") == "gate" for e in ev_b))
+            # the first delivery's lock is intact and still its own
+            info = json.loads(self._lock_path(d).read_text(encoding="utf-8"))
+            self.assertEqual(info["run_id"], "run-A")
+
+    # -- (b) two deliveries on DIFFERENT projects -> both start fine --------
+
+    def test_different_projects_never_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, ev_a = self._orch(d, project_id="alpha", run_id="run-alpha")
+            b, ev_b = self._orch(d, project_id="beta", run_id="run-beta")
+            self.assertEqual(a.start()["status"], "awaiting-verdict")
+            self.assertEqual(b.start()["status"], "awaiting-verdict")
+            self.assertFalse(any(e.get("type") == "delivery_blocked"
+                                 for e in ev_a + ev_b))
+            # each wrote its OWN lock under its OWN project namespace
+            self.assertTrue(self._lock_path(d, "alpha").is_file())
+            self.assertTrue(self._lock_path(d, "beta").is_file())
+            self.assertEqual(
+                json.loads(self._lock_path(d, "alpha").read_text())["run_id"],
+                "run-alpha")
+            self.assertEqual(
+                json.loads(self._lock_path(d, "beta").read_text())["run_id"],
+                "run-beta")
+
+    # -- (c) a STALE lock is reclaimed, not blocked ------------------------
+
+    def _seed_lock(self, root, *, run_id, pid, acquired_at, project_id="default"):
+        lp = self._lock_path(root, project_id)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        lp.write_text(json.dumps({
+            "run_id": run_id, "pid": pid, "host": "otherhost",
+            "acquired_at": acquired_at}), encoding="utf-8")
+        return lp
+
+    def test_stale_lock_past_ttl_is_reclaimed(self):
+        # LIVE pid (this very process) but acquired 7h ago -> past the 6h TTL
+        # -> stale -> reclaimed (proves TTL crash-safety without needing a dead
+        # pid).
+        with tempfile.TemporaryDirectory() as d:
+            old = (datetime.now(timezone.utc) - timedelta(hours=7)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+            self._seed_lock(d, run_id="run-old", pid=os.getpid(), acquired_at=old)
+            orch, ev = self._orch(d, run_id="run-new")
+            self.assertEqual(orch.start()["status"], "awaiting-verdict")
+            self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev))
+            self.assertEqual(
+                json.loads(self._lock_path(d).read_text())["run_id"], "run-new")
+
+    def test_stale_lock_dead_pid_is_reclaimed(self):
+        # Recent timestamp but a same-host DEAD pid -> stale -> reclaimed.
+        with tempfile.TemporaryDirectory() as d:
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._seed_lock(d, run_id="run-old", pid=_spawn_dead_pid(),
+                            acquired_at=now)
+            orch, ev = self._orch(d, run_id="run-new")
+            self.assertEqual(orch.start()["status"], "awaiting-verdict")
+            self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev))
+            self.assertEqual(
+                json.loads(self._lock_path(d).read_text())["run_id"], "run-new")
+
+    # -- (d) a RESUME (same run_id) reclaims its OWN lock ------------------
+
+    def test_resume_same_run_id_reclaims_own_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, _ = self._orch(d, run_id="run-X")
+            a.start()  # acquires the lock for run-X (live pid, fresh timestamp)
+            # A reconstructed orchestrator with the SAME run_id (crash/restart)
+            # must reclaim its OWN live lock, never block itself.
+            b, ev_b = self._orch(d, run_id="run-X")
+            self.assertEqual(b.start()["status"], "awaiting-verdict")
+            self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev_b))
+
+    # -- (e) a terminal status releases the lock --------------------------
+
+    def test_terminal_complete_releases_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, _ = self._orch(d, run_id="run-1")
+            a.start()
+            self.assertTrue(self._lock_path(d).is_file())  # held during delivery
+            res = None
+            for _ in range(6):                 # G0..G5 -> complete
+                res = a.apply_verdict("approve")
+            self.assertEqual(res["status"], "complete")
+            self.assertFalse(self._lock_path(d).is_file(),
+                             "a completed delivery must release its lock")
+            # a SUBSEQUENT delivery on the SAME project now starts fine
+            b, ev_b = self._orch(d, run_id="run-2")
+            self.assertEqual(b.start()["status"], "awaiting-verdict")
+            self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev_b))
+
+    def test_terminal_complete_waived_releases_lock(self):
+        # complete-waived is the terminal status when the FINAL gate (G5) is
+        # itself waived, advancing without a signature.
+        with tempfile.TemporaryDirectory() as d:
+            a, _ = self._orch(d, run_id="run-1")
+            a.start()
+            for _ in range(5):                          # approve G0..G4 -> at G5
+                a.apply_verdict("approve")
+            res = a.apply_verdict("waive", "ship without the release sign-off")
+            self.assertEqual(res["status"], "complete-waived")
+            self.assertFalse(self._lock_path(d).is_file(),
+                             "a waived-to-complete delivery must release its lock")
+
+    def test_release_only_touches_our_own_lock(self):
+        # A terminal release must NEVER delete another delivery's lock.
+        with tempfile.TemporaryDirectory() as d:
+            self._seed_lock(
+                d, run_id="someone-else", pid=os.getpid(),
+                acquired_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            orch, _ = self._orch(d, run_id="run-mine")
+            orch._release_delivery_lock()  # our run_id != the lock's -> no-op
+            self.assertTrue(self._lock_path(d).is_file())
+            self.assertEqual(
+                json.loads(self._lock_path(d).read_text())["run_id"], "someone-else")
+
+    # -- pid-liveness cross-platform contract -----------------------------
+
+    def test_pid_liveness_detects_dead_and_live(self):
+        self.assertTrue(go_mod._pid_is_alive(os.getpid()))  # this process is live
+        self.assertFalse(go_mod._pid_is_alive(_spawn_dead_pid()))  # reaped -> dead
+        self.assertTrue(go_mod._pid_is_alive(0))            # non-positive -> assume live
+        self.assertTrue(go_mod._pid_is_alive("nope"))       # unparseable -> assume live
+
+    def test_lock_liveness_predicate(self):
+        # dead pid -> stale; live pid + fresh -> live; live pid + old -> stale.
+        now = datetime.now(timezone.utc)
+        fresh = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        old = (now - timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with tempfile.TemporaryDirectory() as d:
+            orch, _ = self._orch(d, run_id="r")
+            self.assertFalse(orch._delivery_lock_is_live(
+                {"pid": _spawn_dead_pid(), "acquired_at": fresh}))
+            self.assertTrue(orch._delivery_lock_is_live(
+                {"pid": os.getpid(), "acquired_at": fresh}))
+            self.assertFalse(orch._delivery_lock_is_live(
+                {"pid": os.getpid(), "acquired_at": old}))
+            self.assertFalse(orch._delivery_lock_is_live(
+                {"pid": os.getpid()}))  # missing timestamp -> stale (no deadlock)
 
 
 if __name__ == "__main__":

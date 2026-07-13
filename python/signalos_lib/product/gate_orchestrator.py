@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
+import socket
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -246,6 +249,107 @@ def _current_wave_id(repo_root: Path, project_id: str = "default") -> str | None
     except Exception:
         return None
     return None if not wave or wave == "\u2014" else wave
+
+
+# ---------------------------------------------------------------------------
+# Per-(repo_root, project_id) single-active-delivery lock (crash-safe).
+#
+# One operator who starts the SAME project's delivery twice at once must not be
+# able to corrupt shared gate state. The lock is keyed on (repo_root,
+# project_id) and lives UNDER the project namespace
+# (.signalos/projects/<project_id>/delivery.lock): DIFFERENT projects already
+# keep isolated state, so the lock can NEVER block two different projects -- it
+# only blocks a SECOND concurrent delivery on the SAME project. A lock is
+# honoured only while its owning process is still alive AND it is younger than
+# the TTL; a killed process (dead pid) or an abandoned lock (past the TTL) is
+# reclaimed, so a crash never deadlocks the project permanently.
+# ---------------------------------------------------------------------------
+_LOCK_TTL_SECONDS = 6 * 3600  # a lock older than this is stale -> reclaimable
+
+
+def _hostname() -> str:
+    try:
+        return socket.gethostname()
+    except Exception:
+        return "?"
+
+
+def _parse_iso_utc(value: Any) -> Optional[datetime]:
+    """Parse the ISO-8601 UTC timestamp a delivery lock carries back into an
+    aware UTC datetime, or None when absent/unparseable."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None
+            else dt.astimezone(timezone.utc))
+
+
+def _pid_is_alive_windows(pid: int) -> bool:
+    """Windows liveness probe. os.kill(pid, 0) is NOT usable here -- CPython
+    maps it to TerminateProcess and would KILL a live process -- so probe with a
+    READ-ONLY OpenProcess handle instead. Explicit argtypes/restype are required
+    so 64-bit HANDLEs are not truncated on 64-bit Python (a truncated handle
+    would make a live process look dead). Fails toward 'alive' on any probe
+    error so a still-running delivery is never wrongly reclaimed."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE,
+                                                ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Access-denied means the process EXISTS (alive, just not ours);
+            # any other failure (invalid parameter) means no such pid (dead).
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return True
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return True
+
+
+def _pid_is_alive(pid: Any) -> bool:
+    """Best-effort, CROSS-PLATFORM 'is this process still running?'.
+
+    Fails toward "alive" whenever UNSURE (so a still-running delivery is never
+    wrongly reclaimed) and reports "dead" only on a CLEAR no-such-process --
+    which a same-host, different, dead pid IS, so its stale lock is reclaimable.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    if sys.platform == "win32":
+        return _pid_is_alive_windows(pid)
+    try:
+        os.kill(pid, 0)  # POSIX signal 0 delivers nothing; only checks existence
+    except ProcessLookupError:
+        return False           # ESRCH -- clearly gone -> reclaimable
+    except PermissionError:
+        return True            # exists but not ours -> alive
+    except OSError:
+        return True            # uncertain -> assume alive (never reclaim)
+    return True
 
 
 class GateOrchestrator:
@@ -996,8 +1100,95 @@ class GateOrchestrator:
                             + ", ".join(map(str, unrendered[:5])) + ")")
         return problems
 
+    # -- single-active-delivery lock (per repo_root + project_id) -----------
+
+    def _delivery_lock_path(self) -> Path:
+        """The lock file guarding THIS project's namespace. Different projects
+        resolve to different paths, so the lock never blocks across projects."""
+        return (self.repo_root / ".signalos" / "projects"
+                / self.project_id / "delivery.lock")
+
+    def _read_delivery_lock(self) -> Optional[dict]:
+        try:
+            data = json.loads(self._delivery_lock_path().read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def _delivery_lock_is_live(self, info: dict) -> bool:
+        """A lock still GUARDS the project only while its owning process is
+        alive AND it is younger than the TTL. A dead pid, a past-TTL age, or an
+        unparseable/absent timestamp is STALE (reclaimable) -- crash-safety must
+        never deadlock a project permanently."""
+        if not isinstance(info, dict) or not _pid_is_alive(info.get("pid")):
+            return False
+        acquired = _parse_iso_utc(info.get("acquired_at"))
+        if acquired is None:
+            return False
+        age = (datetime.now(timezone.utc) - acquired).total_seconds()
+        return age < _LOCK_TTL_SECONDS
+
+    def _write_delivery_lock(self) -> None:
+        path = self._delivery_lock_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "run_id": self.state.run_id,
+                "pid": os.getpid(),
+                "host": _hostname(),
+                "acquired_at": datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"),
+            }, indent=2), encoding="utf-8")
+        except OSError:
+            # The lock is a safety net, not the delivery itself: a repo whose
+            # lock cannot be written (e.g. read-only fs) still delivers.
+            pass
+
+    def _acquire_delivery_lock(self) -> Optional[dict]:
+        """Take the per-(repo, project) single-active-delivery lock at the start
+        of a delivery. Returns a BLOCKED status dict when another LIVE delivery
+        (a DIFFERENT run_id) already holds it; otherwise acquires -- reclaiming a
+        STALE lock (dead pid / past TTL) or our OWN lock (a resume of the same
+        run) by overwriting it -- and returns None."""
+        existing = self._read_delivery_lock()
+        if (existing
+                and str(existing.get("run_id") or "") != self.state.run_id
+                and self._delivery_lock_is_live(existing)):
+            other = str(existing.get("run_id") or "?")
+            pid = existing.get("pid")
+            return {
+                "status": "blocked",
+                "gate": self.state.current_gate,
+                "active_run_id": other,
+                "reason": (f"a delivery is already active for project "
+                           f"'{self.project_id}' (run {other}, pid {pid}) -- "
+                           "finish or cancel it first."),
+            }
+        self._write_delivery_lock()
+        return None
+
+    def _release_delivery_lock(self) -> None:
+        """Release the lock at a terminal delivery status -- but ONLY if it is
+        OURS (run_id matches), so we never delete another delivery's lock. Never
+        raises; a killed process is covered by the stale-reclaim, not by this."""
+        try:
+            info = self._read_delivery_lock()
+            if info and str(info.get("run_id") or "") == self.state.run_id:
+                self._delivery_lock_path().unlink()
+        except OSError:
+            pass
+
     def start(self) -> dict:
         gate = self.state.current_gate
+        blocked = self._acquire_delivery_lock()
+        if blocked is not None:
+            # A dedicated NON-error event so callers asserting "no error events"
+            # still hold, while the UI/founder learns a delivery is already live.
+            self.emit({"type": "delivery_blocked", "gate": gate,
+                       "reason": blocked["reason"],
+                       "active_run_id": blocked.get("active_run_id")})
+            return {"run_id": self.state.run_id, "gate": gate,
+                    "status": "blocked", "reason": blocked["reason"]}
         self._run_gate(gate)
         return {"run_id": self.state.run_id, "gate": gate, "status": self.state.status}
 
@@ -1011,6 +1202,7 @@ class GateOrchestrator:
             if gate == "G4" and not (self._g4_verify or {}).get("ok"):
                 reason = (self._g4_verify or {}).get("reason", "build not verified")
                 self.emit({"type": "error", "error": f"Gate G4 cannot be signed: {reason}"})
+                self._release_delivery_lock()
                 return {"status": "build-not-verified", "gate": gate, "reason": reason}
             # Fix 1 (production sign path): never sign a gate the agent did not
             # actually complete. `_run_gate` only opens a gate for review
@@ -1070,6 +1262,7 @@ class GateOrchestrator:
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": ready, "waived": list(self.state.waived)})
                 self._finalize_closeout(ready=ready)
+                self._release_delivery_lock()
                 return {"status": "complete", "ready": ready,
                         "waived": list(self.state.waived),
                         "conditions": dict(self.state.conditions)}
@@ -1141,6 +1334,7 @@ class GateOrchestrator:
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": False, "waived": list(self.state.waived)})
                 self._finalize_closeout(ready=False)
+                self._release_delivery_lock()
                 return {"status": "complete-waived", "ready": False,
                         "waived": list(self.state.waived)}
             self._run_gate(nxt)
