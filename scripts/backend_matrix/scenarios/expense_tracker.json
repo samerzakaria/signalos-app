@@ -1,0 +1,51 @@
+{
+  "id": "expense_tracker",
+  "name": "Personal Expense Tracker",
+  "profile": "react-vite",
+  "prompt": "Build a complete personal expense tracker as a React + Vite application. Implement every requirement below in the delivered product; do not defer, mock, or describe any listed capability instead of implementing it. Preserve every REQ-* identifier in each gate's governance artifacts for G0, G1, G2, and G3 so requirement coverage remains traceable. [REQ-FIELDS] Each expense must have an editable description, amount, category, and date before it is added. [REQ-ADD] A user must be able to add an expense and see it in the expense list immediately. [REQ-DELETE] A user must be able to delete a specific expense without deleting other expenses, and that deletion must remain in effect after a full page refresh. [REQ-RECONCILE] A user must be able to mark a specific expense as reconciled, see a clear reconciled state, and retain that state after a full page refresh without changing other expenses. [REQ-FILTER] A user must be able to filter expenses by category, including Food and Travel, and return to an All view. [REQ-PERSIST] Added expenses, deleted expenses, and reconciled state must persist after a full page refresh. [REQ-ACCESSIBLE] Provide an accessible, keyboard-usable interface with associated labels, meaningful control names, visible focus, and status that is not communicated by color alone.",
+  "requirements": [
+    {
+      "id": "REQ-FIELDS",
+      "description": "Each new expense captures description, amount, category, and date."
+    },
+    {
+      "id": "REQ-ADD",
+      "description": "The user can add an expense and immediately see it in the list."
+    },
+    {
+      "id": "REQ-DELETE",
+      "description": "The user can delete one expense without affecting another, and deletion survives refresh."
+    },
+    {
+      "id": "REQ-RECONCILE",
+      "description": "The user can visibly mark one expense reconciled without affecting another, and the state survives refresh."
+    },
+    {
+      "id": "REQ-FILTER",
+      "description": "The user can filter by category, including Food and Travel, and restore the All view."
+    },
+    {
+      "id": "REQ-PERSIST",
+      "description": "Added, deleted, and reconciled state remains correct after a full page refresh."
+    },
+    {
+      "id": "REQ-ACCESSIBLE",
+      "description": "The interface is keyboard usable and exposes labels, meaningful control names, visible focus, and non-color-only status."
+    }
+  ],
+  "oracle": "oracles/expense_tracker.mjs",
+  "trace_requirements_through_gates": [
+    "G0",
+    "G1",
+    "G2",
+    "G3"
+  ],
+  "expected_gates": [
+    "G0",
+    "G1",
+    "G2",
+    "G3",
+    "G4",
+    "G5"
+  ]
+}

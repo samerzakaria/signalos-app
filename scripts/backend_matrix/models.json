@@ -1,0 +1,26 @@
+{
+  "provider": "openrouter",
+  "api_key_env": "OPENROUTER_API_KEY",
+  "models": [
+    {
+      "alias": "gptoss120b",
+      "id": "openai/gpt-oss-120b"
+    },
+    {
+      "alias": "glm52",
+      "id": "z-ai/glm-5.2"
+    },
+    {
+      "alias": "qwen37max",
+      "id": "qwen/qwen3.7-max"
+    },
+    {
+      "alias": "sonnet5",
+      "id": "anthropic/claude-sonnet-5"
+    },
+    {
+      "alias": "gpt55",
+      "id": "openai/gpt-5.5"
+    }
+  ]
+}
