@@ -803,6 +803,88 @@ class TestG4BuildVerification(unittest.TestCase):
             self.assertNotIn("G4", orch.state.signed)
 
 
+class TestUxAcceptanceGate(unittest.TestCase):
+    """UX/BEHAVIORAL acceptance is a G4 HARD gate (both profiles): a build with
+    a green build AND green tests is STILL not verified when it ships no real,
+    styled, usable UI (the measured-render acceptance fails). Enforced inside
+    _verify_g4_build so it applies before G4 can be signed."""
+
+    def _make(self, root):
+        return GateOrchestrator(
+            Path(root), _EndAdapter(), (lambda e: None),
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: [f"{'G4'}.md"], prompt="build an expense tracker")
+
+    def _write(self, root, rel, content):
+        p = Path(root) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+
+    def _green_validation(self):
+        return (
+            mock.patch("signalos_lib.product.stacks.detect_profile",
+                       return_value="react-vite"),
+            mock.patch("signalos_lib.product.validation.build_validation_plan",
+                       return_value={"can_validate_build": True,
+                                     "can_validate_tests": True,
+                                     "profile": "react-vite"}),
+            mock.patch("signalos_lib.product.validation.run_validation",
+                       return_value={"results": {"build": {"status": "passed"},
+                                                 "test": {"status": "passed"}}}),
+        )
+
+    def _seed_wired_product(self, d):
+        self._write(d, "src/App.tsx",
+                    "import { List } from './components/List';\n"
+                    "export default function App(){ return <List/>; }\n")
+        self._write(d, "src/components/List.tsx",
+                    "export const List = () => null;\n")
+
+    def test_green_build_with_failing_ux_is_not_verified(self):
+        # RED case: build + tests green, but the UI is bare HTML -> the UX
+        # acceptance measurement fails -> G4 is NOT verified (cannot be signed).
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._seed_wired_product(d)
+            p_prof, p_plan, p_run = self._green_validation()
+            with p_prof, p_plan, p_run, \
+                 mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
+                            return_value={"ok": False, "ran": True,
+                                          "reason": "UX acceptance FAILED -- the "
+                                          "build does not ship a real, styled, "
+                                          "usable UI."}):
+                res = orch._verify_g4_build(None)
+            self.assertFalse(res["ok"])
+            self.assertIn("UX acceptance", res["reason"])
+            self.assertEqual(res.get("ux"), "failed")
+
+    def test_green_build_with_passing_ux_is_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._seed_wired_product(d)
+            p_prof, p_plan, p_run = self._green_validation()
+            with p_prof, p_plan, p_run, \
+                 mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
+                            return_value={"ok": True, "ran": True,
+                                          "reason": "UX acceptance passed."}):
+                res = orch._verify_g4_build(None)
+            self.assertTrue(res["ok"])
+
+    def test_ux_skip_never_false_fails_a_green_build(self):
+        # When the UI cannot be measured offline (no installed deps etc.), the
+        # gate SKIPS and does not block a genuinely-green build.
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._seed_wired_product(d)
+            p_prof, p_plan, p_run = self._green_validation()
+            with p_prof, p_plan, p_run, \
+                 mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
+                            return_value={"ok": True, "ran": False,
+                                          "reason": "deps not installed"}):
+                res = orch._verify_g4_build(None)
+            self.assertTrue(res["ok"])
+
+
 class TestScaffoldFirst(unittest.TestCase):
     """FIX 2: GateOrchestrator materializes the SELECTED stack's shell before
     the BUILD gate on a greenfield repo -- and is a STRICT no-op on a repo that

@@ -11,17 +11,27 @@ __all__ = [
     "build_acceptance_matrix",
     "check_closure_readiness",
     "classify_criterion_verifiability",
+    "ensure_ux_acceptance_test",
     "has_responsive_breakpoints",
     "load_acceptance_matrix",
     "reconcile_acceptance_evidence",
+    "run_ux_acceptance",
     "scan_ux_state_coverage",
     "update_criterion_status",
+    "ux_acceptance_applies",
+    "ux_acceptance_test_source",
     "write_acceptance_matrix",
+    "UX_ACCEPTANCE_MIN_CONTROLS",
+    "UX_ACCEPTANCE_MIN_STYLED",
+    "UX_ACCEPTANCE_MIN_STYLED_RATIO",
+    "UX_ACCEPTANCE_TEST_BASENAME",
 ]
 
 import json
 import os
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -965,4 +975,329 @@ def check_closure_readiness(matrix: dict[str, Any]) -> dict[str, Any]:
         "pending": pending,
         "skipped": skipped,
         "blockers": blockers,
+    }
+
+
+# ---------------------------------------------------------------------------
+# UX acceptance -- a BUILD-TIME HARD GATE: "ship a real, usable UI"
+# ---------------------------------------------------------------------------
+#
+# The design contract asks, in prose, for a real, styled, usable interface.
+# Prose is not enforcement -- a benchmark's strongest model shipped
+# functionally-correct code with ZERO UI because only *function* was enforced
+# ("grade only what you enforce"). This promotes "usable UI" into a MEASURED
+# acceptance test the build must satisfy, enforced by the G4 "acceptance tests
+# must pass" machinery.
+#
+# The check is a REAL browser-DOM MEASUREMENT, not source/className counting:
+# it renders the actual product entry with @testing-library/react on jsdom
+# (both shipped by the react-vite fixture, fully OFFLINE -- no Playwright, no
+# network) and asserts, by inspecting the rendered DOM:
+#
+#   1. INTERACTIVE CONTROLS -- the UI renders real controls found by ARIA role
+#      (button / textbox / combobox / checkbox / ...). A no-UI build that emits
+#      only static markup renders nothing interactive -> fails. (A decoy that
+#      sprinkles classNames onto non-interactive divs has no real controls ->
+#      fails here.)
+#   2. REAL STYLING -- a non-trivial share of the RENDERED elements carry a
+#      styling signal: a component-library component (Mantine/Chakra/MUI/...),
+#      an inline style, or a CSS class. A bare-HTML build (no classes, no
+#      styles, no component library) has zero styled elements -> fails here.
+#   3. A11Y BASICS -- every interactive control has an accessible name (a
+#      <label>/aria-label for inputs, a name for buttons).
+#
+# Requiring BOTH (1) AND (2) is what makes it fair: a bare-HTML build passes
+# controls but fails styling; a sprinkled-className decoy passes styling but
+# fails controls; a genuinely styled, interactive product passes both. The
+# measurement runs on the MOUNTED DOM, so dead/unmounted markup never counts.
+#
+# Thresholds are calibrated against real cached builds (styled builds pass with
+# wide margin; a bare-HTML build has 0 styled elements) and kept deliberately
+# generous so a genuinely-good build is never false-failed.
+
+# Minimum interactive controls the rendered UI must expose (found by ARIA
+# role). Two is enough to distinguish a real interactive surface from a
+# static/no-UI shell without demanding a specific control count.
+UX_ACCEPTANCE_MIN_CONTROLS = 2
+# Minimum number of RENDERED elements that carry a styling signal (class /
+# inline style / component-library component). A bare-HTML build has 0.
+UX_ACCEPTANCE_MIN_STYLED = 3
+# ...and at least this share of rendered elements must be styled, so a mostly
+# unstyled page with a couple of incidental classes still fails.
+UX_ACCEPTANCE_MIN_STYLED_RATIO = 0.10
+
+# The authored test's basename. Lives beside the app entry (source dir) so its
+# `./App` import resolves and vitest auto-discovers it in the suite.
+UX_ACCEPTANCE_TEST_BASENAME = "__ux_acceptance__.test.tsx"
+
+# Browser profiles that ship a React entry the render measurement can drive.
+_UX_BROWSER_PROFILES = frozenset({"react-vite"})
+_APP_ENTRY_SUFFIXES = (".tsx", ".jsx")
+
+
+def ux_acceptance_test_source(app_import: str = "./App") -> str:
+    """The source of the UX acceptance test (a real vitest + jsdom +
+    @testing-library render measurement). Parametrised only by the import
+    specifier for the product's App entry. The thresholds are baked in from
+    the module constants so the model READS the exact bar it must satisfy."""
+    return f'''/**
+ * UX ACCEPTANCE -- SignalOS build-time hard gate (AUTO-AUTHORED, READ-ONLY).
+ *
+ * This test is the signed UX spec: a build does not pass the Build gate unless
+ * it ships a REAL, styled, usable UI. It renders the actual product entry and
+ * MEASURES the rendered DOM (no className/source counting): interactive
+ * controls found by ARIA role, real styling signal on the mounted elements,
+ * and a11y names. Do NOT edit, weaken, or delete this file -- make the PRODUCT
+ * satisfy it (add a real, styled, interactive interface).
+ *
+ * Deterministic and fully offline (jsdom + Testing Library; no network).
+ */
+import {{ describe, it, expect }} from 'vitest';
+import {{ render, queryAllByRole }} from '@testing-library/react';
+import App from '{app_import}';
+
+const INTERACTIVE_ROLES = [
+  'button', 'textbox', 'combobox', 'checkbox', 'radio', 'switch',
+  'spinbutton', 'searchbox', 'slider', 'menuitem', 'menuitemcheckbox', 'tab',
+  'link',
+];
+
+// A component-library component leaves a recognizable class prefix on the DOM
+// it renders (Mantine/Chakra/MUI/Ant/emotion/styled-components). Any of these,
+// an inline style, or a plain CSS class counts as a styling signal.
+const LIB_CLASS = /(^|\\s)(mantine-|chakra-|Mui[A-Z]|ant-|css-[a-z0-9]{{4,}}|chi-|sc-[a-zA-Z]|MuiBox)/;
+
+function collectControls(container) {{
+  let out = [];
+  for (const role of INTERACTIVE_ROLES) {{
+    out = out.concat(queryAllByRole(container, role));
+  }}
+  return out;
+}}
+
+function accessibleName(el) {{
+  const aria = (el.getAttribute('aria-label') || '').trim();
+  if (aria) return aria;
+  const doc = el.ownerDocument;
+  const labelledby = el.getAttribute('aria-labelledby');
+  if (labelledby) {{
+    const t = labelledby
+      .split(/\\s+/)
+      .map((id) => (doc.getElementById(id)?.textContent || '').trim())
+      .join(' ')
+      .trim();
+    if (t) return t;
+  }}
+  const id = el.getAttribute('id');
+  if (id) {{
+    const lbl = doc.querySelector(`label[for="${{id}}"]`);
+    if (lbl && (lbl.textContent || '').trim()) return lbl.textContent.trim();
+  }}
+  let p = el.parentElement;
+  while (p) {{
+    if (p.tagName === 'LABEL' && (p.textContent || '').trim()) return p.textContent.trim();
+    p = p.parentElement;
+  }}
+  const txt = (el.textContent || '').trim();
+  if (txt) return txt;
+  const title = (el.getAttribute('title') || '').trim();
+  if (title) return title;
+  const ph = (el.getAttribute('placeholder') || '').trim();
+  if (ph) return ph;
+  const alt = (el.getAttribute('alt') || '').trim();
+  if (alt) return alt;
+  return '';
+}}
+
+describe('UX acceptance: ships a real, styled, usable UI', () => {{
+  it('renders real interactive controls (not a no-UI/static shell)', () => {{
+    const {{ container }} = render(<App />);
+    const controls = collectControls(container);
+    expect(
+      controls.length,
+      'The UI renders no real interactive controls (buttons/inputs/selects/links). ' +
+        'A usable product needs an interactive surface, not static markup.',
+    ).toBeGreaterThanOrEqual({UX_ACCEPTANCE_MIN_CONTROLS});
+  }});
+
+  it('ships real styling (component library, inline styles, or CSS -- not bare HTML)', () => {{
+    const {{ container }} = render(<App />);
+    const all = Array.from(container.querySelectorAll('*'));
+    // Measured on the MOUNTED DOM (never source/className counting). Preferred
+    // "real" signals: a PARSED inline style (jsdom computes it) or a
+    // component-library component (it injects real CSS). Fallback rendered-DOM
+    // signal: a CSS class on a rendered element -- how a utility framework
+    // (Tailwind) or an external stylesheet hangs styling that jsdom's cascade
+    // cannot compute. A bare-HTML build has none of the three -> styled == 0.
+    let styled = 0;
+    for (const el of all) {{
+      const cls = (el.getAttribute('class') || '').trim();
+      const hasInline = (el.getAttribute('style') || '').trim().length > 0 ||
+        (el.style && el.style.length > 0);
+      // real (jsdom-computed) styling OR the rendered-DOM class fallback
+      if (hasInline || LIB_CLASS.test(cls) || cls) styled += 1;
+    }}
+    const ratio = all.length ? styled / all.length : 0;
+    expect(
+      styled,
+      'The rendered UI carries no styling: not one element has a CSS class, an inline ' +
+        'style, or a component-library component. Style the interface with a component ' +
+        'library or real CSS -- do not ship bare, unstyled HTML.',
+    ).toBeGreaterThanOrEqual({UX_ACCEPTANCE_MIN_STYLED});
+    expect(
+      ratio,
+      'Almost nothing in the rendered UI is styled -- give the interface a real, ' +
+        'consistent visual design.',
+    ).toBeGreaterThanOrEqual({UX_ACCEPTANCE_MIN_STYLED_RATIO});
+  }});
+
+  it('interactive controls have accessible names (a11y basics)', () => {{
+    const {{ container }} = render(<App />);
+    const controls = collectControls(container);
+    const unnamed = controls.filter((el) => !accessibleName(el));
+    expect(
+      unnamed.length,
+      `${{unnamed.length}} interactive control(s) have no accessible name. Every input ` +
+        'needs a <label> or aria-label, and every button needs a name.',
+    ).toBe(0);
+  }});
+}});
+'''
+
+
+def _app_entry_import(repo_root: Path, source_dir: str) -> str | None:
+    """The import specifier for the product's App entry, relative to a test
+    that sits in ``source_dir`` -- ``./App`` when ``source_dir/App.tsx`` (or
+    .jsx) exists, else None (non-standard layout: the gate does not apply)."""
+    base = Path(repo_root) / source_dir
+    for suffix in _APP_ENTRY_SUFFIXES:
+        if (base / f"App{suffix}").is_file():
+            return "./App"
+    return None
+
+
+def ux_acceptance_applies(repo_root: Path, profile: str,
+                          source_dir: str = "src") -> bool:
+    """True when the UX acceptance render measurement can drive this build: a
+    browser profile whose source dir ships a React App entry. Non-browser
+    profiles (APIs, CLIs) and non-standard layouts are N/A."""
+    if profile not in _UX_BROWSER_PROFILES:
+        return False
+    return _app_entry_import(repo_root, source_dir) is not None
+
+
+def ensure_ux_acceptance_test(repo_root: Path, *, source_dir: str = "src",
+                              profile: str = "react-vite") -> Path | None:
+    """Author (or refresh) the UX acceptance test into the product's suite so
+    the build agent iterates against it and the G4 suite enforces it. The test
+    is the signed spec: it is (re)written to the canonical content every call,
+    so a model cannot silently weaken or delete it. Returns the path, or None
+    when the gate does not apply (non-browser profile / no App entry)."""
+    app_import = _app_entry_import(repo_root, source_dir)
+    if profile not in _UX_BROWSER_PROFILES or app_import is None:
+        return None
+    path = Path(repo_root) / source_dir / UX_ACCEPTANCE_TEST_BASENAME
+    source = ux_acceptance_test_source(app_import)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Idempotent: only write when content differs, so mtime/byte churn is
+        # avoided on a re-run of an already-authored build.
+        if not path.is_file() or path.read_text(encoding="utf-8") != source:
+            path.write_text(source, encoding="utf-8")
+    except OSError:
+        return None
+    return path
+
+
+def _single_test_argv(repo_root: Path, profile: str, rel_test: str) -> list | None:
+    """The stack adapter's own single-test command for ``rel_test`` (e.g.
+    ``[npx, vitest, run, <path>]`` for react-vite). None when the adapter has
+    no single-test runner. Stays stack-agnostic -- no vitest/npx literal here."""
+    try:
+        from .stacks import get_adapter
+        adapter = get_adapter(profile)
+    except Exception:
+        return None
+    tfc = getattr(adapter, "test_file_command", None)
+    if not callable(tfc):
+        return None
+    try:
+        argv = tfc(repo_root, rel_test)
+    except Exception:
+        return None
+    return list(argv) if argv else None
+
+
+# Assertion-failure lines vitest prints, mined for a crisp gate reason.
+_UX_FAIL_LINE_RE = re.compile(
+    r"AssertionError|The (?:UI|rendered)|no real interactive|carries no styling|"
+    r"accessible name|Almost nothing|expected .* to be", re.I)
+
+
+def run_ux_acceptance(repo_root: Path, *, source_dir: str = "src",
+                      profile: str | None = None,
+                      timeout: int = 420) -> dict[str, Any]:
+    """Run the UX acceptance MEASUREMENT offline and report the result.
+
+    Authors the render-measurement test into the suite, then executes JUST that
+    file through the stack's single-test runner (vitest on jsdom -- offline, no
+    network). Returns::
+
+        {"ok": bool, "ran": bool, "reason": str, "skipped": str|None}
+
+    ``ran`` distinguishes a real measurement from a skip. The gate blocks ONLY
+    on ``ran and not ok`` -- when the measurement genuinely cannot run offline
+    (no installed dependencies / no single-test runner / no App entry) it
+    returns ``ok=True, ran=False`` so a good build is never false-failed on
+    tooling grounds (the suite-level enforcement remains the backstop)."""
+    repo_root = Path(repo_root)
+    if profile is None:
+        try:
+            from .stacks import detect_profile
+            profile = detect_profile(repo_root)
+        except Exception:
+            profile = "generic"
+
+    def _skip(reason: str) -> dict[str, Any]:
+        return {"ok": True, "ran": False, "reason": reason, "skipped": reason}
+
+    if not ux_acceptance_applies(repo_root, profile, source_dir):
+        return _skip("UX acceptance N/A for this profile/layout")
+    # Offline preconditions: installed dependencies + a runnable single-test
+    # command. Absent -> skip (never a false fail on tooling).
+    if not (repo_root / "node_modules").is_dir():
+        return _skip("dependencies not installed -- UX measurement skipped")
+    test_path = ensure_ux_acceptance_test(
+        repo_root, source_dir=source_dir, profile=profile)
+    if test_path is None:
+        return _skip("could not author the UX acceptance test")
+    rel_test = str(test_path.relative_to(repo_root)).replace("\\", "/")
+    argv = _single_test_argv(repo_root, profile, rel_test)
+    if not argv:
+        return _skip("no single-test runner for this stack")
+    if shutil.which(str(argv[0])) is None and not Path(argv[0]).exists():
+        return _skip(f"test runner '{argv[0]}' not available")
+    try:
+        proc = subprocess.run(
+            argv, cwd=str(repo_root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout, shell=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # A tooling failure (could not execute / timed out) is NOT a UX
+        # verdict -- do not false-fail the build on it.
+        return _skip(f"UX measurement could not run ({type(exc).__name__})")
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "",
+                 (proc.stdout or "") + "\n" + (proc.stderr or ""))
+    if proc.returncode == 0:
+        return {"ok": True, "ran": True,
+                "reason": "UX acceptance passed: the UI renders styled, "
+                          "accessible, interactive controls.", "skipped": None}
+    fails = [ln.strip() for ln in out.splitlines()
+             if ln.strip() and _UX_FAIL_LINE_RE.search(ln)]
+    detail = "\n".join(dict.fromkeys(fails))[:1200] or out[-1200:]
+    return {
+        "ok": False, "ran": True, "skipped": None,
+        "reason": ("UX acceptance FAILED -- the build does not ship a real, "
+                   "styled, usable UI. Fix the interface (render real "
+                   "interactive controls, give them a styled visual design, "
+                   "and label them), then rebuild:\n" + detail),
     }

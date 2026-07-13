@@ -20,6 +20,8 @@ from signalos_lib.product.subagent_build import (
     parse_implementer_status,
     parse_verdict,
     run_subagent_driven_build,
+    task_dod_violations,
+    is_vacuous_test,
 )
 
 
@@ -855,6 +857,181 @@ class TestReviewerReadOnlyTools(unittest.TestCase):
             self.assertNotIn("edit_file", names)
             self.assertNotIn("run_command", names)
             self.assertIn("read_file", names)
+
+
+# ---------------------------------------------------------------------------
+# Per-task DEFINITION-OF-DONE hard gate
+# ---------------------------------------------------------------------------
+
+class TestVacuousTestDetection(unittest.TestCase):
+    def test_no_assertion_is_vacuous(self):
+        self.assertTrue(is_vacuous_test("it('x', () => { doThing(); });"))
+
+    def test_literal_tautology_is_vacuous(self):
+        self.assertTrue(is_vacuous_test("it('a', () => { expect(true).toBe(true); });"))
+        self.assertTrue(is_vacuous_test("test('b', () => { expect(1).toBe(1); });"))
+
+    def test_real_assertion_is_not_vacuous(self):
+        self.assertFalse(is_vacuous_test(
+            "it('x', () => { render(<App/>); "
+            "expect(screen.getByRole('button')).toBeInTheDocument(); });"))
+        self.assertFalse(is_vacuous_test(
+            "it('y', () => { expect(add(2, 3)).toBe(5); });"))
+
+    def test_non_test_text_is_not_flagged(self):
+        self.assertFalse(is_vacuous_test("export const x = 1;\n"))
+
+
+class TestTaskDodViolations(unittest.TestCase):
+    def _repo(self) -> Path:
+        return Path(tempfile.mkdtemp())
+
+    def test_dead_code_is_flagged(self):
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "orphan.ts").write_text(
+            "export const orphan = () => 42;\n", encoding="utf-8")
+        task = Task(id="T1", name="T", text="", files=["src/orphan.ts"])
+        viol = task_dod_violations(d, task, source_dir="src")
+        self.assertTrue(any("dead" in v for v in viol), viol)
+
+    def test_wired_code_is_not_flagged(self):
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "thing.ts").write_text(
+            "export const thing = () => 1;\n", encoding="utf-8")
+        (d / "src" / "consumer.ts").write_text(
+            "import { thing } from './thing';\nthing();\n", encoding="utf-8")
+        task = Task(id="T1", name="T", text="", files=["src/thing.ts"])
+        self.assertEqual(task_dod_violations(d, task, source_dir="src"), [])
+
+    def test_complexity_ceiling_is_flagged(self):
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        body = "\n".join(f"  if (x === {i}) return {i};" for i in range(60))
+        (d / "src" / "big.ts").write_text(
+            f"export function big(x: number) {{\n{body}\n  return 0;\n}}\n",
+            encoding="utf-8")
+        (d / "src" / "consumer.ts").write_text(
+            "import { big } from './big';\nbig(1);\n", encoding="utf-8")
+        task = Task(id="T1", name="T", text="", files=["src/big.ts"])
+        viol = task_dod_violations(d, task, source_dir="src")
+        self.assertTrue(any("complex" in v for v in viol), viol)
+
+    def test_unlabeled_input_is_flagged_a11y(self):
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "Form.tsx").write_text(
+            "export const Form = () => <form><input /></form>;\n", encoding="utf-8")
+        (d / "src" / "App.tsx").write_text(
+            "import { Form } from './Form';\nexport default () => <Form/>;\n",
+            encoding="utf-8")
+        task = Task(id="T1", name="T", text="", files=["src/Form.tsx"])
+        viol = task_dod_violations(d, task, source_dir="src")
+        self.assertTrue(any("a11y" in v for v in viol), viol)
+
+    def test_labeled_wired_component_is_clean(self):
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        (d / "src" / "Form.tsx").write_text(
+            'export const Form = () => (<form>'
+            '<label htmlFor="n">Name</label><input id="n" />'
+            '<button>Save</button></form>);\n', encoding="utf-8")
+        (d / "src" / "App.tsx").write_text(
+            "import { Form } from './Form';\nexport default () => <Form/>;\n",
+            encoding="utf-8")
+        task = Task(id="T1", name="T", text="", files=["src/Form.tsx"])
+        self.assertEqual(task_dod_violations(d, task, source_dir="src"), [])
+
+
+def _dod_plan_repo(test_body: str, *, impl_rel: str = "src/store/s.ts",
+                   impl_body: str = "export const s = 1;\n") -> Path:
+    """A signed-plan repo whose T1 carries a REAL on-disk impl file + test, so
+    the DoD gate has files to evaluate. T2 is a trivial second task (the plan
+    parser needs >=2 task headings)."""
+    d = Path(tempfile.mkdtemp())
+    # Make the repo resolve to the react-vite stack so the DoD scan targets the
+    # 'src' source dir deterministically (source-dir detection is otherwise
+    # stack-dependent).
+    (d / "package.json").write_text(json.dumps({
+        "dependencies": {"react": "^18.3.1"},
+        "devDependencies": {"vite": "^5.4.0", "vitest": "^3.2.0"},
+        "scripts": {"build": "tsc && vite build", "test": "vitest run"},
+    }), encoding="utf-8")
+    (d / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
+    plan = d / "core" / "execution" / "PLAN.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(
+        "# Plan\n\n"
+        f"### T1 — Store\n**Files:** `{impl_rel}`\n"
+        "**Test:** `core/execution/tests/T1.test.ts`\n"
+        "Acceptance: the store works\n\n"
+        "### T2 — Other\n**Files:** `src/other.ts`\n"
+        "**Test:** `core/execution/tests/T2.test.ts`\n"
+        "Acceptance: the other works\n", encoding="utf-8")
+    impl = d / impl_rel
+    impl.parent.mkdir(parents=True, exist_ok=True)
+    impl.write_text(impl_body, encoding="utf-8")
+    t1 = d / "core" / "execution" / "tests" / "T1.test.ts"
+    t1.parent.mkdir(parents=True, exist_ok=True)
+    t1.write_text(test_body, encoding="utf-8")
+    return d
+
+
+def _red_once_for(test_suffix: str):
+    """build_check that returns RED once for the given per-task test (so the
+    impl loop runs and reaches the DoD gate), GREEN otherwise."""
+    state = {"n": 1}
+
+    def check(_r, only_test=None):
+        if only_test and only_test.endswith(test_suffix) and state["n"] > 0:
+            state["n"] -= 1
+            return (False, "red")
+        return (True, "")
+    return check
+
+
+class TestPerTaskDodGate(unittest.TestCase):
+    def test_vacuous_test_blocks_the_build_fail_fast(self):
+        # A task whose acceptance test is a literal tautology cannot be "done":
+        # the DoD gate blocks it, the build fails fast, and NO evidence pass is
+        # paid (the missing Build Evidence keeps the G4 sign fail-closed).
+        d = _dod_plan_repo("it('x', () => { expect(true).toBe(true); });")
+        rec = Recorder()
+        res = run_subagent_driven_build(
+            d, adapter="A", prompt="x", run_agent=rec,
+            build_check=_red_once_for("T1.test.ts"))
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertNotIn("evidence", rec.roles())
+        self.assertIn("dod_failed", res.final_text)
+
+    def test_dead_code_blocks_when_unresolved(self):
+        # A task that leaves an unwired module (dead code) is blocked by the DoD
+        # gate after its bounded fixer budget cannot resolve it.
+        d = _dod_plan_repo("it('x', () => { expect(s).toBe(1); });",
+                           impl_rel="src/orphan.ts",
+                           impl_body="export const orphan = () => 42;\n")
+        rec = Recorder()  # the fake fixer never actually wires it in
+        res = run_subagent_driven_build(
+            d, adapter="A", prompt="x", run_agent=rec,
+            build_check=_red_once_for("T1.test.ts"))
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertIn("fixer", rec.roles())          # DoD dispatched a fixer
+        self.assertNotIn("evidence", rec.roles())
+        self.assertIn("dod_failed", res.final_text)
+
+    def test_clean_task_meets_dod_and_build_completes(self):
+        # A real assertion + wired impl -> DoD is clean -> the build completes
+        # (a genuinely-good task is NEVER false-blocked by the DoD gate).
+        d = _dod_plan_repo("it('x', () => { expect(s).toBe(1); });")
+        (d / "src" / "consumer.ts").write_text(
+            "import { s } from './store/s';\ns;\n", encoding="utf-8")
+        rec = Recorder()
+        res = run_subagent_driven_build(
+            d, adapter="A", prompt="x", run_agent=rec,
+            build_check=_red_once_for("T1.test.ts"))
+        self.assertEqual(res.status, "completed")
+        self.assertIn("evidence", rec.roles())
 
 
 if __name__ == "__main__":

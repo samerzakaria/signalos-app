@@ -22,13 +22,19 @@ from signalos_lib.product.blueprints.registry import (
 )
 from signalos_lib.product.capabilities import apply_capability_choices
 from signalos_lib.product.acceptance import (
+    UX_ACCEPTANCE_MIN_CONTROLS,
+    UX_ACCEPTANCE_MIN_STYLED,
     build_acceptance_matrix,
     check_closure_readiness,
+    ensure_ux_acceptance_test,
     has_responsive_breakpoints,
     load_acceptance_matrix,
     reconcile_acceptance_evidence,
+    run_ux_acceptance,
     scan_ux_state_coverage,
     update_criterion_status,
+    ux_acceptance_applies,
+    ux_acceptance_test_source,
     write_acceptance_matrix,
 )
 
@@ -534,3 +540,69 @@ class TestUxBaselineCriteria:
         blockers = " ".join(reconciled["reconciliation"]["blockers"])
         assert "responsive breakpoints" in blockers
         assert "empty" in blockers
+
+
+# ---------------------------------------------------------------------------
+# UX/behavioral acceptance -- the build-time "ship a real, usable UI" hard gate
+# ---------------------------------------------------------------------------
+
+def _react_repo(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text(
+        "export default () => null;\n", encoding="utf-8")
+    return tmp_path
+
+
+class TestUxAcceptanceMechanism:
+    def test_source_is_a_rendered_dom_measurement(self):
+        src = ux_acceptance_test_source("./App")
+        # renders the REAL app and measures the MOUNTED DOM (never source/
+        # className string counting)
+        assert "render(<App />)" in src
+        assert "queryAllByRole" in src
+        assert "querySelectorAll('*')" in src
+        assert "import App from './App'" in src
+        # the exact thresholds the model must satisfy are baked in
+        assert f"toBeGreaterThanOrEqual({UX_ACCEPTANCE_MIN_CONTROLS})" in src
+        assert f"toBeGreaterThanOrEqual({UX_ACCEPTANCE_MIN_STYLED})" in src
+
+    def test_applies_only_to_browser_with_app_entry(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        assert ux_acceptance_applies(tmp_path, "react-vite") is False  # no App
+        (tmp_path / "src" / "App.tsx").write_text(
+            "export default () => null;\n", encoding="utf-8")
+        assert ux_acceptance_applies(tmp_path, "react-vite") is True
+        assert ux_acceptance_applies(tmp_path, "node-api") is False
+
+    def test_ensure_authors_for_react_and_skips_non_browser(self, tmp_path):
+        _react_repo(tmp_path)
+        path = ensure_ux_acceptance_test(
+            tmp_path, source_dir="src", profile="react-vite")
+        assert path is not None and path.is_file()
+        assert "queryAllByRole" in path.read_text(encoding="utf-8")
+        # non-browser profile -> never authored
+        assert ensure_ux_acceptance_test(
+            tmp_path, source_dir="src", profile="node-api") is None
+
+    def test_ensure_is_idempotent(self, tmp_path):
+        _react_repo(tmp_path)
+        p1 = ensure_ux_acceptance_test(tmp_path, source_dir="src",
+                                       profile="react-vite")
+        first = p1.read_text(encoding="utf-8")
+        p2 = ensure_ux_acceptance_test(tmp_path, source_dir="src",
+                                       profile="react-vite")
+        assert p2 == p1
+        assert p2.read_text(encoding="utf-8") == first  # canonical, unchanged
+
+    def test_run_skips_without_installed_deps_never_false_fails(self, tmp_path):
+        # No node_modules -> the render measurement cannot run offline. It must
+        # SKIP (ran=False, ok=True), never false-fail a build on tooling grounds.
+        _react_repo(tmp_path)
+        r = run_ux_acceptance(tmp_path, source_dir="src", profile="react-vite")
+        assert r["ran"] is False
+        assert r["ok"] is True
+
+    def test_run_is_na_for_non_browser_profile(self, tmp_path):
+        r = run_ux_acceptance(tmp_path, source_dir="src", profile="node-api")
+        assert r["ran"] is False
+        assert r["ok"] is True
