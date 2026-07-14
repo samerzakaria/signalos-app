@@ -461,6 +461,24 @@ export function handle(evt: AgentEvent): void {
       break;
     }
 
+    case 'gate_blocked': {
+      // C4: the engine refused to open a gate for review because its build or
+      // checks are not verified (e.g. G4's anti-fake-green wall returns
+      // `not-reviewable`). Surface it in the transcript so a blocked gate is
+      // visible instead of silently dropped. Keyed per (run, gate) so a sidecar
+      // replay upserts instead of duplicating.
+      const gate = typeof evt.gate === 'string' && evt.gate ? evt.gate : 'Gate';
+      const reason = typeof evt.reason === 'string' && evt.reason ? evt.reason : '';
+      upsertBubble({
+        id: `agent-gate-blocked-${runId}-${gate}`,
+        kind: 'system',
+        text: reason
+          ? `${gate} can't be reviewed yet — ${reason}`
+          : `${gate} can't be reviewed yet — its build or checks are not verified.`,
+      });
+      break;
+    }
+
     case 'delivery_complete': {
       // The governed delivery finished the G0->G5 walk. Surfaced as visible
       // completion state (Claim 11a) and clears the working indicator. Keyed
@@ -532,6 +550,8 @@ function parseGateBubbleId(bubbleId: string): { runId: string; gate: string } | 
 // verdict was accepted.
 const VERDICT_FAILURE_STATUSES = new Set<string>([
   'build-not-verified',
+  'not-reviewable',
+  'conditions-need-text',
   'sign-failed',
   'max-rework',
   'max-rejections',
@@ -542,6 +562,11 @@ const VERDICT_FAILURE_STATUSES = new Set<string>([
 
 const VERDICT_REFUSAL_TEXT: Record<string, string> = {
   'build-not-verified': 'This gate cannot be signed until the build is independently verified.',
+  // C4: the engine refused to open this gate for review — its build/checks are
+  // not verified yet (e.g. G4's anti-fake-green wall). Without this the card
+  // read a blocked verdict as accepted.
+  'not-reviewable': 'This gate is not ready to review yet — its build or checks have not been verified.',
+  'conditions-need-text': 'Approving with conditions needs a written condition to track.',
   'sign-failed': 'The signature could not be recorded.',
   'max-rework': 'This gate has used up its change-request budget and cannot take more.',
   'max-rejections': 'This gate has used up its rejection budget.',
