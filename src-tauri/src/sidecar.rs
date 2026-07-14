@@ -46,7 +46,10 @@ fn validate_handshake(value: &serde_json::Value) -> Result<String, String> {
             }
         ));
     }
-    let data = value.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let data = value
+        .get("data")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let version = data
         .get("version")
         .and_then(|v| v.as_str())
