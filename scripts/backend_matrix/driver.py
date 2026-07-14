@@ -509,13 +509,18 @@ class CostGuard:
             return self.spent
         self.last_checked = now
         try:
-            self.last_usage = self.client.usage()
+            observed_usage = self.client.usage()
             self.failures = 0
         except InfrastructureError as exc:
             self.failures += 1
             if self.failures >= 2:
                 raise CostGuardError("provider usage monitoring failed twice; aborting fail-closed") from exc
             return self.spent
+        if observed_usage + 1e-9 < self.last_usage:
+            raise CostGuardError(
+                "provider usage counter moved backward; cost attribution is unreliable"
+            )
+        self.last_usage = observed_usage
         if self.spent > self.cap:
             raise CostGuardError(
                 f"provider-reported row usage ${self.spent:.4f} exceeded the ${self.cap:.4f} cap"
@@ -1428,10 +1433,24 @@ def _engine_metadata() -> dict[str, Any]:
         return completed.stdout.strip() if completed.returncode == 0 else "unknown"
 
     status = git("status", "--porcelain")
+    commit = git("rev-parse", "HEAD")
+    upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    upstream_commit = git("rev-parse", "@{upstream}")
+    pushed = False
+    if commit != "unknown" and upstream != "unknown":
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, "@{upstream}"],
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20, check=False,
+        )
+        pushed = ancestry.returncode == 0
     return {
-        "commit": git("rev-parse", "HEAD"),
+        "commit": commit,
         "tree": git("rev-parse", "HEAD^{tree}"),
         "branch": git("branch", "--show-current"),
+        "upstream": upstream,
+        "upstream_commit": upstream_commit,
+        "pushed": pushed,
         "dirty": bool(status),
         "dirty_paths": [line[3:] for line in status.splitlines() if len(line) > 3],
         "python": sys.version.split()[0],
@@ -1439,7 +1458,9 @@ def _engine_metadata() -> dict[str, Any]:
     }
 
 
-def _require_reproducible_engine(engine: dict[str, Any], *, live: bool) -> None:
+def _require_reproducible_engine(
+    engine: dict[str, Any], *, live: bool, verified_ci_sha: str | None = None
+) -> None:
     """Paid evidence must map to one reconstructable committed code tree."""
     if not live:
         return
@@ -1458,6 +1479,49 @@ def _require_reproducible_engine(engine: dict[str, Any], *, live: bool) -> None:
             "live matrix refuses an uncommitted engine; commit or stash every "
             f"backend/harness change before spending provider credit{suffix}"
         )
+    if not engine.get("pushed") or engine.get("upstream") in (None, "", "unknown"):
+        raise InfrastructureError(
+            "live matrix requires HEAD to be pushed to its configured upstream"
+        )
+    commit = str(engine.get("commit") or "").lower()
+    attested = str(verified_ci_sha or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", attested):
+        raise InfrastructureError(
+            "live matrix requires --ci-verified-sha (or SIGNALOS_CI_VERIFIED_SHA) "
+            "for the exact green commit"
+        )
+    if attested != commit:
+        raise InfrastructureError(
+            "CI-verified SHA does not match the current engine HEAD"
+        )
+
+
+def _require_external_output_root(path: Path) -> Path:
+    """Keep generated products and result evidence outside the engine tree."""
+
+    output = Path(path).expanduser().resolve()
+    repo = ROOT.resolve()
+    if output == repo or repo in output.parents:
+        raise InfrastructureError(
+            "live matrix output root must be outside the SignalOS Git worktree"
+        )
+    return output
+
+
+def _require_engine_unchanged(
+    expected: dict[str, Any], *, verified_ci_sha: str
+) -> dict[str, Any]:
+    """Re-check the paid engine boundary before and after every model row."""
+
+    current = _engine_metadata()
+    _require_reproducible_engine(
+        current, live=True, verified_ci_sha=verified_ci_sha
+    )
+    if current.get("commit") != expected.get("commit") or current.get("tree") != expected.get("tree"):
+        raise InfrastructureError(
+            "engine commit/tree changed during the funded matrix; aborting"
+        )
+    return current
 
 
 def _load_scenario(path: Path) -> dict[str, Any]:
@@ -1913,6 +1977,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--env-file", type=Path, default=None, help="Explicit dotenv path; never copied into results.")
     parser.add_argument("--output-root", type=Path, default=Path(tempfile.gettempdir()) / "signalos-backend-matrix")
+    parser.add_argument(
+        "--ci-verified-sha",
+        default=os.environ.get("SIGNALOS_CI_VERIFIED_SHA", ""),
+        help="Exact 40-character HEAD SHA whose CI run was verified green.",
+    )
     parser.add_argument("--max-cost-per-model", type=float, default=None, metavar="USD")
     parser.add_argument("--acknowledge-key-exposure", action="store_true")
     parser.add_argument("--init-timeout", type=float, default=240.0, metavar="SECONDS")
@@ -1951,7 +2020,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         scenario = _load_scenario(scenario_path)
         orchestrator_profile = _validate_orchestrator_profile(args.orchestrator_profile)
         engine = _engine_metadata()
-        _require_reproducible_engine(engine, live=bool(args.live))
+        _require_reproducible_engine(
+            engine,
+            live=bool(args.live),
+            verified_ci_sha=args.ci_verified_sha,
+        )
+        output_root = (
+            _require_external_output_root(args.output_root)
+            if args.live
+            else args.output_root.expanduser().resolve()
+        )
         key, key_source = _resolve_api_key(selected[0], args.env_file)
         if any(spec.key_env != selected[0].key_env or spec.provider != selected[0].provider for spec in selected):
             raise ValueError("a single run may use only one provider and API key environment")
@@ -1986,7 +2064,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        run_root = args.output_root.resolve() / f"{stamp}-{uuid.uuid4().hex[:8]}"
+        run_root = output_root / f"{stamp}-{uuid.uuid4().hex[:8]}"
         run_root.mkdir(parents=True, exist_ok=False)
         oracle_path = scenario_path.parent.parent / str(scenario["oracle"])
         hashes = {
@@ -2006,6 +2084,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "orchestrator_profile": orchestrator_profile,
             "models": [dataclasses.asdict(spec) for spec in selected],
             "engine": engine,
+            "ci_attestation": {"verified_sha": args.ci_verified_sha.lower()},
             "hashes": hashes,
             "preflight": {
                 "local": local,
@@ -2018,6 +2097,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest_path = run_root / "matrix-result.json"
         _safe_json_write(manifest_path, manifest, (key,))
         for spec in selected:
+            _require_engine_unchanged(
+                engine, verified_ci_sha=args.ci_verified_sha
+            )
             print(f"[{spec.alias}] starting fresh backend journey", flush=True)
             row = _run_row(
                 spec,
@@ -2034,6 +2116,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 orchestrator_profile=orchestrator_profile,
                 engine=engine,
                 hashes=hashes,
+            )
+            _require_engine_unchanged(
+                engine, verified_ci_sha=args.ci_verified_sha
             )
             manifest["results"].append(
                 {

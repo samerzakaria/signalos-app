@@ -198,8 +198,13 @@ def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType
         "tree": "b" * 40,
         "dirty": False,
         "dirty_paths": [],
+        "upstream": "origin/main",
+        "upstream_commit": "a" * 40,
+        "pushed": True,
     }
-    driver._require_reproducible_engine(clean, live=True)
+    driver._require_reproducible_engine(
+        clean, live=True, verified_ci_sha=clean["commit"]
+    )
     driver._require_reproducible_engine(
         {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]},
         live=False,
@@ -207,17 +212,54 @@ def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType
 
     with pytest.raises(driver.InfrastructureError, match="uncommitted engine"):
         driver._require_reproducible_engine(
-            {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]},
-            live=True,
+            {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]}, live=True,
+            verified_ci_sha=clean["commit"],
         )
     with pytest.raises(driver.InfrastructureError, match="Git commit and tree"):
         driver._require_reproducible_engine(
-            {**clean, "commit": "unknown"}, live=True
+            {**clean, "commit": "unknown"}, live=True,
+            verified_ci_sha=clean["commit"],
+        )
+    with pytest.raises(driver.InfrastructureError, match="pushed"):
+        driver._require_reproducible_engine(
+            {**clean, "pushed": False}, live=True,
+            verified_ci_sha=clean["commit"],
+        )
+    with pytest.raises(driver.InfrastructureError, match="CI-verified SHA"):
+        driver._require_reproducible_engine(clean, live=True)
+    with pytest.raises(driver.InfrastructureError, match="does not match"):
+        driver._require_reproducible_engine(
+            clean, live=True, verified_ci_sha="c" * 40
         )
 
     metadata = driver._engine_metadata()
     assert metadata["commit"] != "unknown"
     assert metadata["tree"] != "unknown"
+    assert metadata["upstream"] != "unknown"
+    assert metadata["pushed"] is True
+
+
+def test_live_matrix_output_must_be_outside_engine_tree(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    assert driver._require_external_output_root(tmp_path) == tmp_path.resolve()
+    with pytest.raises(driver.InfrastructureError, match="outside"):
+        driver._require_external_output_root(ROOT)
+    with pytest.raises(driver.InfrastructureError, match="outside"):
+        driver._require_external_output_root(ROOT / "matrix-results")
+
+
+def test_cost_guard_refuses_a_decreasing_provider_counter(driver: ModuleType) -> None:
+    class FakeRouter:
+        def __init__(self) -> None:
+            self.values = iter((10.0, 9.5))
+
+        def usage(self) -> float:
+            return next(self.values)
+
+    guard = driver.CostGuard(FakeRouter(), cap=1.0, interval=0.0)
+    with pytest.raises(driver.CostGuardError, match="moved backward"):
+        guard.check(force=True)
 
 
 def test_orchestrator_profile_is_explicit_and_has_one_evidence_value(

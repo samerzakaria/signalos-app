@@ -42,6 +42,7 @@ python scripts/backend_matrix/driver.py --preflight
 python scripts/backend_matrix/driver.py --preflight --env-file C:\path\to\benchmark.env
 
 # Run one paid benchmark row. Live model calls always require an explicit opt-in.
+$env:SIGNALOS_CI_VERIFIED_SHA = git rev-parse HEAD  # only after this SHA's CI is green
 python scripts/backend_matrix/driver.py --live --models gpt56solpro `
   --orchestrator-profile benchmark `
   --max-cost-per-model 2.00 --acknowledge-key-exposure
@@ -74,7 +75,10 @@ run; model availability, account limits, and the local browser installation can
 change independently of this repository. `--live` is deliberately required
 because it makes paid external API calls. `--orchestrator-profile` accepts only
 `benchmark` or `production`; the default is the explicit, deterministic
-`benchmark` comparison contract. Use `production` only when you intentionally
+`benchmark` comparison contract. Live mode also requires the exact pushed HEAD
+SHA to be supplied through `--ci-verified-sha` or `SIGNALOS_CI_VERIFIED_SHA`
+after its CI run is confirmed green, and refuses any output root inside the Git
+worktree. Use `production` only when you intentionally
 want the extra release-safety stages included in the measured journey.
 
 ## API key handling
@@ -91,7 +95,7 @@ Never paste a key into `models.json`, a scenario, the prompt, a terminal argumen
 
 Every model row receives a fresh workspace, isolated runtime home, and new run identifier. Gate state, generated sources, dependency installation, build output, and oracle evidence are evaluated from that row only; prior workspaces, caches, pre-signed fixtures, links/reparse points, and another model's output are not accepted as evidence. The sidecar process tree is stopped before final product bytes are snapshotted. The final product check is run from a clean copy with a lockfile and a fresh dependency install so undeclared or stale local dependencies cannot produce a false pass.
 
-The driver writes a machine-readable result bundle under its output root and prints the exact location. Results identify the engine commit and Git tree, model and provider, scenario/config/oracle hashes, event and response evidence, gate outcomes, source-tree change, clean-room build, and browser checks. A paid `--live` run refuses a dirty checkout before provider preflight, so every result maps to one reconstructable committed engine tree. Workspaces and failure artifacts are retained for diagnosis. A successful process exit means every selected row passed; any failed, blocked, incomplete, timed-out, or infrastructure-error row makes the command fail.
+The driver writes a machine-readable result bundle under its output root and prints the exact location. Results identify the engine commit and Git tree, model and provider, scenario/config/oracle hashes, event and response evidence, gate outcomes, source-tree change, clean-room build, and browser checks. A paid `--live` run refuses a dirty or unpushed checkout before provider preflight, requires an exact CI-SHA attestation, rechecks that boundary around every paid row, and keeps all output outside the engine worktree. Workspaces and failure artifacts are retained for diagnosis. A successful process exit means every selected row passed; any failed, blocked, incomplete, timed-out, or infrastructure-error row makes the command fail.
 
 The browser oracle is external to the generated workspace and is not included in the model prompt. It serves the built application on an ephemeral loopback port and checks observable user behavior in fresh browser contexts. Missing Chromium or another oracle infrastructure failure is an error, never a product pass.
 
