@@ -79,6 +79,11 @@ def _orch(root, events, signed, *, adapter=None, **kw):
     # faked sign_fn. Real _verify_g4_build is covered in
     # test_product_gate_orchestrator.TestG4BuildVerification.
     orch._verify_g4_build = lambda *a, **k: {"ok": True}
+    # C7 also binds G5 readiness to a real product and the current-tree G4
+    # proof.  Reopen tests isolate cascade/authorization behavior, so keep
+    # those independent release checks deterministic here.
+    orch._repo_has_real_product_src = lambda: True
+    orch._g4_verification_for_current_tree = lambda: {"ok": True}
     return orch
 
 
@@ -119,7 +124,7 @@ class TestReopenCascade(unittest.TestCase):
             self.assertFalse(inv["G3"]["cascade"])
             self.assertTrue(inv["G4"]["cascade"])
             self.assertTrue(inv["G5"]["cascade"])
-            self.assertEqual(inv["G4"]["by"], "Sam")
+            self.assertEqual(inv["G4"]["by"], "foundry-agent")
             self.assertEqual(inv["G4"]["reason"], "the checkout flow is wrong")
             # audit: one reversal row per gate, using replay-legible markers
             rows = _audit_rows(d)
@@ -186,17 +191,17 @@ class TestReopenCascade(unittest.TestCase):
 
 
 class TestReopenRefusals(unittest.TestCase):
-    def test_unauthorized_role_refused(self):
+    def test_caller_claimed_role_is_ignored_in_favor_of_server_role(self):
         with tempfile.TemporaryDirectory() as d:
             events, signed = [], []
             orch = _orch(d, events, signed)
             orch.start()
             _approve_n(orch, 6)                       # G5 signed (QA territory)
             res = orch.reopen_gate("G5", "not ready", role="PO")
-            self.assertEqual(res["status"], "role-not-authorized")
-            self.assertIn("G5", orch.state.signed)    # no state change
-            self.assertEqual(orch.state.reopens, {})
-            self.assertEqual(orch.state.invalidated, [])
+            self.assertEqual(res["status"], "reopened")
+            self.assertNotIn("G5", orch.state.signed)
+            self.assertEqual(orch.state.reopens, {"G5": 1})
+            self.assertEqual(orch.state.invalidated[-1]["by"], "foundry-agent")
 
     def test_not_signed_gate_refused(self):
         with tempfile.TemporaryDirectory() as d:
@@ -293,6 +298,11 @@ class TestReopenPersistence(unittest.TestCase):
             _approve_n(orch, 4)
             orch.reopen_gate("G2", "plan changed", role="PO")
 
+            # Model an actual owner/process teardown before reconstruction.
+            # A second live object with the same run id is intentionally not a
+            # resume authority under the per-instance lock-token contract.
+            orch._release_delivery_lock()
+
             loaded = resume_delivery(
                 Path(d), orch.state.run_id, _EndAdapter(), events.append,
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
@@ -317,6 +327,10 @@ class TestReopenPersistence(unittest.TestCase):
             del data["reopens"]
             del data["invalidated"]
             sf.write_text(json.dumps(data), encoding="utf-8")
+
+            # The original owner terminates before the persisted checkpoint is
+            # reconstructed. Same-process dual ownership is tested separately.
+            orch._release_delivery_lock()
 
             legacy = resume_delivery(
                 Path(d), orch.state.run_id, _EndAdapter(), events.append,
@@ -363,10 +377,11 @@ class TestReopenIPC(unittest.TestCase):
                                     "args": [json.dumps({
                                         "prompt": "build CRM", "run_id": "re-1",
                                         "provider": "openai", "model": "gpt-test"})]})
-                        for _ in range(3):            # sign G0..G2, at G3
+                        for gate_index in range(3):   # sign G0..G2, at G3
                             srv.handle({"command": "agent:verdict", "id": "v",
                                         "args": [json.dumps({
                                             "run_id": "re-1",
+                                            "gate_id": f"G{gate_index}",
                                             "verdict": "approve"})]})
                     buf = io.StringIO()
                     with contextlib.redirect_stdout(buf):
@@ -389,6 +404,7 @@ class TestReopenIPC(unittest.TestCase):
                         r2 = srv.handle({"command": "agent:verdict", "id": "3",
                                          "args": [json.dumps({
                                              "run_id": "re-1",
+                                             "gate_id": "G1",
                                              "verdict": "request-changes",
                                              "feedback": "redo it"})]})
                     self.assertTrue(r2["ok"], r2)
@@ -416,7 +432,12 @@ class TestReopenIPC(unittest.TestCase):
                                         "provider": "openai", "model": "gpt-test"})]})
                         srv.handle({"command": "agent:verdict", "id": "v",
                                     "args": [json.dumps({"run_id": "re-2",
+                                                         "gate_id": "G0",
                                                          "verdict": "approve"})]})
+                    # Simulate the old sidecar owner terminating before its
+                    # in-memory registry is lost. Merely clearing the registry
+                    # while that owner remains live must not authorize takeover.
+                    srv._ACTIVE_DELIVERIES["re-2"]._release_delivery_lock()
                     srv._ACTIVE_DELIVERIES.clear()    # sidecar memory loss
                     with contextlib.redirect_stdout(io.StringIO()):
                         r = srv.handle({"command": "agent:reopen-gate", "id": "2",

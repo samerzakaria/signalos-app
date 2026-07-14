@@ -129,6 +129,57 @@ class SealVerifyTests(unittest.TestCase):
         self.assertEqual(payload["status"], "error")
         self.assertIn("seal file not found", payload["error"])
 
+    def _rewrite_bundle(self, mutate) -> None:
+        path = self.tmp / ".signalos" / "integrity" / "seal-1.json"
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        mutate(bundle)
+        path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+
+    def test_verify_rejects_empty_artifact_rows(self) -> None:
+        _seed_some_artifacts(self.tmp)
+        seal.create_seal(self.tmp, "1")
+        self._rewrite_bundle(lambda bundle: bundle.__setitem__("artifacts", []))
+
+        result = seal.verify_seal(self.tmp, "1")
+
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(any("empty" in error for error in result["errors"]))
+
+    def test_verify_rejects_an_omitted_canonical_row(self) -> None:
+        _seed_some_artifacts(self.tmp)
+        seal.create_seal(self.tmp, "1")
+        self._rewrite_bundle(lambda bundle: bundle["artifacts"].pop())
+
+        result = seal.verify_seal(self.tmp, "1")
+
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(any("omitted" in error for error in result["errors"]))
+
+    def test_verify_rejects_a_duplicate_canonical_row(self) -> None:
+        _seed_some_artifacts(self.tmp)
+        seal.create_seal(self.tmp, "1")
+
+        def duplicate(bundle) -> None:
+            bundle["artifacts"].append(dict(bundle["artifacts"][0]))
+
+        self._rewrite_bundle(duplicate)
+        result = seal.verify_seal(self.tmp, "1")
+
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(any("duplicate" in error for error in result["errors"]))
+
+    def test_verify_rejects_bundle_project_replay(self) -> None:
+        _seed_some_artifacts(self.tmp)
+        seal.create_seal(self.tmp, "1")
+        self._rewrite_bundle(
+            lambda bundle: bundle.__setitem__("project_id", "another-project")
+        )
+
+        result = seal.verify_seal(self.tmp, "1")
+
+        self.assertEqual(result["status"], "error")
+        self.assertTrue(any("project_id" in error for error in result["errors"]))
+
 
 class SealG5HookTests(unittest.TestCase):
     def setUp(self) -> None:

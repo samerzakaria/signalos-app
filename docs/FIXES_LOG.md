@@ -8,6 +8,29 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## End-to-end governed delivery closure (2026-07-14)
+
+This pass closed the desktop and direct-backend seams together. A delivery is
+now project/run-bound from the founder's G0 approval through G4 attribution and
+the G5 release receipt; the offline matrix drives the same backend without the
+desktop UI.
+
+| Area | Failure closed | Implemented contract | Verification |
+|---|---|---|---|
+| G0 founder authority | Project creation or a generic verdict could manufacture founder approval | Exact consent (`I approve Gate 0 as sole founder`), explicit button/chat/simulation provenance, workspace + project + approval-ID binding, durable transaction/rollback, project-bound PO authority with scoped PE delegation, and placeholder refusal | G0/IPC/orchestrator integration suites |
+| Desktop-to-backend identity | A stale card or global run ID could approve another project/run | Every gate card is bound to workspace, project, run and gate; stale cards retire; in-flight responses cannot overwrite a new project; reopened gates become actionable again | Vitest workspace, chat and agent-event suites |
+| Direct backend lifecycle | Scripted tests did not traverse the durable resume/cancel/reopen boundary | Canonical run-ID grammar, containment-safe run storage, single workspace delivery lock, persisted profile/project/signer, active and idle cancellation, one-shot reopen, and pre-provider resume validation | IPC boundary, resume, reopen and direct matrix suites |
+| Virtual-project isolation | Identical artifact paths/hashes could replay a global audit row across projects | New sign/reopen/release audit rows carry `project_id`; non-default validation requires an exact match; legacy unbound rows remain compatible only for `default`; registry mutations refuse corrupt or redirected authority files | Cross-project replay and registry tests |
+| G4 generated-code proof | A pre-existing or trivial green tree could be treated as this run's build | Versioned run-bound attribution records the pre/post source tree, requires a meaningful product delta, stores real build/test results, and binds the entire shippable payload digest (including tracked build output and deletions) | Attribution and tamper tests |
+| G5 release truth | A raw G5 signature, forged trailer, stale marker, or successful-looking push could report shipped | Raw G4/G5 signing is refused; G5 revalidates all gates and the current G4 tree, persists a pending checkpoint before effects, commits through an isolated exact index, rejects non-canonical control drift and redirected paths, verifies the local seal/hash and release commit, then reads the exact pushed SHA back from the remote branch before `ready=true` | Real bare-remote, crash-recovery, cancellation and forged-receipt tests |
+| Backend matrix + CI | Browser oracle coverage lived outside the normal CI path | Repository-owned offline driver exercises the complete backend gate walk; clean-room browser oracle validates the generated product; the browser-enabled CI journey job now runs the oracle without API keys or paid providers | 29 backend-matrix/oracle tests; workflow/ACL checks |
+| Production desktop profile | Desktop delivery could resume with benchmark-only safety stages or accept raw HTML as UX proof | New desktop deliveries use `production`; the profile is persisted and immutable across resume; G5 independently requires current security, runtime, and an executed post-JavaScript browser receipt for UI products | Delivery-profile, runtime-proof, resume and desktop journey suites |
+| Packaged browser proof | Browser proof worked in a source checkout but a packaged desktop could lack Playwright/Chromium and block every UI release | Existing project/source tooling is preferred; otherwise a pinned Playwright + matching Chromium runtime is provisioned once into an OS user-scoped cache outside the product/release tree, with bounded locking/timeouts, stable-browser fallback, redacted diagnostics and fail-closed verification | Runtime-proof bootstrap/discovery/cache/channel tests + live journey |
+| Credential boundary | Model-authored commands, preview servers, browser proof, or tooling bootstrap could inherit the sidecar's provider key | Every generated-command, preview, browser and tooling subprocess receives a credential-scrubbed child environment while the trusted provider process retains its key; non-secret PATH/proxy/tool settings remain available | Sandbox, AgentLoop, IPC and runtime-proof credential tests |
+| Audit and reversal authority | Deleting a mutable reopen marker or appending a hashless sign row could resurrect an old approval | Reopen/revoke is appended to the chained project-bound audit before the marker; strict validation requires an exact current artifact hash from a valid chained authority row and honors the latest sign/reversal event | Revocation deletion, fresh re-sign, hashless-tail and cross-project tests |
+
+---
+
 ## Desktop-journey wave — close fail-open holes in the real desktop flow (2026-07-14)
 
 Five checkpoints (C1–C7) audited against the shipped desktop journey; C5 (G4 this-run attribution) and C7 (G5 verify-before-push) were already closed by the governance epoch (G-3 / G-5). The three real remaining holes:

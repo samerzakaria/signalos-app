@@ -27,6 +27,28 @@ from signalos_lib.product.gate_orchestrator import (
     GATE_SPECIALISTS,
     resume_delivery,
 )
+from signalos_lib.sign import (
+    SOLO_FOUNDER_GATE0_CONSENT,
+    approve_gate0_as_solo_founder,
+)
+
+
+def _explicit_g0_approval(root: Path, approval_id: str = "test-g0") -> dict:
+    signalos = root / ".signalos"
+    signalos.mkdir(parents=True, exist_ok=True)
+    (signalos / "identity.json").write_text(
+        json.dumps({"name": "Test Founder", "role": "PO"}),
+        encoding="utf-8",
+    )
+    return approve_gate0_as_solo_founder(
+        root,
+        consent=SOLO_FOUNDER_GATE0_CONSENT,
+        via="simulation",
+        expected_workspace=str(root),
+        approval_id=approval_id,
+        project_id="default",
+        expected_project_id="default",
+    )
 
 
 class TestSignedSeeding(unittest.TestCase):
@@ -94,7 +116,7 @@ _GOOD_BRIEF_JSON = (
 )
 
 
-def _orch(root, events, signed, *, max_rework=None):
+def _orch(root, events, signed, *, max_rework=None, release_ready=True):
     def fake_sign(repo_root, gate, signer, role, verdict, conditions):
         signed.append((gate, role, verdict))
         return [f"{gate}.md"]
@@ -115,6 +137,10 @@ def _orch(root, events, signed, *, max_rework=None):
     # stub the outcome gate open (mirrors the _verify_g4_build stub). The REAL
     # _gate_review_ready enforcement is covered in TestAgentOutcomeGate below.
     orch._gate_review_ready = lambda *a, **k: {"ok": True}
+    if release_ready:
+        # Walk-mechanics tests use a fake signer/build and do not construct real
+        # release evidence. C7's verify-before-sign contract has dedicated tests.
+        orch._verify_g5_release = lambda **k: {"ok": True, "reasons": []}
     return orch
 
 
@@ -306,6 +332,9 @@ class TestGateWalk(unittest.TestCase):
             orch = _orch(d, events, signed)
             orch.start()
             events.clear()
+            # Simulate process loss: the old instance no longer owns the
+            # workspace lock before a new orchestrator reconstructs it.
+            orch._release_delivery_lock()
 
             loaded = resume_delivery(
                 Path(d),
@@ -355,7 +384,7 @@ class TestDeliveryIPC(unittest.TestCase):
                     buf2 = io.StringIO()
                     with contextlib.redirect_stdout(buf2):
                         r2 = srv.handle({"command": "agent:verdict",
-                                         "args": [_json.dumps({"run_id": "del-1", "verdict": "approve"})],
+                                         "args": [_json.dumps({"run_id": "del-1", "gate_id": "G0", "verdict": "approve"})],
                                          "id": "2"})
                     self.assertTrue(r2["ok"], r2)
                     self.assertEqual(r2["data"]["status"], "advanced")
@@ -376,9 +405,10 @@ class TestDeliveryIPC(unittest.TestCase):
         import io, contextlib, os, json as _json
         import signalos_ipc_server as srv
 
+        signed = []
         srv._AGENT_ADAPTER_FACTORY = lambda model: _EndAdapter()
         srv._AGENT_ENFORCEMENT_FACTORY = lambda: StaticEnforcementProvider(trust_tier="T3")
-        srv._DELIVERY_SIGN_FN = lambda root, gate, signer, role, verdict, conditions: [f"{gate}.md"]
+        srv._DELIVERY_SIGN_FN = lambda root, gate, signer, role, verdict, conditions: signed.append(gate) or [f"{gate}.md"]
         try:
             with tempfile.TemporaryDirectory() as d:
                 cwd = os.getcwd()
@@ -389,6 +419,7 @@ class TestDeliveryIPC(unittest.TestCase):
                                          "args": [_json.dumps({"prompt": "build CRM", "run_id": "del-resume", "provider": "openai", "model": "gpt-test"})],
                                          "id": "1"})
                     self.assertTrue(r1["ok"], r1)
+                    srv._ACTIVE_DELIVERIES["del-resume"]._release_delivery_lock()
                     srv._ACTIVE_DELIVERIES.clear()
 
                     buf = io.StringIO()
@@ -399,9 +430,23 @@ class TestDeliveryIPC(unittest.TestCase):
                     self.assertTrue(r2["ok"], r2)
                     self.assertTrue(r2["data"]["resumed"])
                     self.assertEqual(r2["data"]["gate"], "G0")
+                    self.assertEqual(r2["data"]["status"], "blocked")
                     events = [_json.loads(l) for l in buf.getvalue().splitlines() if l.strip().startswith("{")]
-                    self.assertTrue(any(e.get("type") == "gate" and e.get("gate") == "G0" for e in events))
+                    self.assertTrue(any(e.get("type") == "gate_blocked" and e.get("gate") == "G0" for e in events))
                     self.assertIn("del-resume", srv._ACTIVE_DELIVERIES)
+
+                    # A restart must not turn an unreviewable checkpoint into a
+                    # signable gate, even when IPC injects a custom signer.
+                    r3 = srv.handle({"command": "agent:verdict",
+                                     "args": [_json.dumps({"run_id": "del-resume", "gate_id": "G0", "verdict": "approve"})],
+                                     "id": "3"})
+                    self.assertTrue(r3["ok"], r3)
+                    self.assertEqual(r3["data"]["status"], "not-reviewable")
+                    self.assertEqual(signed, [])
+                    persisted = _json.loads((Path(d) / ".signalos" / "agent-runs"
+                                             / "del-resume" / "delivery.json").read_text(
+                                                 encoding="utf-8"))
+                    self.assertEqual(persisted["status"], "blocked")
                 finally:
                     os.chdir(cwd)
         finally:
@@ -459,6 +504,7 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             # covered by TestAgentOutcomeGate.
             orch._gate_review_ready = lambda *a, **k: {"ok": True}
             orch.start()
+            self.assertTrue(_explicit_g0_approval(root)["signed"])
             res = orch.apply_verdict("approve")
             self.assertEqual(res["status"], "advanced")
             # artifact now carries a signature block
@@ -472,7 +518,6 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             self.assertTrue(sign_rows, f"no SOUL-DOCUMENT sign row in audit: {rows}")
             self.assertEqual(sign_rows[0]["role"], "PE")
             self.assertEqual(sign_rows[0]["verdict"], "APPROVED")
-            self.assertEqual(sign_rows[0]["wave"], "07")
 
     def test_placeholder_artifact_blocks_gate_advance(self):
         """0.6 fail-closed: a gate artifact that is still unfilled template
@@ -497,8 +542,10 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             )
             orch._gate_review_ready = lambda *a, **k: {"ok": True}  # isolate the sign path
             orch.start()
+            approval = _explicit_g0_approval(root, "placeholder-g0")
+            self.assertFalse(approval["signed"])
             res = orch.apply_verdict("approve")
-            self.assertEqual(res["status"], "sign-failed")       # placeholder blocked
+            self.assertEqual(res["status"], "explicit-approval-required")
             self.assertEqual(orch.state.current_gate, "G0")      # did not advance
             self.assertNotIn("G0", orch.state.signed)
 
@@ -522,27 +569,31 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             # missing artifacts).
             orch._gate_review_ready = lambda *a, **k: {"ok": True}
             orch.start()
+            approval = _explicit_g0_approval(root, "missing-g0")
+            self.assertFalse(approval["signed"])
             res = orch.apply_verdict("approve")
-            self.assertEqual(res["status"], "sign-failed")       # did not sign
+            self.assertEqual(res["status"], "explicit-approval-required")
             self.assertEqual(orch.state.current_gate, "G0")      # did not advance
             self.assertNotIn("G0", orch.state.signed)
-            self.assertTrue(any(e.get("type") == "error" for e in events))
+            self.assertTrue(any(e.get("type") == "gate_blocked" for e in events))
 
     def test_waive_marks_delivery_not_ready(self):
         with tempfile.TemporaryDirectory() as d:
             events, signed = [], []
-            orch = _orch(d, events, signed)
+            orch = _orch(d, events, signed, release_ready=False)
             orch.start()
-            # waive G0, then approve the rest through to completion
+            # Waive G0, then reach G5. C7 refuses the release before signing;
+            # a known-not-ready product must never complete or push.
             orch.apply_verdict("waive", "n/a for MVP")
             res = None
             for _ in range(5):
                 res = orch.apply_verdict("approve")
-            self.assertEqual(res["status"], "complete")
-            self.assertFalse(res["ready"])               # INV-1: cannot be ready
-            self.assertIn("G0", res["waived"])
+            self.assertEqual(res["status"], "release-not-ready")
+            self.assertFalse(res["ready"])
+            self.assertIn("G0", orch.state.waived)
+            self.assertNotIn("G5", orch.state.signed)
             done = [e for e in events if e.get("type") == "delivery_complete"]
-            self.assertTrue(done and done[-1]["ready"] is False)
+            self.assertFalse(done)
 
 
 class _RecordingAdapter:
@@ -665,6 +716,7 @@ class TestReworkFeedbackThreading(unittest.TestCase):
             sf = Path(d) / ".signalos" / "agent-runs" / orch.state.run_id / "delivery.json"
 
             # resume restores the feedback field
+            orch._release_delivery_lock()
             loaded = resume_delivery(
                 Path(d), orch.state.run_id, _RecordingAdapter(), events.append,
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
@@ -679,6 +731,7 @@ class TestReworkFeedbackThreading(unittest.TestCase):
             data = json.loads(sf.read_text(encoding="utf-8"))
             del data["feedback"]
             sf.write_text(json.dumps(data), encoding="utf-8")
+            loaded._release_delivery_lock()
             legacy = resume_delivery(
                 Path(d), orch.state.run_id, _RecordingAdapter(), events.append,
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
@@ -745,11 +798,14 @@ class TestG4BuildVerification(unittest.TestCase):
     def _make(self, root):
         def fake_sign(repo_root, gate, signer, role, verdict, conditions):
             return [f"{gate}.md"]
-        return GateOrchestrator(
+        orch = GateOrchestrator(
             Path(root), _EndAdapter(), (lambda e: None),
             enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
             sign_fn=fake_sign, prompt="build an expense tracker",
         )
+        orch._product_source_dir = lambda: "src"
+        orch._prepare_g4_attribution()
+        return orch
 
     def _write(self, root, rel, content):
         p = Path(root) / rel
@@ -763,7 +819,7 @@ class TestG4BuildVerification(unittest.TestCase):
             self._write(d, "src/App.tsx", "function App() {\n  return <h1>SignalOS Product</h1>;\n}\n\nexport default App;\n")
             self._write(d, "src/App.test.tsx", "test('x', () => {});\n")
             self._write(d, "src/main.tsx", "import App from './App';\n")
-            res = orch._verify_g4_build(None)
+            res = orch._verify_g4_build(_Result())
             self.assertFalse(res["ok"])
             self.assertIn("No real product source", res["reason"])
 
@@ -777,7 +833,7 @@ class TestG4BuildVerification(unittest.TestCase):
                  mock.patch("signalos_lib.product.validation.run_validation",
                             return_value={"results": {"build": {"status": "failed", "output": "error TS2307: Cannot find module './Foo'"},
                                                        "test": {"status": "passed"}}}):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertFalse(res["ok"])
             self.assertIn("not green", res["reason"])
             self.assertIn("TS2307", res["reason"])  # actionable: the real error is fed back
@@ -792,7 +848,7 @@ class TestG4BuildVerification(unittest.TestCase):
                             return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
                  mock.patch("signalos_lib.product.validation.run_validation",
                             return_value={"results": {"build": {"status": "passed"}, "test": {"status": "passed"}}}):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertTrue(res["ok"])
 
     def test_apply_verdict_blocks_g4_until_verified(self):
@@ -812,10 +868,13 @@ class TestUxAcceptanceGate(unittest.TestCase):
     _verify_g4_build so it applies before G4 can be signed."""
 
     def _make(self, root):
-        return GateOrchestrator(
+        orch = GateOrchestrator(
             Path(root), _EndAdapter(), (lambda e: None),
             enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
             sign_fn=lambda *a, **k: [f"{'G4'}.md"], prompt="build an expense tracker")
+        orch._product_source_dir = lambda: "src"
+        orch._prepare_g4_attribution()
+        return orch
 
     def _write(self, root, rel, content):
         p = Path(root) / rel
@@ -855,7 +914,7 @@ class TestUxAcceptanceGate(unittest.TestCase):
                                           "reason": "UX acceptance FAILED -- the "
                                           "build does not ship a real, styled, "
                                           "usable UI."}):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertFalse(res["ok"])
             self.assertIn("UX acceptance", res["reason"])
             self.assertEqual(res.get("ux"), "failed")
@@ -869,7 +928,7 @@ class TestUxAcceptanceGate(unittest.TestCase):
                  mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
                             return_value={"ok": True, "ran": True,
                                           "reason": "UX acceptance passed."}):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertTrue(res["ok"])
 
     def test_ux_skip_never_false_fails_a_green_build(self):
@@ -883,7 +942,7 @@ class TestUxAcceptanceGate(unittest.TestCase):
                  mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
                             return_value={"ok": True, "ran": False,
                                           "reason": "deps not installed"}):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertTrue(res["ok"])
 
 
@@ -993,6 +1052,8 @@ class TestValidationConvergence(unittest.TestCase):
                 Path(d), _EndAdapter(), (lambda e: None),
                 enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
                 sign_fn=lambda *a, **k: ["x"], prompt="build an expense tracker")
+            orch._product_source_dir = lambda: "src"
+            orch._prepare_g4_attribution()
             (Path(d) / "src" / "components").mkdir(parents=True)
             (Path(d) / "src" / "components" / "ExpenseList.tsx").write_text(
                 "export const ExpenseList = () => null;\n", encoding="utf-8")
@@ -1014,7 +1075,7 @@ class TestValidationConvergence(unittest.TestCase):
                                           "profile": "react-vite"}), \
                  mock.patch("signalos_lib.product.validation.run_validation",
                             side_effect=_spy):
-                res = orch._verify_g4_build(None)
+                res = orch._verify_g4_build(_Result())
             self.assertTrue(res["ok"])
             self.assertEqual(calls, ["react-vite"])  # the shared impl was invoked
             self.assertIsNotNone(real_run)
@@ -1039,6 +1100,8 @@ class TestCloseoutConvergence(unittest.TestCase):
         orch._verify_g4_build = lambda *a, **k: {"ok": True}
         orch._execute_build_gate = lambda *a, **k: setattr(
             orch, "_g4_verify", {"ok": True})
+        orch._gate_review_ready = lambda *a, **k: {"ok": True}
+        orch._verify_g5_release = lambda **k: {"ok": True, "reasons": []}
         return orch, events
 
     @staticmethod
@@ -1179,6 +1242,8 @@ class TestEngineProfiles(unittest.TestCase):
         orch._verify_g4_build = lambda *a, **k: {"ok": True}
         orch._execute_build_gate = lambda *a, **k: setattr(
             orch, "_g4_verify", {"ok": True})
+        orch._gate_review_ready = lambda *a, **k: {"ok": True}
+        orch._verify_g5_release = lambda **k: {"ok": True, "reasons": []}
         return orch, events
 
     @staticmethod
@@ -1202,10 +1267,10 @@ class TestEngineProfiles(unittest.TestCase):
             self.assertFalse(go_mod.PROFILE_STAGES["benchmark"]["security_gate"])
             self.assertFalse(go_mod.PROFILE_STAGES["benchmark"]["runtime_proof"])
 
-    def test_unknown_profile_falls_back_to_safe_default(self):
+    def test_unknown_profile_is_rejected_instead_of_failing_open(self):
         with tempfile.TemporaryDirectory() as d:
-            orch, _ = self._make(d, profile="totally-bogus")
-            self.assertEqual(orch.profile, "benchmark")
+            with self.assertRaisesRegex(ValueError, "unknown orchestrator profile"):
+                self._make(d, profile="totally-bogus")
 
     def test_post_build_stages_are_noop_under_benchmark(self):
         # Direct unit check: with every service patched, the benchmark profile's
@@ -1338,10 +1403,15 @@ class TestEngineProfiles(unittest.TestCase):
                 "export const ExpenseList = () => null;\n", encoding="utf-8")
             (root / "vite.config.ts").write_text("export default {}\n", encoding="utf-8")
 
-            # (a) REAL G4 wall (validation mocked green) verifies the fixture --
-            # a separate orch whose _verify_g4_build is NOT stubbed.
+            # (a) REAL G4 wall (validation mocked green) verifies a source
+            # change attributable to this attempt -- a pre-existing green tree
+            # alone is deliberately no longer sufficient.
             real_orch, _ = self._make(d, profile="benchmark")
             del real_orch._verify_g4_build  # drop the stub -> use the real method
+            real_orch._prepare_g4_attribution()
+            (root / "src" / "components" / "ExpenseList.tsx").write_text(
+                "export const ExpenseList = () => <section>Expenses</section>;\n",
+                encoding="utf-8")
             with mock.patch("signalos_lib.product.stacks.detect_profile",
                             return_value="react-vite"), \
                  mock.patch("signalos_lib.product.validation.build_validation_plan",
@@ -1351,7 +1421,7 @@ class TestEngineProfiles(unittest.TestCase):
                  mock.patch("signalos_lib.product.validation.run_validation",
                             return_value={"results": {"build": {"status": "passed"},
                                                       "test": {"status": "passed"}}}):
-                self.assertTrue(real_orch._verify_g4_build(None)["ok"])
+                self.assertTrue(real_orch._verify_g4_build(_Result())["ok"])
 
             # (b)-(d) full walk to completion under the benchmark profile, with
             # every profile service patched so we can prove they never fire.
@@ -1620,6 +1690,18 @@ class TestG5ReleaseReadiness(unittest.TestCase):
     'no waivers'. No built product / unresolved condition / waiver -> not ready
     (the delivery still COMPLETES, but is honestly reported not-ready)."""
 
+    @staticmethod
+    def _passing_browser_runtime() -> dict:
+        return {
+            "status": "passed",
+            "stack": "react-vite",
+            "ux_required": True,
+            "ux_status": "passed",
+            "ux_executed": True,
+            "ux_schema_version": "signalos.ux-browser-proof.v1",
+            "ok": True,
+        }
+
     def test_not_ready_without_built_product(self):
         with tempfile.TemporaryDirectory() as d:
             orch = _bare_orch(d)
@@ -1649,9 +1731,65 @@ class TestG5ReleaseReadiness(unittest.TestCase):
             root = Path(d)
             _seed_react_product(root)
             orch = _bare_orch(root, profile="production")
+            orch.state.release_evidence["security_gate"] = {"status": "passed"}
             orch._last_runtime_ok = False
             self.assertFalse(orch._verify_g5_release()["ok"])
+            orch.state.release_evidence["runtime_proof"] = (
+                self._passing_browser_runtime()
+            )
             orch._last_runtime_ok = True
+            self.assertTrue(orch._verify_g5_release()["ok"])
+
+    def test_production_browser_ux_failed_skipped_unmeasurable_or_missing_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_react_product(root)
+            orch = _bare_orch(root, profile="production")
+            orch.state.release_evidence["security_gate"] = {"status": "passed"}
+            for ux_status in ("failed", "skipped", "unmeasurable", None):
+                with self.subTest(ux_status=ux_status):
+                    evidence = self._passing_browser_runtime()
+                    if ux_status is None:
+                        evidence.pop("ux_status")
+                    else:
+                        evidence["ux_status"] = ux_status
+                    evidence["ux_executed"] = ux_status == "passed"
+                    evidence["ok"] = ux_status == "passed"
+                    orch.state.release_evidence["runtime_proof"] = evidence
+                    orch._last_runtime_ok = evidence["ok"]
+                    result = orch._verify_g5_release()
+                    self.assertFalse(result["ok"], result)
+                    self.assertTrue(any(
+                        "browser UX proof" in reason
+                        for reason in result["reasons"]
+                    ), result)
+
+    def test_production_requires_passing_security_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _seed_react_product(root)
+            orch = _bare_orch(root, profile="production")
+            orch.state.release_evidence["runtime_proof"] = (
+                self._passing_browser_runtime()
+            )
+            orch._last_runtime_ok = True
+
+            missing = orch._verify_g5_release()
+            self.assertFalse(missing["ok"])
+            self.assertIn(
+                "production profile: security gate did not pass",
+                missing["reasons"],
+            )
+
+            orch.state.release_evidence["security_gate"] = {"status": "warning"}
+            warning = orch._verify_g5_release()
+            self.assertFalse(warning["ok"])
+            self.assertIn(
+                "production profile: security gate did not pass",
+                warning["reasons"],
+            )
+
+            orch.state.release_evidence["security_gate"] = {"status": "passed"}
             self.assertTrue(orch._verify_g5_release()["ok"])
 
 
@@ -1683,7 +1821,7 @@ class TestWaiverAndConditions(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             events, signed = [], []
-            orch = _orch(root, events, signed)
+            orch = _orch(root, events, signed, release_ready=False)
             # Isolate the blocker: pretend a real product was built, so ONLY the
             # unresolved condition can keep the delivery from being ready.
             orch._repo_has_real_product_src = lambda: True
@@ -1695,9 +1833,10 @@ class TestWaiverAndConditions(unittest.TestCase):
             res = None
             for _ in range(5):
                 res = orch.apply_verdict("approve")
-            self.assertEqual(res["status"], "complete")
-            self.assertFalse(res["ready"])                 # unresolved condition blocks
-            self.assertIn("G0", res["conditions"])
+            self.assertEqual(res["status"], "release-not-ready")
+            self.assertFalse(res["ready"])
+            self.assertIn("G0", orch.state.conditions)
+            self.assertNotIn("G5", orch.state.signed)
 
 
 class TestPersistBeforeDispatch(unittest.TestCase):
@@ -1752,12 +1891,7 @@ def _spawn_dead_pid() -> int:
 
 
 class TestSingleActiveDeliveryLock(unittest.TestCase):
-    """Per-(repo_root, project_id) single-active-delivery lock: a SECOND
-    concurrent delivery on the SAME project is BLOCKED with a clear message,
-    while DIFFERENT projects are NEVER blocked. A stale lock (dead pid / past
-    TTL) and a RESUME of the same run reclaim the lock; a terminal status
-    releases it so the next delivery on that project starts fine. Driven on the
-    real start()/apply_verdict path (no lock mocks)."""
+    """Workspace-global delivery lock protecting shared product/Git bytes."""
 
     def _orch(self, root, *, project_id="default", run_id=None, events=None):
         ev = events if events is not None else []
@@ -1775,12 +1909,12 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
         orch._execute_build_gate = lambda *a, **k: setattr(
             orch, "_g4_verify", {"ok": True})
         orch._gate_review_ready = lambda *a, **k: {"ok": True}
+        orch._verify_g5_release = lambda **k: {"ok": True, "reasons": []}
         return orch, ev
 
     @staticmethod
     def _lock_path(root, project_id="default"):
-        return (Path(root) / ".signalos" / "projects" / project_id
-                / "delivery.lock")
+        return Path(root) / ".signalos" / "locks" / "delivery.lock"
 
     # -- (a) two deliveries on the SAME project -> the second is blocked ----
 
@@ -1792,7 +1926,7 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
             b, ev_b = self._orch(d, run_id="run-B")  # same repo + project
             res_b = b.start()
             self.assertEqual(res_b["status"], "blocked")
-            self.assertIn("already active for project 'default'", res_b["reason"])
+            self.assertIn("already active in this workspace", res_b["reason"])
             self.assertIn("run-A", res_b["reason"])  # names the holder
             self.assertTrue(any(e.get("type") == "delivery_blocked" for e in ev_b))
             # blocked BEFORE running its own gate (no gate event emitted)
@@ -1801,33 +1935,28 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
             info = json.loads(self._lock_path(d).read_text(encoding="utf-8"))
             self.assertEqual(info["run_id"], "run-A")
 
-    # -- (b) two deliveries on DIFFERENT projects -> both start fine --------
+    # -- (b) virtual projects still share product/Git bytes -----------------
 
-    def test_different_projects_never_block(self):
+    def test_different_projects_are_serialized(self):
         with tempfile.TemporaryDirectory() as d:
             a, ev_a = self._orch(d, project_id="alpha", run_id="run-alpha")
             b, ev_b = self._orch(d, project_id="beta", run_id="run-beta")
             self.assertEqual(a.start()["status"], "awaiting-verdict")
-            self.assertEqual(b.start()["status"], "awaiting-verdict")
-            self.assertFalse(any(e.get("type") == "delivery_blocked"
-                                 for e in ev_a + ev_b))
-            # each wrote its OWN lock under its OWN project namespace
-            self.assertTrue(self._lock_path(d, "alpha").is_file())
-            self.assertTrue(self._lock_path(d, "beta").is_file())
+            self.assertEqual(b.start()["status"], "blocked")
+            self.assertTrue(any(e.get("type") == "delivery_blocked" for e in ev_b))
             self.assertEqual(
-                json.loads(self._lock_path(d, "alpha").read_text())["run_id"],
+                json.loads(self._lock_path(d).read_text())["run_id"],
                 "run-alpha")
-            self.assertEqual(
-                json.loads(self._lock_path(d, "beta").read_text())["run_id"],
-                "run-beta")
 
     # -- (c) a STALE lock is reclaimed, not blocked ------------------------
 
-    def _seed_lock(self, root, *, run_id, pid, acquired_at, project_id="default"):
+    def _seed_lock(self, root, *, run_id, pid, acquired_at, project_id="default",
+                   host=None):
         lp = self._lock_path(root, project_id)
         lp.parent.mkdir(parents=True, exist_ok=True)
         lp.write_text(json.dumps({
-            "run_id": run_id, "pid": pid, "host": "otherhost",
+            "run_id": run_id, "pid": pid,
+            "host": host if host is not None else go_mod._hostname(),
             "acquired_at": acquired_at}), encoding="utf-8")
         return lp
 
@@ -1838,7 +1967,8 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             old = (datetime.now(timezone.utc) - timedelta(hours=7)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ")
-            self._seed_lock(d, run_id="run-old", pid=os.getpid(), acquired_at=old)
+            self._seed_lock(d, run_id="run-old", pid=os.getpid(), acquired_at=old,
+                            host="otherhost")
             orch, ev = self._orch(d, run_id="run-new")
             self.assertEqual(orch.start()["status"], "awaiting-verdict")
             self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev))
@@ -1857,17 +1987,34 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
             self.assertEqual(
                 json.loads(self._lock_path(d).read_text())["run_id"], "run-new")
 
-    # -- (d) a RESUME (same run_id) reclaims its OWN lock ------------------
+    # -- (d) ownership is per instance, not merely run/pid/host ------------
 
-    def test_resume_same_run_id_reclaims_own_lock(self):
+    def test_second_instance_same_process_and_run_id_is_blocked(self):
         with tempfile.TemporaryDirectory() as d:
             a, _ = self._orch(d, run_id="run-X")
             a.start()  # acquires the lock for run-X (live pid, fresh timestamp)
-            # A reconstructed orchestrator with the SAME run_id (crash/restart)
-            # must reclaim its OWN live lock, never block itself.
+
+            # The acquiring instance may safely re-enter its own lock.
+            self.assertIsNone(a._acquire_delivery_lock())
+            owner = json.loads(self._lock_path(d).read_text(encoding="utf-8"))
+            self.assertEqual(owner["owner_token"], a._delivery_lock_owner_token)
+
+            # A reconstructed object shares run_id, pid, and host, but has a
+            # distinct owner token and therefore remains a real contender.
             b, ev_b = self._orch(d, run_id="run-X")
-            self.assertEqual(b.start()["status"], "awaiting-verdict")
-            self.assertFalse(any(e.get("type") == "delivery_blocked" for e in ev_b))
+            self.assertNotEqual(
+                b._delivery_lock_owner_token,
+                a._delivery_lock_owner_token,
+            )
+            blocked = b.start()
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertTrue(any(e.get("type") == "delivery_blocked" for e in ev_b))
+
+            # The contender cannot release the live owner's lock; the owner can.
+            b._release_delivery_lock()
+            self.assertTrue(self._lock_path(d).is_file())
+            a._release_delivery_lock()
+            self.assertFalse(self._lock_path(d).exists())
 
     # -- (e) a terminal status releases the lock --------------------------
 
@@ -1921,20 +2068,25 @@ class TestSingleActiveDeliveryLock(unittest.TestCase):
         self.assertTrue(go_mod._pid_is_alive("nope"))       # unparseable -> assume live
 
     def test_lock_liveness_predicate(self):
-        # dead pid -> stale; live pid + fresh -> live; live pid + old -> stale.
+        # Same-host live PIDs never expire; remote locks use TTL.
         now = datetime.now(timezone.utc)
         fresh = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         old = (now - timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
         with tempfile.TemporaryDirectory() as d:
             orch, _ = self._orch(d, run_id="r")
             self.assertFalse(orch._delivery_lock_is_live(
-                {"pid": _spawn_dead_pid(), "acquired_at": fresh}))
+                {"pid": _spawn_dead_pid(), "host": go_mod._hostname(),
+                 "acquired_at": fresh}))
             self.assertTrue(orch._delivery_lock_is_live(
-                {"pid": os.getpid(), "acquired_at": fresh}))
+                {"pid": os.getpid(), "host": go_mod._hostname(),
+                 "acquired_at": fresh}))
+            self.assertTrue(orch._delivery_lock_is_live(
+                {"pid": os.getpid(), "host": go_mod._hostname(),
+                 "acquired_at": old}))
             self.assertFalse(orch._delivery_lock_is_live(
-                {"pid": os.getpid(), "acquired_at": old}))
+                {"pid": os.getpid(), "host": "remote", "acquired_at": old}))
             self.assertFalse(orch._delivery_lock_is_live(
-                {"pid": os.getpid()}))  # missing timestamp -> stale (no deadlock)
+                {"pid": os.getpid(), "host": "remote"}))
 
 
 if __name__ == "__main__":

@@ -14,29 +14,29 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _quality_check(root: Path) -> Path:
-    path = root / "core" / "governance" / "QUALITY_CHECK.md"
+def _expectation_map(root: Path) -> Path:
+    path = root / "core" / "strategy" / "EXPECTATION_MAP.md"
     _write(
         path,
-        "# Quality Check\n\n"
-        "Stage 1 review: PASS\n"
-        "Stage 2 review: PASS\n"
-        "Release verdict: PASS\n",
+        "# Expectation Map\n\n"
+        "Actor: Customer\n"
+        "Outcome: A verified product result\n"
+        "Acceptance: The observable result matches the agreed expectation.\n",
     )
     return path
 
 
 def test_validate_gate_passes_for_signed_audit_linked_gate(tmp_path: Path) -> None:
-    _quality_check(tmp_path)
+    _expectation_map(tmp_path)
 
     rc = sign_command.main([
-        "G5",
+        "G2",
         "--repo-root",
         str(tmp_path),
         "--signer",
-        "QA Lead",
+        "Product Owner",
         "--role",
-        "QA",
+        "PO",
         "--verdict",
         "APPROVED",
         "--wave",
@@ -44,20 +44,20 @@ def test_validate_gate_passes_for_signed_audit_linked_gate(tmp_path: Path) -> No
     ])
 
     assert rc == 0
-    result = validate_gate(tmp_path, "5", wave="W01")
+    result = validate_gate(tmp_path, "2", wave="W01")
 
     assert result["ok"] is True
-    assert result["gate"] == "G5"
+    assert result["gate"] == "G2"
     assert result["wave"] == "01"
     assert result["summary"]["failed"] == 0
-    assert (tmp_path / ".signalos" / "evidence" / "gates" / "validate-gate-g5-w01.json").is_file()
+    assert (tmp_path / ".signalos" / "evidence" / "gates" / "validate-gate-g2-w01.json").is_file()
 
 
 def test_validate_gate_fails_without_audit_link(tmp_path: Path) -> None:
-    artifact = _quality_check(tmp_path)
-    sign_artifact(artifact, "QA Lead", "QA", "G5", "APPROVED")
+    artifact = _expectation_map(tmp_path)
+    sign_artifact(artifact, "Product Owner", "PO", "G2", "APPROVED")
 
-    result = validate_gate(tmp_path, "G5", write_evidence=False)
+    result = validate_gate(tmp_path, "G2", write_evidence=False)
 
     assert result["ok"] is False
     blocker_ids = {blocker["id"] for blocker in result["blockers"]}
@@ -66,38 +66,38 @@ def test_validate_gate_fails_without_audit_link(tmp_path: Path) -> None:
 
 
 def test_validate_gate_fails_on_wave_mismatch(tmp_path: Path) -> None:
-    _quality_check(tmp_path)
+    _expectation_map(tmp_path)
     assert sign_command.main([
-        "G5",
+        "G2",
         "--repo-root",
         str(tmp_path),
         "--signer",
-        "QA Lead",
+        "Product Owner",
         "--role",
-        "QA",
+        "PO",
         "--verdict",
         "APPROVED",
         "--wave",
         "1",
     ]) == 0
 
-    result = validate_gate(tmp_path, "G5", wave="2", write_evidence=False)
+    result = validate_gate(tmp_path, "G2", wave="2", write_evidence=False)
 
     assert result["ok"] is False
     linked = next(check for check in result["checks"] if check["id"] == "gate-audit-linked")
-    assert linked["details"]["missing_links"] == ["core/governance/QUALITY_CHECK.md"]
+    assert linked["details"]["missing_links"] == ["core/strategy/EXPECTATION_MAP.md"]
 
 
 def test_cli_exposes_validate_gate_command(tmp_path: Path, capsys) -> None:
-    _quality_check(tmp_path)
+    _expectation_map(tmp_path)
     assert sign_command.main([
-        "G5",
+        "G2",
         "--repo-root",
         str(tmp_path),
         "--signer",
-        "QA Lead",
+        "Product Owner",
         "--role",
-        "QA",
+        "PO",
         "--verdict",
         "APPROVED",
         "--wave",
@@ -119,7 +119,7 @@ def test_cli_exposes_validate_gate_command(tmp_path: Path, capsys) -> None:
         "--repo-root",
         str(tmp_path),
         "--gate",
-        "5",
+        "2",
         "--wave",
         "01",
         "--json",
@@ -129,4 +129,4 @@ def test_cli_exposes_validate_gate_command(tmp_path: Path, capsys) -> None:
     payload = json.loads(captured.out)
     assert rc == 0
     assert payload["ok"] is True
-    assert payload["gate"] == "G5"
+    assert payload["gate"] == "G2"

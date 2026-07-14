@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
-const ORACLE_VERSION = "1.0.0";
+const ORACLE_VERSION = "1.1.0";
 const DEFAULT_TIMEOUT_MS = 15_000;
 const CHECKS = [
   "BOOT_FORM",
@@ -807,8 +807,13 @@ const PRODUCT_CHECKS = {
   async DELETE_DURABLE({ page, token, baseUrl }) {
     const target = expense(token, "delete target", 11.41, "Food", "2026-04-11");
     const survivor = expense(token, "delete survivor", 22.52, "Travel", "2026-04-12");
-    await fillExpense(page, target);
+    // Insert the survivor first and the target second.  This ordering is
+    // deliberate: an implementation whose row buttons are all accidentally
+    // hard-wired to expenses[0] used to pass when the target was inserted
+    // first.  Acting on the second record proves the control is bound to the
+    // record the user selected, not merely to a convenient array position.
     await fillExpense(page, survivor);
+    await fillExpense(page, target);
     await clickDelete(page, target.description, [survivor.description]);
     await pollUntil(
       async () => (await visibleTextCount(page, target.description)) === 0,
@@ -829,8 +834,10 @@ const PRODUCT_CHECKS = {
   async RECONCILE_DURABLE({ page, token, baseUrl }) {
     const target = expense(token, "reconcile target", 33.63, "Food", "2026-03-13");
     const survivor = expense(token, "reconcile survivor", 44.74, "Travel", "2026-03-14");
-    await fillExpense(page, target);
+    // Keep the target away from index zero for the same record-binding proof as
+    // DELETE_DURABLE.  A target-local control must update this second record.
     await fillExpense(page, survivor);
+    await fillExpense(page, target);
 
     let targetRecord = await findRecordContainer(page, target.description, { action: "reconcile", excludes: [survivor.description] });
     let survivorRecord = await findRecordContainer(page, survivor.description, { action: "reconcile", excludes: [target.description] });

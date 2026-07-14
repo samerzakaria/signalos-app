@@ -1206,6 +1206,104 @@ class TestResume(unittest.TestCase):
             )
             self.assertEqual(state["status"], "cancelled")
 
+    def test_plain_run_persists_virtual_project_binding(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            loop = _loop(
+                root,
+                AgentTestProvider(script=[_end_resp("done")]),
+                project_id="alpha",
+                execution_context="conversation",
+            )
+
+            result = loop.run("sys", "finish")
+
+            self.assertEqual(result.status, "completed")
+            state = json.loads(loop.state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["run_id"], "test-run")
+            self.assertEqual(state["project_id"], "alpha")
+
+    def test_direct_resume_refuses_cross_project_checkpoint_before_chat(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._seed_running_run(root, "project-bound-run")
+            state_path = (
+                root / ".signalos" / "agent-runs" / "project-bound-run"
+                / "state.json"
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["project_id"] = "alpha"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            provider = AgentTestProvider(script=[_end_resp("must not run")])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="project-bound-run",
+                project_id="beta",
+            )
+
+            result = loop.resume()
+
+            self.assertEqual(result.status, "error")
+            self.assertIn("belongs to project", result.error or "")
+            self.assertEqual(provider.calls, [])
+
+    def test_control_leaf_symlinks_never_redirect_transcript_or_audit_writes(self):
+        for filename in ("state.json", "conversation.jsonl", "tool-calls.jsonl"):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                loop = _loop(root, AgentTestProvider(script=[]))
+                loop._ensure_run_dir()
+                outside = root.parent / f"{root.name}-{filename}.outside"
+                sentinel = "trusted parent content\n"
+                outside.write_text(sentinel, encoding="utf-8")
+                leaf = loop.run_dir / filename
+                try:
+                    leaf.symlink_to(outside)
+                except (OSError, NotImplementedError):
+                    outside.unlink(missing_ok=True)
+                    self.skipTest("file symlinks are unavailable on this platform")
+                try:
+                    with self.assertRaisesRegex(ValueError, "symlink|junction"):
+                        if filename == "tool-calls.jsonl":
+                            loop._audit(
+                                ToolCall(id="audit-1", name="read_file", arguments={}),
+                                "allowed",
+                                "test",
+                                0.0,
+                                None,
+                            )
+                        else:
+                            loop._persist_state([], 0, "running")
+                    self.assertEqual(outside.read_text(encoding="utf-8"), sentinel)
+                finally:
+                    leaf.unlink(missing_ok=True)
+                    outside.unlink(missing_ok=True)
+
+    def test_predictable_legacy_state_temp_symlink_is_not_opened(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            loop = _loop(root, AgentTestProvider(script=[]), project_id="alpha")
+            loop._ensure_run_dir()
+            outside = root.parent / f"{root.name}-legacy-state-temp.outside"
+            sentinel = "outside must stay unchanged\n"
+            outside.write_text(sentinel, encoding="utf-8")
+            legacy_temp = loop.run_dir / "state.json.tmp"
+            try:
+                legacy_temp.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                outside.unlink(missing_ok=True)
+                self.skipTest("file symlinks are unavailable on this platform")
+            try:
+                loop._persist_state([], 0, "running")
+                self.assertEqual(outside.read_text(encoding="utf-8"), sentinel)
+                state = json.loads(loop.state_path.read_text(encoding="utf-8"))
+                self.assertEqual(state["project_id"], "alpha")
+            finally:
+                legacy_temp.unlink(missing_ok=True)
+                outside.unlink(missing_ok=True)
+
 
 # ---------------------------------------------------------------------------
 # Security scan on write (T24 / 2.9)

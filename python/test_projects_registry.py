@@ -65,6 +65,66 @@ def test_dangling_active_pointer_falls_back_to_default(root: Path) -> None:
     assert get_active_project(root) == "default"
 
 
+@pytest.mark.parametrize("mutation", ["create", "switch"])
+def test_mutation_refuses_to_overwrite_a_corrupt_existing_registry(
+    root: Path, mutation: str,
+) -> None:
+    corrupt = "{not json\n"
+    registry_path(root).write_text(corrupt, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="corrupt.*not modified"):
+        if mutation == "create":
+            create_project(root, "Alpha")
+        else:
+            set_active_project(root, "default")
+
+    assert registry_path(root).read_text(encoding="utf-8") == corrupt
+
+
+def test_registry_leaf_symlink_is_never_read_or_replaced(
+    root: Path,
+) -> None:
+    outside = root.parent / f"{root.name}-outside-projects.json"
+    outside_payload = json.dumps({
+        "schema_version": projects.SCHEMA_VERSION,
+        "active": "default",
+        "projects": {"default": {"name": "Outside", "created_at": ""}},
+    })
+    outside.write_text(outside_payload, encoding="utf-8")
+    link = registry_path(root)
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        outside.unlink(missing_ok=True)
+        pytest.skip("file symlinks are unavailable on this platform")
+
+    try:
+        with pytest.raises(ValueError, match="symlink|junction|outside"):
+            get_active_project(root)
+        with pytest.raises(ValueError, match="symlink|junction|outside"):
+            create_project(root, "Alpha")
+        assert outside.read_text(encoding="utf-8") == outside_payload
+    finally:
+        link.unlink(missing_ok=True)
+        outside.unlink(missing_ok=True)
+
+
+def test_registry_parent_symlink_cannot_escape_the_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside-control"
+    outside.mkdir()
+    control = workspace / ".signalos"
+    try:
+        control.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks are unavailable on this platform")
+
+    with pytest.raises(ValueError, match="symlink|junction|outside"):
+        create_project(workspace, "Alpha")
+    assert not (outside / "projects.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # create / switch
 # ---------------------------------------------------------------------------
@@ -94,6 +154,16 @@ def test_create_project_collision_suffixes(root: Path) -> None:
         "default", "alpha", "alpha-2", "alpha-3",
     ]
     assert reg["active"] == "alpha-3"
+
+
+def test_create_project_bounds_long_ids_and_collision_suffixes(root: Path) -> None:
+    name = "A" * 100
+    first = create_project(root, name)["id"]
+    second = create_project(root, name)["id"]
+
+    assert first == "a" * 64
+    assert second.endswith("-2")
+    assert len(second) == 64
 
 
 def test_create_project_default_is_reserved(root: Path) -> None:

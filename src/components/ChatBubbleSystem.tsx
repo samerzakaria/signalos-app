@@ -130,20 +130,38 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
     }
   }
 
-  // C1: the founder clicks "Approve Gate 0" to sign the governance agreement —
-  // the explicit-click half of "click Approve or say approve in chat". Calls the
-  // same approveGate0 the chat path uses; never auto-signs.
+  // Clicking this explicitly accepts the sole-founder authority statement.
+  // The service delegates authentication, signing, and strict verification to
+  // one backend transaction; this component never chooses signing roles.
   async function handleApproveGate0() {
     if (busy.value) return;
     busy.value = true;
     errorMsg.value = null;
     try {
       const approve = (window as unknown as {
-        approveGate0?: (o?: { via?: string }) => Promise<{ signed: boolean }>;
+        approveGate0?: (o?: {
+          via?: 'button' | 'chat';
+          consent?: 'I approve Gate 0 as sole founder';
+          expectedWorkspace?: string;
+          expectedProjectId?: string;
+        }) => Promise<{
+          signed: boolean;
+          reason?: string;
+          alreadySigned?: boolean;
+          coalesced?: boolean;
+        }>;
       }).approveGate0;
-      const result = approve ? await approve({ via: 'button' }) : { signed: false };
+      const result = approve
+        ? await approve({
+            via: 'button',
+            consent: 'I approve Gate 0 as sole founder',
+            expectedWorkspace: bubble.approvalWorkspace,
+            expectedProjectId: bubble.approvalProjectId,
+          })
+        : { signed: false, reason: 'Gate 0 approval service is unavailable.' };
       if (!result.signed) {
-        errorMsg.value = 'Could not record the Gate 0 approval. Check governance status and try again.';
+        errorMsg.value = result.reason
+          || 'Could not record the Gate 0 approval. Check governance status and try again.';
         return;
       }
       const followup: ChatBubble = {
@@ -153,7 +171,7 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
         gate: 'G0' as ChatBubble['gate'],
         waveAction: 'gate-approved',
       };
-      onFollowup?.(followup);
+      if (!result.alreadySigned && !result.coalesced) onFollowup?.(followup);
       onResolved?.(bubble.id, { choice: 'approve', followupText: followup.text });
     } catch (err) {
       errorMsg.value = messageOf(err);
@@ -184,7 +202,7 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
                 disabled={busy.value}
                 onClick={handleApproveGate0}
               >
-                Approve Gate 0 <i className="ti ti-check"></i>
+                Approve G0 as sole founder <i className="ti ti-check"></i>
               </button>
             )}
             {errorMsg.value ? (

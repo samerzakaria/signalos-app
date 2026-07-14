@@ -14,13 +14,14 @@
  *     questions ("what is X?", "how do I …?") stay conversational.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 // chat.js touches ipc / util / conversation / app-v2 / waveEngineClient at
 // module load and in its send path. Mock them so importing the module for a
 // pure classifier test never reaches Tauri.
 vi.mock('../../ipc.js', () => ({
   signal: { run: vi.fn(), runAndWait: vi.fn(), cancelPending: vi.fn() },
+  gates: { getAll: vi.fn(async () => []), sign: vi.fn() },
   enforcement: {
     state: vi.fn(), precheck: vi.fn(), override: vi.fn(),
     setMode: vi.fn(), freeze: vi.fn(), unfreeze: vi.fn(),
@@ -45,10 +46,35 @@ vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({ onDragDropEvent: async () => () => undefined }),
 }));
 
-const { isDeliveryIntent, isApprovalIntent } = await import('../chat.js') as unknown as {
+import {
+  busy,
+  chatBubbles,
+  chatInputValue,
+  govGatesList,
+  workspacePath,
+} from '../../../state';
+import { signal, gates } from '../../ipc.js';
+
+const { isDeliveryIntent, isApprovalIntent, loadBuild } = await import('../chat.js') as unknown as {
   isDeliveryIntent: (t: string, ctx?: { hasProduct?: boolean }) => boolean;
   isApprovalIntent: (t: string) => boolean;
+  loadBuild: () => Promise<void>;
 };
+
+const runAndWait = signal.runAndWait as unknown as ReturnType<typeof vi.fn>;
+const getAll = gates.getAll as unknown as ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  workspacePath.value = '';
+  govGatesList.value = [];
+  chatBubbles.value = [];
+  chatInputValue.value = '';
+  busy.value = false;
+  runAndWait.mockReset();
+  runAndWait.mockResolvedValue(null);
+  getAll.mockReset();
+  getAll.mockResolvedValue([]);
+});
 
 describe('isDeliveryIntent — build vs. conversation routing', () => {
   const delivery = [
@@ -138,22 +164,10 @@ describe('isDeliveryIntent — imperative edit follow-ups against an existing pr
 });
 
 describe('isApprovalIntent — founder approving Gate 0 in chat (C1)', () => {
-  // The founder signs the governance agreement (Gate 0) by an explicit
-  // affirmation. Kept tight so a build request that merely contains "approve"
-  // never signs the gate.
+  // This exact sentence is both approval and a dual-seat authority contract.
+  // Broad positive sentiment is intentionally not enough.
   const approvals = [
-    'approve',
-    'approved',
-    'I approve',
-    'accepted',
-    'I accept',
-    'agree',
-    'agreed',
-    'signed',
-    'sign it',
-    'confirm',
-    'lgtm',
-    'looks good',
+    'I approve Gate 0 as sole founder',
   ];
   for (const prompt of approvals) {
     it(`treats "${prompt}" as an approval`, () => {
@@ -164,6 +178,21 @@ describe('isApprovalIntent — founder approving Gate 0 in chat (C1)', () => {
   const notApprovals = [
     '', // empty
     '/approve', // slash command, not a chat approval
+    'approve',
+    'I agree',
+    'looks good',
+    'approve gate 0 as sole founder',
+    'APPROVE G0 AS SOLO FOUNDER',
+    'I approve G0 as the sole founder.',
+    ' I approve Gate 0 as sole founder',
+    'I approve Gate 0 as sole founder ',
+    'I approve Gate 0 as sole founder\n',
+    'not approve Gate 0 as sole founder',
+    'I do not approve Gate 0 as sole founder',
+    'Can I approve Gate 0 as sole founder?',
+    'Could I approve Gate 0 as sole founder',
+    'Maybe approve Gate 0 as sole founder',
+    'I might approve Gate 0 as sole founder',
     'how do I approve gate 0?', // a question
     'why do I need to approve this?',
     // A long build request that happens to contain "approve" must NOT sign the gate.
@@ -175,4 +204,70 @@ describe('isApprovalIntent — founder approving Gate 0 in chat (C1)', () => {
       expect(isApprovalIntent(prompt)).toBe(false);
     });
   }
+});
+
+describe('Gate 0 frontend seam', () => {
+  const current = [
+    { id: 0, name: 'Constitution', status: 'current' },
+    { id: 1, name: 'Belief', status: 'locked' },
+  ];
+  const signed = [
+    { id: 0, name: 'Constitution', status: 'signed' },
+    { id: 1, name: 'Belief', status: 'current' },
+  ];
+
+  it('routes exact chat consent through gate0:approve and refreshes numeric G0 UI state', async () => {
+    workspacePath.value = 'C:/Products/Task App';
+    govGatesList.value = current;
+    chatBubbles.value = [{
+      id: 'g0-card',
+      kind: 'system',
+      text: 'Review G0',
+      gate: 'G0',
+      waveAction: 'gate-approval',
+      approvalWorkspace: 'C:/Products/Task App',
+      approvalProjectId: 'default',
+    }];
+    chatInputValue.value = 'I approve Gate 0 as sole founder';
+    runAndWait.mockImplementation(async (command: string) => {
+      if (command === 'gate0:approve') return { signed: true, gates: signed };
+      return null;
+    });
+
+    await window.sendMsg();
+
+    const calls = runAndWait.mock.calls.filter((call) => call[0] === 'gate0:approve');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][1][0])).toMatchObject({
+      consent: 'I approve Gate 0 as sole founder',
+      via: 'chat',
+      expected_workspace: 'C:/Products/Task App',
+      expected_project_id: 'default',
+    });
+    expect(govGatesList.value[0]).toMatchObject({ id: 0, status: 'signed' });
+    expect(chatBubbles.value.find((bubble) => bubble.id === 'g0-card')?.waveResolved)
+      .toMatchObject({ choice: 'approve' });
+    expect(chatBubbles.value.some((bubble) => bubble.waveAction === 'gate-approved')).toBe(true);
+    expect(busy.value).toBe(false);
+  });
+
+  it('reconstructs the approval card on Build reload and never duplicates it', async () => {
+    workspacePath.value = 'C:/Products/Task App';
+    getAll.mockResolvedValue(current);
+
+    await loadBuild();
+    await loadBuild();
+
+    expect(chatBubbles.value.filter((bubble) => bubble.waveAction === 'gate-approval')).toHaveLength(1);
+    expect(chatBubbles.value.find((bubble) => bubble.waveAction === 'gate-approval'))
+      .toMatchObject({
+        approvalWorkspace: 'C:/Products/Task App',
+        approvalProjectId: 'default',
+      });
+
+    getAll.mockResolvedValue(signed);
+    await loadBuild();
+    expect(chatBubbles.value.find((bubble) => bubble.waveAction === 'gate-approval')?.waveResolved)
+      .toMatchObject({ choice: 'approve' });
+  });
 });

@@ -1,7 +1,8 @@
 # test_sign_cli_role_enforcement.py
 # #17 Edit 3.4 — the CLI sign path routes through sign.sign_gate, which enforces
-# segregation of duties from artifact required_roles. End-to-end proof that a PO
-# cannot sign a QA gate (G5) on the REAL path, and a QA can.
+# segregation of duties from artifact required_roles. Outcome gates G4/G5 also
+# refuse every raw CLI sign, so G2 exercises the authorised positive path while
+# G5 remains a refusal case.
 
 from __future__ import annotations
 
@@ -64,23 +65,23 @@ class TestSignCliRoleEnforcement(unittest.TestCase):
                 "no signature should be written on an unauthorised sign",
             )
 
-    def test_qa_can_sign_g5(self):
+    def test_po_can_sign_g2(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            _seed_gate_artifacts(root, "G5")
+            _seed_gate_artifacts(root, "G2")
             rc = _run_main(
                 [
-                    "G5",
+                    "G2",
                     "--signer",
-                    "Quinn Assurance",
+                    "Pat Owner",
                     "--role",
-                    "QA",
+                    "PO",
                     "--repo-root",
                     str(root),
                 ]
             )
-            self.assertEqual(rc, 0, "QA signing the QA gate must succeed")
-            self.assertTrue(_signatures_present(root, "G5"))
+            self.assertEqual(rc, 0, "PO signing the G2 strategy gate must succeed")
+            self.assertTrue(_signatures_present(root, "G2"))
 
     def test_pe_cannot_sign_g1(self):
         # G1 requires PO; a PE must be rejected on the real path too.

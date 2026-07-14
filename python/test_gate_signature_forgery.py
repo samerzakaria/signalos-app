@@ -145,6 +145,39 @@ class TestStrictValidator(unittest.TestCase):
         self.assertTrue(res.signed)
         self.assertEqual(res.reasons, [])
 
+    def test_production_outcome_evidence_requires_executed_browser_receipt(self):
+        root = _mkroot()
+        (root / "package.json").write_text(
+            json.dumps({
+                "scripts": {"dev": "vite"},
+                "dependencies": {"react": "18", "vite": "5"},
+            }),
+            encoding="utf-8",
+        )
+        (root / "src").mkdir()
+        evidence = {
+            "security_gate": {"status": "passed"},
+            "runtime_proof": {
+                "status": "passed",
+                "ok": True,
+                "stack": "react-vite",
+                "ux_required": True,
+                "ux_status": "passed",
+                "ux_executed": False,
+                "ux_schema_version": "signalos.ux-browser-proof.v1",
+            },
+        }
+
+        reasons = sign._production_release_evidence_reasons(root, evidence)
+
+        self.assertIn(
+            "production browser UX proof was not executed", reasons
+        )
+        evidence["runtime_proof"]["ux_executed"] = True
+        self.assertEqual(
+            sign._production_release_evidence_reasons(root, evidence), []
+        )
+
     def test_rejected_verdict_not_signed(self):
         root = _mkroot()
         p = _genuine_sign_g2(root)
@@ -179,6 +212,26 @@ class TestStrictValidator(unittest.TestCase):
         sign.sign_artifact(p, "PO Lead", "PO", "G2", "APPROVED")  # block only, no audit
         self.assertFalse(self._strict(root))
 
+    def test_hashless_unchained_audit_row_cannot_authorize_gate(self):
+        root = _mkroot()
+        artifact = root.joinpath(*_G2_ARTIFACT.split("/"))
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(_G2_BODY, encoding="utf-8")
+        sign.sign_artifact(artifact, "PO Lead", "PO", "G2", "APPROVED")
+        audit = _audit_log(root)
+        sign.append_audit_event(audit, {"action": "test.boundary"})
+        with audit.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({
+                "action": "sign",
+                "gate": "Execution Plan",
+                "artifact": _G2_ARTIFACT,
+                "verdict": "APPROVED",
+                "project_id": "default",
+            }) + "\n")
+
+        self.assertEqual(sign.verify_audit_chain(audit), [])
+        self.assertFalse(self._strict(root))
+
     def test_revoked_gate_not_signed(self):
         root = _mkroot()
         _genuine_sign_g2(root)
@@ -196,6 +249,22 @@ class TestStrictValidator(unittest.TestCase):
         # rework + re-sign
         _genuine_sign_g2(root)
         self.assertFalse(sign.is_gate_revoked(root, "G2"))
+        self.assertTrue(self._strict(root))
+
+    def test_deleting_revocation_marker_does_not_resurrect_old_signature(self):
+        root = _mkroot()
+        _genuine_sign_g2(root)
+        sign.revoke_gate(root, "G2", reason="reopened")
+        marker = root / ".signalos" / "gate-revocations.json"
+        self.assertTrue(marker.is_file())
+
+        marker.unlink()
+
+        self.assertFalse(sign.is_gate_revoked(root, "G2"))
+        self.assertFalse(self._strict(root))
+        # A fresh signature is later than the audit reversal and is therefore
+        # the only legitimate way to restore the gate.
+        _genuine_sign_g2(root)
         self.assertTrue(self._strict(root))
 
 

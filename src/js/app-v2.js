@@ -27,6 +27,7 @@ import { mapEnforcementRules } from "../enforcementView.js";
 import { runShareExport } from "../services/shareExport.js";
 import { toggleVoiceInput } from "../services/voiceInput.js";
 import { toggleNotifications, closeNotifications, notifyLocal } from "../services/notifications.js";
+import { reconcileGate0ApprovalAffordance } from "../services/workspace.ts";
 
 // ─── Boot sequence ─────────────────────────────────────────────────────────────
 
@@ -156,6 +157,7 @@ async function bootApp() {
 
   bootListeners();
   await switchTab("dashboard");
+  reconcileGate0ApprovalAffordance(state.govGates || []);
 }
 
 // ─── Tauri event listeners ─────────────────────────────────────────────────────
@@ -512,6 +514,7 @@ async function loadGovPanel() {
     // Wave label
     const gateList = gatesData.status === "fulfilled" ? (Array.isArray(gatesData.value) ? gatesData.value : (gatesData.value?.gates || [])) : [];
     state.govGates = gateList;
+    reconcileGate0ApprovalAffordance(gateList);
 
     if (auditData.status === "fulfilled" && auditData.value) {
       state.auditTrail = auditData.value.slice(0, 6);
@@ -1187,23 +1190,15 @@ async function createProject() {
     closeModal("newProjectModal");
     await bootApp();
     if (result?.governance && result.governance.awaitingApproval) {
-      // C1: G0 is intentionally NOT auto-signed. Guide the founder to review the
-      // governance agreement and approve Gate 0 -- by clicking Approve or saying
-      // "approve" in chat -- before building. This is expected, not an error.
-      setNewProjectStatus("Project created — Gate 0 awaits your approval.");
-      try {
-        const bubbleId = (typeof crypto !== "undefined" && crypto.randomUUID)
-          ? crypto.randomUUID() : String(Date.now());
-        state.chatBubbles = [...(state.chatBubbles || []), {
-          id: bubbleId,
-          kind: "system",
-          waveAction: "gate-approval",
-          gate: "G0",
-          text: `"${name}" is created and your governance docs (Soul, Constitution, Decision-DNA) are filled and ready for your review. Foundry does not sign Gate 0 for you — review the agreement, then approve it to start building. Click Approve Gate 0 below, or just say "approve" in chat.`,
-        }];
-      } catch (bubbleErr) {
-        console.warn("could not surface Gate 0 approval prompt:", bubbleErr);
-      }
+      const failures = Array.isArray(result.governance.failed) ? result.governance.failed : [];
+      const prepared = (result.governance.filled?.length || 0) + (result.governance.unchanged?.length || 0);
+      setNewProjectStatus(failures.length > 0
+        ? `Project created — ${prepared} governance documents are ready; ${failures.length} could not be prepared.`
+        : "Project created — governance documents are ready and Gate 0 awaits your review.");
+      reconcileGate0ApprovalAffordance(state.govGates || [], {
+        workspace: path,
+        documentFailures: failures,
+      });
     } else if (result?.governance && !result.governance.signed) {
       showError("Project was created, but Gate 0 was not signed. Check governance status before building.");
     }

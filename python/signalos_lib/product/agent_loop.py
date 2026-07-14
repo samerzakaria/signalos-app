@@ -45,6 +45,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..harness import AgentResponse, ToolCall
+from ..projects import validate_project_id
 from .enforcement_state import (
     EnforcementProvider,
     EnforcementState,
@@ -63,6 +65,7 @@ from .budgets import (
     resolve_agent_loop_tool_budget,
 )
 from .provider_adapter import ProviderAdapter
+from .run_ids import agent_run_dir, safe_control_path, validate_run_id
 from .sandbox import SandboxRunner, select_runner
 
 # ---------------------------------------------------------------------------
@@ -1097,7 +1100,10 @@ class AgentLoop:
         self.adapter = adapter
         self.repo_root = Path(repo_root)
         self.enforcement_provider = enforcement_provider or StaticEnforcementProvider()
-        self.run_id = run_id or f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        generated_run_id = (
+            f"agent-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        )
+        self.run_id = validate_run_id(run_id if run_id is not None else generated_run_id)
         self.tool_call_limit = resolve_agent_loop_tool_budget(tool_call_limit)
         self._cancel_check = cancel_check or (lambda: False)
         self._emit = emit or (lambda _e: None)
@@ -1107,7 +1113,7 @@ class AgentLoop:
         # §3.2: the delivery's project namespace. Rebases the PHYSICAL target
         # of gate-artifact rel_paths (see _artifact_base); governance/policy
         # checks keep operating on the canonical rel_path the model addressed.
-        self.project_id = project_id
+        self.project_id = validate_project_id(project_id)
         self._context_signed_gates = set(signed_gates or [])
         self._test_written_this_run = False
         # Whether ANY write (write_file/edit_file) actually LANDED this run.
@@ -1152,22 +1158,165 @@ class AgentLoop:
 
     @property
     def run_dir(self) -> Path:
-        return self.repo_root / ".signalos" / "agent-runs" / self.run_id
+        return agent_run_dir(self.repo_root, self.run_id)
+
+    @staticmethod
+    def control_path_for(
+        repo_root: Path, run_id: str, filename: str
+    ) -> Path:
+        """Return one canonical run-control leaf without following aliases.
+
+        State, transcript, and audit files are authority-bearing inputs on
+        resume.  Treat both their parent chain and the leaf itself as a trust
+        boundary: an existing symlink, Windows junction, or non-file leaf is a
+        hard error rather than an alternate storage location.
+        """
+        canonical_run_id = validate_run_id(run_id)
+        # Validate the run directory separately so a same-base run alias is
+        # rejected even when the requested leaf does not exist yet.
+        agent_run_dir(Path(repo_root), canonical_run_id)
+        path = safe_control_path(
+            Path(repo_root),
+            ".signalos",
+            "agent-runs",
+            canonical_run_id,
+            filename,
+        )
+        if path.exists() and not path.is_file():
+            raise ValueError(
+                f"agent run control path is not a regular file: {filename}"
+            )
+        return path
+
+    @staticmethod
+    def validate_persisted_binding(
+        repo_root: Path, run_id: str, project_id: str
+    ) -> dict[str, Any]:
+        """Load a plain run checkpoint and bind it to run + virtual project.
+
+        This intentionally needs no adapter instance, allowing IPC callers to
+        reject cross-run/cross-project replay before constructing a provider.
+        Legacy checkpoints without ``project_id`` are accepted only as the
+        historical ``default`` project; non-default projects always require an
+        explicit matching binding.
+        """
+        canonical_run_id = validate_run_id(run_id)
+        canonical_project_id = validate_project_id(project_id)
+        state_path = AgentLoop.control_path_for(
+            Path(repo_root), canonical_run_id, "state.json"
+        )
+        if not state_path.is_file():
+            raise FileNotFoundError(
+                f"no persisted state for run {canonical_run_id}"
+            )
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError(f"agent run state unreadable: {exc}") from exc
+        if not isinstance(state, dict):
+            raise RuntimeError("agent run state must be a JSON object")
+
+        stored_run_id = state.get("run_id")
+        if stored_run_id != canonical_run_id:
+            raise RuntimeError(
+                "persisted agent run_id does not match its run directory "
+                f"({stored_run_id!r} != {canonical_run_id!r})"
+            )
+        raw_project_id = state.get("project_id", "default")
+        try:
+            stored_project_id = validate_project_id(raw_project_id)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"persisted agent project_id is invalid: {exc}"
+            ) from exc
+        if stored_project_id != raw_project_id:
+            raise RuntimeError("persisted agent project_id is not canonical")
+        if stored_project_id != canonical_project_id:
+            raise RuntimeError(
+                "persisted agent run belongs to project "
+                f"{stored_project_id!r}, not {canonical_project_id!r}"
+            )
+        conversation_path = AgentLoop.control_path_for(
+            Path(repo_root), canonical_run_id, "conversation.jsonl"
+        )
+        if not conversation_path.is_file():
+            raise FileNotFoundError(
+                f"no persisted conversation for run {canonical_run_id}"
+            )
+        return state
 
     @property
     def ledger_path(self) -> Path:
-        return self.run_dir / "tool-calls.jsonl"
+        return self.control_path_for(
+            self.repo_root, self.run_id, "tool-calls.jsonl"
+        )
 
     @property
     def state_path(self) -> Path:
-        return self.run_dir / "state.json"
+        return self.control_path_for(self.repo_root, self.run_id, "state.json")
 
     @property
     def conversation_path(self) -> Path:
-        return self.run_dir / "conversation.jsonl"
+        return self.control_path_for(
+            self.repo_root, self.run_id, "conversation.jsonl"
+        )
 
     def _ensure_run_dir(self) -> None:
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        # Re-resolve after creation.  A pre-existing alias or a parent swapped
+        # during mkdir must never become an accepted authority directory.
+        self.run_dir
+
+    def _atomic_replace_control_text(self, filename: str, content: str) -> None:
+        """Publish a complete control file without opening its leaf for write.
+
+        A random sibling temp avoids the predictable ``state.json.tmp`` alias
+        problem.  ``os.replace`` replaces a raced-in leaf symlink itself rather
+        than following it, while the repeated canonical checks reject redirected
+        parents before publication.
+        """
+        self._ensure_run_dir()
+        destination = self.control_path_for(
+            self.repo_root, self.run_id, filename
+        )
+        run_dir = self.run_dir
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(run_dir), prefix=f".{filename}.", suffix=".tmp"
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Revalidate both the directory chain and destination immediately
+            # before atomic publication.
+            destination = self.control_path_for(
+                self.repo_root, self.run_id, filename
+            )
+            os.replace(temp_path, destination)
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            temp_path.unlink(missing_ok=True)
+            raise
+
+    def _append_control_text(self, filename: str, content: str) -> None:
+        """Atomically append by publishing one complete replacement file."""
+        path = self.control_path_for(self.repo_root, self.run_id, filename)
+        prior = ""
+        if path.is_file():
+            try:
+                prior = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise RuntimeError(
+                    f"agent run control file unreadable: {filename}: {exc}"
+                ) from exc
+            # Do not trust a leaf that changed while it was being read.
+            self.control_path_for(self.repo_root, self.run_id, filename)
+        self._atomic_replace_control_text(filename, prior + content)
 
     def _load_enforcement(self) -> str | None:
         """Load and cache enforcement once per run/resume.
@@ -1186,15 +1335,9 @@ class AgentLoop:
         return None
 
     def _load_state(self) -> dict[str, Any]:
-        if not self.state_path.is_file():
-            raise FileNotFoundError(f"no persisted state for run {self.run_id}")
-        try:
-            state = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise RuntimeError(f"agent run state unreadable: {exc}") from exc
-        if not isinstance(state, dict):
-            raise RuntimeError("agent run state must be a JSON object")
-        return state
+        return self.validate_persisted_binding(
+            self.repo_root, self.run_id, self.project_id
+        )
 
     def _load_conversation(self) -> list[dict[str, Any]]:
         if not self.conversation_path.is_file():
@@ -1565,6 +1708,10 @@ class AgentLoop:
     # --- text-only mode (INV-7 / 2.11) --------------------------------------
 
     def _run_text_only(self, messages: list[dict[str, Any]]) -> LoopResult:
+        # Persist the run/project binding before the first provider call.  Tool-
+        # capable runs do this at the top of _run_tool_loop; text-only mode must
+        # provide the same crash/replay boundary.
+        self._persist_state(messages, 0, status="running")
         try:
             resp = self.adapter.chat(messages=messages, tools=None)
             self._track_usage(resp)
@@ -2603,8 +2750,9 @@ class AgentLoop:
             "change_type": change_type,
         }
         self._ensure_run_dir()
-        with open(self.ledger_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._append_control_text(
+            "tool-calls.jsonl", json.dumps(entry, ensure_ascii=False) + "\n"
+        )
 
     def _tool_search_files(self, pattern: str) -> str:
         if not pattern:
@@ -2767,8 +2915,9 @@ class AgentLoop:
             "duration_ms": duration_ms,
         }
         self._ensure_run_dir()
-        with open(self.ledger_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._append_control_text(
+            "tool-calls.jsonl", json.dumps(entry, ensure_ascii=False) + "\n"
+        )
 
     def _redact_args(self, args: dict[str, Any]) -> dict[str, Any]:
         # Safety net: never crash the audit on a non-dict argument payload (a
@@ -2794,18 +2943,22 @@ class AgentLoop:
         self._ensure_run_dir()
         state = {
             "run_id": self.run_id,
+            "project_id": self.project_id,
             "status": status,
             "tool_calls_made": tool_calls_made,
             "trust_tier": self._enforcement.trust_tier if self._enforcement else None,
             "updated_at": _now_iso(),
         }
-        tmp = self.state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.state_path)
-        # Append the conversation tail for resume (full transcript log).
-        with open(self.conversation_path, "w", encoding="utf-8") as f:
-            for m in messages:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        self._atomic_replace_control_text(
+            "state.json", json.dumps(state, indent=2) + "\n"
+        )
+        # Publish the complete conversation atomically for resume.  A crash can
+        # leave the prior complete transcript, never a truncated JSONL tail.
+        conversation = "".join(
+            json.dumps(message, ensure_ascii=False) + "\n"
+            for message in messages
+        )
+        self._atomic_replace_control_text("conversation.jsonl", conversation)
 
     @staticmethod
     def _assistant_tool_msg(

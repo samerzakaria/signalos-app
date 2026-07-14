@@ -6,6 +6,14 @@ from pathlib import Path
 from signalos_lib.cli import _build_parser, main as cli_main
 from signalos_lib.commands import sign as sign_command
 from signalos_lib.commands.validate_wave_status import _audit_status, validate_wave_status
+from signalos_lib.artifacts import expected_gate_artifacts
+from signalos_lib.sign import (
+    SOLO_FOUNDER_GATE0_CONSENT,
+    _append_audit,
+    approve_gate0_as_solo_founder,
+    sign_artifact,
+)
+from conftest import seed_governed_release_proof
 
 
 def _write(path: Path, text: str) -> None:
@@ -56,13 +64,57 @@ def _sign(root: Path, gate: str, role: str) -> None:
 
 
 def _sign_complete_wave(root: Path) -> None:
-    _sign(root, "G0", "PE")
+    _write(
+        root / ".signalos" / "identity.json",
+        json.dumps({"name": "Fixture Founder", "role": "PO"}) + "\n",
+    )
+    approval = approve_gate0_as_solo_founder(
+        root,
+        consent=SOLO_FOUNDER_GATE0_CONSENT,
+        via="simulation",
+        expected_workspace=str(root.resolve()),
+        approval_id="validate-wave-fixture-g0",
+        project_id="default",
+        expected_project_id="default",
+    )
+    assert approval.get("signed") is True, approval
+    delegated = "Fixture Founder (sole founder; primary PO; delegated G0 PE)"
+    audit = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    for artifact in expected_gate_artifacts("G0"):
+        _append_audit(
+            audit,
+            delegated,
+            "PE",
+            "G0",
+            artifact.rel_path,
+            root / artifact.rel_path,
+            "APPROVED",
+            wave="1",
+        )
     _sign(root, "G1", "PO")
     _sign(root, "G2", "PO")
     _sign(root, "G3", "PO")
     _sign(root, "G3", "PE")
-    _sign(root, "G4", "PE")
-    _sign(root, "G5", "QA")
+    # Outcome gates cannot be signed through the public raw CLI.  This fixture
+    # models the artifacts written by the governed delivery and then persists
+    # the same ordered G4->G5 proof strict readers require.
+    for gate in ("G4", "G5"):
+        for artifact in expected_gate_artifacts(gate):
+            role = artifact.required_roles[0]
+            signer = f"{role} Signer"
+            path = root / artifact.rel_path
+            sign_artifact(path, signer, role, gate, "APPROVED")
+            _append_audit(
+                audit,
+                signer,
+                role,
+                gate,
+                artifact.rel_path,
+                path,
+                "APPROVED",
+                wave="1",
+            )
+    seed_governed_release_proof(root, run_id="validate-wave-fixture")
 
 
 def _commands() -> set[str]:

@@ -48,9 +48,9 @@ class TestSidecarSignRole(unittest.TestCase):
         self.assertEqual(argv[argv.index("--role") + 1], "PE")
 
     def test_sidecar_sign_gate_no_hardcoded_po(self):
-        srv.sign_gate(5, "Sam", "QA")
+        srv.sign_gate(3, "Sam", "PE")
         argv = self._argv()
-        self.assertEqual(argv[argv.index("--role") + 1], "QA")
+        self.assertEqual(argv[argv.index("--role") + 1], "PE")
         self.assertNotIn("PO", argv)
 
     def test_sidecar_sign_gate_falls_back_to_identity_role(self):
@@ -58,11 +58,18 @@ class TestSidecarSignRole(unittest.TestCase):
         sig = Path(os.getcwd()) / ".signalos"
         sig.mkdir(parents=True, exist_ok=True)
         (sig / "identity.json").write_text(
-            '{"name": "Sam", "role": "QA"}', encoding="utf-8"
+            '{"name": "Sam", "role": "PE"}', encoding="utf-8"
         )
-        srv.sign_gate(5, "Sam", None)
+        srv.sign_gate(3, "Sam", None)
         argv = self._argv()
-        self.assertEqual(argv[argv.index("--role") + 1], "QA")
+        self.assertEqual(argv[argv.index("--role") + 1], "PE")
+
+    def test_sidecar_refuses_raw_outcome_gate_signing(self):
+        for gate in (4, 5):
+            with self.subTest(gate=gate), self.assertRaisesRegex(
+                    RuntimeError, "raw gate:sign is disabled"):
+                srv.sign_gate(gate, "Sam", "PE" if gate == 4 else "QA")
+        self.assertEqual(self._captured, [])
 
     def test_sidecar_sign_gate_no_role_no_identity_raises(self):
         with self.assertRaises(RuntimeError):

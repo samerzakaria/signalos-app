@@ -19,6 +19,11 @@ from signalos_lib.artifacts import expected_gate_artifacts
 from signalos_lib.commands import release_readiness
 from signalos_lib.sign import _append_audit, revoke_gate, sign_artifact
 from signalos_ipc_server import map_slash_command
+from conftest import seed_governed_release_proof
+from signalos_lib.sign import (
+    SOLO_FOUNDER_GATE0_CONSENT,
+    approve_gate0_as_solo_founder,
+)
 
 
 def _write(path: Path, text: str) -> None:
@@ -83,6 +88,25 @@ def _make_ready_repo(root: Path) -> None:
             "APPROVED",
         )
 
+    # G0 authority is an explicit founder transaction, not the existence of a
+    # PO/PE signature block.  The raw fixture rows above model artifact history;
+    # this declaration binds that history to this workspace and project.
+    _write(
+        root / ".signalos" / "identity.json",
+        json.dumps({"name": "Fixture Founder", "role": "PO"}) + "\n",
+    )
+    approval = approve_gate0_as_solo_founder(
+        root,
+        consent=SOLO_FOUNDER_GATE0_CONSENT,
+        via="simulation",
+        expected_workspace=str(root.resolve()),
+        approval_id="fixture-release-readiness-g0",
+        project_id="default",
+        expected_project_id="default",
+    )
+    if approval.get("signed") is not True:
+        raise AssertionError(f"fixture Gate 0 approval failed: {approval}")
+
     evidence_dir = root / ".signalos" / "evidence" / "W1"
     evidence_dir.mkdir(parents=True)
     verify_payload = {
@@ -99,6 +123,7 @@ def _make_ready_repo(root: Path) -> None:
         ],
     }
     _write(evidence_dir / "verify-product.json", json.dumps(verify_payload) + "\n")
+    seed_governed_release_proof(root, run_id="release-readiness-fixture")
 
 
 class ReleaseReadinessTests(unittest.TestCase):

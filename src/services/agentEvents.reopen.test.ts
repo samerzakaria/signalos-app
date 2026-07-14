@@ -106,6 +106,53 @@ describe('agentEvents — gate reopen', () => {
     expect(byId.G4).toMatchObject({ signed: false, status: 'locked' });
   });
 
+  it('turns the backend checkpoint emitted after reopen into one actionable gate card', async () => {
+    const { state } = await loadHarness();
+    state.chatBubbles.value = [{
+      id: 'agent-gate-run-9-G3',
+      kind: 'gate',
+      text: 'Old signed evidence',
+      gateReview: {
+        gate: 'G3',
+        title: 'Design review',
+        question: 'Old question',
+        resolvedVerdict: 'approve',
+      },
+    }];
+
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-9',
+      type: 'gate_reopened',
+      gate: 'G3',
+      invalidated: ['G4'],
+      reason: 'design must be reworked',
+    });
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-9',
+      type: 'gate',
+      gate: 'G3',
+      title: 'Design review reopened',
+      question: 'Review the reworked design before signing again.',
+      evidence: 'Fresh G3 evidence',
+    });
+
+    const cards = state.chatBubbles.value.filter((bubble) => bubble.kind === 'gate');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      id: 'agent-gate-run-9-G3',
+      text: 'Fresh G3 evidence',
+      gateReview: {
+        gate: 'G3',
+        title: 'Design review reopened',
+        question: 'Review the reworked design before signing again.',
+        resolvedVerdict: null,
+      },
+    });
+    expect(state.busy.value).toBe(false);
+  });
+
   it('tolerates a minimal gate_reopened payload (missing fields)', async () => {
     const { state } = await loadHarness();
     emit({ kind: 'agent-event', run_id: 'run-9', type: 'gate_reopened' });

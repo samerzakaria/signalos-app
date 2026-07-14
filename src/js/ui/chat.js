@@ -7,6 +7,12 @@ import { wrapWithSignalosContext, extractPlanWithErrors } from '../../services/s
 import { scanChatResponse, summariseRedactions } from '../../services/chatResponseGuard.ts';
 import { tryBegin as waveEngineTryBegin, translateExternal as waveEngineTranslateExternal } from '../../services/waveEngineClient.ts';
 import { isGovernedCommand, splitGovernedCommand } from '../../services/governedShell.ts';
+import {
+  isGate0AwaitingApproval,
+  reconcileGate0ApprovalAffordance,
+  refreshGovernanceGates,
+} from '../../services/workspace.ts';
+import { activeProjectId } from '../../services/projectPicker.ts';
 
 function nowId() {
   return (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random();
@@ -62,19 +68,13 @@ export function isDeliveryIntent(text, context = {}) {
   return false;
 }
 
-// C1: approval intent -- the founder explicitly approving the governance
-// agreement (Gate 0) in chat: the spoken half of "click Approve, or say
-// approve / accepted / signed / agree". Kept tight (a short, affirmation-shaped
-// message) so a long build request that merely contains the word "approve"
-// never signs the gate, and a question ("how do I approve?") is excluded.
-const _APPROVAL_INTENT = /\b(approve[ds]?|accept(?:ed|s)?|agree[ds]?|sign(?:ed|s)?|confirm(?:ed|s)?|lgtm|looks good)\b/i;
+// G0 approval is also a dual-seat authority declaration, so generic positive
+// sentiment ("looks good", "I agree") is not consent. Accept one anchored,
+// auditable sentence only. Anchoring fails closed for negation, questions,
+// modal uncertainty, and unrelated product language.
+const _GATE0_APPROVAL_CONSENT = 'I approve Gate 0 as sole founder';
 export function isApprovalIntent(text) {
-  const t = (text || '').trim();
-  if (!t || t.startsWith('/')) return false;
-  if (_PURE_QUESTION.test(t)) return false;      // "how do I approve?" is a question
-  if (t.split(/\s+/).length > 6) return false;   // an affirmation, not a paragraph
-  if (isDeliveryIntent(t)) return false;         // "add an approve button" is build work
-  return _APPROVAL_INTENT.test(t);
+  return typeof text === 'string' && text === _GATE0_APPROVAL_CONSENT;
 }
 
 // C1: is Gate 0 (the setup / governance-agreement gate) still awaiting the
@@ -83,10 +83,7 @@ export function isApprovalIntent(text) {
 // 'signed' or its signed flag is true.
 function gate0AwaitingApproval() {
   try {
-    const gates = state.govGates || [];
-    const g0 = gates.find((g) => String(g && g.id) === 'G0');
-    if (!g0) return false;
-    return !(g0.status === 'signed' || g0.signed === true);
+    return isGate0AwaitingApproval(state.govGates || []);
   } catch {
     return false;
   }
@@ -188,6 +185,18 @@ export async function loadBuild() {
     console.warn('Could not load conversation history:', e.message);
   }
 
+  // Backend gate truth is the durable source for this affordance. Re-fetch on
+  // every Build load so an app reload/project reopen reconstructs the card and
+  // a backend-completed approval resolves it without relying on chat history.
+  if (String(state.workspace || '').trim()) {
+    try {
+      await refreshGovernanceGates();
+    } catch (e) {
+      console.warn('Could not refresh Gate 0 approval state:', e && e.message ? e.message : e);
+      reconcileGate0ApprovalAffordance(state.govGates || []);
+    }
+  }
+
   await loadEnforcement().catch(() => {});
 }
 
@@ -200,7 +209,11 @@ function autoSwitchSidebarForIntent(text) {
 }
 
 async function sendMsg() {
-  const val = (state.chatInputValue || '').trim();
+  // Keep the original bytes for authority-bearing consent. Normal chat is
+  // still trimmed for usability, but whitespace/casing/punctuation variants
+  // must not be normalized into the exact sole-founder declaration.
+  const rawVal = String(state.chatInputValue || '');
+  const val = rawVal.trim();
   if (!val || state.busy) return;
   state.busy = true;
 
@@ -253,22 +266,28 @@ async function sendMsg() {
     return;
   }
 
-  // C1: an approval phrase while Gate 0 is still awaiting review signs G0 as the
-  // founder's EXPLICIT approval of the governance agreement -- the chat half of
-  // "click Approve, or say approve". Scoped to G0 only: it never fires once G0
-  // is signed, and a delivery drives later-gate review through cards, not chat.
-  // A clicked "Approve Gate 0" chip routes here too (sendChip sends its text).
-  if (gate0AwaitingApproval() && isApprovalIntent(val)) {
+  // Only the exact sole-founder consent grammar can enter this path. Generic
+  // approval language remains a normal chat turn and cannot grant PO+PE power.
+  if (gate0AwaitingApproval() && isApprovalIntent(rawVal)) {
     try {
       const res = window.approveGate0
-        ? await window.approveGate0({ via: 'chat' })
-        : { signed: false };
+        ? await window.approveGate0({
+            via: 'chat',
+            // Pass the user's exact accepted bytes; never replace a looser
+            // phrase with the canonical authority declaration in the audit.
+            consent: rawVal,
+            expectedWorkspace: String(state.workspace || ''),
+            expectedProjectId: String(activeProjectId.value || ''),
+          })
+        : { signed: false, reason: 'Gate 0 approval service is unavailable.' };
       state.chatBubbles = [...state.chatBubbles, {
         id: nowId(),
         kind: 'system',
         text: res && res.signed
           ? 'Gate 0 approved — your governance agreement is signed. You can start building now.'
-          : 'Could not record the Gate 0 approval. Check governance status and try again.',
+          : `Could not record the Gate 0 approval. ${res && res.reason ? res.reason : 'Check governance status and try again.'}`,
+        gate: 'G0',
+        waveAction: res && res.signed ? 'gate-approved' : 'gate-approval-failed',
       }];
     } catch (e) {
       state.chatBubbles = [...state.chatBubbles, {

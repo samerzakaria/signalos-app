@@ -309,6 +309,33 @@ class GatePassedRequiresAllRequiredArtifacts(unittest.TestCase):
                 content=content if content is not None
                 else f"# {row.label}\n\nReal filled content line.\n"
                      "Second real content line.\nThird real content line.\n",
+                role=(
+                    "PE" if gate == "G0" and "PE" in row.required_roles
+                    else row.required_roles[0]
+                ),
+            )
+        if gate == "G0" and not only_first:
+            from signalos_lib.sign import (
+                SOLO_FOUNDER_GATE0_CONSENT,
+                _GATE0_AUTHORITY_CAPABILITY,
+                append_audit_event,
+            )
+            append_audit_event(
+                root / ".signalos" / "AUDIT_TRAIL.jsonl",
+                {
+                    "actor": "Test Founder",
+                    "role": "PO",
+                    "action": "authority:solo-founder-g0-declared",
+                    "gate": "Gate 0",
+                    "approval_id": "status-test-g0",
+                    "delegated_role": "PE",
+                    "scope": "G0 only",
+                    "via": "button",
+                    "consent": SOLO_FOUNDER_GATE0_CONSENT,
+                    "workspace": str(root.resolve()),
+                    "project_id": "default",
+                },
+                _capability=_GATE0_AUTHORITY_CAPABILITY,
             )
 
     def test_all_required_artifacts_signed_gate_passed(self):

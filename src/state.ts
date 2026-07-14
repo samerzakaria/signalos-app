@@ -201,6 +201,11 @@ export interface ChatBubble {
    *  'violation-prompt'   → 3-way (fix-now / defer / override-with-log)
    *  anything else        → plain info row */
   waveAction?: string;
+  /** Workspace that owns a Gate 0 approval affordance. Prevents a stale card
+   *  from approving a different project after the user switches workspaces. */
+  approvalWorkspace?: string;
+  /** Project namespace that owns this Gate 0 approval affordance. */
+  approvalProjectId?: string;
   /** Original user request — needed to re-fire wave:scope-drift-resolve. */
   waveUserRequest?: string;
   /** Drift-verdict extras (GATE-REOPEN-DESIGN #5): when the drift conflicts

@@ -72,7 +72,9 @@ class TestDeliveryResume(unittest.TestCase):
             orch.apply_verdict("approve")   # G0 -> G1
             orch.apply_verdict("approve")   # G1 -> G2
             self.assertEqual(orch.state.current_gate, "G2")
-            # "Crash": drop the object, resume from disk.
+            # "Crash": the old process no longer owns the delivery lock, then
+            # reconstruction resumes only from the durable checkpoint.
+            orch._release_delivery_lock()
             del orch
             events = []
             resumed = go.resume_delivery(root, "del-x", _EndAdapter(), events.append,
@@ -80,10 +82,16 @@ class TestDeliveryResume(unittest.TestCase):
                                          sign_fn=fake_sign)
             self.assertEqual(resumed.state.current_gate, "G2")
             self.assertEqual(resumed.state.signed, ["G0", "G1"])
-            # ...and it can continue from there.
-            res = resumed.apply_verdict("approve")  # sign G2 -> G3
-            self.assertEqual(res["status"], "advanced")
-            self.assertEqual(res["gate"], "G3")
+            self.assertEqual(resumed.state.status, "blocked")
+            # G2's no-tool outcome was never reviewable. Restarting must not
+            # manufacture an awaiting-verdict checkpoint or let a custom
+            # signer approve it; it remains at G2 until the work is rerun.
+            res = resumed.apply_verdict("approve")
+            self.assertEqual(res["status"], "not-reviewable")
+            self.assertEqual(res["gate"], "G2")
+            self.assertEqual(signed, ["G0", "G1"])
+            self.assertTrue(any(e.get("type") == "gate_blocked"
+                                and e.get("gate") == "G2" for e in events))
 
 
 # Live provider path is OPT-IN (SIGNALOS_LIVE_E2E=1) so the offline suite is

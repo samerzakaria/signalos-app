@@ -105,6 +105,15 @@ def main(argv: list[str]) -> int:  # noqa: C901
     if args.check:
         return _render_check(gate, statuses, GATE_LABELS)
 
+    if gate in {"G4", "G5"}:
+        print(
+            f"\n  Refused: raw signing is disabled for outcome gate {gate}. "
+            "Run the governed delivery so current build/release proof is "
+            "verified before approval.\n",
+            file=sys.stderr,
+        )
+        return 1
+
     # ------------------------------------------------------------------
     # Sign mode
     # ------------------------------------------------------------------

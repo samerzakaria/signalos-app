@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from conftest import seed_signed_artifact  # noqa: E402
+from conftest import seed_signed_artifact, seed_signed_gate  # noqa: E402
 from signalos_lib.artifacts import expected_gate_artifacts  # noqa: E402
 from signalos_lib.product.preflight import validate_build_readiness  # noqa: E402
 from signalos_lib.product.subagent_build import run_subagent_driven_build  # noqa: E402
@@ -22,9 +22,20 @@ def _ready_repo() -> Path:
     no structured plan (acceptance fallback -> no plan-test contract)."""
     root = Path(tempfile.mkdtemp())
     for gate in ("G0", "G1", "G2", "G3"):
-        for row in expected_gate_artifacts(gate):
-            seed_signed_artifact(root, row.rel_path, gate,
-                                 content=f"# {row.label}\n\nReal content here.\n")
+        rows = expected_gate_artifacts(gate)
+        seed_signed_gate(
+            root,
+            gate,
+            bodies={
+                row.rel_path: (
+                    f"# {row.label}\n\n"
+                    "Real product decision one.\n"
+                    "Real product decision two.\n"
+                    "Real product decision three.\n"
+                )
+                for row in rows
+            },
+        )
     # react-vite markers + build/test scripts so the validation plan exists
     (root / "package.json").write_text(
         '{"dependencies": {"react": "18", "vite": "5"}, '

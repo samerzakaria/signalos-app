@@ -33,6 +33,7 @@ sys.path.insert(0, str(HERE))
 
 from signalos_lib.orchestrator import _auto_commit_wave
 from signalos_lib.sign import _auto_push_on_g5
+from signalos_lib.product.release_tree import tree_digest, workspace_release_tree
 
 
 def _git_available() -> bool:
@@ -236,7 +237,11 @@ class AutoPushOnG5(unittest.TestCase):
             prev = os.environ.pop("SIGNALOS_GH_CLIENT_ID", None)
             try:
                 # No exception should escape this call.
-                _auto_push_on_g5(root)
+                _auto_push_on_g5(
+                    root,
+                    release_id="default:no-remote-fixture",
+                    release_digest=tree_digest(workspace_release_tree(root)),
+                )
             finally:
                 if prev is not None:
                     os.environ["SIGNALOS_GH_CLIENT_ID"] = prev
@@ -280,7 +285,11 @@ class AutoPushOnG5(unittest.TestCase):
             before = _count()
             prev = os.environ.pop("SIGNALOS_GH_CLIENT_ID", None)
             try:
-                _auto_push_on_g5(root)   # must add + commit BEFORE the push
+                _auto_push_on_g5(
+                    root,
+                    release_id="default:generated-product-fixture",
+                    release_digest=tree_digest(workspace_release_tree(root)),
+                )  # must add + commit BEFORE the push
             finally:
                 if prev is not None:
                     os.environ["SIGNALOS_GH_CLIENT_ID"] = prev

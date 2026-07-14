@@ -8,6 +8,7 @@ from the definitions here instead of being maintained separately.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from importlib import resources
@@ -185,10 +186,22 @@ def resolve_workspace_path(
         from signalos_lib.projects import project_governance_dir
 
         base = project_governance_dir(root, project_id)
-    candidate = (base / relative).resolve(strict=False)
+    # Keep the canonical lexical path.  Resolving the whole candidate here
+    # would erase evidence that an intermediate component is a symlink or a
+    # Windows junction, including an alias that redirects to another location
+    # *inside* the same workspace.
+    candidate = Path(os.path.abspath(str(base / relative)))
     if not _is_relative_to(candidate, root):
         raise ValueError(f"path escapes workspace root: {rel_path!r}")
-    return candidate
+    workspace_relative = candidate.relative_to(root).as_posix()
+    from signalos_lib.product.release_tree import ReleaseTreeError, workspace_path
+
+    try:
+        return workspace_path(
+            root, workspace_relative, allow_leaf_symlink=False,
+        )
+    except ReleaseTreeError as exc:
+        raise ValueError(f"unsafe workspace artifact path {rel_path!r}: {exc}") from exc
 
 
 def resolve_gate_artifacts(

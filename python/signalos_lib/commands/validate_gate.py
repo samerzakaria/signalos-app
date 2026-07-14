@@ -19,11 +19,19 @@ from pathlib import Path
 from typing import Any
 
 from signalos_lib.artifacts import list_gates
-from signalos_lib.sign import GATE_LABELS, _compute_hash, check_gate
+from signalos_lib.product.run_ids import safe_control_path
+from signalos_lib.sign import (
+    GATE_LABELS,
+    _audit_entry_hash,
+    _compute_hash,
+    check_gate,
+    verify_audit_chain,
+)
 
 SCHEMA_VERSION = "signalos.validate_gate.v1"
 _APPROVED_VERDICTS = {"APPROVED", "APPROVED-WITH-CONDITIONS", "WAIVED"}
 _SIGN_ACTIONS = {"sign", "gate-sign", "gate.signed", "gate.approved"}
+_REVERSE_ACTIONS = {"gate.reopen", "gate.unsign", "gate.revoke"}
 
 
 @dataclass
@@ -76,7 +84,15 @@ def validate_gate(
     statuses = check_gate(root, normalized_gate, project_id=project_id)
     artifact_checks = _check_artifacts(statuses)
     checks.extend(artifact_checks)
-    checks.extend(_check_audit(root, normalized_gate, normalized_wave, statuses))
+    checks.extend(
+        _check_audit(
+            root,
+            normalized_gate,
+            normalized_wave,
+            statuses,
+            project_id=project_id,
+        )
+    )
 
     return _payload(root, normalized_gate, normalized_wave, checks, write_evidence=write_evidence)
 
@@ -137,8 +153,27 @@ def _check_audit(
     gate: str,
     wave: str | None,
     statuses: list[Any],
+    *,
+    project_id: str = "default",
 ) -> list[GateCheck]:
-    audit_path = root / ".signalos" / "AUDIT_TRAIL.jsonl"
+    try:
+        audit_path = safe_control_path(root, ".signalos", "AUDIT_TRAIL.jsonl")
+    except ValueError as exc:
+        return [
+            GateCheck(
+                id="gate-audit-trail-present",
+                status="FAIL",
+                severity="HALT",
+                message="AUDIT_TRAIL.jsonl path is unsafe",
+                details={"path": ".signalos/AUDIT_TRAIL.jsonl", "reason": str(exc)},
+            ),
+            GateCheck(
+                id="gate-audit-linked",
+                status="FAIL",
+                severity="HALT",
+                message="gate signatures cannot use a redirected audit trail",
+            ),
+        ]
     if not audit_path.is_file():
         return [
             GateCheck(
@@ -156,6 +191,26 @@ def _check_audit(
             ),
         ]
 
+    chain_violations = verify_audit_chain(audit_path)
+    if chain_violations:
+        return [
+            GateCheck(
+                id="gate-audit-trail-present",
+                status="PASS",
+                severity="HALT",
+                message="AUDIT_TRAIL.jsonl exists",
+                evidence=[".signalos/AUDIT_TRAIL.jsonl"],
+            ),
+            GateCheck(
+                id="gate-audit-linked",
+                status="FAIL",
+                severity="HALT",
+                message="audit trail integrity validation failed",
+                evidence=[".signalos/AUDIT_TRAIL.jsonl"],
+                details={"violations": chain_violations},
+            ),
+        ]
+
     entries = _read_audit_entries(audit_path)
     present_statuses = [status for status in statuses if status.exists]
     linked: list[dict[str, Any]] = []
@@ -169,6 +224,7 @@ def _check_audit(
             wave=wave,
             artifact=status.rel_path,
             computed_hash=computed_hash,
+            project_id=project_id,
         )
         if match is None:
             missing_links.append(status.rel_path)
@@ -179,6 +235,7 @@ def _check_audit(
                 "gate": match.get("gate"),
                 "wave": match.get("wave"),
                 "verdict": match.get("verdict"),
+                "project_id": match.get("project_id", "default"),
             })
 
     return [
@@ -200,6 +257,7 @@ def _check_audit(
                 "linked": linked,
                 "missing_links": missing_links,
                 "wave_required": wave,
+                "project_id": project_id,
             },
         ),
     ]
@@ -212,10 +270,26 @@ def _find_audit_match(
     wave: str | None,
     artifact: str,
     computed_hash: str,
+    project_id: str = "default",
 ) -> dict[str, Any] | None:
     gate_label = GATE_LABELS.get(gate, gate)
     for entry in reversed(entries):
-        if str(entry.get("action", "")).lower() not in _SIGN_ACTIONS:
+        # The workspace audit ledger is shared by every virtual project, while
+        # artifact paths stay canonical (for example every project has a
+        # ``core/strategy/BELIEF.md``).  Path + hash is therefore insufficient:
+        # identical bytes signed for project A must never authorize project B.
+        # Historical single-project rows had no project_id, so only the
+        # ``default`` project may consume that legacy form.
+        if not _audit_project_matches(entry, project_id):
+            continue
+        action = str(entry.get("action", "")).strip().lower()
+        # Reopen/revoke rows are audit-authoritative.  The mutable convenience
+        # marker may be deleted or lost, but an older sign row must never become
+        # valid again.  A genuinely newer sign row is encountered first and can
+        # restore validity for its exact artifact/hash.
+        if action in _REVERSE_ACTIONS and _audit_reverses_gate(entry, gate):
+            return None
+        if action not in _SIGN_ACTIONS:
             continue
         if _normalize_artifact(entry.get("artifact")) != _normalize_artifact(artifact):
             continue
@@ -226,10 +300,32 @@ def _find_audit_match(
         if str(entry.get("verdict", "")).upper() not in _APPROVED_VERDICTS:
             continue
         audit_hash = str(entry.get("hash", "")).strip().lower()
-        if audit_hash and audit_hash != computed_hash.lower():
+        if audit_hash != computed_hash.lower():
+            continue
+        entry_hash = str(entry.get("entry_hash") or "").strip().lower()
+        if (
+            len(entry_hash) != 64
+            or any(char not in "0123456789abcdef" for char in entry_hash)
+            or _audit_entry_hash(entry) != entry_hash
+        ):
             continue
         return entry
     return None
+
+
+def _audit_project_matches(entry: dict[str, Any], project_id: str) -> bool:
+    audit_project = entry.get("project_id")
+    if project_id == "default":
+        return audit_project in (None, "", "default")
+    return audit_project == project_id
+
+
+def _audit_reverses_gate(entry: dict[str, Any], gate: str) -> bool:
+    candidates: list[Any] = [entry.get("gate")]
+    listed = entry.get("gates")
+    if isinstance(listed, list):
+        candidates.extend(listed)
+    return gate in {_normalize_gate_value(value) for value in candidates}
 
 
 def _payload(

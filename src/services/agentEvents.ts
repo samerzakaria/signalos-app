@@ -476,6 +476,10 @@ export function handle(evt: AgentEvent): void {
           ? `${gate} can't be reviewed yet — ${reason}`
           : `${gate} can't be reviewed yet — its build or checks are not verified.`,
       });
+      // A blocked checkpoint is parked, not still executing. This matters on
+      // sidecar restart: agent:resume re-emits only gate_blocked (there is no
+      // preceding gate card event to clear the working indicator).
+      busy.value = false;
       break;
     }
 
@@ -552,6 +556,8 @@ const VERDICT_FAILURE_STATUSES = new Set<string>([
   'build-not-verified',
   'not-reviewable',
   'conditions-need-text',
+  'release-not-ready',
+  'security-blocked',
   'sign-failed',
   'max-rework',
   'max-rejections',
@@ -567,6 +573,8 @@ const VERDICT_REFUSAL_TEXT: Record<string, string> = {
   // read a blocked verdict as accepted.
   'not-reviewable': 'This gate is not ready to review yet — its build or checks have not been verified.',
   'conditions-need-text': 'Approving with conditions needs a written condition to track.',
+  'release-not-ready': 'This release is not ready, so G5 remains open and unsigned.',
+  'security-blocked': 'The production security gate blocked this signature.',
   'sign-failed': 'The signature could not be recorded.',
   'max-rework': 'This gate has used up its change-request budget and cannot take more.',
   'max-rejections': 'This gate has used up its rejection budget.',
@@ -763,7 +771,9 @@ export function resumeAgentRun(runId?: string): void {
   }
   resumableRunId.value = null;
   busy.value = true;
-  sendAgentCommand('agent:resume', { run_id: rid, ...selected });
+  // The desktop is always the strict production surface.  Persisted benchmark
+  // checkpoints must never be resumed here without an explicit mismatch.
+  sendAgentCommand('agent:resume', { run_id: rid, ...selected, profile: 'production' });
 }
 
 function subscribe(): void {

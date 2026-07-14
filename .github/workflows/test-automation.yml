@@ -146,8 +146,8 @@ jobs:
         # test_backend_matrix_oracle.py drives the Playwright/Chromium browser
         # oracle (scripts/backend_matrix/oracles/expense_tracker.mjs). This step
         # has no browser stack and npm install runs later, so it is excluded
-        # here like the live-e2e test; it runs on dev machines and belongs in a
-        # browser-enabled CI job (follow-up), not this fast gate.
+        # here like the live-e2e test; the browser-enabled journey job below
+        # runs it after installing Playwright Chromium.
         run: python -m pytest . --ignore=test_product_live_e2e.py --ignore=test_backend_matrix_oracle.py -q
       - uses: actions/setup-node@v5
         with:
@@ -168,10 +168,17 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 20
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
       - name: npm install
         run: npm install
       - name: Install Playwright chromium
         run: npx playwright install --with-deps chromium
+      - name: Backend-matrix browser oracle (offline)
+        run: |
+          python -m pip install "pytest>=9.0,<10"
+          python -m pytest python/test_backend_matrix_oracle.py -q
       - name: Build UI
         run: npm run build
       - name: User-journey smoke (launch → onboarding → app boot → views → #53 build guard)

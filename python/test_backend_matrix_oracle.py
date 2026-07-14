@@ -102,6 +102,20 @@ GOOD_APP = r"""<!doctype html>
 """
 
 
+# Every rendered row still has its own controls, but both handlers mutate the
+# first array element instead of the record represented by the clicked row.
+# This is intentionally plausible: the UI looks correct and a target inserted
+# at index zero passes shallow black-box checks.  The oracle must exercise a
+# non-zero-index target and reject it.
+FIRST_RECORD_HARDWIRED_APP = GOOD_APP.replace(
+    "expense.reconciled = reconcile.checked;",
+    "expenses[0].reconciled = reconcile.checked;",
+).replace(
+    "expenses = expenses.filter((item) => item.id !== expense.id);",
+    "expenses.splice(0, 1);",
+)
+
+
 def _run_oracle(dist: Path, evidence: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -136,6 +150,7 @@ def test_known_good_black_box_product_passes_all_oracle_checks(tmp_path: Path) -
     result = json.loads(evidence.read_text(encoding="utf-8"))
     assert result["status"] == "pass"
     assert result["exitCode"] == 0
+    assert result["oracleVersion"] == "1.1.0"
     assert [check["name"] for check in result["checks"]] == [
         "BOOT_FORM",
         "ADD_FIELDS",
@@ -159,3 +174,18 @@ def test_missing_production_build_is_an_infrastructure_error(tmp_path: Path) -> 
     assert result["status"] == "infra-error"
     assert result["exitCode"] == 2
     assert result["checks"] == []
+
+
+def test_record_actions_must_mutate_the_selected_non_first_record(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(FIRST_RECORD_HARDWIRED_APP, encoding="utf-8")
+    evidence = tmp_path / "evidence.json"
+
+    completed = _run_oracle(dist, evidence)
+
+    assert completed.returncode == 1, completed.stdout or completed.stderr
+    result = json.loads(evidence.read_text(encoding="utf-8"))
+    by_name = {check["name"]: check for check in result["checks"]}
+    assert by_name["DELETE_DURABLE"]["status"] == "fail"
+    assert by_name["RECONCILE_DURABLE"]["status"] == "fail"

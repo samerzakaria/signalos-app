@@ -474,6 +474,26 @@ class TestAgentVerdictReworkBudget(_AgentIpcBase):
 
 class TestAgentCancelResume(_AgentIpcBase):
     def test_cancel_sets_flag_and_returns_ok(self):
+        # Cancellation is bound to a real active/persisted run; unknown ids
+        # are refused so callers cannot pre-seed control markers for a future
+        # run.  A plain AgentLoop checkpoint is sufficient for this contract.
+        run_dir = (
+            Path(os.getcwd()) / ".signalos" / "agent-runs" / "run-X"
+        )
+        run_dir.mkdir(parents=True)
+        (run_dir / "state.json").write_text(
+            json.dumps({
+                "run_id": "run-X",
+                "project_id": "default",
+                "status": "running",
+                "tool_calls_made": 0,
+            }) + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "conversation.jsonl").write_text(
+            json.dumps({"role": "system", "content": "pending"}) + "\n",
+            encoding="utf-8",
+        )
         resp, _ = self._run(
             {
                 "command": "agent:cancel",

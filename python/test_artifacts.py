@@ -117,6 +117,71 @@ class ArtifactMapTests(unittest.TestCase):
                 if created_junction and link.exists():
                     link.rmdir()
 
+    def test_resolve_workspace_path_rejects_same_workspace_link_alias(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            alternate = root / "alternate"
+            alternate.mkdir()
+            link = root / "link"
+            created_junction = False
+            try:
+                link.symlink_to(alternate, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not _create_windows_junction(link, alternate):
+                    self.skipTest("filesystem link creation is unavailable in this environment")
+                created_junction = True
+
+            try:
+                with self.assertRaisesRegex(ValueError, "symlink|junction"):
+                    artifacts.resolve_workspace_path(root, "link/artifact.md")
+            finally:
+                if created_junction and link.exists():
+                    link.rmdir()
+
+    def test_sign_gate_rejects_an_audit_log_outside_the_workspace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
+            root = Path(tmp) / "root"
+            artifact = root / "core" / "strategy" / "EXPECTATION_MAP.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("# Expectations\n\nCurrent.\n", encoding="utf-8")
+            outside = Path(tmp) / "outside-audit.jsonl"
+
+            with self.assertRaisesRegex(ValueError, "escapes the workspace"):
+                sign.sign_gate(
+                    root, "G2", "Product Owner", "PO", "APPROVED",
+                    audit_log=outside,
+                )
+
+            self.assertFalse(outside.exists())
+            self.assertNotIn("## Signatures", artifact.read_text(encoding="utf-8"))
+
+    def test_canonical_audit_append_rejects_redirected_signalos_dir(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
+            root = Path(tmp) / "root"
+            outside = Path(tmp) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            control = root / ".signalos"
+            created_junction = False
+            try:
+                control.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not _create_windows_junction(control, outside):
+                    self.skipTest("filesystem link creation is unavailable in this environment")
+                created_junction = True
+
+            try:
+                with self.assertRaisesRegex(ValueError, "symlink|junction|outside"):
+                    sign.append_audit_event(
+                        control / "AUDIT_TRAIL.jsonl",
+                        {"action": "test.redirected-audit"},
+                    )
+                self.assertFalse((outside / "AUDIT_TRAIL.jsonl").exists())
+            finally:
+                if created_junction and control.exists():
+                    control.rmdir()
+
     def test_check_gate_uses_shared_resolved_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
             root = Path(tmp)
@@ -146,7 +211,7 @@ class ArtifactMapTests(unittest.TestCase):
                 ],
             )
 
-    def test_sign_gate_g4_signs_trust_tier_and_build_evidence(self) -> None:
+    def test_raw_sign_gate_g4_cannot_bypass_governed_build_proof(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
             root = Path(tmp)
             for rel_path, title in (
@@ -157,16 +222,15 @@ class ArtifactMapTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(f"# {title}\n\nReady.\n", encoding="utf-8")
 
-            signed = sign.sign_gate(root, "G4", "Pat Engineer", "PE", "APPROVED")
+            with self.assertRaisesRegex(ValueError, "governed proof"):
+                sign.sign_gate(
+                    root, "G4", "Pat Engineer", "PE", "APPROVED",
+                    finalize_release=False,
+                )
             statuses = sign.check_gate(root, "G4")
 
-            self.assertEqual(
-                signed,
-                ["core/execution/TRUST_TIER.md", "core/execution/BUILD_EVIDENCE.md"],
-            )
             self.assertTrue(all(status.exists for status in statuses))
-            self.assertTrue(all(status.has_signatures for status in statuses))
-            self.assertEqual([status.signers for status in statuses], [["Pat Engineer"], ["Pat Engineer"]])
+            self.assertTrue(all(not status.has_signatures for status in statuses))
 
 
 if __name__ == "__main__":

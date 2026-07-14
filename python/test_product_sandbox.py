@@ -218,6 +218,23 @@ class TestContainerArgv:
         assert "-e CI=1" in joined
         assert "-e FORCE_COLOR=0" in joined
 
+    def test_secret_overlay_and_credential_file_pointer_are_not_forwarded(self):
+        with tempfile.TemporaryDirectory() as d:
+            argv = build_container_argv(
+                "node -v",
+                Path(d),
+                engine="docker",
+                env={
+                    "CI": "1",
+                    "OPENROUTER_API_KEY": "fake-overlay-key",
+                    "SIGNALOS_ENV_FILE": "/workspace/.env",
+                },
+            )
+        joined = " ".join(argv)
+        assert "-e CI=1" in joined
+        assert "OPENROUTER_API_KEY" not in joined
+        assert "SIGNALOS_ENV_FILE" not in joined
+
     def test_subdir_sets_workdir_under_mount(self):
         # A peeled `cd frontend` cwd maps to -w /workspace/frontend so the
         # command runs in the right place INSIDE the single mount.
@@ -430,9 +447,8 @@ class TestInProcessRunner:
             )
         assert exit_code == 3
 
-    def test_env_overlay_is_merged_onto_os_environ(self):
-        # The overlay reaches the child AND host vars survive (byte-identical to
-        # the old {**os.environ, "CI": "1", ...}).
+    def test_non_secret_env_overlay_is_merged_onto_safe_host_environ(self):
+        # Ordinary overlay + host vars reach the child after credential scrubbing.
         marker = "SIGNALOS_SANDBOX_TEST_MARKER"
         os.environ[marker] = "host-value"
         try:
@@ -448,6 +464,43 @@ class TestInProcessRunner:
             assert "host-value" in out.stdout  # host env preserved
         finally:
             os.environ.pop(marker, None)
+
+    def test_governed_child_cannot_observe_parent_provider_credentials(self):
+        parent_values = {
+            "OPENROUTER_API_KEY": "fake-parent-key",
+            "ANTHROPIC_AUTH_TOKEN": "fake-parent-token",
+            "SIGNALOS_ENV_FILE": "C:/private/provider.env",
+        }
+        previous = {key: os.environ.get(key) for key in parent_values}
+        os.environ.update(parent_values)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                code = (
+                    "import os;"
+                    "names=['OPENROUTER_API_KEY','ANTHROPIC_AUTH_TOKEN',"
+                    "'SIGNALOS_ENV_FILE','OPENAI_API_KEY'];"
+                    "print('SECRET_PRESENT' if any(os.environ.get(n) for n in names) "
+                    "else 'SECRET_ABSENT');"
+                    "print(os.environ.get('CI','missing'))"
+                )
+                exit_code, out = InProcessRunner().run(
+                    f'{shlex_quote(sys.executable)} -c "{code}"',
+                    d,
+                    30,
+                    {"CI": "1", "OPENAI_API_KEY": "fake-overlay-key"},
+                )
+            assert exit_code == 0
+            assert "SECRET_ABSENT" in out.stdout
+            assert "1" in out.stdout  # non-secret overlay remains available
+            # Sanitizing a copied child environment must never consume or
+            # mutate the provider credentials retained by the sidecar.
+            assert os.environ["OPENROUTER_API_KEY"] == "fake-parent-key"
+        finally:
+            for key, old_value in previous.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
 
     def test_timeout_returns_timed_out_flag(self):
         with tempfile.TemporaryDirectory() as d:

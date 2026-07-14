@@ -136,6 +136,103 @@ def test_driver_targets_the_real_long_lived_backend_protocol() -> None:
     # A timed-out row owns one sidecar tree; it must never kill every Node
     # process on the developer's machine as the discarded script did.
     assert '"/IM", "node.exe"' not in source
+    assert '"gate0:approve"' in source
+    assert '"via": "simulation"' in source
+    assert "_prepare_local_release_remote" in source
+
+
+def test_row_local_release_origin_supports_offline_commit_and_push(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("baseline\n", encoding="utf-8")
+
+    evidence = driver._prepare_local_release_remote(
+        workspace,
+        tmp_path / "origin.git",
+        env=dict(os.environ),
+    )
+
+    assert evidence["kind"] == "row-local-bare-git-origin"
+    assert all(command["ok"] for command in evidence["commands"])
+    remote = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert Path(remote).resolve() == (tmp_path / "origin.git").resolve()
+
+
+def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType) -> None:
+    clean = {
+        "commit": "a" * 40,
+        "tree": "b" * 40,
+        "dirty": False,
+        "dirty_paths": [],
+    }
+    driver._require_reproducible_engine(clean, live=True)
+    driver._require_reproducible_engine(
+        {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]},
+        live=False,
+    )
+
+    with pytest.raises(driver.InfrastructureError, match="uncommitted engine"):
+        driver._require_reproducible_engine(
+            {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]},
+            live=True,
+        )
+    with pytest.raises(driver.InfrastructureError, match="Git commit and tree"):
+        driver._require_reproducible_engine(
+            {**clean, "commit": "unknown"}, live=True
+        )
+
+    metadata = driver._engine_metadata()
+    assert metadata["commit"] != "unknown"
+    assert metadata["tree"] != "unknown"
+
+
+def test_orchestrator_profile_is_explicit_and_has_one_evidence_value(
+    driver: ModuleType,
+) -> None:
+    """The paid request and recorded evidence must name the same profile.
+
+    The desktop backend intentionally defaults to ``production`` while this
+    comparison harness intentionally defaults to ``benchmark``.  Lock down the
+    explicit handoff so a backend-default change cannot silently change what a
+    matrix row measured or what its evidence claims it measured.
+    """
+    args = driver._build_parser().parse_args([])
+    assert args.orchestrator_profile == driver.DEFAULT_ORCHESTRATOR_PROFILE
+    assert args.orchestrator_profile == "benchmark"
+
+    spec = driver.load_model_catalog(MODEL_CONFIG)[0]
+    request = driver._delivery_request(
+        prompt="Build the fixture",
+        spec=spec,
+        run_id="matrix-profile-contract",
+        orchestrator_profile=args.orchestrator_profile,
+    )
+    recorded_row = {"orchestrator_profile": args.orchestrator_profile}
+    recorded_manifest = {"orchestrator_profile": args.orchestrator_profile}
+
+    assert request["profile"] == recorded_row["orchestrator_profile"]
+    assert request["profile"] == recorded_manifest["orchestrator_profile"]
+    with pytest.raises(ValueError, match="unknown orchestrator profile"):
+        driver._delivery_request(
+            prompt="Build the fixture",
+            spec=spec,
+            run_id="matrix-profile-contract",
+            orchestrator_profile="prodution",
+        )
+
+    # The live row must also compare that requested value with the backend's
+    # durable delivery checkpoint; merely echoing the request is not evidence.
+    source = DRIVER_PATH.read_text(encoding="utf-8")
+    assert 'row["persisted_orchestrator_profile"] = persisted_profile' in source
+    assert "persisted_profile != orchestrator_profile" in source
 
 
 def test_backend_preflight_runs_real_keyless_source_sidecar(

@@ -128,9 +128,18 @@ def seed_signed_artifact(
     path.write_text(content, encoding="utf-8")
     signer = signer or f"Test {role}"
     sign_artifact(path, signer, role, gate, "APPROVED")
+    project_id = (
+        base.parts[-2]
+        if len(base.parts) >= 4
+        and base.parts[-1] == "governance"
+        and base.parts[-3] == "projects"
+        and base.parts[-4] == ".signalos"
+        else "default"
+    )
     _append_audit(
         _audit_trail_root(base) / ".signalos" / "AUDIT_TRAIL.jsonl",
         signer, role, gate, rel_path, path, "APPROVED",
+        project_id=project_id,
     )
     return path
 
@@ -179,6 +188,52 @@ def seed_signed_gate(
 
     gate = gate.upper()
     bodies = bodies or {}
+    base = Path(base)
+    if gate == "G0" and role is None:
+        # A passed G0 is not representable by raw role strings anymore. Seed
+        # the documents, then use the same explicit, project/workspace-bound
+        # sole-founder authority transaction as the desktop/backend.
+        entries = expected_gate_artifacts(gate)
+        paths: list[Path] = []
+        for artifact in entries:
+            content = bodies.get(
+                artifact.rel_path, bodies.get(artifact.label, default_content)
+            )
+            path = base.joinpath(*artifact.rel_path.replace("\\", "/").split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            paths.append(path)
+        root = _audit_trail_root(base)
+        project_id = (
+            base.parts[-2]
+            if len(base.parts) >= 4
+            and base.parts[-1] == "governance"
+            and base.parts[-3] == "projects"
+            and base.parts[-4] == ".signalos"
+            else "default"
+        )
+        identity = root / ".signalos" / "identity.json"
+        if not identity.exists():
+            identity.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            identity.write_text(
+                json.dumps({"name": signer or "Test Founder", "role": "PO"}),
+                encoding="utf-8",
+            )
+        from signalos_lib.sign import (
+            SOLO_FOUNDER_GATE0_CONSENT,
+            approve_gate0_as_solo_founder,
+        )
+        approve_gate0_as_solo_founder(
+            root,
+            consent=SOLO_FOUNDER_GATE0_CONSENT,
+            via="simulation",
+            expected_workspace=str(root),
+            approval_id=f"fixture-g0-{project_id}",
+            project_id=project_id,
+            expected_project_id=project_id,
+        )
+        return paths
     signed: list[Path] = []
     for artifact in expected_gate_artifacts(gate):
         content = bodies.get(
@@ -187,7 +242,74 @@ def seed_signed_gate(
         signed.append(
             seed_signed_artifact(
                 base, artifact.rel_path, gate, content,
-                role=role, signer=signer,
+                # Default to a role authorized for THIS artifact, not merely a
+                # role that appears somewhere in the gate's union.
+                role=role or artifact.required_roles[0], signer=signer,
             )
         )
     return signed
+
+
+def seed_governed_release_proof(
+    root: Path | str,
+    *,
+    run_id: str = "fixture-release",
+    project_id: str = "default",
+    profile: str = "benchmark",
+) -> str:
+    """Persist the minimal current-tree G4->G5 receipt for a terminal fixture.
+
+    Tests for downstream readiness/ship consumers should not make a raw G5
+    signature look authoritative.  This helper explicitly models the durable
+    checkpoint those consumers require; tests of the real gate walk use the
+    orchestrator instead.
+    """
+    import json
+
+    from signalos_lib.product.release_tree import tree_digest, workspace_release_tree
+
+    workspace = Path(root).resolve()
+    tree = workspace_release_tree(workspace)
+    digest = tree_digest(tree)
+    run_dir = workspace / ".signalos" / "agent-runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "run_id": run_id,
+        "project_id": project_id,
+        "profile": profile,
+        "current_gate": "G5",
+        "status": "complete",
+        "signed": [f"G{i}" for i in range(6)],
+        "release_evidence": {
+            "release_verification": {
+                "ok": True,
+                "reasons": [],
+                "release_digest": digest,
+            },
+            "release_finalization": {
+                "schema_version": "signalos.release-finalization.v1",
+                "status": "pending",
+                "phase": "signed",
+                "run_id": run_id,
+                "project_id": project_id,
+                "profile": profile,
+                "release_digest": digest,
+            },
+        },
+    }
+    attribution = {
+        "version": 4,
+        "phase": "verified",
+        "run_id": run_id,
+        "project_id": project_id,
+        "verification": {"ok": True},
+        "release_tree": tree,
+        "release_digest": digest,
+    }
+    (run_dir / "delivery.json").write_text(
+        json.dumps(state, indent=2) + "\n", encoding="utf-8",
+    )
+    (run_dir / "g4-attribution.json").write_text(
+        json.dumps(attribution, indent=2) + "\n", encoding="utf-8",
+    )
+    return digest

@@ -58,6 +58,19 @@ function violationBubble(over: Partial<ChatBubble> = {}): ChatBubble {
   };
 }
 
+function gateApprovalBubble(over: Partial<ChatBubble> = {}): ChatBubble {
+  return {
+    id: 'g0-approval',
+    kind: 'system',
+    text: 'Review the governance documents before approval.',
+    gate: 'G0',
+    waveAction: 'gate-approval',
+    approvalWorkspace: 'C:/Products/Task App',
+    approvalProjectId: 'default',
+    ...over,
+  };
+}
+
 
 describe('ChatBubbleSystem — plain info bubble', () => {
   it('renders the text inside an info-styled bubble', () => {
@@ -70,6 +83,55 @@ describe('ChatBubbleSystem — plain info bubble', () => {
     render(<ChatBubbleSystem bubble={plainSystemBubble()} />);
     expect(screen.queryByTestId('scope-drift-option-a')).toBeNull();
     expect(screen.queryByTestId('violation-option-a')).toBeNull();
+  });
+});
+
+describe('ChatBubbleSystem — Gate 0 sole-founder approval', () => {
+  it('submits exact consent bound to the card workspace and resolves only after verified success', async () => {
+    const approve = vi.fn(async () => ({ signed: true, gates: [] }));
+    window.approveGate0 = approve as typeof window.approveGate0;
+    const onFollowup = vi.fn();
+    const onResolved = vi.fn();
+    render(
+      <ChatBubbleSystem
+        bubble={gateApprovalBubble()}
+        onFollowup={onFollowup}
+        onResolved={onResolved}
+      />,
+    );
+
+    const button = screen.getByTestId('approve-gate0');
+    expect(button).toHaveTextContent('Approve G0 as sole founder');
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(1));
+    expect(approve).toHaveBeenCalledWith({
+      via: 'button',
+      consent: 'I approve Gate 0 as sole founder',
+      expectedWorkspace: 'C:/Products/Task App',
+      expectedProjectId: 'default',
+    });
+    expect(onResolved).toHaveBeenCalledWith('g0-approval', expect.objectContaining({ choice: 'approve' }));
+    expect(onFollowup).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the card open and surfaces the backend refusal reason', async () => {
+    window.approveGate0 = vi.fn(async () => ({
+      signed: false,
+      reason: 'A required G0 artifact still contains placeholders.',
+      gates: [],
+    }));
+    const onResolved = vi.fn();
+    render(<ChatBubbleSystem bubble={gateApprovalBubble()} onResolved={onResolved} />);
+
+    fireEvent.click(screen.getByTestId('approve-gate0'));
+
+    await waitFor(() => {
+      expect(screen.getByText('A required G0 artifact still contains placeholders.')).toBeInTheDocument();
+    });
+    expect(onResolved).not.toHaveBeenCalled();
+    expect(screen.getByTestId('approve-gate0')).toBeEnabled();
   });
 });
 

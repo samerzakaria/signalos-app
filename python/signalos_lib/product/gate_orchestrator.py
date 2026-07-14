@@ -9,10 +9,12 @@ advances without signing and marks the delivery not-"ready" (INV-1).
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -22,10 +24,15 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .. import agent_loader, wave_engine, sign
-from .agent_loop import AgentLoop
+from ..projects import validate_project_id
+from .agent_loop import AgentLoop, LoopResult
 from .wiring_check import CODE_SUFFIXES, SCAFFOLD_NAMES, find_unwired_modules
 from .budgets import resolve_gate_reopen_budget, resolve_gate_rework_budget
 from .enforcement_state import EnforcementProvider
+from .release_tree import ReleaseTreeError
+from .release_tree import tree_digest as release_tree_digest
+from .release_tree import workspace_path, workspace_release_tree
+from .run_ids import agent_run_dir, safe_control_path, validate_run_id
 
 __all__ = ["GateOrchestrator", "GATE_SPECIALISTS", "GATE_QUESTIONS", "GATE_ROLES",
            "resume_delivery"]
@@ -87,8 +94,9 @@ _UNREVIEWABLE_LOOP_STATUSES = frozenset({
 #     runs", so re-running them here would only add noise and flake.
 #   * "production": adds the release-safety stages -- a real security gate
 #     (gitleaks/semgrep-style scan; a CRITICAL finding HARD-BLOCKS the sign) and
-#     real runtime/UX proof (a live dev server / headless page; release EVIDENCE
-#     only, never a hard block, because real servers/ports/timing are flaky).
+#     real runtime/UX proof (a live dev server and executed browser page). These
+#     stages do not rewrite the G4 build result, but missing/failing evidence
+#     fails the later G5 release decision closed.
 #
 # Each stage is a single existing implementation (security_gate.run_security_gate,
 # proof.run_runtime_proof / run_ux_proof) -- called here, never reimplemented.
@@ -99,6 +107,23 @@ PROFILE_STAGES: dict[str, dict[str, bool]] = {
     "benchmark": {"security_gate": False, "runtime_proof": False},
     "production": {"security_gate": True, "runtime_proof": True},
 }
+
+
+def validate_orchestrator_profile(profile: str) -> str:
+    """Return a canonical engine profile or fail closed.
+
+    Profile selection changes release enforcement, so silently converting a
+    typo to the less strict benchmark profile is unsafe.  Defaults are chosen
+    by callers; once a value reaches the engine it must be one of the declared
+    profiles.
+    """
+    value = str(profile or "").strip()
+    if value not in PROFILE_STAGES:
+        allowed = ", ".join(sorted(PROFILE_STAGES))
+        raise ValueError(
+            f"unknown orchestrator profile {value!r}; expected one of: {allowed}"
+        )
+    return value
 
 
 def _is_real_product_src(rel_path: str) -> bool:
@@ -123,6 +148,12 @@ class DeliveryState:
     # Persisted so resume_delivery restores the SAME namespace binding (an
     # older persisted state without the field resumes as "default").
     project_id: str = "default"
+    # Release enforcement is part of the durable delivery identity.  A restart
+    # must never downgrade a production run to benchmark semantics.
+    profile: str = DEFAULT_PROFILE
+    # Preserve the signer selected when the delivery began.  Identity changes
+    # outside the run must not rewrite who is recorded on later resumed gates.
+    signer: str = "foundry-agent"
     rework: dict = field(default_factory=dict)
     rejections: dict = field(default_factory=dict)
     signed: list = field(default_factory=list)
@@ -151,6 +182,11 @@ class DeliveryState:
     # a founder/auditor can see WHY a gate did or did not open for review
     # (status, ok, reason). Absent from older persisted states; defaults to {}.
     last_outcome: dict = field(default_factory=dict)
+    # Durable G4/G5 release evidence needed to resume safely: verified-build
+    # outcome, security/runtime proof summaries, and the final readiness result.
+    # Full proof artifacts remain on disk; this state stores the decision inputs
+    # that must survive a sidecar restart.
+    release_evidence: dict = field(default_factory=dict)
 
 
 # High-confidence unfilled-template markers that block a gate signature (0.6).
@@ -178,7 +214,8 @@ def _artifact_placeholder_violations(path: Path) -> list[str]:
 
 def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
                   verdict: str, conditions: str,
-                  project_id: str = "default") -> list:
+                  project_id: str = "default",
+                  delivery_run_id: str = "") -> list:
     """Production signing path - INV-3: sign.py is the ONLY signer.
 
     Writes the audit trail (T38) and co-signs gates whose artifacts require
@@ -218,13 +255,22 @@ def _default_sign(repo_root: Path, gate: str, signer: str, role: str,
     if present and all(role in a.required_roles for a in present):
         return sign.sign_gate(repo_root, gate, signer, role, verdict,
                               conditions, audit_log=audit_log, wave=wave,
-                              project_id=project_id)
-    signed = []
-    for a in present:
-        r = role if role in a.required_roles else a.required_roles[0]
-        sign.sign_artifact(a.path, signer, r, gate, verdict, conditions)
-        sign._append_audit(audit_log, signer, r, gate, a.rel_path, a.path, verdict, wave=wave)
-        signed.append(a.rel_path)
+                              project_id=project_id, finalize_release=False,
+                              delivery_run_id=delivery_run_id)
+    signed: list[str] = []
+    roles = [role]
+    roles.extend(
+        required
+        for artifact in present
+        for required in artifact.required_roles
+        if required not in roles
+    )
+    for authorized_role in roles:
+        signed.extend(sign.sign_gate(
+            repo_root, gate, signer, authorized_role, verdict, conditions,
+            audit_log=audit_log, wave=wave, project_id=project_id,
+            finalize_release=False, delivery_run_id=delivery_run_id,
+        ))
     return signed
 
 
@@ -371,15 +417,14 @@ class GateOrchestrator:
         critic_adapter: Any = None,
         finalize_closeout: bool = True,
         profile: str = DEFAULT_PROFILE,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.adapter = adapter
-        # Engine profile (see PROFILE_STAGES). The SAFE DEFAULT is "benchmark":
-        # it enables NO extra post-build stage, so a caller that does not opt in
-        # gets the behavior-identical, deterministic benchmark path. "production"
-        # must be requested explicitly to turn on the release-safety stages. An
-        # unknown value falls back to the safe default rather than erroring.
-        self.profile = profile if profile in PROFILE_STAGES else DEFAULT_PROFILE
+        # Engine profile (see PROFILE_STAGES). Callers may deliberately choose
+        # the deterministic benchmark default, but an explicit unknown value is
+        # never allowed to fail open into that less strict profile.
+        self.profile = validate_orchestrator_profile(profile)
         # 1.3 + 1.8: an optional second adapter used to author the plain-words
         # gate brief. When configured (and its vendor differs), the brief is
         # genuinely cross-vendor (1.4's independence guarantee). When absent,
@@ -395,9 +440,14 @@ class GateOrchestrator:
         # disable it; see _finalize_closeout.
         self.finalize_closeout = finalize_closeout
         self.emit = emit
+        self.cancel_check = cancel_check or (lambda: False)
         self.enforcement_provider = enforcement_provider
         self.signer = signer
-        self.project_id = project_id
+        self.project_id = validate_project_id(project_id)
+        # Lock ownership belongs to this concrete orchestrator instance, not
+        # merely to its run id or process.  Two reconstructed objects can share
+        # run_id/pid/host while only one is allowed to mutate product/Git state.
+        self._delivery_lock_owner_token = uuid.uuid4().hex
         # §3.2: bind the delivery's project namespace into the default sign
         # path so signatures land under the SAME governance dir inspect()
         # reads. Custom sign_fn callables (tests, IPC overrides) keep their
@@ -405,7 +455,7 @@ class GateOrchestrator:
         if sign_fn is not None:
             self._sign = sign_fn
         else:
-            self._sign = functools.partial(_default_sign, project_id=project_id)
+            self._sign = _default_sign
         # Fix 1: the production sign path (_default_sign, sign_fn is None) is
         # where governance enforcement lives, so it also enforces the
         # agent-outcome gate -- apply_verdict refuses to approve a gate whose
@@ -415,6 +465,10 @@ class GateOrchestrator:
         # and placeholder checks. In production _DELIVERY_SIGN_FN is None, so
         # the gate is active on the real desktop/CLI delivery path.
         self._enforce_outcome_gate = sign_fn is None
+        # A custom signer historically owns fresh-run outcome gating.  Resume
+        # is different: a durable blocked checkpoint must remain unsignable
+        # even when the reconstructing surface injects a signer callback.
+        self._enforce_blocked_checkpoint = self._enforce_outcome_gate
         self.max_rework = resolve_gate_rework_budget(max_rework)
         self.max_rejections = max_rejections
         self.max_reopens = resolve_gate_reopen_budget(max_reopens)
@@ -422,12 +476,20 @@ class GateOrchestrator:
         # (.signalos/agent-runs/<run_id>/delivery.json). An explicit run_id is
         # honored verbatim (resume path); the fallback adds a timestamp + uuid
         # suffix so two deliveries with the same prompt prefix never collide.
-        rid = run_id or (
+        rid = validate_run_id(run_id or (
             f"delivery-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
-        )
+        ))
         self.state = DeliveryState(run_id=rid, prompt=prompt,
                                    project_id=project_id,
+                                   profile=self.profile,
+                                   signer=self.signer,
                                    current_gate=self._current_gate())
+        if sign_fn is None:
+            self._sign = functools.partial(
+                _default_sign,
+                project_id=self.project_id,
+                delivery_run_id=self.state.run_id,
+            )
         # Seed the signed set from the repo's ACTUAL on-disk signatures so a
         # fresh or resumed orchestrator that reaches G4 with G0-G3 already signed
         # KNOWS they are signed. Without this the in-memory signed set is empty,
@@ -447,6 +509,7 @@ class GateOrchestrator:
         # Fix 1: the most recent gate agent's structured outcome (LoopResult or
         # build result), retained so the outcome gate can be inspected/audited.
         self._last_result: Any = None
+        self._gate_in_flight: bool = False
         # Fix 1: wall-clock at which the current gate run started, used to tell
         # a freshly-written (current-run) required artifact from a stale one.
         self._gate_run_started_at: float = 0.0
@@ -569,8 +632,31 @@ class GateOrchestrator:
         # Fix 1: mark run start BEFORE the agent runs so we can tell an artifact
         # written THIS run from a stale pre-existing one.
         self._gate_run_started_at = time.time()
-        result = executor(gate, system_prompt, signed_ints)
+        self._gate_in_flight = True
+        try:
+            result = executor(gate, system_prompt, signed_ints)
+        finally:
+            self._gate_in_flight = False
         self._last_result = result
+        if str(getattr(result, "status", "") or "") == "cancelled":
+            reason = str(getattr(result, "error", "") or "delivery cancelled")
+            self.state.status = "cancelled"
+            self.state.last_outcome = {
+                "gate": gate,
+                "ok": False,
+                "reason": reason,
+                "loop_status": "cancelled",
+            }
+            self._persist()
+            self.emit({"type": "cancelled", "run_id": self.state.run_id,
+                       "gate": gate, "reason": reason})
+            self._release_delivery_lock()
+            return result
+        if gate == "G4" and isinstance(self._g4_verify, dict):
+            # A restart while G4 is awaiting review must retain the independent
+            # build verification instead of making the gate unverifiable or,
+            # worse, reconstructing evidence from a different run.
+            self.state.release_evidence["g4_verify"] = dict(self._g4_verify)
         if gate == "G3":
             self._emit_preview(gate)
         self.emit({
@@ -624,7 +710,9 @@ class GateOrchestrator:
             adapter=self.adapter,
             repo_root=self.repo_root,
             enforcement_provider=self.enforcement_provider,
+            run_id=self.state.run_id,
             emit=self.emit,
+            cancel_check=self.cancel_check,
             execution_context="delivery",
             active_gate=gate,
             # §3.2 creation side: the loop rebases gate-artifact writes
@@ -651,18 +739,44 @@ class GateOrchestrator:
         # bootstrapping the root entry/config files governance denies. Strictly
         # idempotent -- a no-op when the shell already exists on disk.
         self._scaffold_shell_if_greenfield()
-        from .subagent_build import run_subagent_driven_build
-        result = run_subagent_driven_build(
-            self.repo_root,
-            self.adapter,
-            reviewer_adapter=self.critic_adapter,
-            enforcement_provider=self.enforcement_provider,
-            emit=self.emit,
-            project_id=self.project_id,
-            signed_gates=signed_ints,
-            prompt=self._gate_message(gate),
-            governance_frame=system_prompt,
-        )
+        # C5: baseline AFTER framework scaffolding but BEFORE build-agent work.
+        # Scaffold bytes are infrastructure, not evidence that G4 implemented
+        # product value. Reuse an in-flight checkpoint after a crash so partial
+        # work remains bound to the interrupted attempt's original baseline.
+        try:
+            self._prepare_g4_attribution()
+        except Exception as exc:
+            # Verification below fails closed when no trustworthy baseline
+            # exists. Surface the checkpoint failure before any review.
+            self.emit({
+                "type": "system",
+                "text": ("G4 attribution checkpoint failed; this build "
+                         f"cannot be signed ({type(exc).__name__}: {exc})."),
+            })
+        from .subagent_build import BuildCancelled, run_subagent_driven_build
+        try:
+            result = run_subagent_driven_build(
+                self.repo_root,
+                self.adapter,
+                reviewer_adapter=self.critic_adapter,
+                enforcement_provider=self.enforcement_provider,
+                emit=self.emit,
+                project_id=self.project_id,
+                signed_gates=signed_ints,
+                prompt=self._gate_message(gate),
+                governance_frame=system_prompt,
+                parent_run_id=self.state.run_id,
+                cancel_check=self.cancel_check,
+            )
+        except BuildCancelled as exc:
+            result = LoopResult(
+                run_id=self.state.run_id,
+                status="cancelled",
+                final_text=str(exc),
+                tool_calls_made=0,
+                messages=[],
+                error=str(exc),
+            )
         # INV-2: independently verify the build gate produced a real, passing
         # product before it can be signed. apply_verdict refuses to sign until ok.
         self._g4_verify = self._verify_g4_build(result)
@@ -728,6 +842,405 @@ class GateOrchestrator:
             self.emit({"type": "system",
                        "text": f"Scaffold-first skipped ({type(exc).__name__}: {exc})."})
 
+    # -- G4 current-run attribution (C5) ------------------------------------
+
+    _G4_ATTRIBUTION_VERSION = 4
+    _G4_SOURCE_SUFFIXES = frozenset((*CODE_SUFFIXES, ".css", ".scss", ".sass",
+                                    ".less", ".html", ".htm"))
+    _G4_EXCLUDED_DIRS = frozenset({
+        ".git", ".signalos", "core", "node_modules", "dist", "build", "coverage",
+        ".next", ".nuxt", "target", "vendor", "__pycache__",
+    })
+    _G4_RELEASE_EXCLUDED_DIRS = frozenset({
+        ".git", ".signalos", "node_modules", "vendor", ".venv", "venv",
+        "dist", "build", "coverage", "target", ".next", ".nuxt", "out",
+        "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        ".tox", ".cache", ".turbo",
+    })
+
+    def _g4_attribution_path(self) -> Path:
+        return self._state_dir() / "g4-attribution.json"
+
+    @staticmethod
+    def _g4_tree_digest(tree: dict[str, str]) -> str:
+        return release_tree_digest(tree)
+
+    def _g4_product_tree(self) -> dict[str, str]:
+        """Content-hash meaningful product source, excluding tests, build
+        output, governance, and symlinks that could escape the workspace."""
+        root = self.repo_root.resolve()
+        try:
+            src = (self.repo_root / self._product_source_dir()).resolve()
+            src.relative_to(root)
+        except (OSError, ValueError):
+            return {}
+        if not src.is_dir():
+            return {}
+
+        tree: dict[str, str] = {}
+        for path in sorted(src.rglob("*")):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                resolved = path.resolve()
+                rel = resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            parts_lower = {part.lower() for part in rel.parts}
+            if parts_lower & self._G4_EXCLUDED_DIRS:
+                continue
+            name = path.name.lower()
+            if ("tests" in parts_lower or "test" in parts_lower
+                    or "__tests__" in parts_lower
+                    or ".test." in name or ".spec." in name
+                    or "_test." in name or name.startswith("test_")):
+                continue
+            if path.suffix.lower() not in self._G4_SOURCE_SUFFIXES:
+                continue
+            try:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            tree[str(rel).replace("\\", "/")] = digest
+        return tree
+
+    @staticmethod
+    def _g4_normalize_meaningful_source(text: str) -> str:
+        """A conservative cross-stack normalization for attribution.
+
+        Whitespace-only and whole-line-comment-only edits are not delivery
+        evidence. Inline comments are retained to avoid mis-parsing strings or
+        language-specific syntax; mechanical build/tests remain the semantic
+        authority after this cheap anti-trivial-write check.
+        """
+        kept: list[str] = []
+        in_block_comment = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if in_block_comment:
+                if "*/" in stripped or "-->" in stripped:
+                    in_block_comment = False
+                continue
+            if not stripped:
+                continue
+            if stripped.startswith(("//", "#", "*")):
+                continue
+            if stripped.startswith(("/*", "<!--")):
+                if not ("*/" in stripped or "-->" in stripped):
+                    in_block_comment = True
+                continue
+            kept.append(re.sub(r"\s+", "", line))
+        return "".join(kept)
+
+    def _g4_meaningful_tree(self) -> dict[str, str]:
+        """Normalized source tree used only to decide whether G4 made a
+        meaningful change. Exact byte hashes remain the release binding."""
+        tree: dict[str, str] = {}
+        for rel_path in self._g4_product_tree():
+            path = self.repo_root / rel_path
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            normalized = self._g4_normalize_meaningful_source(text)
+            if not normalized:
+                continue
+            tree[rel_path] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        return tree
+
+    def _g4_release_tree(self) -> dict[str, str]:
+        """Exact-byte tree of every shippable workspace file.
+
+        Unlike the attribution source tree, this includes package manifests,
+        lockfiles, root config, public assets, migrations, and tests: all bytes
+        that ``git add -A`` can ship. It excludes only VCS/control-plane state,
+        dependency trees, and generated build/cache directories. Root ``core``
+        is SignalOS governance (G4/G5 signatures legitimately change it after
+        verification), not product payload. Unreadable files fail closed.
+        """
+        return workspace_release_tree(self.repo_root)
+
+    def _load_g4_attribution(self) -> Optional[dict]:
+        try:
+            data = json.loads(self._g4_attribution_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        if data.get("version") != self._G4_ATTRIBUTION_VERSION:
+            return None
+        if str(data.get("run_id") or "") != self.state.run_id:
+            return None
+        if str(data.get("project_id") or "default") != self.project_id:
+            return None
+        return data
+
+    def _write_g4_attribution(self, data: dict) -> None:
+        """Atomically persist protected attribution evidence."""
+        path = self._g4_attribution_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=2, sort_keys=True),
+                           encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _prepare_g4_attribution(self) -> dict:
+        """Persist the pre-build tree. Reuse only an interrupted attempt from
+        this delivery; completed/refused attempts receive a fresh baseline."""
+        existing = self._load_g4_attribution()
+        if existing and existing.get("phase") == "running":
+            baseline = existing.get("baseline_tree")
+            meaningful = existing.get("baseline_meaningful_tree")
+            if (isinstance(baseline, dict)
+                    and isinstance(meaningful, dict)
+                    and existing.get("baseline_digest") == self._g4_tree_digest(baseline)
+                    and existing.get("baseline_meaningful_digest")
+                    == self._g4_tree_digest(meaningful)
+                    and existing.get("source_dir") == self._product_source_dir()):
+                return existing
+
+        attempt = 1
+        if existing:
+            try:
+                attempt = max(1, int(existing.get("attempt", 0)) + 1)
+            except (TypeError, ValueError):
+                attempt = 1
+        baseline = self._g4_product_tree()
+        meaningful = self._g4_meaningful_tree()
+        record = {
+            "version": self._G4_ATTRIBUTION_VERSION,
+            "run_id": self.state.run_id,
+            "project_id": self.project_id,
+            "attempt": attempt,
+            "phase": "running",
+            "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source_dir": self._product_source_dir(),
+            "baseline_tree": baseline,
+            "baseline_digest": self._g4_tree_digest(baseline),
+            "baseline_meaningful_tree": meaningful,
+            "baseline_meaningful_digest": self._g4_tree_digest(meaningful),
+        }
+        self._write_g4_attribution(record)
+        return record
+
+    @staticmethod
+    def _g4_result_field(result: Any, name: str, default: Any = None) -> Any:
+        if isinstance(result, dict):
+            return result.get(name, default)
+        return getattr(result, name, default)
+
+    def _evaluate_g4_attribution(self, agent_result: Any) -> dict:
+        """Require a completed build result and a current-attempt source delta.
+        Both accepted and refused outcomes are persisted for audit/resume."""
+        status = str(self._g4_result_field(agent_result, "status", "") or "")
+        wrote_no_files = bool(self._g4_result_field(
+            agent_result, "wrote_no_files", False))
+        record = self._load_g4_attribution()
+
+        def refuse(reason: str) -> dict:
+            if record is not None:
+                record.update({
+                    "phase": "refused",
+                    "result": {
+                        "status": status,
+                        "wrote_no_files": wrote_no_files,
+                        "tool_calls_made": self._g4_result_field(
+                            agent_result, "tool_calls_made", None),
+                        "error": self._g4_result_field(agent_result, "error", None),
+                    },
+                    "verification": {"ok": False, "reason": reason},
+                })
+                try:
+                    self._write_g4_attribution(record)
+                except OSError:
+                    pass
+            return {"ok": False, "reason": reason}
+
+        if status != "completed":
+            return refuse("G4 build agent did not complete successfully "
+                          f"(outcome: {status or 'missing'})")
+        if wrote_no_files:
+            return refuse("G4 build agent reported that it wrote no files this run")
+        if record is None or record.get("phase") != "running":
+            return refuse("G4 has no trustworthy pre-build attribution checkpoint")
+        baseline = record.get("baseline_tree")
+        if not isinstance(baseline, dict):
+            return refuse("G4 pre-build attribution checkpoint is malformed")
+        if record.get("baseline_digest") != self._g4_tree_digest(baseline):
+            return refuse("G4 pre-build attribution checkpoint failed its tree-hash check")
+        baseline_meaningful = record.get("baseline_meaningful_tree")
+        if not isinstance(baseline_meaningful, dict):
+            return refuse("G4 pre-build meaningful-source checkpoint is malformed")
+        if (record.get("baseline_meaningful_digest")
+                != self._g4_tree_digest(baseline_meaningful)):
+            return refuse("G4 meaningful-source checkpoint failed its tree-hash check")
+        if record.get("source_dir") != self._product_source_dir():
+            return refuse("G4 product source directory changed during the build")
+
+        post = self._g4_product_tree()
+        post_meaningful = self._g4_meaningful_tree()
+        changed = sorted(path for path in set(baseline) | set(post)
+                         if baseline.get(path) != post.get(path))
+        meaningful_changed = sorted(
+            path for path in set(baseline_meaningful) | set(post_meaningful)
+            if baseline_meaningful.get(path) != post_meaningful.get(path)
+        )
+        meaningful_written = [path for path in meaningful_changed
+                              if path in post_meaningful]
+        written = [path for path in changed if path in post]
+        removed = [path for path in changed if path not in post]
+        record.update({
+            "phase": "attributed" if changed else "refused",
+            "result": {
+                "status": status,
+                "wrote_no_files": wrote_no_files,
+                "tool_calls_made": self._g4_result_field(
+                    agent_result, "tool_calls_made", None),
+                "error": self._g4_result_field(agent_result, "error", None),
+            },
+            "post_tree": post,
+            "post_digest": self._g4_tree_digest(post),
+            "post_meaningful_tree": post_meaningful,
+            "post_meaningful_digest": self._g4_tree_digest(post_meaningful),
+            "changed_product_source": changed,
+            "meaningful_product_source_change": meaningful_changed,
+            "meaningful_written_product_source": meaningful_written,
+            "written_product_source": written,
+            "removed_product_source": removed,
+        })
+        if not meaningful_written:
+            reason = ("G4 produced zero meaningful written/modified product source "
+                      "from its pre-build baseline (stale green, trivial edits, "
+                      "and deletion-only changes are not current-run delivery evidence)")
+            record["verification"] = {"ok": False, "reason": reason}
+            try:
+                self._write_g4_attribution(record)
+            except OSError:
+                pass
+            return {"ok": False, "reason": reason,
+                    "changed_product_source": changed,
+                    "meaningful_product_source_change": meaningful_changed,
+                    "meaningful_written_product_source": []}
+        try:
+            self._write_g4_attribution(record)
+        except OSError as exc:
+            return {"ok": False,
+                    "reason": f"G4 attribution evidence could not be persisted: {exc}"}
+        return {"ok": True, "changed_product_source": changed,
+                "meaningful_product_source_change": meaningful_changed,
+                "meaningful_written_product_source": meaningful_written,
+                "written_product_source": written,
+                "removed_product_source": removed}
+
+    def _finish_g4_verification(self, result: dict) -> dict:
+        """Seal verification and bind success to the exact post-build tree."""
+        record = self._load_g4_attribution()
+        if record is None or record.get("phase") != "attributed":
+            return {"ok": False,
+                    "reason": "G4 current-run attribution was not established"}
+        final = dict(result)
+        if final.get("ok"):
+            current_digest = self._g4_tree_digest(self._g4_product_tree())
+            if current_digest != record.get("post_digest"):
+                final = {"ok": False,
+                         "reason": ("product source changed during independent G4 "
+                                    "verification; rerun from a fresh baseline")}
+        if final.get("ok"):
+            try:
+                release_tree = self._g4_release_tree()
+            except (OSError, ValueError) as exc:
+                final = {"ok": False,
+                         "reason": ("could not capture the verified shippable "
+                                    f"workspace tree: {type(exc).__name__}: {exc}")}
+            else:
+                record["release_tree"] = release_tree
+                record["release_digest"] = self._g4_tree_digest(release_tree)
+        record["phase"] = "verified" if final.get("ok") else "refused"
+        record["verified_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        record["verification"] = final
+        try:
+            self._write_g4_attribution(record)
+        except OSError as exc:
+            return {"ok": False,
+                    "reason": f"G4 verification evidence could not be persisted: {exc}"}
+        if final.get("ok"):
+            final["attribution"] = {
+                "attempt": record.get("attempt"),
+                "post_digest": record.get("post_digest"),
+                "release_digest": record.get("release_digest"),
+                "changed_product_source": list(
+                    record.get("changed_product_source") or []),
+                "meaningful_product_source_change": list(
+                    record.get("meaningful_product_source_change") or []),
+                "meaningful_written_product_source": list(
+                    record.get("meaningful_written_product_source") or []),
+            }
+        return final
+
+    def _g4_verification_for_current_tree(self) -> dict:
+        """Restore proof only if it is valid for current product bytes."""
+        record = self._load_g4_attribution()
+        if record is None or record.get("phase") != "verified":
+            return {"ok": False,
+                    "reason": "no verified current-run G4 attribution evidence"}
+        verification = record.get("verification")
+        post = record.get("post_tree")
+        if not isinstance(verification, dict) or not verification.get("ok"):
+            return {"ok": False, "reason": "persisted G4 verification did not pass"}
+        if not isinstance(post, dict):
+            return {"ok": False, "reason": "persisted G4 product tree is malformed"}
+        digest = self._g4_tree_digest(post)
+        if digest != record.get("post_digest"):
+            return {"ok": False, "reason": "persisted G4 product tree hash is invalid"}
+        changed = record.get("changed_product_source")
+        meaningful_changed = record.get("meaningful_product_source_change")
+        meaningful_written = record.get("meaningful_written_product_source")
+        if (not isinstance(changed, list)
+                or not isinstance(meaningful_changed, list)
+                or not isinstance(meaningful_written, list)
+                or not meaningful_written):
+            return {"ok": False,
+                    "reason": "persisted G4 proof contains no product-source change"}
+        if record.get("source_dir") != self._product_source_dir():
+            return {"ok": False,
+                    "reason": "product source directory no longer matches verified G4"}
+        if self._g4_tree_digest(self._g4_product_tree()) != digest:
+            return {"ok": False, "reason": "product source changed after G4 verification"}
+        release_tree = record.get("release_tree")
+        if not isinstance(release_tree, dict):
+            return {"ok": False,
+                    "reason": "persisted G4 shippable workspace tree is malformed"}
+        release_digest = self._g4_tree_digest(release_tree)
+        if release_digest != record.get("release_digest"):
+            return {"ok": False,
+                    "reason": "persisted G4 shippable workspace tree hash is invalid"}
+        try:
+            current_release_digest = self._g4_tree_digest(self._g4_release_tree())
+        except (OSError, ValueError) as exc:
+            return {"ok": False,
+                    "reason": ("could not re-read shippable workspace files: "
+                               f"{type(exc).__name__}: {exc}")}
+        if current_release_digest != release_digest:
+            return {"ok": False,
+                    "reason": "shippable workspace files changed after G4 verification"}
+        restored = dict(verification)
+        restored["attribution"] = {
+            "attempt": record.get("attempt"),
+            "post_digest": digest,
+            "release_digest": release_digest,
+            "changed_product_source": list(changed),
+            "meaningful_product_source_change": list(meaningful_changed),
+            "meaningful_written_product_source": list(meaningful_written),
+        }
+        return restored
+
     def _verify_g4_build(self, agent_result: Any) -> dict:
         """Independently verify G4 built a real, working product — the walk must
         never sign a stub (INV-2, no fake-green). Two checks, both required:
@@ -741,24 +1254,37 @@ class GateOrchestrator:
         Returns {"ok": bool, "reason": str, ...}. Never raises — a failure to
         verify is reported as not-ok so signing is refused, not bypassed.
         """
+        # Consume the actual build result and establish current-run attribution
+        # before a pre-existing green disk can satisfy the mechanical checks.
+        attribution = self._evaluate_g4_attribution(agent_result)
+        if not attribution.get("ok"):
+            return attribution
+
+        def finish(result: dict) -> dict:
+            return self._finish_g4_verification(result)
+
         src_dir = self._product_source_dir()
         # 1. Real product source must EXIST in the repo (checked on disk -- the
         # LoopResult exposes no files list). A scaffold-only stub is refused.
         if not self._repo_has_real_product_src():
-            return {"ok": False,
-                    "reason": f"No real product source under {src_dir}/** -- implement the "
-                              "product's modules/logic (not just tests or a stub), then rebuild."}
+            return finish({
+                "ok": False,
+                "reason": f"No real product source under {src_dir}/** -- implement the "
+                          "product's modules/logic (not just tests or a stub), then rebuild.",
+            })
         # 1.5. WIRING gate: every product module must be reachable from the app
         # entry through the import graph. Components that exist but are never
         # composed ("pieces without wiring" -- the dominant observed failure)
         # are refused by machine, with the orphan modules named.
         orphans = self._unwired_modules()
         if orphans:
-            return {"ok": False,
-                    "reason": ("Build has UNWIRED modules -- written but never imported/"
-                               "composed into the app. Wire each into the app's component "
-                               "tree (import + render/use it), or remove it if truly "
-                               "unneeded:\n" + "\n".join(f"- {o}" for o in orphans))}
+            return finish({
+                "ok": False,
+                "reason": ("Build has UNWIRED modules -- written but never imported/"
+                           "composed into the app. Wire each into the app's component "
+                           "tree (import + render/use it), or remove it if truly "
+                           "unneeded:\n" + "\n".join(f"- {o}" for o in orphans)),
+            })
         # 2. Independent build + test; surface the ACTUAL errors so rework
         # feedback is actionable (e.g. a missing module the compiler can name).
         try:
@@ -767,8 +1293,10 @@ class GateOrchestrator:
             profile = detect_profile(self.repo_root)
             plan = build_validation_plan(self.repo_root, profile)
             if not (plan.get("can_validate_build") and plan.get("can_validate_tests")):
-                return {"ok": False,
-                        "reason": f"profile '{profile}' has no build/test validation — cannot verify a real build."}
+                return finish({
+                    "ok": False,
+                    "reason": f"profile '{profile}' has no build/test validation; cannot verify a real build.",
+                })
             result = run_validation(self.repo_root, plan)
             results = result.get("results", {})
             b, t = results.get("build", {}), results.get("test", {})
@@ -781,10 +1309,13 @@ class GateOrchestrator:
                 # false-failed.
                 ux = self._verify_ux_acceptance(profile)
                 if not ux.get("ok"):
-                    return {"ok": False, "reason": ux.get("reason", "UX acceptance failed"),
-                            "build": "passed", "test": "passed", "ux": "failed"}
-                return {"ok": True, "profile": profile,
-                        "ux": ux.get("status", "ok")}
+                    return finish({
+                        "ok": False,
+                        "reason": ux.get("reason", "UX acceptance failed"),
+                        "build": "passed", "test": "passed", "ux": "failed",
+                    })
+                return finish({"ok": True, "profile": profile,
+                               "ux": ux.get("status", "ok")})
             # Prefer the parsed per-file diagnostics (crisp + actionable); fall
             # back to raw command output.
             errs = []
@@ -797,14 +1328,19 @@ class GateOrchestrator:
             # The rebuild hint quotes the stack's OWN validation commands.
             cmds = " && ".join([*plan.get("build", []), *plan.get("test", [])]) \
                 or "the project's build and test commands"
-            return {"ok": False,
-                    "reason": (f"G4 build is not green. Fix EVERY error below, then rebuild "
-                               f"({cmds}). If a test imports a module that does not exist, "
-                               f"the implementation file MUST be created under {src_dir}/** "
-                               "-- never delete or weaken the test:\n" + detail),
-                    "build": b.get("status"), "test": t.get("status")}
+            return finish({
+                "ok": False,
+                "reason": (f"G4 build is not green. Fix EVERY error below, then rebuild "
+                           f"({cmds}). If a test imports a module that does not exist, "
+                           f"the implementation file MUST be created under {src_dir}/** "
+                           "-- never delete or weaken the test:\n" + detail),
+                "build": b.get("status"), "test": t.get("status"),
+            })
         except Exception as exc:  # never bypass on error -- fail closed
-            return {"ok": False, "reason": f"G4 build verification error: {type(exc).__name__}: {exc}"}
+            return finish({
+                "ok": False,
+                "reason": f"G4 build verification error: {type(exc).__name__}: {exc}",
+            })
 
     # (Import-graph shapes + entry names live in wiring_check.py -- the single
     # source for the wiring analysis, shared with the in-loop build reviewer so a
@@ -1139,13 +1675,20 @@ class GateOrchestrator:
                             + ", ".join(map(str, unrendered[:5])) + ")")
         return problems
 
-    # -- single-active-delivery lock (per repo_root + project_id) -----------
+    # -- single-active-delivery lock (workspace-global product bytes) -------
 
     def _delivery_lock_path(self) -> Path:
-        """The lock file guarding THIS project's namespace. Different projects
-        resolve to different paths, so the lock never blocks across projects."""
-        return (self.repo_root / ".signalos" / "projects"
-                / self.project_id / "delivery.lock")
+        """Guard shared product bytes and Git state across virtual projects.
+
+        Governance documents are project-namespaced, but source files, build
+        output, Git index/HEAD, and origin are workspace-global.  Until product
+        worktrees are physically isolated, concurrent project deliveries would
+        attribute and ship each other's writes, so one workspace owns one live
+        delivery operation.
+        """
+        return safe_control_path(
+            self.repo_root, ".signalos", "locks", "delivery.lock",
+        )
 
     def _read_delivery_lock(self) -> Optional[dict]:
         try:
@@ -1159,60 +1702,110 @@ class GateOrchestrator:
         alive AND it is younger than the TTL. A dead pid, a past-TTL age, or an
         unparseable/absent timestamp is STALE (reclaimable) -- crash-safety must
         never deadlock a project permanently."""
-        if not isinstance(info, dict) or not _pid_is_alive(info.get("pid")):
+        if not isinstance(info, dict):
             return False
+        # A same-host process lock remains live for the life of that process;
+        # long deliveries must not silently lose exclusivity after a wall-clock
+        # TTL. TTL applies only when the owning host cannot be probed locally.
+        if str(info.get("host") or "") == _hostname():
+            return _pid_is_alive(info.get("pid"))
         acquired = _parse_iso_utc(info.get("acquired_at"))
         if acquired is None:
             return False
         age = (datetime.now(timezone.utc) - acquired).total_seconds()
         return age < _LOCK_TTL_SECONDS
 
-    def _write_delivery_lock(self) -> None:
+    def _write_delivery_lock(self) -> bool:
         path = self._delivery_lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.parent / f".delivery-lock-{os.getpid()}-{uuid.uuid4().hex}.tmp"
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
-                "run_id": self.state.run_id,
-                "pid": os.getpid(),
-                "host": _hostname(),
-                "acquired_at": datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"),
-            }, indent=2), encoding="utf-8")
-        except OSError:
-            # The lock is a safety net, not the delivery itself: a repo whose
-            # lock cannot be written (e.g. read-only fs) still delivers.
-            pass
+            with tmp.open("x", encoding="utf-8") as handle:
+                json.dump({
+                    "run_id": self.state.run_id,
+                    "project_id": self.project_id,
+                    "owner_token": self._delivery_lock_owner_token,
+                    "pid": os.getpid(),
+                    "host": _hostname(),
+                    "acquired_at": datetime.now(timezone.utc).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"),
+                }, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                # A hard-link publish is atomic and refuses an existing target;
+                # contenders can never observe/truncate a half-written JSON lock.
+                os.link(tmp, path)
+                return True
+            except FileExistsError:
+                return False
+        except FileExistsError:
+            return False
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
     def _acquire_delivery_lock(self) -> Optional[dict]:
-        """Take the per-(repo, project) single-active-delivery lock at the start
+        """Take the workspace-global single-active-delivery lock at the start
         of a delivery. Returns a BLOCKED status dict when another LIVE delivery
-        (a DIFFERENT run_id) already holds it; otherwise acquires -- reclaiming a
-        STALE lock (dead pid / past TTL) or our OWN lock (a resume of the same
-        run) by overwriting it -- and returns None."""
-        existing = self._read_delivery_lock()
-        if (existing
-                and str(existing.get("run_id") or "") != self.state.run_id
-                and self._delivery_lock_is_live(existing)):
-            other = str(existing.get("run_id") or "?")
-            pid = existing.get("pid")
-            return {
-                "status": "blocked",
-                "gate": self.state.current_gate,
-                "active_run_id": other,
-                "reason": (f"a delivery is already active for project "
-                           f"'{self.project_id}' (run {other}, pid {pid}) -- "
-                           "finish or cancel it first."),
-            }
-        self._write_delivery_lock()
-        return None
+        already holds it; otherwise acquires -- reclaiming only a STALE lock
+        (dead pid / past TTL) -- and returns None. Re-entry is allowed solely
+        for this exact orchestrator instance's random owner token. Run-id,
+        process-id, and host equality alone never establish ownership.
+        """
+        for _attempt in range(3):
+            if self._write_delivery_lock():
+                return None
+            existing = self._read_delivery_lock()
+            same_owner = bool(
+                existing
+                and str(existing.get("run_id") or "") == self.state.run_id
+                and str(existing.get("pid") or "") == str(os.getpid())
+                and str(existing.get("host") or "") == _hostname()
+                and str(existing.get("owner_token") or "")
+                == self._delivery_lock_owner_token
+            )
+            if same_owner:
+                return None
+            if existing and self._delivery_lock_is_live(existing):
+                other = str(existing.get("run_id") or "?")
+                pid = existing.get("pid")
+                return {
+                    "status": "blocked",
+                    "gate": self.state.current_gate,
+                    "active_run_id": other,
+                    "reason": (f"a delivery is already active in this workspace "
+                               f"(run {other}, project "
+                               f"{existing.get('project_id', 'default')}, pid {pid}) -- "
+                               "finish or cancel it first."),
+                }
+            try:
+                self._delivery_lock_path().unlink()
+            except FileNotFoundError:
+                continue
+        return {
+            "status": "blocked",
+            "gate": self.state.current_gate,
+            "reason": "delivery lock could not be acquired atomically",
+        }
 
     def _release_delivery_lock(self) -> None:
-        """Release the lock at a terminal delivery status -- but ONLY if it is
-        OURS (run_id matches), so we never delete another delivery's lock. Never
-        raises; a killed process is covered by the stale-reclaim, not by this."""
+        """Release the lock only when its run and random owner token are ours.
+
+        A second object with the same run_id/pid/host is still a contender and
+        must never delete the acquiring instance's lock. Never raises; a killed
+        process is covered by stale reclaim rather than this path.
+        """
         try:
             info = self._read_delivery_lock()
-            if info and str(info.get("run_id") or "") == self.state.run_id:
+            if (
+                info
+                and str(info.get("run_id") or "") == self.state.run_id
+                and str(info.get("owner_token") or "")
+                == self._delivery_lock_owner_token
+            ):
                 self._delivery_lock_path().unlink()
         except OSError:
             pass
@@ -1228,20 +1821,43 @@ class GateOrchestrator:
                        "active_run_id": blocked.get("active_run_id")})
             return {"run_id": self.state.run_id, "gate": gate,
                     "status": "blocked", "reason": blocked["reason"]}
-        self._run_gate(gate)
+        try:
+            self._run_gate(gate)
+        except Exception:
+            self._release_delivery_lock()
+            raise
         return {"run_id": self.state.run_id, "gate": gate, "status": self.state.status}
 
     def apply_verdict(self, verdict: str, feedback: str = "") -> dict:
         gate = self.state.current_gate
         v = verdict if verdict in _KNOWN_VERDICTS else _classify(verdict)
+        cancelled = self._cancel_at_boundary("verdict")
+        if cancelled is not None:
+            return cancelled
 
         if v in ("approve", "approve-with-conditions"):
+            g0_preapproved = False
+            # A persisted blocked checkpoint is never signable merely because a
+            # sidecar restarted or a test injected a custom sign function.  The
+            # reviewer must request changes so the gate agent reruns and produces
+            # a new reviewable outcome.
+            if (self.state.status == "blocked"
+                    and self._enforce_blocked_checkpoint):
+                reason = ((self.state.last_outcome or {}).get("reason")
+                          or "the gate is blocked and not open for review")
+                self.emit({"type": "gate_blocked", "gate": gate, "reason": reason})
+                return {"status": "not-reviewable", "gate": gate, "reason": reason}
             # INV-2: G4 cannot be signed until its build is independently verified
             # (real product source written + build/tests pass). Never fake-green.
+            if gate == "G4" and self._enforce_outcome_gate:
+                # Revalidate the protected persisted proof against the current
+                # product tree on every production verdict. This restores a
+                # legitimate crash-resumed G4 and invalidates source edits made
+                # after the independent build check.
+                self._g4_verify = self._g4_verification_for_current_tree()
             if gate == "G4" and not (self._g4_verify or {}).get("ok"):
                 reason = (self._g4_verify or {}).get("reason", "build not verified")
                 self.emit({"type": "error", "error": f"Gate G4 cannot be signed: {reason}"})
-                self._release_delivery_lock()
                 return {"status": "build-not-verified", "gate": gate, "reason": reason}
             # Fix 1 (production sign path): never sign a gate the agent did not
             # actually complete. `_run_gate` only opens a gate for review
@@ -1267,6 +1883,49 @@ class GateOrchestrator:
                            "error": f"Gate {gate}: approve-with-conditions requires a "
                                     "written condition."})
                 return {"status": "conditions-need-text", "gate": gate}
+            # C7: G5 readiness is a PRECONDITION to signing. The orchestrated
+            # signer suppresses release side effects; this verified/pending
+            # checkpoint is durable BEFORE the signature and later drives the
+            # idempotent seal/commit/push state machine.
+            release = None
+            if gate == "G5":
+                pending = ({"G5": str(feedback or "").strip()}
+                           if v == "approve-with-conditions" else None)
+                release = self._verify_g5_release(pending_conditions=pending)
+                ready = bool(release.get("ok"))
+                self._set_release_verification(release)
+                if ready and self._enforce_outcome_gate:
+                    previous = self._release_finalization_marker()
+                    self.state.release_evidence["release_finalization"] = {
+                        "schema_version": "signalos.release-finalization.v1",
+                        "status": "pending",
+                        "phase": "verified",
+                        "run_id": self.state.run_id,
+                        "project_id": self.project_id,
+                        "profile": self.profile,
+                        "release_digest": str(release.get("release_digest") or ""),
+                        "attempts": int(previous.get("attempts") or 0),
+                        "created_at": str(
+                            previous.get("created_at") or self._release_timestamp()
+                        ),
+                        "updated_at": self._release_timestamp(),
+                    }
+                try:
+                    self._persist()
+                except OSError as exc:
+                    reason = f"release verification evidence could not be persisted: {exc}"
+                    self.emit({"type": "error", "error": reason})
+                    return {"status": "release-not-ready", "gate": gate,
+                            "ready": False, "reasons": [reason]}
+                self.emit({"type": "release_verified", "ready": ready,
+                           "reasons": release.get("reasons", [])})
+                if not ready:
+                    reasons = list(release.get("reasons") or [])
+                    reason = "; ".join(reasons) or "release verification did not pass"
+                    self.emit({"type": "gate_blocked", "gate": gate,
+                               "reason": reason})
+                    return {"status": "release-not-ready", "gate": gate,
+                            "ready": False, "reasons": reasons}
             # Production-profile POST-BUILD release-safety stages. Runs only for
             # the BUILD gate, only after its build is independently verified
             # (above), so it can NEVER change the verified-build outcome, the
@@ -1276,13 +1935,56 @@ class GateOrchestrator:
             if gate == "G4":
                 blocked = self._run_post_build_stages()
                 if blocked is not None:
+                    # A release-stage refusal is a durable non-reviewable state.
+                    # Persist it before returning so agent:resume cannot turn it
+                    # back into an approvable checkpoint.
+                    reason = str(blocked.get("reason") or "release safety stage blocked")
+                    self.state.status = "blocked"
+                    self.state.last_outcome = {
+                        "gate": gate,
+                        "ok": False,
+                        "reason": reason,
+                        "loop_status": str(blocked.get("status") or "blocked"),
+                    }
+                    self._persist()
                     return blocked
-            try:
-                self._sign(self.repo_root, gate, self.signer, self._role_for(gate),
-                           _SIGN_VERDICT[v], feedback)
-            except Exception as exc:
-                self.emit({"type": "error", "error": f"Gate {gate} signing failed: {exc}"})
-                return {"status": "sign-failed", "gate": gate, "error": str(exc)}
+                if any(PROFILE_STAGES[self.profile].values()):
+                    # Production proof is a durable release decision input,
+                    # not transient process memory.  Checkpoint it before the
+                    # signer runs so a signing error or sidecar crash cannot
+                    # erase the security/runtime result on resume.
+                    self._persist()
+            if gate == "G0" and self._enforce_outcome_gate:
+                authority = sign.check_gate_signed_strict(
+                    self.repo_root, "G0", project_id=self.project_id,
+                )
+                if not authority.signed:
+                    reason = (
+                        "Gate G0 requires the exact explicit solo-founder approval "
+                        "transaction before a generic verdict can advance it"
+                    )
+                    self.emit({"type": "gate_blocked", "gate": gate,
+                               "reason": reason,
+                               "reasons": list(authority.reasons or [])})
+                    return {
+                        "status": "explicit-approval-required",
+                        "gate": gate,
+                        "reason": reason,
+                        "reasons": list(authority.reasons or []),
+                    }
+                # The authority transaction already wrote and audit-linked the
+                # canonical G0 signatures. Do not append a second raw signature.
+                g0_preapproved = True
+            cancelled = self._cancel_at_boundary("gate signature")
+            if cancelled is not None:
+                return cancelled
+            if not g0_preapproved:
+                try:
+                    self._sign(self.repo_root, gate, self.signer, self._role_for(gate),
+                               _SIGN_VERDICT[v], feedback)
+                except Exception as exc:
+                    self.emit({"type": "error", "error": f"Gate {gate} signing failed: {exc}"})
+                    return {"status": "sign-failed", "gate": gate, "error": str(exc)}
             self.state.signed.append(gate)
             # Fix 5: record the (unresolved) condition so it blocks readiness.
             if v == "approve-with-conditions":
@@ -1290,21 +1992,76 @@ class GateOrchestrator:
             self.emit({"type": "gate_signed", "gate": gate, "verdict": v})
             nxt = self._next_after(gate)
             if nxt is None:
+                if self._enforce_outcome_gate:
+                    marker = dict(self._release_finalization_marker())
+                    marker.update({
+                        "status": "pending",
+                        "phase": "signed",
+                        "run_id": self.state.run_id,
+                        "project_id": self.project_id,
+                        "profile": self.profile,
+                        "updated_at": self._release_timestamp(),
+                    })
+                    self.state.release_evidence["release_finalization"] = marker
                 self.state.status = "complete"
                 self._persist()
-                # Fix 4: readiness reflects a real release verification, not the
-                # mere absence of waivers.
-                release = self._verify_g5_release()
-                ready = bool(release.get("ok"))
-                self.emit({"type": "release_verified", "ready": ready,
-                           "reasons": release.get("reasons", [])})
-                self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
-                           "ready": ready, "waived": list(self.state.waived)})
-                self._finalize_closeout(ready=ready)
+                finalization: dict = {}
+                if self._enforce_outcome_gate:
+                    finalization = self._finalize_pending_g5_release()
+                else:
+                    # Custom signer seams do not own real Git/seal side effects.
+                    self._finalize_closeout(ready=True)
+                release_truth = self.state.release_evidence.get(
+                    "release_verification", {}
+                )
+                truth_ready = bool(
+                    isinstance(release_truth, dict)
+                    and release_truth.get("ok") is True
+                )
+                finalized = (
+                    not self._enforce_outcome_gate
+                    or finalization.get("status") == "succeeded"
+                )
+                ready = truth_ready and finalized
+                if not ready:
+                    reasons = list(
+                        release_truth.get("reasons") or []
+                        if isinstance(release_truth, dict) else []
+                    )
+                    if truth_ready and not finalized:
+                        last = finalization.get("last_attempt")
+                        attempt_status = (
+                            str(last.get("status") or "pending")
+                            if isinstance(last, dict) else "pending"
+                        )
+                        reasons.append(
+                            f"release finalization is pending ({attempt_status})"
+                        )
+                    self._release_delivery_lock()
+                    terminal_cancel = self.state.status == "cancelled"
+                    return {
+                        "status": (
+                            "cancelled" if terminal_cancel
+                            else ("release-not-ready" if not truth_ready
+                                  else "release-pending")
+                        ),
+                        "gate": gate,
+                        "ready": False,
+                        "reasons": reasons,
+                        "release_finalization": finalization,
+                    }
+                self.emit({
+                    "type": "delivery_complete",
+                    "run_id": self.state.run_id,
+                    "ready": True,
+                    "waived": list(self.state.waived),
+                    "release_finalization": finalization,
+                })
                 self._release_delivery_lock()
-                return {"status": "complete", "ready": ready,
+                return {"status": "complete", "ready": True,
                         "waived": list(self.state.waived),
-                        "conditions": dict(self.state.conditions)}
+                        "conditions": dict(self.state.conditions),
+                        "release_finalization": finalization}
             # Fix 6: persist the freshly-signed state DURABLY before dispatching
             # the next gate. Previously the next gate ran (mutating state,
             # running the agent) BEFORE any persist, so a crash mid-next-gate
@@ -1331,6 +2088,7 @@ class GateOrchestrator:
                                     detail=f"'{gate}' hit the rework limit.")
                 self.state.status = "stopped"
                 self._persist()
+                self._release_delivery_lock()
                 return {"status": "max-rework", "gate": gate}
             self.state.rework[gate] = cyc
             self._record_review(gate, v, feedback, cyc)
@@ -1347,6 +2105,7 @@ class GateOrchestrator:
                                     detail=f"'{gate}' was rejected too many times.")
                 self.state.status = "stopped"
                 self._persist()
+                self._release_delivery_lock()
                 return {"status": "max-rejections", "gate": gate}
             self.state.rejections[gate] = cnt
             self._record_review(gate, v, feedback, cnt)
@@ -1369,6 +2128,10 @@ class GateOrchestrator:
             nxt = self._next_after(gate)
             if nxt is None:
                 self.state.status = "complete"
+                self.state.release_evidence["release_verification"] = {
+                    "ok": False,
+                    "reasons": ["delivery completed with one or more waived gates"],
+                }
                 self._persist()
                 self.emit({"type": "delivery_complete", "run_id": self.state.run_id,
                            "ready": False, "waived": list(self.state.waived)})
@@ -1415,17 +2178,17 @@ class GateOrchestrator:
         so replay does NOT treat the refused attempt as a reversal.
         Silent on OSError, matching the other audit appenders."""
         audit_path = self.repo_root / ".signalos" / "AUDIT_TRAIL.jsonl"
-        try:
-            audit_path.parent.mkdir(parents=True, exist_ok=True)
-            row = {
-                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "run_id": self.state.run_id,
+        sign.append_audit_event(
+            audit_path,
+            {
                 **entry,
-            }
-            with audit_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+                # Reopen evidence shares one workspace ledger across virtual
+                # projects; keep the project and delivery identity backend-
+                # owned so callers cannot redirect or forge either binding.
+                "run_id": self.state.run_id,
+                "project_id": self.project_id,
+            },
+        )
 
     def reopen_gate(self, gate: str, reason: str, name: str = "",
                     role: str = "") -> dict:
@@ -1453,8 +2216,11 @@ class GateOrchestrator:
                        "error": f"Cannot reopen {gate}: it is not signed."})
             return {"status": "not-signed", "gate": gate}
 
-        actor = str(name or "").strip() or self.signer
-        role = str(role or "").strip() or self._role_for(gate)
+        # Actor/role are server-owned delivery identity, never caller claims.
+        # Keep the legacy parameters for wire compatibility but deliberately
+        # ignore them so a persisted-run reopen cannot self-authorize as QA/PE.
+        actor = self.signer
+        role = self._role_for(gate)
         if role not in self._reopen_roles_for(gate):
             self.emit({"type": "error",
                        "error": f"Role {role!r} is not authorised to reopen "
@@ -1477,6 +2243,42 @@ class GateOrchestrator:
         # Cascade: the target gate plus every later signed gate lose their
         # signature; later waived gates lose their waiver. All audited.
         idx = GATE_ORDER.index(gate)
+        existing_lock = self._read_delivery_lock()
+        owned_before = bool(
+            existing_lock
+            and str(existing_lock.get("run_id") or "") == self.state.run_id
+            and str(existing_lock.get("pid") or "") == str(os.getpid())
+            and str(existing_lock.get("host") or "") == _hostname()
+            and str(existing_lock.get("owner_token") or "")
+            == self._delivery_lock_owner_token
+        )
+        blocked = self._acquire_delivery_lock()
+        if blocked is not None:
+            self.emit({"type": "delivery_blocked", "gate": gate,
+                       "reason": blocked.get("reason", "delivery lock unavailable"),
+                       "active_run_id": blocked.get("active_run_id")})
+            return {"status": "blocked", "gate": gate,
+                    "reason": blocked.get("reason", "delivery lock unavailable")}
+        signed_to_revoke = [
+            candidate for candidate in GATE_ORDER[idx:]
+            if candidate in self.state.signed
+        ]
+        try:
+            sign.revoke_gates(
+                self.repo_root,
+                signed_to_revoke,
+                project_id=self.project_id,
+                reason=reason,
+                actor=actor,
+            )
+        except (OSError, ValueError) as exc:
+            if not owned_before:
+                self._release_delivery_lock()
+            message = f"Cannot reopen {gate}: durable revocation failed ({exc})."
+            self.emit({"type": "error", "error": message})
+            return {"status": "revocation-failed", "gate": gate,
+                    "reason": str(exc)}
+
         invalidated: list[str] = []
         for g in GATE_ORDER[idx:]:
             cascade = g != gate
@@ -1506,6 +2308,16 @@ class GateOrchestrator:
                 invalidated.append(g)
 
         self.state.reopens[gate] = cnt
+        # A reopen creates a new release cycle. Never let a prior successful or
+        # pending G5 marker suppress finalization of the reworked bytes.
+        self.state.release_evidence.pop("release_finalization", None)
+        self.state.release_evidence.pop("release_verification", None)
+        if idx <= GATE_ORDER.index("G4"):
+            self.state.release_evidence.pop("g4_verify", None)
+            self.state.release_evidence.pop("security_gate", None)
+            self.state.release_evidence.pop("runtime_proof", None)
+            self._g4_verify = None
+            self._last_runtime_ok = False
         # Thread the reason through the same feedback mechanism rework uses,
         # so _gate_message includes it when the gate re-runs. Also writes the
         # gate_review audit event (verdict REOPEN).
@@ -1516,6 +2328,17 @@ class GateOrchestrator:
         self.emit({"type": "gate_reopened", "gate": gate,
                    "invalidated": invalidated, "reason": reason,
                    "by": actor, "role": role, "reopen_count": cnt})
+        # Reopening is immediately actionable: emit the same checkpoint/card
+        # contract as a normal gate pause instead of requiring a second manual
+        # resume just to recover the verdict controls.
+        self.emit({
+            "type": "gate",
+            "gate": gate,
+            "title": f"{GATE_SPECIALISTS[gate]} - {gate}",
+            "question": GATE_QUESTIONS[gate],
+            "specialist": GATE_SPECIALISTS[gate],
+            "reopened": True,
+        })
         self.emit({"type": "system",
                    "text": f"{gate} reopened by {actor} ({role}): "
                            f"{reason or 'no reason given'}."
@@ -1534,10 +2357,11 @@ class GateOrchestrator:
         runs AFTER the G4 build is independently verified, so it can never
         change the verified-build outcome, the scores, or the product bytes.
 
-        Returns a blocking status dict when a production stage refuses the sign
-        (a CRITICAL security finding); otherwise None (proof is evidence-only).
+        Returns a blocking status dict when a production stage refuses the G4
+        sign (a CRITICAL security finding); otherwise None.  Degraded/missing
+        evidence is still enforced by the fail-closed G5 readiness decision.
         """
-        stages = PROFILE_STAGES.get(self.profile, PROFILE_STAGES[DEFAULT_PROFILE])
+        stages = PROFILE_STAGES[self.profile]
         if stages.get("security_gate"):
             blocked = self._run_security_gate_stage()
             if blocked is not None:
@@ -1554,7 +2378,8 @@ class GateOrchestrator:
         here would only add noise. Fail policy: a real finding fails CLOSED
         (blocks the sign), but the gate merely ERRORING ('warning') or an
         unexpected exception fails OPEN (never blocks) -- a flaky scanner must
-        not be able to fail a release on its own. Never raises."""
+        not abort the build checkpoint on its own.  It records warning evidence
+        that fails the later production G5 readiness check. Never raises."""
         try:
             from .security_gate import run_security_gate, write_security_result
             from .stacks import detect_profile
@@ -1571,10 +2396,14 @@ class GateOrchestrator:
                 pass
             issues = (result.get("injection_scan") or {}).get("issues_found") or []
             status = str(result.get("status") or "")
+            self.state.release_evidence["security_gate"] = {
+                "status": status,
+                "issue_count": len(issues),
+            }
             self.emit({"type": "security_gate", "gate": "G4",
                        "status": status, "issue_count": len(issues)})
-            # Only a real 'failed' verdict (critical findings) blocks. A
-            # 'warning' (the gate itself degraded) is reported, not enforced.
+            # Only a real 'failed' verdict (critical findings) blocks G4. A
+            # degraded warning is persisted and later fails G5 readiness.
             if status == "failed":
                 reason = (
                     f"Security gate found {len(issues)} critical finding(s) in "
@@ -1589,7 +2418,11 @@ class GateOrchestrator:
                            "error": f"Gate G4 cannot be signed: {reason}"})
                 return {"status": "security-blocked", "gate": "G4",
                         "reason": reason, "issue_count": len(issues)}
-        except Exception as exc:  # fail OPEN on infra -- never block on a hiccup
+        except Exception as exc:  # keep G4 open; G5 rejects warning evidence
+            self.state.release_evidence["security_gate"] = {
+                "status": "warning",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
             self.emit({"type": "system",
                        "text": f"Security gate skipped ({type(exc).__name__}: {exc})."})
         return None
@@ -1600,9 +2433,13 @@ class GateOrchestrator:
         the benchmark profile: real servers/ports/timing are flaky and the
         benchmark's behavioral acceptance tests already own 'the app runs', so
         running it there would inject exactly the variance the benchmark must
-        avoid. Release EVIDENCE only -- emitted and persisted under .signalos,
-        NEVER a hard block, so flaky infra can never fail a release on its own.
-        Never raises."""
+        avoid. The stage does not retroactively change G4, but its persisted
+        evidence is mandatory at production G5, so unavailable/flaky proof
+        infrastructure honestly blocks release readiness. Never raises."""
+        # Unknown production stacks fail closed as browser-required until
+        # deterministic stack detection proves they are API-only.
+        ux_required = True
+        stack = "unknown"
         try:
             from .proof import (
                 requires_browser_ux_proof,
@@ -1614,12 +2451,18 @@ class GateOrchestrator:
             stack = detect_profile(self.repo_root)
             runtime = run_runtime_proof(self.repo_root, stack)
             passed = runtime.get("status") == "passed"
-            if requires_browser_ux_proof(self.repo_root, stack):
+            ux_required = requires_browser_ux_proof(self.repo_root, stack)
+            if ux_required:
                 html = runtime.get("html_snapshot") if passed else None
                 ux = run_ux_proof(
                     self.repo_root, stack,
                     port=runtime.get("port") if passed else None,
                     html=html if isinstance(html, str) and html else None,
+                    browser_result=(
+                        runtime.get("browser_ux")
+                        if isinstance(runtime.get("browser_ux"), dict)
+                        else None
+                    ),
                 )
             else:
                 ux = run_ux_proof(self.repo_root, stack, port=None)
@@ -1631,11 +2474,33 @@ class GateOrchestrator:
             # verifier can refuse to report a PRODUCTION delivery ready-to-ship
             # without a passing runtime proof (evidence-only, never a hard
             # block at G4).
-            self._last_runtime_ok = passed
+            ux_executed = ux.get("executed") is True
+            ux_passed = ux.get("status") == "passed"
+            proof_ok = passed and (not ux_required or (ux_passed and ux_executed))
+            self._last_runtime_ok = proof_ok
+            self.state.release_evidence["runtime_proof"] = {
+                "status": runtime.get("status"),
+                "stack": stack,
+                "ux_required": ux_required,
+                "ux_status": ux.get("status"),
+                "ux_executed": ux_executed,
+                "ux_schema_version": ux.get("schema_version"),
+                "ok": proof_ok,
+            }
             self.emit({"type": "proof", "gate": "G4",
                        "runtime_status": runtime.get("status"),
                        "ux_status": ux.get("status")})
         except Exception as exc:  # evidence-only -- a hiccup never fails the walk
+            self._last_runtime_ok = False
+            self.state.release_evidence["runtime_proof"] = {
+                "status": "error",
+                "stack": stack,
+                "ux_required": ux_required,
+                "ux_status": "unmeasurable" if ux_required else "skipped",
+                "ux_executed": False,
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
             self.emit({"type": "system",
                        "text": f"Runtime proof skipped ({type(exc).__name__}: {exc})."})
 
@@ -1672,26 +2537,59 @@ class GateOrchestrator:
         blocks readiness -- an "approve with conditions" cannot silently ship."""
         return [(g, t) for g, t in self.state.conditions.items()]
 
-    def _verify_g5_release(self) -> dict:
+    def _prior_gate_release_reasons(self) -> list[str]:
+        """Fail-closed G5 prerequisites for every prior gate.
+
+        Both durable delivery state membership and canonical on-disk strict
+        validation are required. State alone can be stale/corrupt; files alone
+        can belong to a different walk. The strict validator covers presence,
+        current hashes, approved verdicts, audit linkage, authorized roles, and
+        durable revocation.
+        """
+        reasons: list[str] = []
+        for gate in GATE_ORDER[:-1]:
+            if gate not in self.state.signed:
+                reasons.append(f"{gate}: missing from this delivery's signed state")
+            try:
+                strict = sign.check_gate_signed_strict(
+                    self.repo_root, gate, project_id=self.project_id)
+            except Exception as exc:
+                reasons.append(
+                    f"{gate}: canonical strict signature validation errored "
+                    f"({type(exc).__name__}: {exc})"
+                )
+                continue
+            if not strict.signed:
+                details = list(strict.reasons or [])
+                if details:
+                    reasons.extend(str(detail) for detail in details)
+                else:
+                    reasons.append(f"{gate}: canonical strict signature validation failed")
+        return reasons
+
+    def _verify_g5_release(
+        self, *, pending_conditions: Optional[dict[str, str]] = None
+    ) -> dict:
         """Fix 4: a DETERMINISTIC release verifier that decides delivery
         READINESS at G5. Readiness must reflect real verification, never merely
         the absence of waivers. Returns ``{"ok": bool, "reasons": [str]}``.
 
-        Not-ready (the delivery still COMPLETES, but is honestly reported as
-        not ready-to-ship) when ANY of:
+        Not-ready (G5 remains unsigned and open for remediation) when ANY of:
           * a gate was WAIVED (advanced without a signature); or
           * an approve-with-conditions is UNRESOLVED (Fix 5); or
           * there is no built product to ship (no real product source on disk
             -- never report ready-to-ship over an empty/stub repo); or
-          * in the PRODUCTION profile, the runtime proof did not pass.
+          * in the PRODUCTION profile, security evidence is not exactly passed;
+            or the runtime proof did not pass.
 
-        # INTEGRATE: strict validator -- when sign.is_gate_signed_strict lands,
-        # also require every G0..G5 signature to validate strictly here.
         """
         reasons: list[str] = []
+        release_digest = ""
         if self.state.waived:
             reasons.append("waived gate(s): " + ", ".join(map(str, self.state.waived)))
         unresolved = self._unresolved_conditions()
+        if pending_conditions:
+            unresolved.extend((g, t) for g, t in pending_conditions.items())
         if unresolved:
             reasons.append("unresolved condition(s) on gate(s): "
                            + ", ".join(g for g, _ in unresolved))
@@ -1701,9 +2599,727 @@ class GateOrchestrator:
             has_product = False
         if not has_product:
             reasons.append("no built product source on disk to ship")
-        if self.profile == "production" and not getattr(self, "_last_runtime_ok", False):
-            reasons.append("production profile: runtime proof did not pass")
-        return {"ok": not reasons, "reasons": reasons}
+        # A real production G5 walk must prove every prior gate twice: membership
+        # in this delivery state plus canonical strict on-disk signatures. The
+        # explicit custom-sign test seam owns its own gate truth. Direct
+        # readiness probes at another gate remain useful and do not claim a G5
+        # release decision.
+        real_g5_walk = self._enforce_outcome_gate and self.state.current_gate == "G5"
+        if real_g5_walk:
+            reasons.extend(self._prior_gate_release_reasons())
+            # Unconditional: corrupted state cannot omit G4 to skip tree proof.
+            g4 = self._g4_verification_for_current_tree()
+            if not g4.get("ok"):
+                reasons.append("G4 product proof is not current: "
+                               + str(g4.get("reason") or "verification missing"))
+            else:
+                attribution = g4.get("attribution")
+                if isinstance(attribution, dict):
+                    release_digest = str(attribution.get("release_digest") or "")
+        elif "G4" in self.state.signed:
+            # Non-production/direct seam: still bind when the caller claims G4,
+            # without imposing production's canonical-signature contract on a
+            # custom test signer.
+            g4 = self._g4_verification_for_current_tree()
+            if not g4.get("ok"):
+                reasons.append("G4 product proof is not current: "
+                               + str(g4.get("reason") or "verification missing"))
+            else:
+                attribution = g4.get("attribution")
+                if isinstance(attribution, dict):
+                    release_digest = str(attribution.get("release_digest") or "")
+        if real_g5_walk and not release_digest:
+            reasons.append("G4 proof does not expose a bound release-tree digest")
+        if self.profile == "production":
+            security = self.state.release_evidence.get("security_gate")
+            if (
+                not isinstance(security, dict)
+                or str(security.get("status") or "") != "passed"
+            ):
+                reasons.append("production profile: security gate did not pass")
+            runtime = self.state.release_evidence.get("runtime_proof")
+            if (
+                not isinstance(runtime, dict)
+                or runtime.get("status") != "passed"
+                or runtime.get("ok") is not True
+                or not getattr(self, "_last_runtime_ok", False)
+            ):
+                reasons.append("production profile: runtime proof did not pass")
+            persisted_ux_required = (
+                runtime.get("ux_required") if isinstance(runtime, dict) else None
+            )
+            if type(persisted_ux_required) is not bool:
+                reasons.append(
+                    "production profile: explicit UX requirement evidence is missing"
+                )
+                persisted_ux_required = True
+            current_ux_required = True
+            try:
+                from .proof import requires_browser_ux_proof
+                from .stacks import detect_profile
+
+                current_stack = detect_profile(self.repo_root)
+                current_ux_required = requires_browser_ux_proof(
+                    self.repo_root, current_stack,
+                )
+                if (
+                    isinstance(runtime, dict)
+                    and str(runtime.get("stack") or "") != current_stack
+                ):
+                    reasons.append(
+                        "production profile: runtime proof stack no longer matches the product"
+                    )
+                if persisted_ux_required is not current_ux_required:
+                    reasons.append(
+                        "production profile: persisted UX requirement no longer matches the product"
+                    )
+            except Exception as exc:
+                reasons.append(
+                    "production profile: browser UX requirement could not be determined "
+                    f"({type(exc).__name__}: {exc})"
+                )
+            ux_required = bool(persisted_ux_required or current_ux_required)
+            if ux_required:
+                ux_status = runtime.get("ux_status") if isinstance(runtime, dict) else None
+                ux_executed = (
+                    runtime.get("ux_executed") if isinstance(runtime, dict) else None
+                )
+                ux_schema = (
+                    runtime.get("ux_schema_version")
+                    if isinstance(runtime, dict) else None
+                )
+                if ux_status != "passed":
+                    reasons.append(
+                        "production profile: browser UX proof did not pass"
+                    )
+                if ux_executed is not True:
+                    reasons.append(
+                        "production profile: browser UX proof was not executed"
+                    )
+                if ux_schema != "signalos.ux-browser-proof.v1":
+                    reasons.append(
+                        "production profile: browser UX proof schema is missing or invalid"
+                    )
+        return {
+            "ok": not reasons,
+            "reasons": reasons,
+            "release_digest": release_digest,
+            "checked_at": self._release_timestamp(),
+        }
+
+    @staticmethod
+    def _release_timestamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _cancel_at_boundary(self, boundary: str) -> Optional[dict]:
+        """Let an observed cancel win before an irreversible operation."""
+        try:
+            requested = bool(self.cancel_check())
+        except Exception:
+            requested = False
+        if not requested:
+            return None
+        self.state.status = "cancelled"
+        self.state.last_outcome = {
+            "gate": self.state.current_gate,
+            "ok": False,
+            "reason": f"cancellation observed before {boundary}",
+            "loop_status": "cancelled",
+        }
+        self._persist()
+        self.emit({
+            "type": "cancelled",
+            "run_id": self.state.run_id,
+            "gate": self.state.current_gate,
+            "reason": self.state.last_outcome["reason"],
+        })
+        self._release_delivery_lock()
+        return {
+            "run_id": self.state.run_id,
+            "gate": self.state.current_gate,
+            "status": "cancelled",
+            "reason": self.state.last_outcome["reason"],
+        }
+
+    def _release_digest_from_g4(self) -> str:
+        """The exact shippable-tree digest bound by current G4 evidence."""
+        proof = self._g4_verification_for_current_tree()
+        attribution = proof.get("attribution") if isinstance(proof, dict) else None
+        if not isinstance(attribution, dict):
+            return ""
+        return str(attribution.get("release_digest") or "")
+
+    def _verify_completed_g5_release(self) -> dict:
+        """Recompute release truth after G5 signing and on every complete resume.
+
+        Persisted ``release_verification.ok`` is deliberately ignored.  The
+        current bytes, conditions/runtime policy, delivery-state membership,
+        and canonical strict signatures for *all* G0-G5 gates must still agree.
+        """
+        checked = self._verify_g5_release()
+        reasons = list(checked.get("reasons") or [])
+        if self.state.current_gate != "G5":
+            reasons.append(
+                f"terminal delivery gate is {self.state.current_gate!r}, expected 'G5'"
+            )
+        for gate in GATE_ORDER:
+            if gate not in self.state.signed:
+                reasons.append(f"{gate}: missing from this delivery's signed state")
+            try:
+                strict = sign.check_gate_signed_strict(
+                    self.repo_root, gate, project_id=self.project_id)
+            except Exception as exc:
+                reasons.append(
+                    f"{gate}: canonical strict signature validation errored "
+                    f"({type(exc).__name__}: {exc})"
+                )
+                continue
+            if not strict.signed:
+                details = list(strict.reasons or [])
+                reasons.extend(
+                    (str(detail) for detail in details)
+                    if details
+                    else [f"{gate}: canonical strict signature validation failed"]
+                )
+        # Preserve order while collapsing repeated reasons from the pre-sign
+        # verifier and the unconditional all-gates completion check.
+        reasons = list(dict.fromkeys(str(reason) for reason in reasons if reason))
+        digest = self._release_digest_from_g4()
+        if not digest:
+            reasons.append("G4 proof does not expose a bound release-tree digest")
+        return {
+            "ok": not reasons,
+            "reasons": reasons,
+            "release_digest": digest,
+            "checked_at": self._release_timestamp(),
+        }
+
+    def _release_finalization_marker(self) -> dict:
+        marker = self.state.release_evidence.get("release_finalization")
+        return marker if isinstance(marker, dict) else {}
+
+    def _release_marker_reasons(
+        self, marker: dict, *, release_digest: str = ""
+    ) -> list[str]:
+        """Validate that a finalization receipt belongs to this exact walk."""
+        reasons: list[str] = []
+        if marker.get("schema_version") != "signalos.release-finalization.v1":
+            reasons.append("release finalization marker schema is missing or invalid")
+        if str(marker.get("run_id") or "") != self.state.run_id:
+            reasons.append("release finalization marker run_id mismatch")
+        if str(marker.get("project_id") or "") != self.project_id:
+            reasons.append("release finalization marker project_id mismatch")
+        if str(marker.get("profile") or "") != self.profile:
+            reasons.append("release finalization marker profile mismatch")
+        status = str(marker.get("status") or "")
+        if status not in {"pending", "succeeded"}:
+            reasons.append(f"release finalization marker status {status!r} is invalid")
+        phase = str(marker.get("phase") or "")
+        if phase not in ({"signed"} if status == "succeeded" else {"verified", "signed"}):
+            reasons.append(
+                f"release finalization marker phase {phase!r} is invalid for {status!r}"
+            )
+        bound = str(marker.get("release_digest") or "")
+        if not bound:
+            reasons.append("release finalization marker has no release-tree digest")
+        if release_digest and bound != release_digest:
+            reasons.append("release finalization marker release-tree digest mismatch")
+        if status == "succeeded":
+            outcome = marker.get("outcome")
+            if not isinstance(outcome, dict):
+                reasons.append("successful release marker has no finalizer outcome")
+            else:
+                reasons.extend(self._release_success_reasons(outcome, bound))
+        return reasons
+
+    def _release_success_reasons(
+        self, outcome: dict, release_digest: str,
+    ) -> list[str]:
+        """Validate the durable local and remote receipts for a shipped release."""
+        reasons: list[str] = []
+        if str(outcome.get("status") or "") != "succeeded":
+            reasons.append("release finalizer outcome is not succeeded")
+
+        seal = outcome.get("seal")
+        if not isinstance(seal, dict) or seal.get("status") != "ok":
+            reasons.append("successful release has no valid integrity-seal outcome")
+        else:
+            if str(seal.get("project_id") or "") != self.project_id:
+                reasons.append("integrity seal project_id mismatch")
+            wave = str(seal.get("wave") or "")
+            seal_rel = str(seal.get("path") or "")
+            seal_sha = str(seal.get("sha256") or "").lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", seal_sha):
+                reasons.append("integrity seal receipt has no valid sha256")
+            try:
+                from ..commands.seal import (
+                    compute_seal,
+                    seal_path as canonical_seal_path,
+                    verify_seal,
+                )
+
+                expected_path = canonical_seal_path(
+                    self.repo_root, wave, project_id=self.project_id,
+                )
+                expected_rel = expected_path.relative_to(
+                    self.repo_root.resolve()
+                ).as_posix()
+                if seal_rel != expected_rel:
+                    reasons.append(
+                        "integrity seal receipt path is not the exact canonical "
+                        "wave/project path"
+                    )
+                # Read only the canonical path.  A receipt-controlled path is
+                # never an alternate authority source, even inside .signalos.
+                actual = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+                if seal_sha and actual != seal_sha:
+                    reasons.append("integrity seal receipt hash mismatch")
+                canonical = compute_seal(
+                    self.repo_root, project_id=self.project_id,
+                )
+                expected_count = len(canonical)
+                verification = verify_seal(
+                    self.repo_root, wave, project_id=self.project_id,
+                )
+                if verification.get("status") != "ok":
+                    details = list(verification.get("errors") or [])
+                    mismatch_count = len(verification.get("mismatches") or [])
+                    suffix = (
+                        ": " + "; ".join(map(str, details[:4]))
+                        if details else (
+                            f" ({mismatch_count} artifact mismatch(es))"
+                            if mismatch_count else ""
+                        )
+                    )
+                    reasons.append(
+                        "integrity seal semantic verification failed" + suffix
+                    )
+                if verification.get("checked") != expected_count:
+                    reasons.append(
+                        "integrity seal did not verify the complete canonical artifact set"
+                    )
+                if seal.get("total") != expected_count:
+                    reasons.append(
+                        "integrity seal receipt total does not match the canonical artifact set"
+                    )
+                expected_sealed = sum(1 for entry in canonical if entry.get("exists"))
+                if seal.get("sealed") != expected_sealed:
+                    reasons.append(
+                        "integrity seal receipt sealed count does not match current artifacts"
+                    )
+            except (OSError, ValueError, ReleaseTreeError) as exc:
+                reasons.append(f"integrity seal receipt is unreadable or unsafe ({exc})")
+
+        commit = outcome.get("commit")
+        commit_sha = ""
+        if not isinstance(commit, dict) or commit.get("status") not in {
+            "committed", "already-committed",
+        }:
+            reasons.append("successful release has no committed Git outcome")
+        else:
+            commit_sha = str(commit.get("sha") or "").lower()
+            if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit_sha):
+                reasons.append("release commit receipt has no valid object id")
+            else:
+                receipt = sign._release_commit_at_head(
+                    self.repo_root,
+                    f"{self.project_id}:{self.state.run_id}",
+                    release_digest,
+                    self.project_id,
+                )
+                if receipt != commit_sha:
+                    reasons.append("release commit receipt no longer matches exact HEAD bytes")
+
+        push = outcome.get("push")
+        if not isinstance(push, dict) or push.get("status") != "ok":
+            reasons.append("successful release has no successful push outcome")
+        else:
+            if push.get("verified") is not True:
+                reasons.append("remote push was not read back and verified")
+            if str(push.get("remote") or "") != "origin":
+                reasons.append("remote push receipt is not bound to origin")
+            ref = str(push.get("ref") or "")
+            if not ref.startswith("refs/heads/") or ref == "refs/heads/":
+                reasons.append("remote push receipt has no exact branch ref")
+            if str(push.get("sha") or "").lower() != commit_sha:
+                reasons.append("remote push receipt commit does not match release commit")
+            remote_hash = str(push.get("remote_url_sha256") or "").lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", remote_hash):
+                reasons.append("remote push receipt has no bound remote URL digest")
+            elif (
+                commit_sha
+                and ref.startswith("refs/heads/")
+                and ref != "refs/heads/"
+            ):
+                # A persisted receipt is only a claim about a past push.  On
+                # every completed resume, independently re-read the configured
+                # origin and its exact branch ref so changing origin or moving
+                # the remote branch invalidates readiness.  Never include Git
+                # stdout/stderr here: either may contain credential-bearing
+                # remote URLs.
+                try:
+                    configured = subprocess.run(
+                        ["git", "remote", "get-url", "origin"],
+                        cwd=str(self.repo_root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    configured = None
+                remote_url = (
+                    (configured.stdout or "").strip()
+                    if configured is not None and configured.returncode == 0
+                    else ""
+                )
+                if not remote_url:
+                    reasons.append("origin remote URL could not be verified")
+                elif (
+                    hashlib.sha256(remote_url.encode("utf-8")).hexdigest()
+                    != remote_hash
+                ):
+                    reasons.append("origin remote URL no longer matches release receipt")
+
+                try:
+                    remote = subprocess.run(
+                        ["git", "ls-remote", "--exit-code", "origin", ref],
+                        cwd=str(self.repo_root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=60,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    remote = None
+                remote_rows: list[str] = []
+                if remote is not None and remote.returncode == 0:
+                    for line in (remote.stdout or "").splitlines():
+                        fields = line.split()
+                        if len(fields) == 2 and fields[1] == ref:
+                            remote_rows.append(fields[0].lower())
+                if remote_rows != [commit_sha]:
+                    reasons.append("origin remote ref no longer matches release commit")
+        return list(dict.fromkeys(reasons))
+
+    def _set_release_verification(self, result: dict) -> None:
+        self.state.release_evidence["release_verification"] = {
+            "ok": bool(result.get("ok")),
+            "reasons": list(result.get("reasons") or []),
+            "release_digest": str(result.get("release_digest") or ""),
+            "checked_at": str(result.get("checked_at") or self._release_timestamp()),
+        }
+
+    def _g5_finalization_lock_path(self) -> Path:
+        # Git index/HEAD/origin and integrity seals are workspace-global even
+        # though delivery locks are project-scoped. Serialize finalizers across
+        # every virtual project in this worktree.
+        return safe_control_path(
+            self.repo_root, ".signalos", "locks", "g5-release.lock",
+        )
+
+    def _try_acquire_g5_finalization_lock(self) -> Optional[str]:
+        path = self._g5_finalization_lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        token = uuid.uuid4().hex
+        for attempt in range(2):
+            tmp = path.parent / f".g5-release-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+            try:
+                with tmp.open("x", encoding="utf-8") as handle:
+                    json.dump({
+                        "token": token,
+                        "run_id": self.state.run_id,
+                        "project_id": self.project_id,
+                        "pid": os.getpid(),
+                        "host": _hostname(),
+                        "acquired_at": self._release_timestamp(),
+                    }, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                try:
+                    os.link(tmp, path)
+                    return token
+                except FileExistsError:
+                    pass
+            except FileExistsError:
+                pass
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                owner = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                owner = {}
+            if str(owner.get("host") or "") == _hostname():
+                live = _pid_is_alive(owner.get("pid"))
+            else:
+                acquired = _parse_iso_utc(owner.get("acquired_at"))
+                age = ((datetime.now(timezone.utc) - acquired).total_seconds()
+                       if acquired is not None else _LOCK_TTL_SECONDS + 1)
+                live = age < _LOCK_TTL_SECONDS
+            if attempt == 0 and not live:
+                try:
+                    path.unlink()
+                except OSError:
+                    return None
+                continue
+            return None
+        return None
+
+    def _release_g5_finalization_lock(self, token: Optional[str]) -> None:
+        if not token:
+            return
+        path = self._g5_finalization_lock_path()
+        try:
+            owner = json.loads(path.read_text(encoding="utf-8"))
+            if owner.get("token") == token:
+                path.unlink()
+        except (OSError, ValueError, TypeError):
+            return
+
+    def _finalize_pending_g5_release(self) -> dict:
+        """Advance one durable, idempotent G5 finalization attempt."""
+        marker = self._release_finalization_marker()
+        if marker.get("status") != "pending":
+            return dict(marker)
+        cancelled = self._cancel_at_boundary("G5 finalization")
+        if cancelled is not None:
+            marker = dict(marker)
+            marker["last_attempt"] = {
+                "status": "cancelled",
+                "outcome": cancelled,
+                "at": self._release_timestamp(),
+            }
+            self.state.release_evidence["release_finalization"] = marker
+            self._persist()
+            return marker
+        token = self._try_acquire_g5_finalization_lock()
+        if token is None:
+            pending = dict(marker)
+            pending["reason"] = "another workspace release finalizer is active"
+            return pending
+        try:
+            truth = self._verify_completed_g5_release()
+            marker_errors = self._release_marker_reasons(
+                marker, release_digest=str(truth.get("release_digest") or ""),
+            )
+            if marker_errors:
+                truth = dict(truth)
+                truth["ok"] = False
+                truth["reasons"] = list(dict.fromkeys(
+                    list(truth.get("reasons") or []) + marker_errors
+                ))
+            self._set_release_verification(truth)
+            marker = dict(marker)
+            marker["attempts"] = int(marker.get("attempts") or 0) + 1
+            marker["verification"] = {
+                "ok": bool(truth.get("ok")),
+                "reasons": list(truth.get("reasons") or []),
+                "release_digest": str(truth.get("release_digest") or ""),
+                "checked_at": truth.get("checked_at"),
+            }
+            marker["updated_at"] = self._release_timestamp()
+            self.state.release_evidence["release_finalization"] = marker
+            # This pending checkpoint precedes every seal/commit/push side
+            # effect. If it cannot be made durable, nothing is released.
+            self._persist()
+            if not truth.get("ok"):
+                marker["reason"] = "current release truth failed before finalization"
+                marker["status"] = "pending"
+                marker["last_attempt"] = {
+                    "status": "failed",
+                    "reasons": list(truth.get("reasons") or []),
+                    "at": self._release_timestamp(),
+                }
+                marker["updated_at"] = self._release_timestamp()
+                self.state.release_evidence["release_finalization"] = marker
+                self.state.status = "blocked"
+                self.state.last_outcome = {
+                    "gate": "G5",
+                    "ok": False,
+                    "reason": marker["reason"],
+                    "loop_status": "release-verification-failed",
+                }
+                self._persist()
+                self.emit({
+                    "type": "release_finalization_failed",
+                    "gate": "G5",
+                    "reasons": list(truth.get("reasons") or []),
+                })
+                return dict(marker)
+
+            # Closeout is part of the release commit and therefore must exist
+            # before the finalizer stages/commits/pushes the tree. It is safe to
+            # regenerate on a pending resume.
+            self._finalize_closeout(ready=True)
+            cancelled = self._cancel_at_boundary("release seal")
+            if cancelled is not None:
+                marker["last_attempt"] = {
+                    "status": "cancelled",
+                    "outcome": cancelled,
+                    "at": self._release_timestamp(),
+                }
+                self.state.release_evidence["release_finalization"] = marker
+                self._persist()
+                return dict(marker)
+            try:
+                outcome = sign.finalize_g5_release(
+                    self.repo_root,
+                    release_id=f"{self.project_id}:{self.state.run_id}",
+                    release_digest=str(truth.get("release_digest") or ""),
+                    project_id=self.project_id,
+                    cancel_check=self.cancel_check,
+                )
+            except Exception as exc:
+                outcome = {
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            if not isinstance(outcome, dict):
+                outcome = {"status": "failed", "reason": "finalizer returned no outcome"}
+            status = str(outcome.get("status") or "failed")
+            if status not in {"succeeded", "deferred", "failed", "cancelled"}:
+                outcome = dict(outcome)
+                outcome["reason"] = f"unknown finalizer status {status!r}"
+                status = "failed"
+            if status == "succeeded":
+                receipt_errors = self._release_success_reasons(
+                    outcome, str(truth.get("release_digest") or ""),
+                )
+                if receipt_errors:
+                    outcome = dict(outcome)
+                    outcome.update({
+                        "status": "failed",
+                        "reason": "release finalizer returned an invalid success receipt",
+                        "receipt_errors": receipt_errors,
+                    })
+                    status = "failed"
+            marker["status"] = "succeeded" if status == "succeeded" else "pending"
+            marker["last_attempt"] = {
+                "status": status,
+                "outcome": outcome,
+                "at": self._release_timestamp(),
+            }
+            if status == "succeeded":
+                marker["outcome"] = outcome
+            elif status == "cancelled":
+                self.state.status = "cancelled"
+            marker["updated_at"] = self._release_timestamp()
+            self.state.release_evidence["release_finalization"] = marker
+            self._persist()
+            event = {
+                "succeeded": "release_finalized",
+                "deferred": "release_finalization_deferred",
+                "failed": "release_finalization_failed",
+                "cancelled": "cancelled",
+            }[status]
+            self.emit({"type": event, "gate": "G5", "outcome": outcome})
+            return dict(marker)
+        finally:
+            self._release_g5_finalization_lock(token)
+
+    def _recover_g5_release(self) -> dict:
+        """Crash recovery used only by an explicit delivery resume.
+
+        A pending/verified marker plus a canonical strict G5 signature proves a
+        crash occurred after signing but before the terminal checkpoint; in that
+        one case state is reconciled instead of signing twice. Complete resumes
+        always recompute current truth, even when finalization already succeeded.
+        """
+        marker = self._release_finalization_marker()
+        eligible_signed_crash = (
+            marker.get("status") == "pending"
+            and marker.get("phase") in {"verified", "signed"}
+            and self.state.status in {"active", "awaiting-verdict"}
+        )
+        if eligible_signed_crash:
+            reasons: list[str] = []
+            if self.state.current_gate != "G5":
+                reasons.append("pending release is not positioned at G5")
+            try:
+                strict_g5 = sign.check_gate_signed_strict(
+                    self.repo_root, "G5", project_id=self.project_id,
+                    require_release_proof=False,
+                )
+            except Exception as exc:
+                strict_g5 = None
+                reasons.append(
+                    "G5 canonical strict signature validation errored "
+                    f"({type(exc).__name__}: {exc})"
+                )
+            if strict_g5 is None or not strict_g5.signed:
+                if strict_g5 is not None:
+                    reasons.extend(str(reason) for reason in strict_g5.reasons or [])
+                # No complete G5 signature means there is nothing to reconcile;
+                # leave the gate open for a normal, freshly verified approval.
+                return {**marker, "recovery_reasons": reasons}
+            current = self._verify_g5_release()
+            reasons.extend(str(reason) for reason in current.get("reasons") or [])
+            expected_digest = str(marker.get("release_digest") or "")
+            current_digest = str(current.get("release_digest") or "")
+            reasons.extend(self._release_marker_reasons(
+                marker, release_digest=current_digest,
+            ))
+            if not expected_digest or current_digest != expected_digest:
+                reasons.append("pending release digest no longer matches current G4 proof")
+            if reasons:
+                marker = dict(marker)
+                marker.update({
+                    "status": "failed",
+                    "reason": "post-sign crash recovery validation failed",
+                    "recovery_reasons": list(dict.fromkeys(reasons)),
+                    "updated_at": self._release_timestamp(),
+                })
+                self.state.release_evidence["release_finalization"] = marker
+                self._set_release_verification({
+                    "ok": False,
+                    "reasons": marker["recovery_reasons"],
+                    "release_digest": current_digest,
+                    "checked_at": self._release_timestamp(),
+                })
+                self._persist()
+                return marker
+            if "G5" not in self.state.signed:
+                self.state.signed.append("G5")
+            self.state.status = "complete"
+            marker = dict(marker)
+            marker.update({
+                "phase": "signed",
+                "updated_at": self._release_timestamp(),
+            })
+            self.state.release_evidence["release_finalization"] = marker
+            self._persist()
+
+        if self.state.status == "complete":
+            # Unconditional recomputation closes the cached-ok resume bypass.
+            truth = self._verify_completed_g5_release()
+            marker = self._release_finalization_marker()
+            marker_errors = (
+                self._release_marker_reasons(
+                    marker,
+                    release_digest=str(truth.get("release_digest") or ""),
+                )
+                if marker else []
+            )
+            if marker_errors:
+                truth = dict(truth)
+                truth["ok"] = False
+                truth["reasons"] = list(dict.fromkeys(
+                    list(truth.get("reasons") or []) + marker_errors
+                ))
+            self._set_release_verification(truth)
+            self._persist()
+            if marker.get("status") == "pending" and not marker_errors:
+                return self._finalize_pending_g5_release()
+            return {
+                **marker,
+                "verification": self.state.release_evidence.get(
+                    "release_verification", {}
+                ),
+            }
+        return dict(self._release_finalization_marker())
 
     def _finalize_closeout(self, *, ready: bool) -> None:
         """CONVERGENCE (Claim 2): produce the delivery CLOSEOUT via the SAME
@@ -1746,7 +3362,7 @@ class GateOrchestrator:
                        "text": f"Closeout skipped ({type(exc).__name__}: {exc})."})
 
     def _state_dir(self) -> Path:
-        return self.repo_root / ".signalos" / "agent-runs" / self.state.run_id
+        return agent_run_dir(self.repo_root, self.state.run_id)
 
     def _persist(self) -> None:
         # Fix 6: persistence is a DURABILITY checkpoint the walk depends on
@@ -1757,8 +3373,19 @@ class GateOrchestrator:
         # persist hiccup handle it explicitly; the checkpoint path does not.
         d = self._state_dir()
         d.mkdir(parents=True, exist_ok=True)
-        (d / "delivery.json").write_text(
-            json.dumps(asdict(self.state), indent=2), encoding="utf-8")
+        target = d / "delivery.json"
+        tmp = d / f".delivery-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+        try:
+            with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(asdict(self.state), indent=2))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, target)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def resume_delivery(
@@ -1770,29 +3397,66 @@ def resume_delivery(
     enforcement_provider: Optional[EnforcementProvider] = None,
     sign_fn: Optional[Callable[..., list]] = None,
     signer: str = "foundry-agent",
-    profile: str = DEFAULT_PROFILE,
+    profile: str | None = None,
+    legacy_profile: str = DEFAULT_PROFILE,
+    recover_pending_release: bool = False,
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> "GateOrchestrator":
     """Reconstruct a GateOrchestrator from its persisted delivery.json (INV-5).
 
     Used after a sidecar crash/restart to resume from the last checkpoint.
-    Raises FileNotFoundError if no state was persisted. *profile* is an engine
-    config (not delivery state), so the caller re-declares it on resume; it
-    defaults to the SAFE benchmark profile just like a fresh orchestrator."""
-    state_file = Path(repo_root) / ".signalos" / "agent-runs" / run_id / "delivery.json"
+    Raises FileNotFoundError if no state was persisted.  The persisted profile
+    is authoritative.  An optional *profile* is an expected value and must
+    match it; *legacy_profile* is used only for pre-profile state files.
+    ``recover_pending_release`` is reserved for the explicit agent-resume
+    surface: it recomputes complete-run truth and retries only a durable pending
+    G5 finalization. Read-only/one-shot reconstruction never pushes implicitly.
+    """
+    root = Path(repo_root)
+    requested_run_id = validate_run_id(run_id)
+    run_dir = agent_run_dir(root, requested_run_id)
+    state_file = safe_control_path(
+        root, ".signalos", "agent-runs", requested_run_id, "delivery.json",
+    )
+    if state_file.parent != run_dir:
+        raise ValueError("persisted delivery state is not bound to its run directory")
     data = json.loads(state_file.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("persisted delivery state must be a JSON object")
+    if str(data.get("run_id") or "") != requested_run_id:
+        raise ValueError("persisted delivery run_id does not match the requested run_id")
+    has_persisted_profile = "profile" in data
+    persisted_raw = data.get("profile")
+    if not has_persisted_profile:
+        persisted_profile = validate_orchestrator_profile(
+            profile if profile is not None else legacy_profile
+        )
+    else:
+        persisted_profile = validate_orchestrator_profile(str(persisted_raw))
+        if profile is not None:
+            expected_profile = validate_orchestrator_profile(profile)
+            if expected_profile != persisted_profile:
+                raise ValueError(
+                    "resume profile mismatch: persisted "
+                    f"{persisted_profile!r}, requested {expected_profile!r}"
+                )
+    persisted_signer = str(data.get("signer") or signer).strip() or "foundry-agent"
     orch = GateOrchestrator(
         repo_root, adapter, emit,
         enforcement_provider=enforcement_provider, sign_fn=sign_fn,
-        signer=signer, run_id=run_id, prompt=data.get("prompt", ""),
+        signer=persisted_signer, run_id=run_id, prompt=data.get("prompt", ""),
         # §3.2: restore the persisted project binding so a resumed delivery
         # keeps signing/generating in the same namespace it started in.
         # Older persisted states predate the field -> "default".
         project_id=str(data.get("project_id") or "default"),
-        profile=profile,
+        profile=persisted_profile,
+        cancel_check=cancel_check,
     )
     st = orch.state
     st.current_gate = data.get("current_gate", "G0")
     st.status = data.get("status", "active")
+    if st.status == "blocked":
+        orch._enforce_blocked_checkpoint = True
     st.rework = dict(data.get("rework", {}))
     st.rejections = dict(data.get("rejections", {}))
     st.signed = list(data.get("signed", []))
@@ -1805,6 +3469,46 @@ def resume_delivery(
     # Fix 5 conditions + Fix 1 last_outcome - absent from older persisted states.
     st.conditions = dict(data.get("conditions", {}))
     st.last_outcome = dict(data.get("last_outcome", {}))
+    st.profile = persisted_profile
+    st.signer = persisted_signer
+    st.release_evidence = dict(data.get("release_evidence", {}))
+    g4_verify = st.release_evidence.get("g4_verify")
+    orch._g4_verify = dict(g4_verify) if isinstance(g4_verify, dict) else None
+    runtime = st.release_evidence.get("runtime_proof")
+    orch._last_runtime_ok = bool(
+        isinstance(runtime, dict)
+        and runtime.get("ok") is True
+        and runtime.get("status") == "passed"
+        and (
+            runtime.get("ux_required") is False
+            or (
+                runtime.get("ux_required") is True
+                and runtime.get("ux_status") == "passed"
+                and runtime.get("ux_executed") is True
+                and runtime.get("ux_schema_version")
+                == "signalos.ux-browser-proof.v1"
+            )
+        )
+    )
+    if not has_persisted_profile or not str(data.get("signer") or "").strip():
+        # One-time fail-closed migration for legacy checkpoints.  If this write
+        # cannot be made, resume surfaces the failure instead of running with an
+        # identity/profile that would be forgotten again on the next restart.
+        orch._persist()
+    terminal = st.status in {"complete", "stopped", "cancelled"}
+    if not terminal or recover_pending_release:
+        blocked = orch._acquire_delivery_lock()
+        if blocked is not None:
+            raise RuntimeError(str(blocked.get("reason") or "delivery lock is held"))
+    if recover_pending_release:
+        try:
+            orch._recover_g5_release()
+        except Exception:
+            # A failed reconstruction is never registered as the lock owner.
+            orch._release_delivery_lock()
+            raise
+        if orch.state.status in {"complete", "stopped", "cancelled"}:
+            orch._release_delivery_lock()
     return orch
 
 

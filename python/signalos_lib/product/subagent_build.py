@@ -43,11 +43,13 @@ __all__ = [
     "run_subagent_driven_build",
     "task_dod_violations",
     "is_vacuous_test",
+    "BuildCancelled",
 ]
 
 import os
 import re
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -73,6 +75,10 @@ RunAgent = Callable[[str, Any, str, str], str]
 # gate. only_test=None runs the FULL build+suite (integration); a path runs just
 # that one plan test (the per-task green gate, so errors never pile up).
 BuildCheck = Callable[..., "tuple[bool, str]"]
+
+
+class BuildCancelled(RuntimeError):
+    """Raised internally when the parent delivery cancellation is observed."""
 
 # Verdict token the reviewer must end its report with. Parsed fail-closed but
 # the loop is budget-bounded, and the objective build gate is the real wall.
@@ -1186,6 +1192,8 @@ def _default_run_agent(
     project_id: str,
     signed_gates: list[int],
     usage: Optional[dict] = None,
+    parent_run_id: str = "",
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> RunAgent:
     """Real dispatcher: each call is a FRESH AgentLoop (fresh run_id, fresh
     context) -- the "fresh subagent per task/review" the bundled skill requires,
@@ -1196,6 +1204,8 @@ def _default_run_agent(
     rev_budget = resolve_build_reviewer_tool_budget()
 
     def run(role: str, adapter: Any, system_prompt: str, user_message: str) -> str:
+        if cancel_check is not None and cancel_check():
+            raise BuildCancelled("parent delivery cancellation requested")
         limit = rev_budget if role.endswith("reviewer") else impl_budget
         loop = AgentLoop(
             # Reviewers get a READ-ONLY tool set (no write_file / edit_file /
@@ -1204,7 +1214,10 @@ def _default_run_agent(
             adapter=_loop_adapter_for_role(role, adapter),
             repo_root=repo_root,
             enforcement_provider=enforcement_provider,
+            run_id=(f"{parent_run_id[:48]}-g4-{uuid.uuid4().hex[:12]}"
+                    if parent_run_id else None),
             emit=emit,
+            cancel_check=cancel_check,
             execution_context="delivery",
             active_gate="G4",
             project_id=project_id,
@@ -1212,6 +1225,8 @@ def _default_run_agent(
             tool_call_limit=limit,
         )
         res = loop.run(system_prompt, user_message)
+        if res.status == "cancelled":
+            raise BuildCancelled("parent delivery cancelled during G4 subagent")
         if usage is not None:
             if res.tokens_in is not None:
                 usage["in"] = (usage.get("in") or 0) + res.tokens_in
@@ -1641,6 +1656,8 @@ def run_subagent_driven_build(
     repair_cycles: int | None = None,
     run_agent: Optional[RunAgent] = None,
     build_check: Optional[BuildCheck] = None,
+    parent_run_id: str = "",
+    cancel_check: Optional[Callable[[], bool]] = None,
 ) -> LoopResult:
     """Execute Gate 4 by EXECUTING THE SIGNED PLAN, test-first and iteratively.
 
@@ -1671,7 +1688,7 @@ def run_subagent_driven_build(
     usage: dict = {"in": None, "out": None}
     run = run_agent or _default_run_agent(
         repo_root, enforcement_provider, emit, project_id, signed_gates,
-        usage=usage)
+        usage=usage, parent_run_id=parent_run_id, cancel_check=cancel_check)
     stack = _resolve_stack(repo_root)
     if build_check is not None:
         check = build_check
@@ -1771,6 +1788,8 @@ def run_subagent_driven_build(
     # signal + product value). Only its DEPENDENTS are skipped -- for free --
     # because paying to build on a red prerequisite is the actual waste.
     for task in tasks:
+        if cancel_check is not None and cancel_check():
+            raise BuildCancelled("parent delivery cancellation requested")
         # CONTROL DECISION 1 (matrix read): block when any prerequisite row
         # is failed/blocked -- skipped for free.
         blocked_by = matrix.failed_or_blocked(task.deps)
@@ -1901,6 +1920,9 @@ def run_subagent_driven_build(
             tokens_out=usage.get("out"),
         )
 
+    if cancel_check is not None and cancel_check():
+        raise BuildCancelled("parent delivery cancellation requested")
+
     # PHASE 1b -- author the UX ACCEPTANCE test into the suite before
     # integration, so the build is TOLD (the model reads the exact bar) and MADE
     # (the full-suite integration check below must pass it) to ship a real,
@@ -1920,6 +1942,9 @@ def run_subagent_driven_build(
                               "controls, real styling, a11y) to pass."})
         except Exception:
             pass
+
+    if cancel_check is not None and cancel_check():
+        raise BuildCancelled("parent delivery cancellation requested")
 
     # PHASE 2 -- INTEGRATION: full build + whole suite to green (cross-task).
     # Same input -> same model -> most likely the same failed output, so a
@@ -1977,6 +2002,9 @@ def run_subagent_driven_build(
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
         )
+
+    if cancel_check is not None and cancel_check():
+        raise BuildCancelled("parent delivery cancellation requested")
 
     # PHASE 3 -- independent review on the GREEN product (spec, then quality).
     # The reviewer is a HARD WALL, not an advisory pass: a reviewer FAIL is NOT
@@ -2071,6 +2099,9 @@ def run_subagent_driven_build(
             summary.append(f"wiring_lint_advisory={len(orphans)}")
         else:
             summary.append("wiring_lint=clean")
+
+    if cancel_check is not None and cancel_check():
+        raise BuildCancelled("parent delivery cancellation requested")
 
     # PHASE 4 -- record the Build Evidence artifact with the real numbers,
     # honestly: a not-green build is recorded as not green (the sign gate will

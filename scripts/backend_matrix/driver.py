@@ -44,6 +44,8 @@ DEFAULT_MODELS_CONFIG = Path(__file__).with_name("models.json")
 DEFAULT_SCENARIO = Path(__file__).with_name("scenarios") / "expense_tracker.json"
 SIDECAR = ROOT / "python" / "signalos_ipc_server.py"
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
+ORCHESTRATOR_PROFILES = ("benchmark", "production")
+DEFAULT_ORCHESTRATOR_PROFILE = "benchmark"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 REDACTED = "[REDACTED]"
 
@@ -569,6 +571,48 @@ def _run_command(
     }
 
 
+def _prepare_local_release_remote(
+    workspace: Path,
+    remote: Path,
+    *,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Create an offline origin so G5 exercises a real commit and push.
+
+    Benchmark rows must never depend on the user's GitHub credentials, but a
+    release-pending result would leave the G5 state machine untested.  A bare
+    row-local repository provides the same Git transport semantics without an
+    external side effect.
+    """
+    commands = [
+        (["git", "init"], workspace),
+        (["git", "config", "user.name", "SignalOS Backend Matrix"], workspace),
+        (["git", "config", "user.email", "matrix@signalos.invalid"], workspace),
+        (["git", "add", "-A"], workspace),
+        (["git", "commit", "-m", "SignalOS matrix baseline"], workspace),
+    ]
+    remote.mkdir(parents=True, exist_ok=False)
+    commands.extend([
+        (["git", "init", "--bare"], remote),
+        (["git", "remote", "add", "origin", str(remote.resolve())], workspace),
+        (["git", "push", "-u", "origin", "HEAD"], workspace),
+    ])
+    evidence: list[dict[str, Any]] = []
+    for argv, cwd in commands:
+        result = _run_command(argv, cwd=cwd, env=env, timeout=60)
+        evidence.append({"argv": argv, **result})
+        if not result.get("ok"):
+            raise InfrastructureError(
+                f"could not prepare row-local release origin ({' '.join(argv)}): "
+                f"{result.get('stderr_tail') or result.get('stdout_tail')}"
+            )
+    return {
+        "kind": "row-local-bare-git-origin",
+        "path": str(remote.resolve()),
+        "commands": evidence,
+    }
+
+
 def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
     """Stop only the owned process group/tree; never use a global image kill."""
 
@@ -649,7 +693,13 @@ def _backend_preflight(scenario: dict[str, Any], *, init_timeout: float) -> dict
         try:
             _events, terminal = sidecar.call("capabilities", [], timeout=60)
             capabilities = _require_ok("capabilities", terminal)
-            required = {"agent:deliver", "agent:verdict", "agent:cancel", "agent:resume"}
+            required = {
+                "gate0:approve",
+                "agent:deliver",
+                "agent:verdict",
+                "agent:cancel",
+                "agent:resume",
+            }
             advertised = set(capabilities.get("commands") or [])
             if capabilities.get("protocol") != 1 or not required.issubset(advertised):
                 raise InfrastructureError("source sidecar capability contract is incompatible")
@@ -1361,12 +1411,34 @@ def _engine_metadata() -> dict[str, Any]:
     status = git("status", "--porcelain")
     return {
         "commit": git("rev-parse", "HEAD"),
+        "tree": git("rev-parse", "HEAD^{tree}"),
         "branch": git("branch", "--show-current"),
         "dirty": bool(status),
         "dirty_paths": [line[3:] for line in status.splitlines() if len(line) > 3],
         "python": sys.version.split()[0],
         "platform": sys.platform,
     }
+
+
+def _require_reproducible_engine(engine: dict[str, Any], *, live: bool) -> None:
+    """Paid evidence must map to one reconstructable committed code tree."""
+    if not live:
+        return
+    if engine.get("commit") in (None, "", "unknown") or engine.get("tree") in (
+        None,
+        "",
+        "unknown",
+    ):
+        raise InfrastructureError(
+            "live matrix requires a Git commit and tree identity for the engine"
+        )
+    if engine.get("dirty"):
+        paths = ", ".join(str(path) for path in engine.get("dirty_paths", [])[:8])
+        suffix = f": {paths}" if paths else ""
+        raise InfrastructureError(
+            "live matrix refuses an uncommitted engine; commit or stash every "
+            f"backend/harness change before spending provider credit{suffix}"
+        )
 
 
 def _load_scenario(path: Path) -> dict[str, Any]:
@@ -1398,6 +1470,34 @@ def _load_scenario(path: Path) -> dict[str, Any]:
     return raw
 
 
+def _validate_orchestrator_profile(value: str) -> str:
+    profile = str(value or "").strip()
+    if profile not in ORCHESTRATOR_PROFILES:
+        raise ValueError(
+            f"unknown orchestrator profile {profile!r}; expected one of "
+            + ", ".join(ORCHESTRATOR_PROFILES)
+        )
+    return profile
+
+
+def _delivery_request(
+    *,
+    prompt: str,
+    spec: ModelSpec,
+    run_id: str,
+    orchestrator_profile: str,
+) -> dict[str, str]:
+    """Build the paid delivery request with an explicit release profile."""
+    profile = _validate_orchestrator_profile(orchestrator_profile)
+    return {
+        "prompt": prompt,
+        "provider": spec.provider,
+        "model": spec.model,
+        "run_id": run_id,
+        "profile": profile,
+    }
+
+
 def _run_row(
     spec: ModelSpec,
     scenario: dict[str, Any],
@@ -1411,9 +1511,11 @@ def _run_row(
     init_timeout: float,
     gate_timeout: float,
     command_timeout: float,
+    orchestrator_profile: str,
     engine: dict[str, Any],
     hashes: dict[str, str],
 ) -> dict[str, Any]:
+    orchestrator_profile = _validate_orchestrator_profile(orchestrator_profile)
     workspace = row_dir / "workspace"
     workspace.mkdir(parents=True, exist_ok=False)
     run_id = f"matrix-{spec.alias}-{uuid.uuid4().hex[:12]}"
@@ -1429,7 +1531,7 @@ def _run_row(
         "scenario": scenario["id"],
         "profile": scenario["profile"],
         "stack_profile": scenario["profile"],
-        "orchestrator_profile": "benchmark",
+        "orchestrator_profile": orchestrator_profile,
         "engine": engine,
         "hashes": hashes,
         "calls": [],
@@ -1475,7 +1577,13 @@ def _run_row(
         capabilities = _require_ok(
             "capabilities", invoke("capabilities", [], 30, guarded=False)
         )
-        required_commands = {"agent:deliver", "agent:verdict", "agent:cancel", "agent:resume"}
+        required_commands = {
+            "gate0:approve",
+            "agent:deliver",
+            "agent:verdict",
+            "agent:cancel",
+            "agent:resume",
+        }
         if capabilities.get("protocol") != 1:
             raise InfrastructureError(
                 f"unsupported sidecar protocol: {capabilities.get('protocol')!r}"
@@ -1508,6 +1616,23 @@ def _run_row(
         marker = workspace / ".signalos" / "INIT_COMPLETE.json"
         if not marker.is_file():
             raise InfrastructureError("signal-init returned success without INIT_COMPLETE.json")
+        # The Tauri onboarding surface normally persists this identity.  This
+        # backend-only harness simulates that same host boundary explicitly so
+        # G0 can exercise the real exact-consent transaction rather than a raw
+        # signer-role shortcut.
+        _safe_json_write(
+            workspace / ".signalos" / "identity.json",
+            {
+                "name": "SignalOS Backend Matrix (simulated founder)",
+                "role": "PO",
+            },
+        )
+        row["release_origin"] = _prepare_local_release_remote(
+            workspace,
+            row_dir / "release-origin.git",
+            env=sidecar_env,
+        )
+        _safe_json_write(result_path, row, (key,))
         baseline = _snapshot_product_tree(workspace)
 
         # Start cost accounting only after local initialization.  Every model
@@ -1516,17 +1641,25 @@ def _run_row(
 
         deliver = invoke(
             "agent:deliver",
-            {
-                "prompt": str(scenario["prompt"]),
-                "provider": spec.provider,
-                "model": spec.model,
-                "run_id": run_id,
-            },
+            _delivery_request(
+                prompt=str(scenario["prompt"]),
+                spec=spec,
+                run_id=run_id,
+                orchestrator_profile=orchestrator_profile,
+            ),
             gate_timeout,
         )
         deliver_data = _require_ok("agent:deliver", deliver)
         if deliver_data.get("run_id") != run_id or deliver_data.get("gate") != "G0":
             raise ProductFailure("agent:deliver returned the wrong run or first gate")
+        persisted_start = _load_delivery(workspace, run_id)
+        persisted_profile = persisted_start.get("profile")
+        row["persisted_orchestrator_profile"] = persisted_profile
+        if persisted_profile != orchestrator_profile:
+            raise ProductFailure(
+                "agent:deliver profile provenance mismatch: requested "
+                f"{orchestrator_profile!r}, persisted {persisted_profile!r}"
+            )
 
         trace_gates = set(scenario.get("trace_requirements_through_gates") or [])
         for index, gate in enumerate(GATES):
@@ -1551,6 +1684,26 @@ def _run_row(
                         f"{gate} governance artifacts omit requirement IDs: "
                         + ", ".join(trace["missing_requirement_ids"])
                     )
+
+            if gate == "G0":
+                approval = invoke(
+                    "gate0:approve",
+                    [json.dumps({
+                        "consent": "I approve Gate 0 as sole founder",
+                        "via": "simulation",
+                        "expected_workspace": str(workspace.resolve()),
+                        "expected_project_id": "default",
+                        "approval_id": f"matrix-{run_id}-g0",
+                    })],
+                    60,
+                    guarded=False,
+                )
+                approval_data = _require_ok("gate0:approve", approval)
+                if approval_data.get("signed") is not True:
+                    raise ProductFailure(
+                        f"the simulated founder G0 approval was refused: {approval_data!r}"
+                    )
+                gate_evidence["authority_approval"] = approval_data
 
             verdict = invoke(
                 "agent:verdict",
@@ -1580,13 +1733,15 @@ def _run_row(
                         f"{gate} approval did not advance exactly to {expected_next}: {verdict_data!r}"
                     )
             else:
-                expected_complete = {
-                    "status": "complete",
-                    "ready": True,
-                    "waived": [],
-                    "conditions": {},
-                }
-                if verdict_data != expected_complete:
+                finalization = verdict_data.get("release_finalization")
+                if (
+                    verdict_data.get("status") != "complete"
+                    or verdict_data.get("ready") is not True
+                    or verdict_data.get("waived") != []
+                    or verdict_data.get("conditions") != {}
+                    or not isinstance(finalization, dict)
+                    or finalization.get("status") != "succeeded"
+                ):
                     raise ProductFailure(
                         f"G5 returned a non-ready or conditional completion: {verdict_data!r}"
                     )
@@ -1597,8 +1752,22 @@ def _run_row(
             or final_state.get("signed") != list(GATES)
             or final_state.get("waived")
             or final_state.get("conditions")
+            or final_state.get("profile") != orchestrator_profile
         ):
             raise ProductFailure("persisted final delivery state is not an unconditional completion")
+        release_evidence = final_state.get("release_evidence")
+        if not isinstance(release_evidence, dict):
+            raise ProductFailure("persisted final delivery omits release evidence")
+        finalization = release_evidence.get("release_finalization")
+        if not isinstance(finalization, dict) or finalization.get("status") != "succeeded":
+            raise ProductFailure("persisted release finalization did not succeed")
+        if orchestrator_profile == "production":
+            security = release_evidence.get("security_gate")
+            runtime = release_evidence.get("runtime_proof")
+            if not isinstance(security, dict) or security.get("status") != "passed":
+                raise ProductFailure("production delivery lacks passing security-gate evidence")
+            if not isinstance(runtime, dict) or runtime.get("ok") is not True:
+                raise ProductFailure("production delivery lacks passing runtime proof")
 
         gates_terminal = invoke("state:gates", [], 45, guarded=False)
         if gates_terminal.get("ok") is not True or not isinstance(gates_terminal.get("data"), list):
@@ -1705,6 +1874,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--models", nargs="+", default=None, help="Aliases/model IDs in order, comma-separated values, or all.")
     parser.add_argument("--models-config", type=Path, default=DEFAULT_MODELS_CONFIG)
     parser.add_argument("--scenario", type=Path, default=DEFAULT_SCENARIO)
+    parser.add_argument(
+        "--orchestrator-profile",
+        choices=ORCHESTRATOR_PROFILES,
+        default=DEFAULT_ORCHESTRATOR_PROFILE,
+        help=(
+            "Release-enforcement profile sent explicitly to agent:deliver; "
+            "benchmark is the stable comparison default."
+        ),
+    )
     parser.add_argument("--env-file", type=Path, default=None, help="Explicit dotenv path; never copied into results.")
     parser.add_argument("--output-root", type=Path, default=Path(tempfile.gettempdir()) / "signalos-backend-matrix")
     parser.add_argument("--max-cost-per-model", type=float, default=None, metavar="USD")
@@ -1743,6 +1921,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parser.error("--live requires a positive --max-cost-per-model USD cap")
         scenario_path = args.scenario.resolve()
         scenario = _load_scenario(scenario_path)
+        orchestrator_profile = _validate_orchestrator_profile(args.orchestrator_profile)
+        engine = _engine_metadata()
+        _require_reproducible_engine(engine, live=bool(args.live))
         key, key_source = _resolve_api_key(selected[0], args.env_file)
         if any(spec.key_env != selected[0].key_env or spec.provider != selected[0].provider for spec in selected):
             raise ValueError("a single run may use only one provider and API key environment")
@@ -1766,6 +1947,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "local": local,
                             "backend": backend,
                             "provider": provider,
+                            "orchestrator_profile": orchestrator_profile,
                         },
                         (key,),
                     ),
@@ -1778,7 +1960,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         run_root = args.output_root.resolve() / f"{stamp}-{uuid.uuid4().hex[:8]}"
         run_root.mkdir(parents=True, exist_ok=False)
-        engine = _engine_metadata()
         oracle_path = scenario_path.parent.parent / str(scenario["oracle"])
         hashes = {
             "models_config_sha256": _sha256_file(args.models_config.resolve()),
@@ -1794,7 +1975,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "run_root": str(run_root),
             "scenario": scenario["id"],
             "stack_profile": scenario["profile"],
-            "orchestrator_profile": "benchmark",
+            "orchestrator_profile": orchestrator_profile,
             "models": [dataclasses.asdict(spec) for spec in selected],
             "engine": engine,
             "hashes": hashes,
@@ -1822,6 +2003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 init_timeout=args.init_timeout,
                 gate_timeout=args.gate_timeout,
                 command_timeout=args.command_timeout,
+                orchestrator_profile=orchestrator_profile,
                 engine=engine,
                 hashes=hashes,
             )

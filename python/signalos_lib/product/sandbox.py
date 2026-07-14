@@ -19,10 +19,9 @@
 # WHAT THIS MODULE PROVIDES
 # -------------------------
 #   * SandboxRunner       -- the WHERE-does-a-command-run abstraction.
-#   * InProcessRunner     -- the CURRENT behavior (subprocess, shell=True, cwd
-#                            jailed). The DEFAULT, so nothing changes unless a
-#                            caller opts in. Byte-identical to the pre-sandbox
-#                            execution.
+#   * InProcessRunner     -- subprocess, shell=True, cwd jailed. The DEFAULT;
+#                            provider credentials are removed from its child
+#                            environment while ordinary host/overlay values stay.
 #   * ContainerRunner     -- opt-in via SIGNALOS_SANDBOX=docker|podman|wsl. Runs
 #                            the command inside a throwaway container with a
 #                            READ-ONLY root filesystem, ONLY the workspace
@@ -145,6 +144,77 @@ _ENGINE_PROBE: dict[str, tuple[str, ...]] = {
 _TRUE = {"1", "true", "yes", "on"}
 # Accepted values of SIGNALOS_SANDBOX that mean "no containment, current path".
 _INPROCESS_ALIASES = {"", "inprocess", "in-process", "none", "off", "0", "false"}
+
+# Model/provider credentials belong to the trusted sidecar process that creates
+# ProviderAdapter.  Model-authored build/test commands are a separate child
+# trust domain and must not inherit those credentials merely because the
+# in-process runner starts from os.environ.
+_SENSITIVE_ENV_NAME_RE = re.compile(
+    r"(?:^|_)(?:API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SECRET(?:_?KEY)?|TOKEN|"
+    r"PASSWORD|PASSWD|CREDENTIALS?|AUTHORIZATION)(?:_|$)",
+    re.IGNORECASE,
+)
+_CREDENTIAL_FILE_POINTERS = {
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AZURE_AUTH_LOCATION",
+    "DOCKER_CONFIG",
+    "DOTENV_CONFIG_PATH",
+    "DOTENV_KEY",
+    "ENV_FILE",
+    "ENVFILE",
+    "GH_CONFIG_DIR",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "KUBECONFIG",
+    "NETRC",
+    "NPM_CONFIG_USERCONFIG",
+    "OPENAI_CONFIG_FILE",
+    "OPENROUTER_CONFIG_FILE",
+    "SIGNALOS_ENV_FILE",
+}
+_CREDENTIAL_FILE_SUFFIXES = (
+    "_CREDENTIALS_FILE",
+    "_ENV_FILE",
+    "_KEY_FILE",
+    "_SECRET_FILE",
+    "_TOKEN_FILE",
+)
+
+
+def _is_sensitive_child_env_name(name: str) -> bool:
+    normalized = str(name).strip().upper()
+    return bool(
+        normalized in _CREDENTIAL_FILE_POINTERS
+        or normalized.endswith(_CREDENTIAL_FILE_SUFFIXES)
+        or _SENSITIVE_ENV_NAME_RE.search(normalized)
+    )
+
+
+def _safe_env_overlay(
+    env: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Keep explicitly supplied non-secret command environment only."""
+    return {
+        str(key): str(value)
+        for key, value in (env or {}).items()
+        if not _is_sensitive_child_env_name(str(key))
+    }
+
+
+def _child_process_env(
+    overlay: Mapping[str, str] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build a child env without mutating or weakening the parent sidecar."""
+    parent = os.environ if environ is None else environ
+    child = {
+        str(key): str(value)
+        for key, value in parent.items()
+        if not _is_sensitive_child_env_name(str(key))
+    }
+    child.update(_safe_env_overlay(overlay))
+    return child
 
 
 @dataclass(frozen=True)
@@ -279,7 +349,7 @@ def build_container_argv(
         "-v", f"{mount_src}:{CONTAINER_WORKSPACE}",  # ONLY the workspace (rw).
         "-w", workdir,          # cwd = the mount (or a contained subdir).
     ]
-    for key, val in (env or {}).items():
+    for key, val in _safe_env_overlay(env).items():
         argv += ["-e", f"{key}={val}"]  # overlay env INTO the container only.
     argv += [image, "sh", "-lc", command]
     return argv
@@ -312,9 +382,9 @@ class SandboxRunner:
     regardless of backend) and executes it, returning ``(exit_code, output)``.
 
     ``env`` is the environment OVERLAY for the command (e.g. ``{"CI": "1"}``),
-    not the whole host environment: InProcessRunner merges it onto ``os.environ``
-    (byte-identical to today); ContainerRunner forwards ONLY these keys into the
-    container as ``-e`` so no host env leaks past the boundary.
+    not the whole host environment: InProcessRunner merges non-secret overlay
+    keys onto a credential-scrubbed host environment; ContainerRunner forwards
+    only non-secret overlay keys into the container as ``-e``.
     """
 
     name: str = "sandbox"
@@ -346,11 +416,13 @@ def _kill_lingering_children() -> None:
 
 
 class InProcessRunner(SandboxRunner):
-    """DEFAULT backend: the CURRENT behavior — a subprocess with ``shell=True``
-    and cwd jailed to the workspace (or a contained subdir). No OS/process
-    containment boundary beyond the jailed cwd; the in-code path/allowlist policy
-    (applied upstream) is the only defense. Byte-identical to the pre-sandbox
-    ``_tool_run_command`` execution."""
+    """DEFAULT backend: a subprocess with ``shell=True`` and jailed cwd.
+
+    There is no OS/process containment boundary beyond the cwd, so the upstream
+    path/allowlist policy remains essential.  The child environment is distinct
+    from the trusted sidecar: provider credentials and credential-file pointers
+    are removed while normal host variables and non-secret overlays remain.
+    """
 
     name = "inprocess"
 
@@ -361,7 +433,7 @@ class InProcessRunner(SandboxRunner):
         timeout: float,
         env: Mapping[str, str] | None = None,
     ) -> tuple[int, CommandOutput]:
-        full_env = {**os.environ, **(env or {})}
+        full_env = _child_process_env(env)
         try:
             proc = subprocess.run(
                 cmd,
@@ -464,6 +536,10 @@ class ContainerRunner(SandboxRunner):
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
+                # The container workload already receives only the filtered
+                # -e overlay.  Sanitize the outer docker/podman/WSL process too
+                # so credentials cannot leak through runtime-specific behavior.
+                env=_child_process_env(),
             )
         except subprocess.TimeoutExpired:
             return _TIMEOUT_EXIT_CODE, CommandOutput("", "", timed_out=True)

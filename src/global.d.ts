@@ -32,11 +32,33 @@ declare global {
       name: string,
       profile?: string,
     ) => Promise<{
-      governance: { filled: string[]; signed: boolean; awaitingApproval?: boolean };
+      governance: {
+        filled: string[];
+        unchanged: string[];
+        failed: Array<{ path: string; error: string }>;
+        signed: boolean;
+        awaitingApproval: boolean;
+        gateStateVerified: boolean;
+      };
       status: unknown | null;
     }>;
-    instantiateGovernance: () => Promise<{ filled: string[] }>;
-    approveGate0: (opts?: { via?: string }) => Promise<{ signed: boolean }>;
+    instantiateGovernance: () => Promise<{
+      filled: string[];
+      unchanged: string[];
+      failed: Array<{ path: string; error: string }>;
+    }>;
+    approveGate0: (opts?: {
+      via?: 'button' | 'chat';
+      consent?: 'I approve Gate 0 as sole founder';
+      expectedWorkspace?: string;
+      expectedProjectId?: string;
+    }) => Promise<{
+      signed: boolean;
+      reason?: string;
+      alreadySigned?: boolean;
+      coalesced?: boolean;
+      gates: unknown[];
+    }>;
     approvePlan: (bubbleId: string) => Promise<void>;
     cancelWave: (bubbleId: string) => void;
     retryTask: (bubbleId: string, taskId: string) => Promise<void>;

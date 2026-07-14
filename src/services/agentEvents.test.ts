@@ -222,6 +222,47 @@ describe('agentEvents', () => {
     expect(res.error).toMatch(/independently verified/i);
   });
 
+  it.each([
+    ['not-reviewable', 'agent produced no reviewable output', /not ready to review/i],
+    ['conditions-need-text', '', /written condition/i],
+    ['release-not-ready', 'runtime proof did not pass', /remains open and unsigned/i],
+    ['security-blocked', 'critical secret found', /security gate blocked/i],
+  ])('keeps the gate card open when the backend returns %s', async (status, reason, expected) => {
+    vi.resetModules();
+    const runAndWait = vi.fn(async () => ({ status, gate: 'G5', reason }));
+    vi.doMock('../js/ipc.js', () => ({ signal: { run: vi.fn(), runAndWait } }));
+    (window as any).__TAURI__ = {
+      event: { listen: vi.fn(async () => () => undefined) },
+    };
+    const mod = await import('./agentEvents');
+
+    const res = await mod.submitGateVerdict('agent-gate-run-refused-G5', 'approve', '');
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(expected);
+  });
+
+  it('surfaces a blocked gate reason in the transcript and ends the busy state', async () => {
+    const { state } = await loadHarness();
+
+    emit({
+      kind: 'agent-event',
+      run_id: 'run-blocked',
+      type: 'gate_blocked',
+      gate: 'G4',
+      reason: 'current-run source attribution is missing',
+    });
+
+    expect(state.chatBubbles.value).toMatchObject([
+      {
+        id: 'agent-gate-blocked-run-blocked-G4',
+        kind: 'system',
+        text: expect.stringMatching(/current-run source attribution is missing/i),
+      },
+    ]);
+    expect(state.busy.value).toBe(false);
+  });
+
   it('treats an accepted verdict (advanced) as success', async () => {
     vi.resetModules();
     const runAndWait = vi.fn(async () => ({ status: 'advanced', gate: 'G2' }));
@@ -256,7 +297,12 @@ describe('agentEvents', () => {
     expect(state.resumableRunId.value).toBe(null);
     expect(state.busy.value).toBe(true);
     expect(run).toHaveBeenCalledWith('agent:resume', [
-      JSON.stringify({ run_id: 'run-5', provider: 'openai', model: 'gpt-test' }),
+      JSON.stringify({
+        run_id: 'run-5',
+        provider: 'openai',
+        model: 'gpt-test',
+        profile: 'production',
+      }),
     ]);
   });
 

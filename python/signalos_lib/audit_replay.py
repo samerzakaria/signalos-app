@@ -28,7 +28,7 @@ GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
 # Actions (or action prefixes) that mark a gate as signed/sealed.
 _SIGN_MARKERS = ("sign", "seal", "gate.signed", "gate.approved")
 # Actions that mark a gate decision being reversed / a wave rolled back.
-_REVERSE_MARKERS = ("rollback", "revert", "unsign", "reopen")
+_REVERSE_MARKERS = ("rollback", "revert", "unsign", "reopen", "revoke")
 
 
 def load_audit_trail(root) -> list[dict[str, Any]]:
@@ -85,16 +85,18 @@ def _apply(state: dict[str, Any], entry: dict[str, Any], index: int) -> None:
         state["wave"] = wave
 
     # Gate sign / reverse.
-    gate = entry.get("gate")
-    if gate in state["gates"]:
-        if _action_matches(action, _REVERSE_MARKERS):
-            state["gates"][gate] = {"signed": False, "role": None, "ts": None}
-        elif _action_matches(action, _SIGN_MARKERS):
-            state["gates"][gate] = {
-                "signed": True,
-                "role": entry.get("role"),
-                "ts": entry.get("ts"),
-            }
+    gates = entry.get("gates")
+    gate_values = gates if isinstance(gates, list) else [entry.get("gate")]
+    for gate in gate_values:
+        if gate in state["gates"]:
+            if _action_matches(action, _REVERSE_MARKERS):
+                state["gates"][gate] = {"signed": False, "role": None, "ts": None}
+            elif _action_matches(action, _SIGN_MARKERS):
+                state["gates"][gate] = {
+                    "signed": True,
+                    "role": entry.get("role"),
+                    "ts": entry.get("ts"),
+                }
 
     # Overrides (headless/audited gate bypass) are notable history events.
     if "override" in action.lower():

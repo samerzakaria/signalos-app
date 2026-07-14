@@ -51,6 +51,7 @@ from typing import Any
 __all__ = [
     "SCHEMA_VERSION",
     "DEFAULT_PROJECT_ID",
+    "validate_project_id",
     "registry_path",
     "project_state_dir",
     "project_plan_path",
@@ -64,11 +65,54 @@ __all__ = [
 
 SCHEMA_VERSION = "signalos.projects.v1"
 DEFAULT_PROJECT_ID = "default"
+_PROJECT_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+
+
+def validate_project_id(value: str) -> str:
+    """Return one canonical registry/path segment or fail closed."""
+    if not isinstance(value, str):
+        raise ValueError("project_id must be a string")
+    project_id = value.strip()
+    if not _PROJECT_ID_RE.fullmatch(project_id):
+        raise ValueError(
+            "project_id must be 1-64 lowercase letters, numbers, or hyphens"
+        )
+    return project_id
 
 
 def registry_path(root: Path | str) -> Path:
     """Return the on-disk registry file for *root*."""
     return Path(root) / ".signalos" / "projects.json"
+
+
+def _safe_registry_path(root: Path | str) -> Path:
+    """Return the registry path only when no authority path is redirected.
+
+    ``projects.json`` selects the active project namespace for every request,
+    so both its parent directory and the file itself are authority-bearing.
+    Refuse symlinks and Windows junction/reparse aliases instead of following
+    them outside (or elsewhere inside) the selected workspace.
+    """
+    workspace = Path(root).resolve()
+    cursor = workspace
+    for part in (".signalos", "projects.json"):
+        cursor = cursor / part
+        if cursor.exists() or cursor.is_symlink():
+            try:
+                resolved = cursor.resolve()
+            except OSError as exc:
+                raise ValueError("project registry path cannot be resolved safely") from exc
+            try:
+                resolved.relative_to(workspace)
+            except ValueError as exc:
+                raise ValueError(
+                    "project registry path resolves outside the workspace"
+                ) from exc
+            if cursor.is_symlink() or resolved != cursor.absolute():
+                raise ValueError(
+                    "project registry path must not traverse a symlink or junction"
+                )
+    return cursor
 
 
 def project_state_dir(root: Path | str, project_id: str = DEFAULT_PROJECT_ID) -> Path:
@@ -77,6 +121,7 @@ def project_state_dir(root: Path | str, project_id: str = DEFAULT_PROJECT_ID) ->
     "default" → workspace-root `.signalos/` (today's layout, unchanged);
     any other id → `.signalos/projects/<project_id>/`.
     """
+    project_id = validate_project_id(project_id)
     base = Path(root) / ".signalos"
     if project_id == DEFAULT_PROJECT_ID:
         return base
@@ -128,6 +173,7 @@ def project_governance_dir(root: Path | str, project_id: str = DEFAULT_PROJECT_I
     engine and the status board can never disagree about where a
     project's gates live.
     """
+    project_id = validate_project_id(project_id)
     if project_id == DEFAULT_PROJECT_ID:
         return Path(root)
     return project_state_dir(root, project_id) / "governance"
@@ -147,7 +193,11 @@ def _default_registry() -> dict[str, Any]:
     }
 
 
-def _load(root: Path | str) -> dict[str, Any]:
+def _load(
+    root: Path | str,
+    *,
+    for_mutation: bool = False,
+) -> dict[str, Any]:
     """Read the registry, falling back to the implicit default registry.
 
     Missing / empty / corrupt files and malformed shapes all normalize to
@@ -155,22 +205,75 @@ def _load(root: Path | str) -> dict[str, Any]:
     unusable. The "default" project is re-inserted if a hand-edited file
     dropped it, and a dangling "active" pointer falls back to "default".
     """
-    path = registry_path(root)
+    path = _safe_registry_path(root)
     data: Any = None
+    if path.exists() and not path.is_file():
+        if for_mutation:
+            raise ValueError("project registry is corrupt: projects.json is not a file")
+        return _default_registry()
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            if for_mutation:
+                raise ValueError(
+                    f"project registry is corrupt and was not modified: {exc}"
+                ) from exc
             data = None
     if not isinstance(data, dict):
+        if for_mutation and path.exists():
+            raise ValueError(
+                "project registry is corrupt and was not modified: expected a JSON object"
+            )
         return _default_registry()
+
+    if for_mutation:
+        problems: list[str] = []
+        if data.get("schema_version") != SCHEMA_VERSION:
+            problems.append(f"schema_version must be {SCHEMA_VERSION!r}")
+        raw_projects = data.get("projects")
+        if not isinstance(raw_projects, dict):
+            problems.append("projects must be an object")
+            raw_projects = {}
+        for raw_pid, raw_meta in raw_projects.items():
+            if not isinstance(raw_pid, str):
+                problems.append("every project id must be a string")
+                continue
+            try:
+                canonical_pid = validate_project_id(raw_pid)
+            except ValueError:
+                problems.append(f"invalid project id {raw_pid!r}")
+                continue
+            if canonical_pid != raw_pid:
+                problems.append(f"non-canonical project id {raw_pid!r}")
+            if not isinstance(raw_meta, dict):
+                problems.append(f"metadata for {raw_pid!r} must be an object")
+                continue
+            if not isinstance(raw_meta.get("name"), str) or not raw_meta["name"].strip():
+                problems.append(f"metadata for {raw_pid!r} requires a name")
+            if not isinstance(raw_meta.get("created_at"), str):
+                problems.append(f"metadata for {raw_pid!r} requires created_at")
+        if DEFAULT_PROJECT_ID not in raw_projects:
+            problems.append("the default project is missing")
+        raw_active = data.get("active")
+        if not isinstance(raw_active, str) or raw_active not in raw_projects:
+            problems.append("active must name a registered project")
+        if problems:
+            raise ValueError(
+                "project registry is corrupt and was not modified: "
+                + "; ".join(problems)
+            )
 
     projects = data.get("projects")
     if not isinstance(projects, dict):
         projects = {}
     normalized: dict[str, Any] = {}
     for pid, meta in projects.items():
-        if not isinstance(pid, str) or not pid:
+        if not isinstance(pid, str):
+            continue
+        try:
+            pid = validate_project_id(pid)
+        except ValueError:
             continue
         meta = meta if isinstance(meta, dict) else {}
         normalized[pid] = {
@@ -200,8 +303,11 @@ def _save(root: Path | str, registry: dict[str, Any]) -> None:
     and the exception propagates (registry mutations must not fail
     silently: the caller reported success to the user).
     """
-    path = registry_path(root)
+    path = _safe_registry_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Re-check after materialising the parent.  This also catches a leaf that
+    # appeared between mutation validation and the atomic replacement.
+    path = _safe_registry_path(root)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -217,7 +323,8 @@ def _save(root: Path | str, registry: dict[str, Any]) -> None:
 
 def _slugify(name: str) -> str:
     """Lowercase, alphanumeric-plus-hyphen project id from a display name."""
-    return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug[:64].rstrip("-")
 
 
 def list_projects(root: Path | str) -> dict[str, Any]:
@@ -254,12 +361,14 @@ def create_project(root: Path | str, name: str) -> dict[str, Any]:
     if slug == DEFAULT_PROJECT_ID:
         raise ValueError("'default' is a reserved project id")
 
-    reg = _load(root)
+    reg = _load(root, for_mutation=True)
     candidate = slug
     suffix = 2
     while candidate in reg["projects"]:
-        candidate = f"{slug}-{suffix}"
+        suffix_text = f"-{suffix}"
+        candidate = f"{slug[:64 - len(suffix_text)].rstrip('-')}{suffix_text}"
         suffix += 1
+    validate_project_id(candidate)
 
     entry = {"name": display, "created_at": _now_iso()}
     reg["projects"][candidate] = entry
@@ -272,8 +381,8 @@ def create_project(root: Path | str, name: str) -> dict[str, Any]:
 def set_active_project(root: Path | str, project_id: str) -> str:
     """Switch the active project. The id must exist in the registry
     ("default" always exists). Returns the new active id."""
-    pid = str(project_id or "").strip()
-    reg = _load(root)
+    pid = validate_project_id(project_id)
+    reg = _load(root, for_mutation=True)
     if pid not in reg["projects"]:
         raise ValueError(f"unknown project id: {pid!r}")
     reg["active"] = pid

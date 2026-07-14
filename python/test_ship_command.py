@@ -9,6 +9,7 @@ from pathlib import Path
 from signalos_lib.cli import main as cli_main
 from signalos_lib.commands.ship import ship_wave
 from signalos_lib.sign import _append_audit, revoke_gate, sign_artifact
+from conftest import seed_governed_release_proof
 
 
 def _write(path: Path, text: str) -> None:
@@ -62,6 +63,7 @@ def _init_ready_repo(root: Path, *, signer: str = "QA User") -> None:
         root / ".signalos" / "evidence" / "W01" / "release-readiness.json",
         json.dumps({"ok": True, "status": "ready-to-publish", "blockers": []}) + "\n",
     )
+    seed_governed_release_proof(root, run_id="ship-fixture")
     _git(root, "add", ".")
     _git(root, "commit", "-m", "ready to ship")
 
