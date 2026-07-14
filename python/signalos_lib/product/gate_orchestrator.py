@@ -799,7 +799,26 @@ class GateOrchestrator:
             )
         # INV-2: independently verify the build gate produced a real, passing
         # product before it can be signed. apply_verdict refuses to sign until ok.
-        self._g4_verify = self._verify_g4_build(result)
+        try:
+            self._g4_verify = self._verify_g4_build(result)
+        except Exception as exc:
+            from .sandbox import SandboxUnavailableError
+
+            if not isinstance(exc, SandboxUnavailableError):
+                raise
+            result = LoopResult(
+                run_id=self.state.run_id,
+                status="error",
+                final_text=None,
+                tool_calls_made=0,
+                messages=[],
+                error=f"G4 verification containment failed: {exc}",
+                failure_type="sandbox-unavailable",
+            )
+            self._g4_verify = {
+                "ok": False,
+                "reason": str(result.error),
+            }
         if not self._g4_verify.get("ok"):
             self.emit({"type": "system",
                        "text": f"G4 build not verified yet: {self._g4_verify.get('reason', '')}"})
@@ -1271,8 +1290,9 @@ class GateOrchestrator:
           2. The product BUILDS and its TESTS PASS on an independent run of the
              stack adapter's own validation plan.
 
-        Returns {"ok": bool, "reason": str, ...}. Never raises — a failure to
-        verify is reported as not-ok so signing is refused, not bypassed.
+        Returns {"ok": bool, "reason": str, ...}. Product/check failures are
+        reported as not-ok so signing is refused; a required sandbox outage
+        raises to the caller and is preserved as infrastructure.
         """
         # Consume the actual build result and establish current-run attribution
         # before a pre-existing green disk can satisfy the mechanical checks.
@@ -1357,6 +1377,10 @@ class GateOrchestrator:
                 "build": b.get("status"), "test": t.get("status"),
             })
         except Exception as exc:  # never bypass on error -- fail closed
+            from .sandbox import SandboxUnavailableError
+
+            if isinstance(exc, SandboxUnavailableError):
+                raise
             return finish({
                 "ok": False,
                 "reason": f"G4 build verification error: {type(exc).__name__}: {exc}",
@@ -1387,8 +1411,8 @@ class GateOrchestrator:
         on a genuine measured failure (``ran and not ok``); a build whose UI
         cannot be measured offline (non-browser profile, deps not installed, no
         App entry) returns ok so a genuinely-good build is never false-failed on
-        tooling grounds. Never raises -- a tooling error is treated as a skip,
-        not a UX verdict."""
+        tooling grounds. A required sandbox outage is re-raised; other tooling
+        errors are treated as a skip, not a UX verdict."""
         try:
             from .acceptance import run_ux_acceptance
             result = run_ux_acceptance(
@@ -1396,6 +1420,10 @@ class GateOrchestrator:
                 source_dir=self._product_source_dir(),
                 profile=profile)
         except Exception as exc:  # tooling error is not a UX verdict
+            from .sandbox import SandboxUnavailableError
+
+            if isinstance(exc, SandboxUnavailableError):
+                raise
             return {"ok": True, "status": f"ux-skip ({type(exc).__name__})"}
         if result.get("ran") and not result.get("ok"):
             return {"ok": False,

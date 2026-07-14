@@ -30,6 +30,7 @@ __all__ = [
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -1248,7 +1249,8 @@ def run_ux_acceptance(repo_root: Path, *, source_dir: str = "src",
     on ``ran and not ok`` -- when the measurement genuinely cannot run offline
     (no installed dependencies / no single-test runner / no App entry) it
     returns ``ok=True, ran=False`` so a good build is never false-failed on
-    tooling grounds (the suite-level enforcement remains the backstop)."""
+    tooling grounds (the suite-level enforcement remains the backstop). A
+    required sandbox outage raises so it is classified as infrastructure."""
     repo_root = Path(repo_root)
     if profile is None:
         try:
@@ -1274,19 +1276,46 @@ def run_ux_acceptance(repo_root: Path, *, source_dir: str = "src",
     argv = _single_test_argv(repo_root, profile, rel_test)
     if not argv:
         return _skip("no single-test runner for this stack")
-    if shutil.which(str(argv[0])) is None and not Path(argv[0]).exists():
-        return _skip(f"test runner '{argv[0]}' not available")
-    try:
-        proc = subprocess.run(
-            argv, cwd=str(repo_root), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout, shell=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        # A tooling failure (could not execute / timed out) is NOT a UX
-        # verdict -- do not false-fail the build on it.
-        return _skip(f"UX measurement could not run ({type(exc).__name__})")
+    from .validation import _select_verifier_runner
+
+    verifier = _select_verifier_runner(repo_root)
+    if verifier is not None:
+        container_argv = list(argv)
+        executable = str(container_argv[0]).replace("\\", "/").rsplit("/", 1)[-1]
+        container_argv[0] = {
+            "npm.cmd": "npm",
+            "npx.cmd": "npx",
+            "node.exe": "node",
+        }.get(executable.lower(), executable)
+        exit_code, output = verifier.run(
+            shlex.join(container_argv),
+            repo_root,
+            timeout,
+            {"CI": "1", "FORCE_COLOR": "0"},
+        )
+        if output.timed_out:
+            return {
+                "ok": False,
+                "ran": True,
+                "reason": f"UX measurement timed out after {timeout}s",
+                "skipped": None,
+            }
+        stdout, stderr, returncode = output.stdout, output.stderr, exit_code
+    else:
+        if shutil.which(str(argv[0])) is None and not Path(argv[0]).exists():
+            return _skip(f"test runner '{argv[0]}' not available")
+        try:
+            proc = subprocess.run(
+                argv, cwd=str(repo_root), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout, shell=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            # A host-tooling failure is not a UX verdict.  Funded/container
+            # failures raise from the verifier and are typed as infrastructure.
+            return _skip(f"UX measurement could not run ({type(exc).__name__})")
+        stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "",
-                 (proc.stdout or "") + "\n" + (proc.stderr or ""))
-    if proc.returncode == 0:
+                 (stdout or "") + "\n" + (stderr or ""))
+    if returncode == 0:
         return {"ok": True, "ran": True,
                 "reason": "UX acceptance passed: the UI renders styled, "
                           "accessible, interactive controls.", "skipped": None}

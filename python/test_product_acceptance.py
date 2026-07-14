@@ -602,6 +602,59 @@ class TestUxAcceptanceMechanism:
         assert r["ran"] is False
         assert r["ok"] is True
 
+    def test_run_uses_funded_container_verifier_not_host(self, tmp_path, monkeypatch):
+        from signalos_lib.product.sandbox import CommandOutput
+
+        calls = []
+
+        class _Verifier:
+            def run(self, command, cwd, timeout, env):
+                calls.append((command, cwd, timeout, env))
+                return 0, CommandOutput(stdout="PASS", stderr="")
+
+        _react_repo(tmp_path)
+        (tmp_path / "node_modules").mkdir()
+        monkeypatch.setattr(
+            "signalos_lib.product.validation._select_verifier_runner",
+            lambda root: _Verifier(),
+        )
+        monkeypatch.setattr(
+            "signalos_lib.product.acceptance.subprocess.run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("host subprocess must not run")
+            ),
+        )
+
+        result = run_ux_acceptance(
+            tmp_path, source_dir="src", profile="react-vite"
+        )
+
+        assert result["ok"] is True and result["ran"] is True
+        assert len(calls) == 1
+        command, cwd, timeout, env = calls[0]
+        assert command.startswith("npx vitest run ")
+        assert "\\" not in command
+        assert cwd == tmp_path
+        assert timeout == 420
+        assert env == {"CI": "1", "FORCE_COLOR": "0"}
+
+    def test_run_propagates_funded_container_outage(self, tmp_path, monkeypatch):
+        from signalos_lib.product.sandbox import SandboxUnavailableError
+
+        class _Verifier:
+            def run(self, *args, **kwargs):
+                raise SandboxUnavailableError("daemon unavailable")
+
+        _react_repo(tmp_path)
+        (tmp_path / "node_modules").mkdir()
+        monkeypatch.setattr(
+            "signalos_lib.product.validation._select_verifier_runner",
+            lambda root: _Verifier(),
+        )
+
+        with pytest.raises(SandboxUnavailableError, match="daemon unavailable"):
+            run_ux_acceptance(tmp_path, source_dir="src", profile="react-vite")
+
     def test_run_is_na_for_non_browser_profile(self, tmp_path):
         r = run_ux_acceptance(tmp_path, source_dir="src", profile="node-api")
         assert r["ran"] is False
