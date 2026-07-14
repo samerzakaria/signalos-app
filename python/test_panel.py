@@ -105,6 +105,8 @@ class ScriptedPanel:
                 ],
                 "ranking": sorted(ids),
                 "preferred_candidate_id": "A01",
+                "abstain": False,
+                "abstain_reason": "",
                 "vetoes": [],
                 "vetoed_candidate_ids": [],
                 "unresolved_risks": ["Production evidence remains bounded"],
