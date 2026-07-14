@@ -19,6 +19,7 @@ import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
 import queue
@@ -762,6 +763,7 @@ def _provider_preflight(
     model_rows: list[dict[str, Any]] = []
     missing: list[str] = []
     without_tools: list[str] = []
+    without_context: list[str] = []
     for spec in selected:
         row = catalog.get(spec.model)
         if row is None:
@@ -781,6 +783,16 @@ def _provider_preflight(
         )
         if not has_tools:
             without_tools.append(spec.model)
+        raw_context = row.get("context_length")
+        context_length = (
+            raw_context
+            if isinstance(raw_context, int)
+            and not isinstance(raw_context, bool)
+            and 4_096 <= raw_context <= 10_000_000
+            else None
+        )
+        if context_length is None:
+            without_context.append(spec.model)
         model_rows.append(
             {
                 "alias": spec.alias,
@@ -790,6 +802,11 @@ def _provider_preflight(
                 "tool_calling": has_tools,
                 "canonical_id": str(row.get("id") or spec.model),
                 "created": row.get("created"),
+                "context_length": context_length,
+                "supported_parameters": sorted(str(value) for value in supported),
+                "architecture": row.get("architecture"),
+                "pricing": row.get("pricing"),
+                "top_provider": row.get("top_provider"),
             }
         )
     if missing:
@@ -797,6 +814,11 @@ def _provider_preflight(
     if without_tools:
         raise InfrastructureError(
             "configured model(s) do not advertise tool calling: " + ", ".join(without_tools)
+        )
+    if without_context:
+        raise InfrastructureError(
+            "configured model(s) have no trustworthy context length: "
+            + ", ".join(without_context)
         )
 
     def numeric(name: str) -> float | None:
@@ -829,6 +851,75 @@ def _provider_preflight(
         "is_free_tier": bool(info.get("is_free_tier", False)),
         "models": model_rows,
     }
+
+
+def _provider_stack_preflight(
+    selected: Sequence[ModelSpec],
+    model_rows: Sequence[dict[str, Any]],
+    *,
+    litellm_module: Any | None = None,
+) -> dict[str, Any]:
+    """Prove the installed adapter can construct every selected route offline."""
+
+    if litellm_module is None:
+        try:
+            import litellm as litellm_module  # type: ignore[import-not-found]
+        except Exception as exc:
+            raise InfrastructureError(
+                "LiteLLM provider stack is unavailable; install the locked sidecar dependencies"
+            ) from exc
+    _lazy_signalos_path()
+    from signalos_lib.product.provider_adapter import (
+        ProviderAdapter,
+        normalize_provider_model,
+    )
+
+    by_id = {str(row.get("id")): row for row in model_rows}
+    routes: list[dict[str, Any]] = []
+    for spec in selected:
+        row = by_id.get(spec.model)
+        if row is None:
+            raise InfrastructureError(
+                f"provider metadata missing for selected model {spec.model}"
+            )
+        context_length = row.get("context_length")
+        if not isinstance(context_length, int):
+            raise InfrastructureError(
+                f"provider context length missing for selected model {spec.model}"
+            )
+        routed_model = normalize_provider_model(
+            spec.model, provider_name=spec.provider
+        )
+        expected_route = f"openrouter/{spec.model}"
+        if routed_model != expected_route:
+            raise InfrastructureError(
+                f"LiteLLM route mismatch for {spec.model}: {routed_model!r}"
+            )
+        adapter = ProviderAdapter(
+            model=spec.model,
+            provider_name=spec.provider,
+            litellm_module=litellm_module,
+            context_length=context_length,
+        )
+        if adapter.routed_model != routed_model or adapter.context_length != context_length:
+            raise InfrastructureError(
+                f"provider adapter metadata mismatch for {spec.model}"
+            )
+        routes.append(
+            {
+                "alias": spec.alias,
+                "model": spec.model,
+                "routed_model": routed_model,
+                "context_length": context_length,
+                "tool_calling": bool(row.get("tool_calling")),
+            }
+        )
+    version = str(getattr(litellm_module, "__version__", "") or "")
+    if not version:
+        with contextlib.suppress(importlib_metadata.PackageNotFoundError):
+            version = importlib_metadata.version("litellm")
+    version = version or "unknown"
+    return {"ready": True, "litellm_version": version, "routes": routes}
 
 
 class SidecarClient:
@@ -1569,7 +1660,8 @@ def _delivery_request(
     spec: ModelSpec,
     run_id: str,
     orchestrator_profile: str,
-) -> dict[str, str]:
+    provider_context_length: int,
+) -> dict[str, Any]:
     """Build the paid delivery request with an explicit release profile."""
     profile = _validate_orchestrator_profile(orchestrator_profile)
     return {
@@ -1578,6 +1670,7 @@ def _delivery_request(
         "model": spec.model,
         "run_id": run_id,
         "profile": profile,
+        "provider_context_length": provider_context_length,
     }
 
 
@@ -1597,6 +1690,7 @@ def _run_row(
     orchestrator_profile: str,
     engine: dict[str, Any],
     hashes: dict[str, str],
+    provider_model_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     orchestrator_profile = _validate_orchestrator_profile(orchestrator_profile)
     workspace = row_dir / "workspace"
@@ -1618,6 +1712,7 @@ def _run_row(
         "orchestrator_profile": orchestrator_profile,
         "engine": engine,
         "hashes": hashes,
+        "provider_route": provider_model_metadata,
         "calls": [],
         "gates": [],
     }
@@ -1730,6 +1825,9 @@ def _run_row(
                 spec=spec,
                 run_id=run_id,
                 orchestrator_profile=orchestrator_profile,
+                provider_context_length=int(
+                    provider_model_metadata["context_length"]
+                ),
             ),
             gate_timeout,
         )
@@ -2042,6 +2140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             required_remaining=float(args.max_cost_per_model or 0.0) * len(selected),
             require_provider_limit=bool(args.live),
         )
+        provider_stack = _provider_stack_preflight(selected, provider["models"])
         if args.preflight:
             print(
                 json.dumps(
@@ -2053,6 +2152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "local": local,
                             "backend": backend,
                             "provider": provider,
+                            "provider_stack": provider_stack,
                             "orchestrator_profile": orchestrator_profile,
                         },
                         (key,),
@@ -2090,12 +2190,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "local": local,
                 "backend": backend,
                 "provider": provider,
+                "provider_stack": provider_stack,
                 "key_source": key_source,
             },
             "results": [],
         }
         manifest_path = run_root / "matrix-result.json"
         _safe_json_write(manifest_path, manifest, (key,))
+        provider_models = {
+            str(row["id"]): row for row in provider["models"]
+        }
         for spec in selected:
             _require_engine_unchanged(
                 engine, verified_ci_sha=args.ci_verified_sha
@@ -2116,6 +2220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 orchestrator_profile=orchestrator_profile,
                 engine=engine,
                 hashes=hashes,
+                provider_model_metadata=provider_models[spec.model],
             )
             _require_engine_unchanged(
                 engine, verified_ci_sha=args.ci_verified_sha

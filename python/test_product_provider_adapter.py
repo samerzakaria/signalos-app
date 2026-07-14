@@ -221,3 +221,15 @@ class TestLiteLLMCallPath:
         )
         assert resp.content == "text only"
         assert "tools" not in lm._captured  # tools dropped (text-only path)
+
+    def test_catalog_context_override_replaces_unknown_model_fallback(self):
+        lm = _fake_litellm(response=_text_response("ready"))
+        adapter = ProviderAdapter(
+            model="qwen/qwen3.7-max",
+            provider_name="openrouter",
+            litellm_module=lm,
+            context_length=262_144,
+        )
+
+        assert adapter.routed_model == "openrouter/qwen/qwen3.7-max"
+        assert adapter.context_length == 262_144

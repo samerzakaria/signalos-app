@@ -282,18 +282,21 @@ def test_orchestrator_profile_is_explicit_and_has_one_evidence_value(
         spec=spec,
         run_id="matrix-profile-contract",
         orchestrator_profile=args.orchestrator_profile,
+        provider_context_length=200_000,
     )
     recorded_row = {"orchestrator_profile": args.orchestrator_profile}
     recorded_manifest = {"orchestrator_profile": args.orchestrator_profile}
 
     assert request["profile"] == recorded_row["orchestrator_profile"]
     assert request["profile"] == recorded_manifest["orchestrator_profile"]
+    assert request["provider_context_length"] == 200_000
     with pytest.raises(ValueError, match="unknown orchestrator profile"):
         driver._delivery_request(
             prompt="Build the fixture",
             spec=spec,
             run_id="matrix-profile-contract",
             orchestrator_profile="prodution",
+            provider_context_length=200_000,
         )
 
     # The live row must also compare that requested value with the backend's
@@ -465,6 +468,7 @@ def test_live_provider_preflight_refuses_an_uncapped_key(driver: ModuleType) -> 
                 selected[0].model: {
                     "id": selected[0].model,
                     "supported_parameters": ["tools"],
+                    "context_length": 200_000,
                 }
             }
 
@@ -472,6 +476,47 @@ def test_live_provider_preflight_refuses_an_uncapped_key(driver: ModuleType) -> 
         driver._provider_preflight(
             FakeRouter(), selected, required_remaining=1.0, require_provider_limit=True
         )
+
+
+def test_provider_stack_preflight_uses_catalog_context_and_exact_route(
+    driver: ModuleType,
+) -> None:
+    selected = driver.load_model_catalog(MODEL_CONFIG)[:1]
+
+    class FakeLiteLLM:
+        __version__ = "test-1.0"
+        model_list: list[str] = []
+
+        @staticmethod
+        def supports_function_calling(*, model: str) -> bool:
+            return True
+
+        @staticmethod
+        def get_model_info(*, model: str) -> dict[str, object]:
+            return {}
+
+    rows = [
+        {
+            "id": selected[0].model,
+            "tool_calling": True,
+            "context_length": 262_144,
+        }
+    ]
+    result = driver._provider_stack_preflight(
+        selected, rows, litellm_module=FakeLiteLLM
+    )
+
+    assert result["ready"] is True
+    assert result["litellm_version"] == "test-1.0"
+    assert result["routes"] == [
+        {
+            "alias": selected[0].alias,
+            "model": selected[0].model,
+            "routed_model": f"openrouter/{selected[0].model}",
+            "context_length": 262_144,
+            "tool_calling": True,
+        }
+    ]
 
 
 @pytest.mark.parametrize(

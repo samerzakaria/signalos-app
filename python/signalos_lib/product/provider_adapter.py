@@ -22,6 +22,7 @@ __all__ = [
     "detect_capabilities",
     "ProviderAuthError",
     "classify_error_scenario",
+    "normalize_provider_model",
     # Layer 2 seed — opt-in raw transcript capture (OFF by default).
     "capture_transcript",
     "iter_cassette",
@@ -32,7 +33,7 @@ __all__ = [
     "replay_cassette",
 ]
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterator
 
 from ..harness import (
@@ -807,6 +808,12 @@ def _normalize_litellm_model(model: str, provider_name: str | None = None) -> st
     return m
 
 
+def normalize_provider_model(model: str, provider_name: str | None = None) -> str:
+    """Return the exact LiteLLM route used for a provider/model pair."""
+
+    return _normalize_litellm_model(model, provider_name=provider_name)
+
+
 def _provider_error_message(exc: Exception, provider_name: str | None = None) -> str:
     provider = (provider_name or "AI provider").strip() or "AI provider"
     raw = str(exc)
@@ -878,6 +885,7 @@ class ProviderAdapter:
         capabilities: ProviderCapabilities | None = None,
         litellm_module: Any | None = None,
         provider_name: str | None = None,
+        context_length: int | None = None,
     ) -> None:
         self.model = model
         self.provider_name = provider_name
@@ -886,7 +894,17 @@ class ProviderAdapter:
             provider_name=provider_name,
         )
         capability_model = _normalize_litellm_model(model, provider_name=provider_name)
-        self._caps = capabilities or detect_capabilities(capability_model, litellm_module=litellm_module)
+        detected = capabilities or detect_capabilities(
+            capability_model, litellm_module=litellm_module
+        )
+        if context_length is not None:
+            if isinstance(context_length, bool) or not isinstance(context_length, int):
+                raise ValueError("provider context_length must be an integer")
+            if not 4_096 <= context_length <= 10_000_000:
+                raise ValueError("provider context_length is outside the supported range")
+            detected = replace(detected, context_length=context_length)
+        self._caps = detected
+        self.routed_model = capability_model
 
     # --- capability surface --------------------------------------------------
 

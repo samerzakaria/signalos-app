@@ -864,7 +864,11 @@ def _optional_agent_run_id(payload: dict, command: str) -> str | None:
         raise ValueError(f"{command} run_id invalid: {exc}") from exc
 
 
-def _build_agent_adapter(model: str, provider: str | None = None):
+def _build_agent_adapter(
+    model: str,
+    provider: str | None = None,
+    context_length: int | None = None,
+):
     """Construct the ProviderAdapter. Honors the test injection seam."""
     if _AGENT_ADAPTER_FACTORY is not None:
         try:
@@ -872,7 +876,24 @@ def _build_agent_adapter(model: str, provider: str | None = None):
         except TypeError:
             return _AGENT_ADAPTER_FACTORY(model)
     from signalos_lib.product.provider_adapter import ProviderAdapter
-    return ProviderAdapter(model=model, provider_name=provider)
+    return ProviderAdapter(
+        model=model,
+        provider_name=provider,
+        context_length=context_length,
+    )
+
+
+def _agent_provider_context_length(payload: dict, command: str) -> int | None:
+    raw = payload.get("provider_context_length")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"{command} provider_context_length must be an integer")
+    if not 4_096 <= raw <= 10_000_000:
+        raise ValueError(
+            f"{command} provider_context_length is outside the supported range"
+        )
+    return raw
 
 
 def _agent_provider_and_model(payload: dict, command: str) -> tuple[str | None, str]:
@@ -1075,6 +1096,9 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         return err(req_id, f"agent:deliver profile invalid: {exc}")
     try:
         provider, model = _agent_provider_and_model(payload, "agent:deliver")
+        provider_context_length = _agent_provider_context_length(
+            payload, "agent:deliver"
+        )
     except ValueError as exc:
         _agent_emit(run_id)({"type": "error", "error": str(exc)})
         return err(req_id, str(exc))
@@ -1090,7 +1114,9 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
     _clear_agent_cancel_marker(repo_root, run_id)
     _AGENT_CANCEL_FLAGS.setdefault(run_id, False)
     try:
-        adapter = _build_agent_adapter(model, provider)
+        adapter = _build_agent_adapter(
+            model, provider, context_length=provider_context_length
+        )
     except Exception as exc:  # INV-4: surface
         _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
         return err(req_id, f"agent:deliver provider init failed: {type(exc).__name__}: {exc}")
