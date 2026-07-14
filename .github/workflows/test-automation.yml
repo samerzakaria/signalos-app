@@ -143,7 +143,12 @@ jobs:
       - name: python tests
         working-directory: python
         shell: bash
-        run: python -m pytest . --ignore=test_product_live_e2e.py -q
+        # test_backend_matrix_oracle.py drives the Playwright/Chromium browser
+        # oracle (scripts/backend_matrix/oracles/expense_tracker.mjs). This step
+        # has no browser stack and npm install runs later, so it is excluded
+        # here like the live-e2e test; it runs on dev machines and belongs in a
+        # browser-enabled CI job (follow-up), not this fast gate.
+        run: python -m pytest . --ignore=test_product_live_e2e.py --ignore=test_backend_matrix_oracle.py -q
       - uses: actions/setup-node@v5
         with:
           node-version: 20
