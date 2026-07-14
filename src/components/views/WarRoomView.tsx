@@ -90,6 +90,13 @@ export function WarRoomView() {
                 <span className="chip" key={m.id} title={m.id} style={{ cursor: 'default' }}>{m.name}</span>
               ))}
             </div>
+            <p
+              className="warroom-key-hint"
+              style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--ink-2)' }}
+            >
+              Cross-vendor via OpenRouter. Add <code>OPENROUTER_API_KEY</code> in{' '}
+              <strong>Settings → Secrets</strong> to enable the panel.
+            </p>
             <textarea
               className="env-textarea"
               placeholder="What decision, design, or claim do you want pressure-tested?"
