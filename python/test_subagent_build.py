@@ -487,6 +487,42 @@ class TestRunWrapperSurfacesNoWork(unittest.TestCase):
         self.assertTrue(any("incomplete" in t.lower() for t in system_texts),
                         f"no no-work signal surfaced; got {system_texts}")
 
+    def test_provider_failure_raises_typed_g4_infrastructure_error(self):
+        from signalos_lib.product.subagent_build import (
+            ProviderExecutionError,
+            _default_run_agent,
+        )
+        from signalos_lib.product.enforcement_state import (
+            StaticEnforcementProvider,
+            seed_trust_tier_paths,
+        )
+        from signalos_lib.product.provider_adapter import (
+            ProviderAdapter,
+            ProviderCapabilities,
+        )
+
+        class _TimeoutProvider:
+            def chat(self, *args, **kwargs):
+                raise TimeoutError("provider connection timed out")
+
+        d = Path(tempfile.mkdtemp())
+        seed_trust_tier_paths(d)
+        caps = ProviderCapabilities(
+            model="m", supports_tool_calls=True, supports_streaming=False,
+            context_length=200_000,
+        )
+        adapter = ProviderAdapter(
+            model="m", provider=_TimeoutProvider(), capabilities=caps,
+        )
+        run = _default_run_agent(
+            d, StaticEnforcementProvider(trust_tier="T3"), lambda _e: None,
+            "default", [0, 1, 2, 3],
+        )
+
+        with self.assertRaises(ProviderExecutionError) as raised:
+            run("implementer", adapter, "sys", "build it")
+        self.assertEqual(raised.exception.failure_type, "provider-transport")
+
 
 # ---------------------------------------------------------------------------
 # FIX 3 (Claim 5) — G4 consumes the CANONICAL machine plan (PLAN.tasks.yaml),

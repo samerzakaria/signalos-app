@@ -80,6 +80,15 @@ BuildCheck = Callable[..., "tuple[bool, str]"]
 class BuildCancelled(RuntimeError):
     """Raised internally when the parent delivery cancellation is observed."""
 
+
+class ProviderExecutionError(RuntimeError):
+    """A G4 subagent could not execute because its provider boundary failed."""
+
+    def __init__(self, failure_type: str, message: str) -> None:
+        super().__init__(message)
+        self.failure_type = failure_type
+
+
 # Verdict token the reviewer must end its report with. Parsed fail-closed but
 # the loop is budget-bounded, and the objective build gate is the real wall.
 _VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|FAIL)", re.I)
@@ -799,6 +808,8 @@ def _diagnose_deadlock(repo_root: Path, task: Task, errs: str, reviewer, adapter
             task.name, test_src, errs, _impl_digest(repo_root, task, project_id))
         try:
             verdict_text = run("test-arbiter", reviewer, sysm, usrm)
+        except ProviderExecutionError:
+            raise
         except Exception:
             verdict_text = ""
         v = parse_arbiter_verdict(verdict_text)
@@ -1232,6 +1243,12 @@ def _default_run_agent(
                 usage["in"] = (usage.get("in") or 0) + res.tokens_in
             if res.tokens_out is not None:
                 usage["out"] = (usage.get("out") or 0) + res.tokens_out
+        failure_type = str(getattr(res, "failure_type", "") or "")
+        if failure_type.startswith("provider-"):
+            raise ProviderExecutionError(
+                failure_type,
+                res.error or f"{role} provider execution failed",
+            )
         # Fix: do NOT silently swallow a "narrated, wrote nothing" / truncated
         # outcome. The loop now refuses to call a no-tool narration turn (or a
         # cut-off max_tokens turn) "completed"; surface that here so a step that

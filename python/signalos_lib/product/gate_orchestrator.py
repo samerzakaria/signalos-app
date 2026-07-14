@@ -759,7 +759,11 @@ class GateOrchestrator:
                 "text": ("G4 attribution checkpoint failed; this build "
                          f"cannot be signed ({type(exc).__name__}: {exc})."),
             })
-        from .subagent_build import BuildCancelled, run_subagent_driven_build
+        from .subagent_build import (
+            BuildCancelled,
+            ProviderExecutionError,
+            run_subagent_driven_build,
+        )
         try:
             result = run_subagent_driven_build(
                 self.repo_root,
@@ -782,6 +786,16 @@ class GateOrchestrator:
                 tool_calls_made=0,
                 messages=[],
                 error=str(exc),
+            )
+        except ProviderExecutionError as exc:
+            result = LoopResult(
+                run_id=self.state.run_id,
+                status="error",
+                final_text=None,
+                tool_calls_made=0,
+                messages=[],
+                error=str(exc),
+                failure_type=exc.failure_type,
             )
         # INV-2: independently verify the build gate produced a real, passing
         # product before it can be signed. apply_verdict refuses to sign until ok.
