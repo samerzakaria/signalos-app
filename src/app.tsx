@@ -10,6 +10,7 @@ import { DashboardView } from './components/views/DashboardView';
 import { BuildView } from './components/views/BuildView';
 import { PreviewView } from './components/views/PreviewView';
 import { VaultView } from './components/views/VaultView';
+import { WarRoomView } from './components/views/WarRoomView';
 import { SettingsView } from './components/views/SettingsView';
 import { HistoryView } from './components/views/HistoryView';
 import { BrainView } from './components/views/BrainView';
@@ -38,6 +39,7 @@ export function App() {
               <BuildView />
               <PreviewView />
               <VaultView />
+              <WarRoomView />
               <SettingsView />
               <HistoryView />
               <BrainView />

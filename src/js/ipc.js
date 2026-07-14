@@ -290,6 +290,13 @@ export const attachments = {
   ),
 };
 
+// PANEL (War Room) -- fan out one question to several models independently.
+// Timeout 0 = no timeout: the panel is slow (same convention agent:deliver uses).
+export const panel = {
+  consult: (question, opts = {}) =>
+    signal.runAndWait("panel:consult", [JSON.stringify({ question, ...opts })], 0),
+};
+
 // IDENTITY + ROLE (Wave 3)
 
 export const identity = {

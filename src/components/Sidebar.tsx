@@ -278,6 +278,7 @@ export function Sidebar() {
       )}
       {ws ? <ProjectPicker /> : null}
       <div className="sb-label">Tools</div>
+      <button type="button" className={sidebarNavClass('warroom')} data-tab="warroom" onClick={() => navigate('warroom')}><i className="ti ti-messages"></i> War Room</button>
       <button type="button" className={sidebarNavClass('vault')} data-tab="vault" onClick={() => navigate('vault')}><i className="ti ti-shield-lock"></i> Vault</button>
       <button type="button" className={sidebarNavClass('brain')} data-tab="brain" onClick={() => navigate('brain')}><i className="ti ti-brain"></i> Brain</button>
       <button type="button" className={sidebarNavClass('history')} data-tab="history" onClick={() => navigate('history')}><i className="ti ti-history"></i> History</button>

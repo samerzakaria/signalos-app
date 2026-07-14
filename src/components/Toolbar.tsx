@@ -114,6 +114,7 @@ export function Toolbar() {
     preview: 'Preview',
     dashboard: 'Evidence',
     vault: 'Vault',
+    warroom: 'War Room',
     settings: 'Settings',
     help: 'Help',
     history: 'History',

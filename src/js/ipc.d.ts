@@ -83,6 +83,10 @@ export const policy: {
 
 export const attachments: { analyze(files: unknown): Promise<unknown> };
 
+export const panel: {
+  consult(question: string, opts?: Record<string, unknown>): Promise<unknown>;
+};
+
 export const identity: {
   set(name: string, role: string): Promise<unknown>;
   get(): Promise<unknown>;

@@ -102,6 +102,7 @@ ROUTED_COMMANDS = (
     "brownfield:audit",
     "competitor:analyze",
     "voice:transcribe",
+    "panel:consult",
     *AGENT_COMMANDS,
 )
 
@@ -314,6 +315,13 @@ def handle(req: dict) -> dict:
                 "error": redact_text(f"{type(exc).__name__}: {exc}"),
                 "trace": redact_text(traceback.format_exc()),
             }
+
+    # panel:consult routes off the RAW payload (like agent:* commands): the
+    # question is fanned out verbatim to external models, so the secret-shape
+    # redaction applied to `args` must not mangle it. panel_consult is fully
+    # self-guarded (it never raises and never leaks the OpenRouter key).
+    if command == "panel:consult":
+        return panel_consult(req_id, raw_args, project_id=project_id)
 
     try:
         return route(req_id, command, args, project_id=project_id)
@@ -2327,6 +2335,76 @@ def voice_transcribe(req_id: str, args: list) -> dict:
     from signalos_lib.voice_transcribe import transcribe
 
     return ok(req_id, data=transcribe(audio_b64, mime))
+
+
+# ---------------------------------------------------------------------------
+# panel:consult -> the War Room (cross-vendor second-opinion panel)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_openrouter_key() -> str:
+    """Resolve an OpenRouter key robustly for panel:consult.
+
+    Order: (a) the process env OPENROUTER_API_KEY (the app-level keychain the
+    Rust host injects at sidecar spawn); (b) the active workspace's .env.local
+    then .env (the desktop Secrets vault writes the product-level key there;
+    cwd is the workspace by the time this runs); (c) panel.load_key() (env ->
+    ~/.claude/openrouter.key -> a discoverable .env, best effort).
+
+    The returned value is a credential: it MUST never be placed in a response,
+    an error string, or a log by any caller.
+    """
+    env_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    # (b) workspace .env.local wins over .env (matches secrets_resolver's order).
+    from signalos_lib.product.secrets_resolver import parse_env_file
+
+    root = Path(os.getcwd())
+    for name in (".env.local", ".env"):
+        value = str(parse_env_file(root / name).get("OPENROUTER_API_KEY", "")).strip()
+        if value:
+            return value
+    # (c) last-resort skill-parity resolver.
+    from signalos_lib import panel
+
+    return (panel.load_key() or "").strip()
+
+
+def panel_consult(req_id: str, args: Any, project_id: str = "default") -> dict:
+    """panel:consult -> fan the SAME question out to four cross-vendor OpenRouter
+    models in parallel (blind/independent) and return each candid answer plus the
+    exact OpenRouter cost delta.
+
+    Payload: {"question": str, "models"?: list|str, "system"?: str}. The
+    OpenRouter key is resolved server-side (never supplied by the frontend) and
+    NEVER appears in the response, an error string, or a log."""
+    try:
+        payload = _parse_object_arg(args, "panel:consult")
+    except (TypeError, ValueError) as exc:
+        return err(req_id, f"panel:consult args invalid: {exc}")
+    question = str(payload.get("question") or "")
+    models = payload.get("models")
+    system = payload.get("system")
+    if system is not None:
+        system = str(system)
+
+    from signalos_lib import panel
+
+    key = ""
+    try:
+        key = _resolve_openrouter_key()
+        result = panel.consult(question, models=models, system=system, key=key)
+    except ValueError as exc:
+        # Empty question / no key. panel.consult authors these messages and does
+        # not embed the key, but redact defensively before it leaves the process.
+        message = str(exc)
+        if key and key in message:
+            message = message.replace(key, "***")
+        return err(req_id, message)
+    except Exception as exc:  # never leak provider internals or the key
+        return err(req_id, f"panel:consult failed: {type(exc).__name__}")
+    return ok(req_id, data=result)
 
 
 # ---------------------------------------------------------------------------

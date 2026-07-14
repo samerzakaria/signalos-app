@@ -233,6 +233,7 @@ async function switchTab(tab) {
     preview: "Preview",
     dashboard: "Dashboard",
     vault: "Vault",
+    warroom: "War Room",
     settings: "Settings",
     help: "Help",
     history: "History",
