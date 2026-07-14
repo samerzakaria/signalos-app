@@ -452,7 +452,7 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
         (d / tpath).write_text("test('x', () => {})", encoding="utf-8")
         stack = _StackContext(
             test_file_command=lambda repo, rel: [
-                sys.executable, "-c", "raise SystemExit(0)", rel,
+                "npx.cmd", "vitest", "run", rel,
             ]
         )
         verifier = _Verifier()
@@ -468,10 +468,40 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
         host_run.assert_not_called()
         self.assertEqual(len(verifier.calls), 1)
         command, repo_root, timeout_s, env = verifier.calls[0]
+        self.assertTrue(command.startswith("npx vitest run "))
         self.assertIn("T1.test.ts", command)
+        self.assertNotIn("\\", command)
         self.assertEqual(repo_root, d)
         self.assertEqual(timeout_s, 240)
         self.assertEqual(env, {"CI": "1", "FORCE_COLOR": "0"})
+
+    def test_container_failure_is_typed_as_infrastructure(self):
+        from signalos_lib.product.sandbox import SandboxUnavailableError
+        from signalos_lib.product.subagent_build import (
+            ExecutionInfrastructureError,
+            _run_single_test,
+            _StackContext,
+        )
+
+        class _BrokenVerifier:
+            def run(self, *args, **kwargs):
+                raise SandboxUnavailableError("daemon unavailable")
+
+        d = Path(tempfile.mkdtemp())
+        tpath = "core/execution/tests/T1.test.ts"
+        (d / tpath).parent.mkdir(parents=True, exist_ok=True)
+        (d / tpath).write_text("test('x', () => {})", encoding="utf-8")
+        stack = _StackContext(
+            test_file_command=lambda repo, rel: ["npx.cmd", "vitest", "run", rel]
+        )
+
+        with mock.patch(
+            "signalos_lib.product.validation._select_verifier_runner",
+            return_value=_BrokenVerifier(),
+        ), self.assertRaises(ExecutionInfrastructureError) as raised:
+            _run_single_test(d, tpath, stack)
+
+        self.assertEqual(raised.exception.failure_type, "sandbox-unavailable")
 
     def test_no_runner_stack_does_not_stamp_pre_existing_green(self):
         # Caller path (CONTROL DECISION 2): with the honest no-runner result the

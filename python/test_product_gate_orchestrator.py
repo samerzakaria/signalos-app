@@ -1592,6 +1592,28 @@ class TestAgentOutcomeGate(unittest.TestCase):
             self.assertEqual(result.failure_type, "provider-rate-limit")
             self.assertIn("rate-limiting", result.error)
 
+    def test_g4_sandbox_failure_is_a_typed_loop_outcome(self):
+        from signalos_lib.product.subagent_build import ExecutionInfrastructureError
+
+        with tempfile.TemporaryDirectory() as d:
+            orch = _bare_orch(d)
+            with mock.patch.object(orch, "_scaffold_shell_if_greenfield"), \
+                    mock.patch.object(orch, "_prepare_g4_attribution"), \
+                    mock.patch(
+                        "signalos_lib.product.subagent_build.run_subagent_driven_build",
+                        side_effect=ExecutionInfrastructureError(
+                            "sandbox-unavailable", "container daemon unavailable"
+                        ),
+                    ), mock.patch.object(
+                        orch, "_verify_g4_build",
+                        return_value={"ok": False, "reason": "sandbox unavailable"},
+                    ):
+                result = orch._execute_build_gate("G4", "system", [0, 1, 2, 3])
+
+            self.assertEqual(result.status, "error")
+            self.assertEqual(result.failure_type, "sandbox-unavailable")
+            self.assertIn("daemon unavailable", result.error)
+
     def test_stalled_agent_not_approvable_even_with_artifacts_present(self):
         # STRONGEST fail-open proof: seed ALL FOUR G0 artifacts so the old
         # _default_sign would happily sign + advance a gate whose agent actually

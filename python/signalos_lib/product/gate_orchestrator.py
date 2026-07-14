@@ -761,7 +761,7 @@ class GateOrchestrator:
             })
         from .subagent_build import (
             BuildCancelled,
-            ProviderExecutionError,
+            ExecutionInfrastructureError,
             run_subagent_driven_build,
         )
         try:
@@ -787,7 +787,7 @@ class GateOrchestrator:
                 messages=[],
                 error=str(exc),
             )
-        except ProviderExecutionError as exc:
+        except ExecutionInfrastructureError as exc:
             result = LoopResult(
                 run_id=self.state.run_id,
                 status="error",

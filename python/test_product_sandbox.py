@@ -161,6 +161,7 @@ class TestBackendSelection:
         assert r.network == "none"
         assert r.pull == "never"
         assert r.image == image
+        assert r.writable_paths == ("node_modules", "dist")
 
     @pytest.mark.parametrize(
         "env,match",
@@ -175,6 +176,14 @@ class TestBackendSelection:
              "read-only"),
             ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_PULL": "missing"},
              "pull policy"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_CPUS": "0"},
+             "cpus"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_MEMORY": "0"},
+             "memory"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_PIDS": "-1"},
+             "pids"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_TMPFS_SIZE": "0"},
+             "tmpfs"),
         ],
     )
     def test_funded_profile_rejects_every_safety_downgrade(self, tmp_path, env, match):
@@ -404,6 +413,7 @@ class TestReadOnlyHardening:
         assert "--security-opt no-new-privileges:true" in joined
         assert "--memory-swap" in argv
         assert "--user" in argv
+        assert "--entrypoint /bin/sh" in joined
         assert "--network none" in joined
         assert "--pull never" in joined
         assert "--name signalos-funded-test" in joined
@@ -414,7 +424,7 @@ class TestReadOnlyHardening:
         assert any(m.endswith(":/workspace/dist:rw") for m in mounts)
         assert all("docker.sock" not in mount for mount in mounts)
         assert "HOME=/home/signalos" in argv
-        assert argv[-4:] == [image, "sh", "-lc", "npm test"]
+        assert argv[-3:] == [image, "-lc", "npm test"]
 
     def test_hardened_argv_rejects_mutable_image_and_policy_downgrades(self, tmp_path):
         with pytest.raises(ValueError, match="sha256"):
@@ -431,6 +441,25 @@ class TestReadOnlyHardening:
         with pytest.raises(ValueError, match="pull"):
             build_container_argv(
                 "true", tmp_path, image=image, hardened=True, pull="missing"
+            )
+
+    @pytest.mark.parametrize(
+        "kwargs,match",
+        [
+            ({"workspace_read_only": False}, "workspace"),
+            ({"workspace_read_only": True, "container_user": "0:0"}, "non-root"),
+            ({"workspace_read_only": True, "cpus": "0"}, "cpus"),
+            ({"workspace_read_only": True, "memory": "0"}, "memory"),
+            ({"workspace_read_only": True, "pids": "-1"}, "pids"),
+            ({"workspace_read_only": True, "tmpfs_size": "0"}, "tmpfs"),
+            ({"workspace_read_only": True, "tmpfs": {"/host": "rw"}}, "custom tmpfs"),
+        ],
+    )
+    def test_hardened_argv_rejects_public_api_downgrades(self, tmp_path, kwargs, match):
+        image = "node:20@sha256:" + "1" * 64
+        with pytest.raises(ValueError, match=match):
+            build_container_argv(
+                "true", tmp_path, image=image, hardened=True, **kwargs
             )
 
 
@@ -520,7 +549,7 @@ class TestContainerRunnerRun:
         fake = MagicMock(side_effect=[
             subprocess.CompletedProcess(args=[], returncode=0, stdout="ok\n", stderr=""),
             subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
-            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not found"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
         ])
         runner = ContainerRunner(
             tmp_path,
@@ -542,6 +571,25 @@ class TestContainerRunnerRun:
         assert calls[1] == ["docker", "rm", "-f", name]
         assert calls[2] == ["docker", "inspect", name]
 
+    def test_hardened_runtime_launch_failure_is_infrastructure(self, tmp_path):
+        image = "node:20@sha256:" + "2" * 64
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=125, stdout="", stderr="daemon down"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such object"),
+        ])
+        runner = ContainerRunner(
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            runner=fake,
+        )
+
+        with pytest.raises(SandboxUnavailableError, match="exit 125"):
+            runner.run("true", tmp_path, 30, {})
+
     def test_hardened_cleanup_failure_is_an_infrastructure_error(self, tmp_path):
         image = "node:20@sha256:" + "f" * 64
         fake = MagicMock(side_effect=[
@@ -558,6 +606,25 @@ class TestContainerRunnerRun:
             runner=fake,
         )
         with pytest.raises(SandboxUnavailableError, match="still exists"):
+            runner.run("true", tmp_path, 30, {})
+
+    def test_hardened_cleanup_rejects_inconclusive_double_failure(self, tmp_path):
+        image = "node:20@sha256:" + "3" * 64
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="permission denied"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="daemon unavailable"),
+        ])
+        runner = ContainerRunner(
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            runner=fake,
+        )
+
+        with pytest.raises(SandboxUnavailableError, match="inconclusive"):
             runner.run("true", tmp_path, 30, {})
 
 

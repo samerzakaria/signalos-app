@@ -60,6 +60,7 @@ __all__ = [
 ]
 
 import logging
+import math
 import os
 import re
 import shutil
@@ -105,14 +106,21 @@ FUNDED_PROFILE = "funded"
 FUNDED_WRITABLE_PATHS = (
     "node_modules",
     "dist",
-    ".vite",
-    "coverage",
-    "target",
-    "build",
-    ".next",
-    ".cache",
 )
 _PINNED_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
+_SIZE_RE = re.compile(r"^([1-9][0-9]*)([kmgt])(?:i?b)?$", re.IGNORECASE)
+_SIZE_MULTIPLIERS = {
+    "k": 1024,
+    "m": 1024 ** 2,
+    "g": 1024 ** 3,
+    "t": 1024 ** 4,
+}
+_CONTAINER_NOT_FOUND_MARKERS = (
+    "no such container",
+    "no such object",
+    "no container with name or id",
+    "container not found",
+)
 
 
 def _default_tmpfs(size: str) -> dict[str, str]:
@@ -151,6 +159,49 @@ def _default_container_user() -> str:
     if hasattr(os, "getuid") and hasattr(os, "getgid"):
         return f"{os.getuid()}:{os.getgid()}"
     return "1000:1000"
+
+
+def _validate_non_root_user(user: str) -> str:
+    value = str(user or "").strip()
+    match = re.fullmatch(r"([0-9]+):([0-9]+)", value)
+    if match is None or int(match.group(1)) == 0 or int(match.group(2)) == 0:
+        raise ValueError(
+            "hardened sandbox requires an explicit non-root numeric uid:gid"
+        )
+    return value
+
+
+def _size_bytes(value: str, label: str) -> int:
+    match = _SIZE_RE.fullmatch(str(value or "").strip())
+    if match is None:
+        raise ValueError(f"hardened sandbox {label} must be a positive size with k/m/g/t units")
+    return int(match.group(1)) * _SIZE_MULTIPLIERS[match.group(2).lower()]
+
+
+def _validate_hardened_limits(
+    cpus: str,
+    memory: str,
+    pids: str,
+    tmpfs_size: str,
+) -> None:
+    try:
+        cpu_value = float(str(cpus).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("hardened sandbox cpus must be numeric") from exc
+    if not math.isfinite(cpu_value) or not 0 < cpu_value <= 16:
+        raise ValueError("hardened sandbox cpus must be greater than 0 and at most 16")
+    try:
+        pids_value = int(str(pids).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("hardened sandbox pids must be an integer") from exc
+    if not 16 <= pids_value <= 4096:
+        raise ValueError("hardened sandbox pids must be between 16 and 4096")
+    memory_bytes = _size_bytes(memory, "memory")
+    if not 256 * 1024 ** 2 <= memory_bytes <= 16 * 1024 ** 3:
+        raise ValueError("hardened sandbox memory must be between 256m and 16g")
+    tmpfs_bytes = _size_bytes(tmpfs_size, "tmpfs size")
+    if not 64 * 1024 ** 2 <= tmpfs_bytes <= 4 * 1024 ** 3:
+        raise ValueError("hardened sandbox tmpfs size must be between 64m and 4g")
 
 
 def _validated_writable_relpaths(paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -369,6 +420,8 @@ def build_container_argv(
     if engine not in _ENGINE_CLI:
         raise ValueError(f"unknown container engine: {engine!r}")
     if hardened:
+        if engine == "wsl":
+            raise ValueError("hardened sandbox requires native docker or podman")
         image = validate_pinned_image(image)
         if network != "none":
             raise ValueError("hardened sandbox requires --network none")
@@ -376,6 +429,14 @@ def build_container_argv(
             raise ValueError("hardened sandbox requires a read-only root filesystem")
         if pull != "never":
             raise ValueError("hardened sandbox requires --pull=never")
+        if not workspace_read_only:
+            raise ValueError("hardened sandbox requires a read-only workspace source mount")
+        if tmpfs is not None:
+            raise ValueError("hardened sandbox does not allow custom tmpfs mounts")
+        container_user = _validate_non_root_user(
+            container_user or _default_container_user()
+        )
+        _validate_hardened_limits(cpus, memory, pids, tmpfs_size)
     mount_src = _mount_source(workspace, engine)
     workdir = CONTAINER_WORKSPACE
     if workdir_rel:
@@ -406,14 +467,18 @@ def build_container_argv(
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--memory-swap", memory,
-            "--user", container_user or _default_container_user(),
+            "--user", container_user,
+            "--entrypoint", "/bin/sh",
         ]
     if read_only:
         argv.append("--read-only")  # immutable rootfs; only the mounts below write.
     if hardened and tmpfs is None:
         tmpfs_mounts = {
             "/tmp": f"rw,nosuid,nodev,noexec,size={tmpfs_size},mode=1777",
-            "/home/signalos": f"rw,nosuid,nodev,size={tmpfs_size},mode=700",
+            # One process/user runs per throwaway container.  Mode 1777 avoids
+            # the root-owned-mode-700 EACCES trap for the mandatory non-root
+            # workload while the tmpfs remains private to this container.
+            "/home/signalos": f"rw,nosuid,nodev,size={tmpfs_size},mode=1777",
         }
     else:
         tmpfs_mounts = _default_tmpfs(tmpfs_size) if tmpfs is None else dict(tmpfs)
@@ -443,7 +508,10 @@ def build_container_argv(
         ]
     for key, val in _safe_env_overlay(env).items():
         argv += ["-e", f"{key}={val}"]  # overlay env INTO the container only.
-    argv += [image, "sh", "-lc", command]
+    if hardened:
+        argv += [image, "-lc", command]
+    else:
+        argv += [image, "sh", "-lc", command]
     return argv
 
 
@@ -607,6 +675,14 @@ class ContainerRunner(SandboxRunner):
                 raise ValueError(
                     "hardened container requires network=none, read_only=true, pull=never"
                 )
+            if not self.workspace_read_only:
+                raise ValueError(
+                    "hardened container requires a read-only workspace source mount"
+                )
+            self.container_user = _validate_non_root_user(self.container_user)
+            _validate_hardened_limits(
+                self.cpus, self.memory, self.pids, self.tmpfs_size
+            )
             for rel in self.writable_paths:
                 candidate = self.workspace / Path(rel)
                 cursor = self.workspace
@@ -668,13 +744,23 @@ class ContainerRunner(SandboxRunner):
     def _cleanup_hardened_container(self, name: str, cidfile: Path) -> None:
         cleanup_errors: list[str] = []
         try:
-            self._runtime_call(["rm", "-f", name])
+            removed = self._runtime_call(["rm", "-f", name])
+            if removed.returncode != 0 and not self._container_not_found(removed):
+                cleanup_errors.append(
+                    "forced remove failed: "
+                    + ((removed.stderr or removed.stdout or "unknown runtime error").strip())
+                )
         except Exception as exc:
             cleanup_errors.append(f"remove failed: {type(exc).__name__}: {exc}")
         try:
             inspected = self._runtime_call(["inspect", name])
             if inspected.returncode == 0:
                 cleanup_errors.append("container still exists after forced cleanup")
+            elif not self._container_not_found(inspected):
+                cleanup_errors.append(
+                    "cleanup verification was inconclusive: "
+                    + ((inspected.stderr or inspected.stdout or "unknown runtime error").strip())
+                )
         except Exception as exc:
             cleanup_errors.append(f"cleanup verification failed: {type(exc).__name__}: {exc}")
         try:
@@ -683,6 +769,11 @@ class ContainerRunner(SandboxRunner):
             cleanup_errors.append(f"CID file cleanup failed: {exc}")
         if cleanup_errors:
             raise SandboxUnavailableError("; ".join(cleanup_errors))
+
+    @staticmethod
+    def _container_not_found(proc: subprocess.CompletedProcess) -> bool:
+        output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+        return any(marker in output for marker in _CONTAINER_NOT_FOUND_MARKERS)
 
     def run(
         self,
@@ -732,6 +823,12 @@ class ContainerRunner(SandboxRunner):
                 f"container runtime execution failed: {type(exc).__name__}: {exc}"
             ) from exc
         else:
+            if self.hardened and proc.returncode in {125, 126, 127}:
+                detail = (proc.stderr or proc.stdout or "container launch failed").strip()
+                raise SandboxUnavailableError(
+                    f"container runtime could not start the funded workload "
+                    f"(exit {proc.returncode}): {detail}"
+                )
             result = (
                 proc.returncode,
                 CommandOutput(proc.stdout or "", proc.stderr or ""),
@@ -845,21 +942,26 @@ def select_runner(
         if requested_pull != "never":
             raise SandboxUnavailableError("funded sandbox pull policy must be 'never'")
 
-    runner = ContainerRunner(
-        workspace,
-        engine=raw,
-        image=image,
-        cpus=env.get("SIGNALOS_SANDBOX_CPUS") or DEFAULT_CPUS,
-        memory=env.get("SIGNALOS_SANDBOX_MEMORY") or DEFAULT_MEMORY,
-        pids=env.get("SIGNALOS_SANDBOX_PIDS") or DEFAULT_PIDS,
-        network="none" if funded else (env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK),
-        read_only=read_only,
-        tmpfs_size=env.get("SIGNALOS_SANDBOX_TMPFS_SIZE") or DEFAULT_TMPFS_SIZE,
-        pull="never" if funded else (env.get("SIGNALOS_SANDBOX_PULL") or DEFAULT_PULL),
-        hardened=funded,
-        workspace_read_only=funded,
-        writable_paths=FUNDED_WRITABLE_PATHS if funded else (),
-    )
+    try:
+        runner = ContainerRunner(
+            workspace,
+            engine=raw,
+            image=image,
+            cpus=env.get("SIGNALOS_SANDBOX_CPUS") or DEFAULT_CPUS,
+            memory=env.get("SIGNALOS_SANDBOX_MEMORY") or DEFAULT_MEMORY,
+            pids=env.get("SIGNALOS_SANDBOX_PIDS") or DEFAULT_PIDS,
+            network="none" if funded else (env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK),
+            read_only=read_only,
+            tmpfs_size=env.get("SIGNALOS_SANDBOX_TMPFS_SIZE") or DEFAULT_TMPFS_SIZE,
+            pull="never" if funded else (env.get("SIGNALOS_SANDBOX_PULL") or DEFAULT_PULL),
+            hardened=funded,
+            workspace_read_only=funded,
+            writable_paths=FUNDED_WRITABLE_PATHS if funded else (),
+        )
+    except ValueError as exc:
+        if funded:
+            raise SandboxUnavailableError(str(exc)) from exc
+        raise
     _LOGGER.info("runtime containment active: %s", runner.name)
     _emit({"type": "sandbox_selected", "engine": raw, "backend": runner.name})
     return runner

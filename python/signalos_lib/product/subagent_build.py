@@ -44,6 +44,7 @@ __all__ = [
     "task_dod_violations",
     "is_vacuous_test",
     "BuildCancelled",
+    "ExecutionInfrastructureError",
     "ProviderExecutionError",
 ]
 
@@ -59,6 +60,7 @@ from typing import Any, Callable, Optional
 
 from ..artifacts import resolve_gate_artifacts, resolve_workspace_path
 from .agent_loop import AgentLoop, LoopResult
+from .sandbox import SandboxUnavailableError
 from .wiring_check import unwired_lint
 from .budgets import (
     resolve_build_doc_cap,
@@ -83,12 +85,16 @@ class BuildCancelled(RuntimeError):
     """Raised internally when the parent delivery cancellation is observed."""
 
 
-class ProviderExecutionError(RuntimeError):
-    """A G4 subagent could not execute because its provider boundary failed."""
+class ExecutionInfrastructureError(RuntimeError):
+    """A required execution boundary failed independently of product quality."""
 
     def __init__(self, failure_type: str, message: str) -> None:
         super().__init__(message)
         self.failure_type = failure_type
+
+
+class ProviderExecutionError(ExecutionInfrastructureError):
+    """A G4 subagent could not execute because its provider boundary failed."""
 
 
 # Verdict token the reviewer must end its report with. Parsed fail-closed but
@@ -810,7 +816,7 @@ def _diagnose_deadlock(repo_root: Path, task: Task, errs: str, reviewer, adapter
             task.name, test_src, errs, _impl_digest(repo_root, task, project_id))
         try:
             verdict_text = run("test-arbiter", reviewer, sysm, usrm)
-        except ProviderExecutionError:
+        except ExecutionInfrastructureError:
             raise
         except Exception:
             verdict_text = ""
@@ -1237,7 +1243,13 @@ def _default_run_agent(
             signed_gates=list(signed_gates),
             tool_call_limit=limit,
         )
-        res = loop.run(system_prompt, user_message)
+        try:
+            res = loop.run(system_prompt, user_message)
+        except SandboxUnavailableError as exc:
+            raise ExecutionInfrastructureError(
+                "sandbox-unavailable",
+                f"{role} containment failed: {exc}",
+            ) from exc
         if res.status == "cancelled":
             raise BuildCancelled("parent delivery cancelled during G4 subagent")
         if usage is not None:
@@ -1293,7 +1305,7 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
     if phys is None or not phys.is_file():
         return False, f"plan test not found: {test_path}"
     try:
-        rel = str(phys.relative_to(repo_root))
+        rel = phys.relative_to(repo_root).as_posix()
     except ValueError:
         rel = str(phys)
     try:
@@ -1302,8 +1314,16 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
 
         verifier = _select_verifier_runner(repo_root)
         if verifier is not None:
+            container_argv = list(argv)
+            executable = str(container_argv[0]).replace("\\", "/").rsplit("/", 1)[-1]
+            executable_aliases = {
+                "npm.cmd": "npm",
+                "npx.cmd": "npx",
+                "node.exe": "node",
+            }
+            container_argv[0] = executable_aliases.get(executable.lower(), executable)
             exit_code, output = verifier.run(
-                shlex.join(argv), repo_root, 240,
+                shlex.join(container_argv), repo_root, 240,
                 {"CI": "1", "FORCE_COLOR": "0"},
             )
             if output.timed_out:
@@ -1316,6 +1336,11 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
                                timeout=240, shell=False)
             stdout, stderr = p.stdout, p.stderr
             returncode = p.returncode
+    except SandboxUnavailableError as exc:
+        raise ExecutionInfrastructureError(
+            "sandbox-unavailable",
+            f"per-test containment failed: {exc}",
+        ) from exc
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"could not run test {test_path}: {exc}"
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", (stdout or "") + "\n" + (stderr or ""))
@@ -1359,7 +1384,14 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
         detail = "\n".join(e for e in errs if e) or (
             ((b.get("output") or "") + "\n" + (t.get("output") or ""))[-3000:])
         return False, detail or "build or tests failed"
-    except Exception as exc:  # never bypass on error -- report not-green
+    except ExecutionInfrastructureError:
+        raise
+    except SandboxUnavailableError as exc:
+        raise ExecutionInfrastructureError(
+            "sandbox-unavailable",
+            f"integration containment failed: {exc}",
+        ) from exc
+    except Exception as exc:  # never bypass on product/check error -- report not-green
         return False, f"build check error: {type(exc).__name__}: {exc}"
 
 

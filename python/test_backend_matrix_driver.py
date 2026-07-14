@@ -368,6 +368,22 @@ def test_provider_failures_are_not_graded_as_product_failures(driver: ModuleType
             signed_before=[],
         )
 
+    with pytest.raises(driver.InfrastructureError, match="sandbox-unavailable"):
+        driver._validate_review_checkpoint(
+            {
+                **state,
+                "last_outcome": {
+                    "gate": "G0",
+                    "ok": False,
+                    "reason": "container daemon unavailable",
+                    "failure_type": "sandbox-unavailable",
+                },
+            },
+            run_id="matrix-run",
+            gate="G0",
+            signed_before=[],
+        )
+
     with pytest.raises(driver.ProductFailure, match="ordinary product failure"):
         driver._require_ok(
             "agent:deliver",

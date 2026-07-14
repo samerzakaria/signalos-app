@@ -1230,11 +1230,18 @@ def _terminal_evidence(
     return redact(compact, secrets)
 
 
+def _is_execution_infrastructure_failure(value: object) -> bool:
+    code = str(value or "").strip().lower()
+    return code == "provider-init" or code.startswith(
+        ("provider-", "sandbox-", "infrastructure-")
+    )
+
+
 def _require_ok(command: str, terminal: dict[str, Any]) -> dict[str, Any]:
     if terminal.get("ok") is not True:
         message = f"{command} failed: {terminal.get('error') or 'unknown sidecar error'}"
         error_code = str(terminal.get("error_code") or "")
-        if error_code == "provider-init" or error_code.startswith("provider-"):
+        if _is_execution_infrastructure_failure(error_code):
             raise InfrastructureError(message)
         raise ProductFailure(message)
     data = terminal.get("data")
@@ -1307,9 +1314,9 @@ def _validate_review_checkpoint(
         last_outcome = state.get("last_outcome") or {}
         reason = last_outcome.get("reason")
         failure_type = str(last_outcome.get("failure_type") or "")
-        if failure_type.startswith("provider-"):
+        if _is_execution_infrastructure_failure(failure_type):
             raise InfrastructureError(
-                f"{gate} provider infrastructure failed "
+                f"{gate} execution infrastructure failed "
                 f"(type={failure_type!r}; reason={reason!r})"
             )
         raise ProductFailure(
