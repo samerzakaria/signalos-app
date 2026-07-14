@@ -1285,12 +1285,21 @@ def _path_inside_workspace(root: Path, path: Path) -> Path:
     Governance writes are authority-bearing.  A `.signalos` or artifact
     symlink must not redirect them outside the selected workspace.
     """
+    lexical_workspace = Path(os.path.abspath(str(root)))
     workspace = Path(root).resolve()
     candidate = Path(os.path.abspath(str(path)))
     try:
-        relative = candidate.relative_to(workspace)
-    except ValueError as exc:
-        raise ValueError(f"governance path escapes the workspace: {path}") from exc
+        relative = candidate.relative_to(lexical_workspace)
+    except ValueError:
+        # Callers may already hold canonical paths.  Accept that spelling too,
+        # while preserving the lexical relative path whenever the selected
+        # workspace itself is an alias (notably macOS /var -> /private/var).
+        try:
+            relative = candidate.relative_to(workspace)
+        except ValueError as exc:
+            raise ValueError(
+                f"governance path escapes the workspace: {path}"
+            ) from exc
     try:
         return workspace_path(
             workspace, relative.as_posix(), allow_leaf_symlink=False,

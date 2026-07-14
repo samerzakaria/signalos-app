@@ -156,6 +156,34 @@ class ArtifactMapTests(unittest.TestCase):
             self.assertFalse(outside.exists())
             self.assertNotIn("## Signatures", artifact.read_text(encoding="utf-8"))
 
+    def test_governance_path_accepts_selected_workspace_root_alias(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
+            real_root = Path(tmp) / "real-root"
+            alias_root = Path(tmp) / "workspace-alias"
+            real_root.mkdir()
+            created_junction = False
+            try:
+                alias_root.symlink_to(real_root, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not _create_windows_junction(alias_root, real_root):
+                    self.skipTest("workspace directory aliases are unavailable")
+                created_junction = True
+
+            try:
+                safe = sign._path_inside_workspace(
+                    alias_root,
+                    alias_root / ".signalos" / "AUDIT_TRAIL.jsonl",
+                )
+                self.assertEqual(
+                    safe,
+                    real_root.resolve() / ".signalos" / "AUDIT_TRAIL.jsonl",
+                )
+            finally:
+                if created_junction and alias_root.exists():
+                    alias_root.rmdir()
+                elif alias_root.is_symlink():
+                    alias_root.unlink()
+
     def test_canonical_audit_append_rejects_redirected_signalos_dir(self) -> None:
         with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
             root = Path(tmp) / "root"
