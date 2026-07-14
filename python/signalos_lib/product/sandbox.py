@@ -823,7 +823,10 @@ class ContainerRunner(SandboxRunner):
                 f"container runtime execution failed: {type(exc).__name__}: {exc}"
             ) from exc
         else:
-            if self.hardened and proc.returncode in {125, 126, 127}:
+            # Docker/Podman reserve 125 for a runtime/daemon launch failure.
+            # 126/127 are the workload shell's normal "cannot execute" / "not
+            # found" results and therefore remain product/toolchain evidence.
+            if self.hardened and proc.returncode == 125:
                 detail = (proc.stderr or proc.stdout or "container launch failed").strip()
                 raise SandboxUnavailableError(
                     f"container runtime could not start the funded workload "

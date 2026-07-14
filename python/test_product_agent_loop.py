@@ -2088,6 +2088,28 @@ class TestSandboxRouting(unittest.TestCase):
         self.assertIn("out-here", content)
         self.assertIn("err-here", content)
 
+    def test_sandbox_failure_is_not_returned_to_model_as_repairable_tool_text(self):
+        from signalos_lib.product.sandbox import SandboxUnavailableError
+
+        class _BrokenRunner:
+            name = "broken"
+
+            def run(self, cmd, cwd, timeout, env):
+                raise SandboxUnavailableError("daemon unavailable")
+
+        with tempfile.TemporaryDirectory() as d:
+            provider = AgentTestProvider(
+                script=[_tool_resp("run_command", {"command": "npm test"})]
+            )
+            loop = _loop(Path(d), provider)
+            loop._sandbox_runner = _BrokenRunner()
+            result = loop.run("sys", "run tests")
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.failure_type, "sandbox-unavailable")
+        self.assertIn("daemon unavailable", result.error)
+        self.assertFalse(any(m.get("role") == "tool" for m in result.messages))
+
     def test_env_selects_container_backend(self):
         # SIGNALOS_SANDBOX=docker + a docker binary present -> ContainerRunner.
         from signalos_lib.product.sandbox import ContainerRunner, select_runner

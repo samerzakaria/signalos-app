@@ -590,6 +590,31 @@ class TestContainerRunnerRun:
         with pytest.raises(SandboxUnavailableError, match="exit 125"):
             runner.run("true", tmp_path, 30, {})
 
+    def test_hardened_missing_product_command_remains_product_evidence(self, tmp_path):
+        image = "node:20@sha256:" + "4" * 64
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(
+                args=[], returncode=127, stdout="", stderr="missing-tool: not found"
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="no such container"
+            ),
+        ])
+        runner = ContainerRunner(
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            runner=fake,
+        )
+
+        exit_code, output = runner.run("missing-tool", tmp_path, 30, {})
+
+        assert exit_code == 127
+        assert "not found" in output.stderr
+
     def test_hardened_cleanup_failure_is_an_infrastructure_error(self, tmp_path):
         image = "node:20@sha256:" + "f" * 64
         fake = MagicMock(side_effect=[

@@ -1263,6 +1263,11 @@ def _default_run_agent(
                 failure_type,
                 res.error or f"{role} provider execution failed",
             )
+        if failure_type.startswith(("sandbox-", "infrastructure-")):
+            raise ExecutionInfrastructureError(
+                failure_type,
+                res.error or f"{role} execution infrastructure failed",
+            )
         # Fix: do NOT silently swallow a "narrated, wrote nothing" / truncated
         # outcome. The loop now refuses to call a no-tool narration turn (or a
         # cut-off max_tokens turn) "completed"; surface that here so a step that

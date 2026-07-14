@@ -66,7 +66,7 @@ from .budgets import (
 )
 from .provider_adapter import ProviderAdapter
 from .run_ids import agent_run_dir, safe_control_path, validate_run_id
-from .sandbox import SandboxRunner, select_runner
+from .sandbox import SandboxRunner, SandboxUnavailableError, select_runner
 
 # ---------------------------------------------------------------------------
 # Constants / timeouts
@@ -1654,7 +1654,25 @@ class AgentLoop:
                     )
 
                 tool_calls_made += 1
-                result_text = self._dispatch_tool(tc)
+                try:
+                    result_text = self._dispatch_tool(tc)
+                except SandboxUnavailableError as exc:
+                    err = f"Required sandbox unavailable: {exc}"
+                    self._persist_state(messages, tool_calls_made, status="error")
+                    self._emit({
+                        "type": "sandbox_error",
+                        "run_id": self.run_id,
+                        "error": err,
+                    })
+                    return LoopResult(
+                        run_id=self.run_id,
+                        status="error",
+                        final_text=final_text,
+                        tool_calls_made=tool_calls_made,
+                        messages=messages,
+                        error=err,
+                        failure_type="sandbox-unavailable",
+                    )
                 messages.append(
                     {
                         "role": "tool",
@@ -1801,6 +1819,11 @@ class AgentLoop:
 
         try:
             result_text = self._execute_tool(tc.name, args)
+        except SandboxUnavailableError as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            self._audit(tc, "error", reason, t0, content_sha)
+            self._emit({"type": "sandbox_error", "tool": tc.name, "error": reason})
+            raise
         except ToolPolicyError as exc:
             self._audit(tc, "denied", exc.reason, t0, content_sha, rule=exc.rule)
             self._emit(
