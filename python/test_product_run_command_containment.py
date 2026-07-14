@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from signalos_lib.product.agent_loop import _command_escapes_workspace
+
+# Git-Bash `/c/...` and Windows drive/backslash path forms only exist on
+# Windows. On POSIX the same tokens are ordinary relative filenames (no drive,
+# `\` is a literal char), so `_command_escapes_workspace` correctly does NOT
+# flag them -- and these Windows-semantics assertions would spuriously fail on
+# the Linux CI runner. POSIX escape detection stays covered by the non-skipped
+# `../..`, bare-`..`, and `/etc/passwd` cases.
+_WINDOWS_ONLY = unittest.skipUnless(
+    os.name == "nt", "Windows/Git-Bash path-form semantics; scenario absent on POSIX"
+)
 
 
 class CommandContainmentTest(unittest.TestCase):
@@ -39,12 +50,14 @@ class CommandContainmentTest(unittest.TestCase):
             self._check("cat ../../gold/x.test.ts"), "../../gold/x.test.ts"
         )
 
+    @_WINDOWS_ONLY
     def test_type_backslash_traversal_escapes(self) -> None:
         # Windows-style: `type ..\..\gold\x`
         self.assertEqual(
             self._check("type ..\\..\\gold\\x"), "..\\..\\gold\\x"
         )
 
+    @_WINDOWS_ONLY
     def test_ls_absolute_path_escapes(self) -> None:
         self.assertEqual(self._check("ls c:/tmp/prove-a"), "c:/tmp/prove-a")
 
@@ -99,11 +112,13 @@ class CommandContainmentTest(unittest.TestCase):
         s = str(p)
         return "/" + s[0].lower() + s[2:].replace("\\", "/")
 
+    @_WINDOWS_ONLY
     def test_gitbash_absolute_workspace_root_is_in_workspace(self):
         # `cd /c/tmp/.../proj && npm test` where /c/tmp/.../proj IS the root.
         cmd = f"cd {self._gitbash(self.repo)} && npm test"
         self.assertIsNone(self._check(cmd))
 
+    @_WINDOWS_ONLY
     def test_gitbash_absolute_subdir_is_in_workspace(self):
         sub = self.repo / "src"
         sub.mkdir()
@@ -113,6 +128,7 @@ class CommandContainmentTest(unittest.TestCase):
         # An absolute Windows path INTO the workspace must not read as an escape.
         self.assertIsNone(self._check(f"cat {self.repo / 'README.md'}"))
 
+    @_WINDOWS_ONLY
     def test_gitbash_absolute_outside_still_escapes(self):
         # Sanity: a Git-Bash absolute path OUTSIDE the workspace still escapes.
         token = "/c/definitely/not/the/workspace/gold/x.ts"

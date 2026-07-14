@@ -112,10 +112,26 @@ def _find_sidecar() -> Path | None:
 
 
 SIDECAR = _find_sidecar()
+
+# ensure-sidecar.sh writes a tiny shell STUB (<100 KB) for lint-only CI runs; a
+# real PyInstaller onefile is tens of MB. A stub does nothing and cannot answer
+# the IPC handshake, so a binary-driven test run against it dies on a
+# BrokenPipe. Treat a stub as "no real binary" and SKIP those tests (they need a
+# genuine build) rather than fail them. Matches ensure-sidecar.sh's own 100 KB
+# stub threshold.
+_STUB_MAX_BYTES = 100 * 1024
+if SIDECAR is not None:
+    try:
+        if SIDECAR.stat().st_size < _STUB_MAX_BYTES:
+            SIDECAR = None
+    except OSError:
+        SIDECAR = None
+
 _SKIP_NO_BIN = SIDECAR is None
 _SKIP_REASON = (
-    "packaged sidecar binary not found (set SIGNALOS_SIDECAR_BIN, or build it "
-    "with scripts/bundle-sidecar.ps1); src-tauri/bin/ is a gitignored artifact."
+    "packaged sidecar binary not found or is a lint-only stub (<100 KB). Set "
+    "SIGNALOS_SIDECAR_BIN, or build a real one with scripts/bundle-sidecar.ps1; "
+    "src-tauri/bin/ is a gitignored artifact."
 )
 
 # The rebuilt sidecar under test reports this version in its capability
@@ -409,7 +425,7 @@ class TestGovernedDeliveryWalkDeterministic(unittest.TestCase):
         for i in range(6):
             v = self._handle({
                 "id": f"v{i}", "command": "agent:verdict", "cwd": self._ws,
-                "args": {"run_id": "det-walk", "verdict": "approve"},
+                "args": {"run_id": "det-walk", "gate_id": f"G{i}", "verdict": "approve"},
             })
             self.assertTrue(v.get("ok"), msg=v)
             last = v.get("data") or {}

@@ -10,12 +10,22 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+# Windows/Git-Bash path canonicalization (drive letters, `/c/...`, case-
+# insensitive drive roots, backslash separators) only applies on Windows. On
+# POSIX these are ordinary case-sensitive relative names, so the Windows-form
+# assertions spuriously fail on the Linux CI runner. The pure-string helpers
+# (_degitbash, _canonical_abs) and the relative-subdir case still run everywhere.
+_WINDOWS_ONLY = unittest.skipUnless(
+    os.name == "nt", "Windows/Git-Bash path-form semantics; scenario absent on POSIX"
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -1717,6 +1727,7 @@ class TestCanonicalPathPipeline(unittest.TestCase):
         s = str(p)
         return "/" + s[0].lower() + s[2:].replace("\\", "/")
 
+    @_WINDOWS_ONLY
     def test_in_workspace_forms_all_resolve_to_root(self):
         # c:\ws  /c/ws  "c:/ws"  C:\WS  mixed-separators -> "" (the root itself).
         r = self.root
@@ -1740,6 +1751,7 @@ class TestCanonicalPathPipeline(unittest.TestCase):
         self.assertEqual(
             _workspace_relative(self.root, "./frontend/App.tsx"), "frontend/App.tsx")
 
+    @_WINDOWS_ONLY
     def test_absolute_into_allowlisted_dir_maps_to_relative_glob(self):
         # The BUILD_EVIDENCE.md bug: an ABSOLUTE path into core/execution/ must
         # canonicalize to the RELATIVE core/execution/** form.
@@ -1753,7 +1765,14 @@ class TestCanonicalPathPipeline(unittest.TestCase):
             _workspace_relative(self.root, gb), "core/execution/BUILD_EVIDENCE.md")
 
     def test_true_escapes_are_denied(self):
-        for esc in ["../..", "../escape", "/etc", "~/.ssh", "..\\..\\gold\\x"]:
+        # POSIX-and-Windows escapes are always denied. The backslash-separator
+        # form only traverses on Windows (on POSIX `\` is a literal filename
+        # char), so it is asserted only there -- keeping full POSIX coverage of
+        # the cross-platform escapes rather than skipping the whole test.
+        escapes = ["../..", "../escape", "/etc", "~/.ssh"]
+        if os.name == "nt":
+            escapes.append("..\\..\\gold\\x")
+        for esc in escapes:
             self.assertIsNone(
                 _workspace_relative(self.root, esc),
                 f"escape must map to None: {esc!r}")
