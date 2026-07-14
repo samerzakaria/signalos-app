@@ -25,6 +25,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER_PATH = ROOT / "scripts" / "backend_matrix" / "driver.py"
 MODEL_CONFIG = ROOT / "scripts" / "backend_matrix" / "models.json"
+DEPENDENCY_ROOT = ROOT / "scripts" / "backend_matrix" / "dependencies"
 
 EXPECTED_MODELS = [
     ("fable5", "openrouter", "anthropic/claude-fable-5", "OPENROUTER_API_KEY"),
@@ -58,6 +59,26 @@ EXPECTED_COHORTS = {
     "gemini31propreview": "exploratory",
     "katcoderprov25": "exploratory",
 }
+
+
+def test_funded_react_dependency_manifest_matches_owned_scaffold(tmp_path: Path) -> None:
+    from signalos_lib.product.stacks import get_adapter
+
+    get_adapter("react-vite").scaffold(tmp_path, {"product_name": "test"})
+    scaffold_package = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    funded_package = json.loads(
+        (DEPENDENCY_ROOT / "react-vite" / "package.json").read_text(encoding="utf-8")
+    )
+    policy = json.loads((DEPENDENCY_ROOT / "policy.json").read_text(encoding="utf-8"))
+
+    assert funded_package == scaffold_package
+    assert policy["profile"] == "react-vite"
+    assert policy["platform"] == "linux/amd64"
+    assert policy["buildImage"].startswith("docker.io/library/node:20-bookworm@sha256:")
+    assert len(policy["buildImage"].rsplit(":", 1)[-1]) == 64
+    assert policy["installCommand"] == [
+        "npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"
+    ]
 
 
 def _load_driver() -> ModuleType:
