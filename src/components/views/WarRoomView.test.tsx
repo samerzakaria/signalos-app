@@ -133,7 +133,7 @@ describe('WarRoomView', () => {
     expect(screen.getByText(/Council cost: unavailable/i)).toBeInTheDocument();
   });
 
-  it('treats a legacy successful payload as complete and labels partial cost honestly', async () => {
+  it('fails a legacy ungoverned payload closed while labeling partial cost honestly', async () => {
     consult.mockResolvedValueOnce({
       answers: [
         {
@@ -158,8 +158,11 @@ describe('WarRoomView', () => {
     fireEvent.click(screen.getByRole('button', { name: /Consult council/i }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('warroom-status')).toHaveTextContent('Complete');
+      expect(screen.getByTestId('warroom-status')).toHaveTextContent('Degraded');
     });
+    expect(screen.getByTestId('warroom-warnings')).toHaveTextContent(
+      'Legacy panel response lacks a governed completion status',
+    );
     expect(screen.getByTestId('warroom-cost')).toHaveTextContent('Known cost subtotal: $0.2500');
     expect(screen.getByTestId('warroom-cost-warning')).toHaveTextContent(
       'Some provider usage costs were unavailable.',

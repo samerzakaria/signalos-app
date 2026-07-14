@@ -291,11 +291,32 @@ export const attachments = {
 };
 
 // PANEL (War Room) -- governed independent advice, verification, jury, and chair.
-// Timeout 0 = no timeout: a quality-first council makes several bounded calls.
+// The engine enforces a bounded deadline. Keep a small transport grace period,
+// but never leave a dead sidecar promise pending forever.
+const DEFAULT_PANEL_DEADLINE_SECONDS = 900;
+const MIN_PANEL_DEADLINE_SECONDS = 30;
+const MAX_PANEL_DEADLINE_SECONDS = 1800;
+const PANEL_TRANSPORT_GRACE_SECONDS = 30;
+
+function panelTransportTimeoutMs(opts = {}) {
+  const config = opts?.config && typeof opts.config === "object" ? opts.config : {};
+  const policy = config?.policy && typeof config.policy === "object" ? config.policy : {};
+  const configured = opts?.deadline_seconds ?? config?.deadline_seconds ?? policy?.deadline_seconds;
+  const parsed = Number(configured);
+  const deadline = Number.isFinite(parsed)
+    ? Math.min(MAX_PANEL_DEADLINE_SECONDS, Math.max(MIN_PANEL_DEADLINE_SECONDS, Math.trunc(parsed)))
+    : DEFAULT_PANEL_DEADLINE_SECONDS;
+  return (deadline + PANEL_TRANSPORT_GRACE_SECONDS) * 1000;
+}
+
 export const panel = {
   consult: (question, opts = {}) =>
     // Keep the positional question authoritative; options must not replace it.
-    signal.runAndWait("panel:consult", [JSON.stringify({ ...opts, question })], 0),
+    signal.runAndWait(
+      "panel:consult",
+      [JSON.stringify({ ...opts, question })],
+      panelTransportTimeoutMs(opts),
+    ),
 };
 
 // IDENTITY + ROLE (Wave 3)

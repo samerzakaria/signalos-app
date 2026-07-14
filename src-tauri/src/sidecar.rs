@@ -16,12 +16,10 @@ use tauri_plugin_shell::ShellExt;
 /// than surfaced as a normal `sidecar:response`.
 const HANDSHAKE_ID: &str = "__capabilities_handshake__";
 
-/// Commands the sidecar MUST support for the desktop Build flow to function.
-/// `agent:deliver` is the exact command the Build UI sends; a bundled binary
-/// that does not report it (e.g. the shipped stale 0.0.9 sidecar, which answers
-/// "Unknown command: agent:deliver") is refused loudly instead of silently
-/// accepted.
-const REQUIRED_SIDECAR_COMMANDS: &[&str] = &["agent:deliver"];
+/// Commands the sidecar MUST support for the desktop product flows to function.
+/// A bundled binary that predates either Build delivery or the War Room is
+/// refused loudly instead of letting one surface fail later at first use.
+const REQUIRED_SIDECAR_COMMANDS: &[&str] = &["agent:deliver", "panel:consult"];
 
 /// How long to wait for the sidecar to answer the capability handshake before
 /// declaring it incompatible. The live sidecar prints its init line and answers
@@ -33,7 +31,7 @@ const HANDSHAKE_TIMEOUT_SECS: u64 = 20;
 ///
 /// Returns `Ok(version)` when the sidecar reports a version string and every
 /// required command; `Err(reason)` explains why the bundled binary is unusable
-/// (too old to implement `capabilities`, or missing `agent:deliver`).
+/// (too old to implement `capabilities`, or missing a required command).
 fn validate_handshake(value: &serde_json::Value) -> Result<String, String> {
     if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         let detail = value.get("error").and_then(|v| v.as_str()).unwrap_or("");
@@ -534,14 +532,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn handshake_accepts_fresh_sidecar_reporting_agent_deliver() {
+    fn handshake_accepts_fresh_sidecar_reporting_required_commands() {
         let resp = json!({
             "id": "__capabilities_handshake__",
             "ok": true,
             "data": {
                 "version": "3.3.0-internal.1",
                 "protocol": 1,
-                "commands": ["ping", "agent:run", "agent:deliver", "agent:cancel"]
+                "commands": ["ping", "agent:run", "agent:deliver", "agent:cancel", "panel:consult"]
             }
         });
         assert_eq!(validate_handshake(&resp).unwrap(), "3.3.0-internal.1");
@@ -567,12 +565,27 @@ mod tests {
             "ok": true,
             "data": {
                 "version": "0.0.9",
-                "commands": ["ping", "help"]
+                "commands": ["ping", "panel:consult"]
             }
         });
         let err = validate_handshake(&resp).unwrap_err();
         assert!(err.contains("agent:deliver"), "unexpected reason: {err}");
         assert!(err.contains("0.0.9"), "unexpected reason: {err}");
+    }
+
+    #[test]
+    fn handshake_rejects_sidecar_missing_panel_consult() {
+        let resp = json!({
+            "id": "__capabilities_handshake__",
+            "ok": true,
+            "data": {
+                "version": "3.3.0-internal.1",
+                "commands": ["ping", "agent:run", "agent:deliver", "agent:cancel"]
+            }
+        });
+        let err = validate_handshake(&resp).unwrap_err();
+        assert!(err.contains("panel:consult"), "unexpected reason: {err}");
+        assert!(err.contains("3.3.0-internal.1"), "unexpected reason: {err}");
     }
 
     #[test]

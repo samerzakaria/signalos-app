@@ -66,7 +66,7 @@ MODE="${1:-stub}"
 # "Exists" is NOT sufficient. A committed-but-stale binary (the shipped 0.0.9
 # sidecar reports "Unknown command: agent:deliver") would otherwise be accepted
 # forever. A fresh sidecar answers the `capabilities` handshake with a command
-# list that includes agent:deliver; a stale one does not.
+# list that includes both agent:deliver and panel:consult; a stale one does not.
 
 # The lint stub written below is a few bytes; a real PyInstaller onefile is tens
 # of MB. Anything under 100 KB is treated as a stub, not a real binary, and the
@@ -78,19 +78,17 @@ sidecar_looks_like_stub() {
   [[ "$size" -lt 102400 ]]
 }
 
-# Probe the binary's capability handshake. Returns 0 only when agent:deliver is
-# reported. The sidecar exits on stdin EOF, so one piped line is enough.
-sidecar_reports_agent_deliver() {
+# Probe the binary's capability handshake. Returns 0 only when both required
+# desktop commands are reported. The sidecar exits on stdin EOF, so one piped
+# line is enough.
+sidecar_reports_required_commands() {
   local out probe='{"id":"__ensure_probe__","command":"capabilities","args":[]}'
   if command -v timeout >/dev/null 2>&1; then
     out="$(printf '%s\n' "$probe" | timeout 60 "$1" 2>/dev/null)" || true
   else
     out="$(printf '%s\n' "$probe" | "$1" 2>/dev/null)" || true
   fi
-  case "$out" in
-    *'"agent:deliver"'*) return 0 ;;
-    *)                    return 1 ;;
-  esac
+  [[ "$out" == *'"agent:deliver"'* && "$out" == *'"panel:consult"'* ]]
 }
 
 # Best-effort source version for the loud "rebuild required" message (no jq/node
@@ -107,8 +105,8 @@ rebuild_sidecar() {
     echo "[ensure-sidecar] FAIL: build did not produce $SIDECAR_NAME"
     exit 1
   fi
-  if ! sidecar_reports_agent_deliver "$SIDECAR_PATH"; then
-    echo "[ensure-sidecar] FAIL: rebuilt sidecar still does not report agent:deliver."
+  if ! sidecar_reports_required_commands "$SIDECAR_PATH"; then
+    echo "[ensure-sidecar] FAIL: rebuilt sidecar does not report both required commands (agent:deliver, panel:consult)."
     exit 1
   fi
   echo "[ensure-sidecar] ✓ rebuilt and verified fresh (agent:deliver present)."
@@ -137,7 +135,7 @@ if [[ -f "$SIDECAR_PATH" ]]; then
     echo "[ensure-sidecar] existing file looks like a lint stub (<100KB); skipping freshness probe."
     exit 0
   fi
-  if sidecar_reports_agent_deliver "$SIDECAR_PATH"; then
+  if sidecar_reports_required_commands "$SIDECAR_PATH"; then
     echo "[ensure-sidecar] ✓ real sidecar reports agent:deliver; fresh — nothing to do."
     exit 0
   fi

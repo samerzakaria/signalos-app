@@ -51,7 +51,7 @@ describe('ipc sidecar waits', () => {
     await expect(wait).resolves.toBe('{"ok":true}');
   });
 
-  it('sends panel options with an authoritative positional question and no timeout', async () => {
+  it('sends an authoritative panel question and enforces the engine deadline plus grace', async () => {
     const { panel } = await import('./ipc.js');
     const wait = panel.consult(
       'Authoritative question',
@@ -66,11 +66,14 @@ describe('ipc sidecar waits', () => {
     const payload = JSON.parse(args.args[0]);
     expect(payload).toEqual({ mode: 'council', question: 'Authoritative question' });
 
-    vi.advanceTimersByTime(2 * 60 * 60 * 1000);
-    listeners.get('sidecar:response')?.({
-      payload: { id: 'req-1', ok: true, data: { status: 'complete' } },
-    });
-    await expect(wait).resolves.toEqual({ status: 'complete' });
+    const settled = vi.fn();
+    void wait.then(settled, settled);
+    vi.advanceTimersByTime(929_999);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    await expect(wait).rejects.toThrow(/Timed out waiting for Foundry engine command "panel:consult"/);
   });
 
   it('rejects a no-timeout wait when the sidecar terminates', async () => {

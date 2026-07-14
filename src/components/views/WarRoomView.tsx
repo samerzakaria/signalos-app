@@ -94,9 +94,20 @@ async function consultPanel(): Promise<void> {
   try {
     const res = await panel.consult(question, { mode: 'council' });
     const payload = ((res as { data?: PanelResult } | null)?.data ?? res) as PanelResult | null;
-    warResult.value = payload && Array.isArray(payload.answers)
-      ? { ...payload, status: payload.status ?? 'complete' }
-      : { answers: [], cost_usd: null, models: [], system: '', status: 'failed' };
+    if (payload && Array.isArray(payload.answers)) {
+      warResult.value = payload.status
+        ? payload
+        : {
+            ...payload,
+            status: 'degraded',
+            warnings: [
+              ...(Array.isArray(payload.warnings) ? payload.warnings : []),
+              'Legacy panel response lacks a governed completion status; review it as advisory only.',
+            ],
+          };
+    } else {
+      warResult.value = { answers: [], cost_usd: null, models: [], system: '', status: 'failed' };
+    }
   } catch (error: unknown) {
     warError.value = error instanceof Error ? error.message : String(error);
     warResult.value = null;
