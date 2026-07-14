@@ -14,7 +14,7 @@ vi.mock('../js/ipc', () => ({
 }));
 
 import { workspacePath } from '../state';
-import { createSignalosProject, initWorkspace, pickWorkspaceFolder } from './workspace';
+import { approveGate0, createSignalosProject, initWorkspace, pickWorkspaceFolder } from './workspace';
 import { signal } from '../js/ipc';
 
 const runAndWait = signal.runAndWait as unknown as ReturnType<typeof vi.fn>;
@@ -43,7 +43,7 @@ describe('workspace factory helpers', () => {
     vi.restoreAllMocks();
   });
 
-  it('creates the folder, awaits init, awaits a genuinely-complete Gate 0 sign, and refreshes status', async () => {
+  it('creates the folder, awaits init, fills governance, and leaves Gate 0 awaiting the founder (no auto-sign)', async () => {
     const result = await createSignalosProject('C:/Products/Task App', 'Task App', 'react-vite');
 
     expect(mkdir).toHaveBeenCalledWith('C:/Products/Task App', { recursive: true });
@@ -55,8 +55,25 @@ describe('workspace factory helpers', () => {
       expect.any(Number),
     );
     expect(invoke).toHaveBeenCalledWith('set_identity', { name: 'User', role: 'PO' });
-    // G0 is signed under BOTH required roles (PO + PE) with a valid verdict,
-    // each awaited, so all four G0 artifacts are covered.
+    // C1: Gate 0 is NOT auto-signed at creation -- signing is the founder's
+    // explicit act (approveGate0, via the Approve button or a chat approval).
+    // No signal-sign for G0 should fire during project creation.
+    const signCalls = runAndWait.mock.calls.filter((c) => c[0] === 'signal-sign');
+    expect(signCalls).toHaveLength(0);
+    expect(invoke).toHaveBeenCalledWith('get_workspace_status', undefined);
+    expect(workspacePath.value).toBe('C:/Products/Task App');
+    expect(result.governance.signed).toBe(false);
+    expect(result.governance.awaitingApproval).toBe(true);
+    expect(result.status).toEqual({ status: 'initialized' });
+  });
+
+  it('approveGate0 signs Gate 0 under BOTH required roles (PO + PE) as an explicit approval', async () => {
+    workspacePath.value = 'C:/Products/Task App';
+
+    const result = await approveGate0({ via: 'chat' });
+
+    // G0's manifest spans PO + PE; the solo founder holds both seats, so both
+    // are signed with a valid verdict, each awaited.
     expect(runAndWait).toHaveBeenCalledWith(
       'signal-sign',
       ['G0', '--signer', 'User', '--role', 'PO', '--verdict', 'APPROVED'],
@@ -67,14 +84,12 @@ describe('workspace factory helpers', () => {
       ['G0', '--signer', 'User', '--role', 'PE', '--verdict', 'APPROVED'],
       expect.any(Number),
     );
-    expect(invoke).toHaveBeenCalledWith('get_workspace_status', undefined);
-    expect(workspacePath.value).toBe('C:/Products/Task App');
-    expect(result.governance.signed).toBe(true);
-    expect(result.status).toEqual({ status: 'initialized' });
+    expect(result.signed).toBe(true);
   });
 
-  it('reports Gate 0 as unsigned when the awaited sidecar sign fails', async () => {
+  it('approveGate0 reports unsigned when the awaited sidecar sign fails', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    workspacePath.value = 'C:/Products/Task App';
     runAndWait.mockImplementation(async (command: string, args: unknown[]) => {
       if (command === 'signal-sign' && Array.isArray(args) && args.includes('PE')) {
         throw new Error('gate validator rejected');
@@ -82,10 +97,10 @@ describe('workspace factory helpers', () => {
       return null;
     });
 
-    const result = await createSignalosProject('C:/Products/Task App', 'Task App', 'react-vite');
+    const result = await approveGate0({ via: 'button' });
 
     // The engine failed the PE half of G0 -> success is NOT reported.
-    expect(result.governance.signed).toBe(false);
+    expect(result.signed).toBe(false);
   });
 
   it('switches between product repos by setting the active workspace each time', async () => {

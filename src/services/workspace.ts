@@ -19,6 +19,9 @@ export interface CreateSignalosProjectResult {
   governance: {
     filled: string[];
     signed: boolean;
+    // C1: G0 is not auto-signed at creation; it awaits the founder's explicit
+    // approval (Approve button or a chat approval).
+    awaitingApproval?: boolean;
   };
   status: unknown | null;
 }
@@ -110,7 +113,13 @@ export async function createSignalosProject(
     name: (userName.value || 'User').trim() || 'User',
     role: userRole.value || 'PO',
   });
-  const governance = await instantiateGovernanceAndSignG0();
+  // C1: fill the governance docs but do NOT auto-sign G0. Signing G0 is the
+  // founder's explicit act -- a real review of Soul / Constitution /
+  // Decision-DNA, done by clicking Approve or affirming in chat, never a silent
+  // rubber-stamp at scaffold time. The New Project flow surfaces G0 as awaiting
+  // the founder's approval.
+  const filledDocs = await instantiateGovernance();
+  const governance = { filled: filledDocs.filled, signed: false, awaitingApproval: true };
   const status = await tauriInvoke('get_workspace_status').catch(() => null);
 
   return { governance, status };
@@ -168,16 +177,18 @@ function applySubstitutions(template: string, sub: Substitutions): string {
 
 /**
  * Fill placeholders in Governance/SOUL-DOCUMENT.md, CONSTITUTION.md, and
- * DECISION-DNA.md with the user's project name + identity, then sign Gate 0
- * (setup gate) so the audit trail records the first checkpoint. Idempotent:
- * if a doc has no placeholders left we skip rewriting it.
+ * DECISION-DNA.md with the user's project name + identity. Idempotent: a doc
+ * with no placeholders left is skipped.
+ *
+ * C1: this deliberately does NOT sign Gate 0. Signing G0 asserts the founder
+ * has reviewed the governance agreement (Soul / Constitution / Decision-DNA);
+ * auto-signing it at scaffold time signs as the founder without a real review.
+ * The founder approves G0 explicitly via {@link approveGate0} -- by clicking
+ * Approve or affirming in chat.
  */
-export async function instantiateGovernanceAndSignG0(): Promise<{
-  filled: string[];
-  signed: boolean;
-}> {
+export async function instantiateGovernance(): Promise<{ filled: string[] }> {
   const ws = workspacePath.value;
-  if (!ws) return { filled: [], signed: false };
+  if (!ws) return { filled: [] };
 
   const sub: Substitutions = {
     projectName: projectNameFrom(ws),
@@ -210,19 +221,31 @@ export async function instantiateGovernanceAndSignG0(): Promise<{
   // filled-in soul / constitution.
   await refreshProtocolContext();
 
-  // Sign Gate 0 -- setup checkpoint. FIX 1 (Claim 3a): AWAIT the real sidecar
-  // sign so `signed` reflects what the engine actually did, not the enqueue of
-  // a fire-and-forget request. Two bugs this closes:
-  //   * verdict 'pass' is not a valid CLI verdict (the sign CLI accepts only
-  //     APPROVED / APPROVED-WITH-CONDITIONS / WAIVED), so the enqueued sign
-  //     actually FAILED -- invisibly, because it was fire-and-forget.
-  //   * G0's manifest spans two roles: Soul + Constitution require PO + PE,
-  //     while Surface Inventory + Permanently-T3 require PE. Signing under a
-  //     single role left half the gate unsigned, so under the strict all()
-  //     gate detection G0 never genuinely passed. In the solo-founder setup the
-  //     founder holds both seats, so we sign once per required role and only
-  //     report `signed` when EVERY awaited sign resolves ok.
-  const signer = sub.user || 'User';
+  return { filled };
+}
+
+/**
+ * Sign Gate 0 -- the setup checkpoint -- as the founder's EXPLICIT approval of
+ * the governance agreement. Called only from a real human action: the New
+ * Project "Approve Gate 0" button, or an approval phrase in chat
+ * ("approve" / "accepted" / "signed" / "I agree"). Never auto-invoked at
+ * scaffold time (C1).
+ *
+ * AWAITs the real sidecar sign so `signed` reflects what the engine actually
+ * did. G0's manifest spans two roles -- Soul + Constitution require PO + PE,
+ * Surface Inventory + Permanently-T3 require PE -- and in the solo-founder
+ * setup the founder holds both seats, so we sign once per required role and
+ * report `signed` only when EVERY awaited sign resolves ok. Valid CLI verdicts
+ * are APPROVED / APPROVED-WITH-CONDITIONS / WAIVED.
+ *
+ * @param opts.via provenance of the approval ("button" | "chat"), for logging.
+ */
+export async function approveGate0(
+  opts: { via?: string } = {},
+): Promise<{ signed: boolean }> {
+  const ws = workspacePath.value;
+  if (!ws) return { signed: false };
+  const signer = (userName.value || 'User').trim() || 'User';
   let signed = false;
   try {
     for (const role of ['PO', 'PE']) {
@@ -233,17 +256,19 @@ export async function instantiateGovernanceAndSignG0(): Promise<{
       );
     }
     signed = true;
+    if (opts.via) console.info(`Gate 0 approved by ${signer} (via ${opts.via}).`);
   } catch (e) {
-    // Surface the real failure: `signed` stays false, which the New Project
-    // flow reports to the user ("Gate 0 was not signed automatically").
+    // Surface the real failure: `signed` stays false so the caller can tell the
+    // founder the approval did not record.
     console.warn('Gate 0 sign failed:', e);
   }
 
-  return { filled, signed };
+  return { signed };
 }
 
 window.pickWorkspaceFolder = pickWorkspaceFolder;
 window.ensureWorkspaceFolder = ensureWorkspaceFolder;
 window.initWorkspace = initWorkspace;
 window.createSignalosProject = createSignalosProject;
-window.instantiateGovernanceAndSignG0 = instantiateGovernanceAndSignG0;
+window.instantiateGovernance = instantiateGovernance;
+window.approveGate0 = approveGate0;

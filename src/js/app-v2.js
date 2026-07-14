@@ -1186,8 +1186,26 @@ async function createProject() {
     applyWorkspaceStatus(await ipc.workspace.status().catch(() => null));
     closeModal("newProjectModal");
     await bootApp();
-    if (result?.governance && !result.governance.signed) {
-      showError("Project was created, but Gate 0 was not signed automatically. Check governance status before building.");
+    if (result?.governance && result.governance.awaitingApproval) {
+      // C1: G0 is intentionally NOT auto-signed. Guide the founder to review the
+      // governance agreement and approve Gate 0 -- by clicking Approve or saying
+      // "approve" in chat -- before building. This is expected, not an error.
+      setNewProjectStatus("Project created — Gate 0 awaits your approval.");
+      try {
+        const bubbleId = (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID() : String(Date.now());
+        state.chatBubbles = [...(state.chatBubbles || []), {
+          id: bubbleId,
+          kind: "system",
+          waveAction: "gate-approval",
+          gate: "G0",
+          text: `"${name}" is created and your governance docs (Soul, Constitution, Decision-DNA) are filled and ready for your review. Foundry does not sign Gate 0 for you — review the agreement, then approve it to start building. Click Approve Gate 0 below, or just say "approve" in chat.`,
+        }];
+      } catch (bubbleErr) {
+        console.warn("could not surface Gate 0 approval prompt:", bubbleErr);
+      }
+    } else if (result?.governance && !result.governance.signed) {
+      showError("Project was created, but Gate 0 was not signed. Check governance status before building.");
     }
   } catch (e) {
     const message = errorMessage(e);

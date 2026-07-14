@@ -30,7 +30,8 @@ const noops = [
   'initWorkspace',
   'createSignalosProject',
   'pickWorkspaceFolder',
-  'instantiateGovernanceAndSignG0',
+  'instantiateGovernance',
+  'approveGate0',
   'openCommandPalette',
   'closeCommandPalette',
 ];

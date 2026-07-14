@@ -45,8 +45,9 @@ vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({ onDragDropEvent: async () => () => undefined }),
 }));
 
-const { isDeliveryIntent } = await import('../chat.js') as unknown as {
+const { isDeliveryIntent, isApprovalIntent } = await import('../chat.js') as unknown as {
   isDeliveryIntent: (t: string, ctx?: { hasProduct?: boolean }) => boolean;
+  isApprovalIntent: (t: string) => boolean;
 };
 
 describe('isDeliveryIntent — build vs. conversation routing', () => {
@@ -134,4 +135,44 @@ describe('isDeliveryIntent — imperative edit follow-ups against an existing pr
     expect(isDeliveryIntent('build a dashboard', { hasProduct: false })).toBe(true);
     expect(isDeliveryIntent('Create a login page', { hasProduct: true })).toBe(true);
   });
+});
+
+describe('isApprovalIntent — founder approving Gate 0 in chat (C1)', () => {
+  // The founder signs the governance agreement (Gate 0) by an explicit
+  // affirmation. Kept tight so a build request that merely contains "approve"
+  // never signs the gate.
+  const approvals = [
+    'approve',
+    'approved',
+    'I approve',
+    'accepted',
+    'I accept',
+    'agree',
+    'agreed',
+    'signed',
+    'sign it',
+    'confirm',
+    'lgtm',
+    'looks good',
+  ];
+  for (const prompt of approvals) {
+    it(`treats "${prompt}" as an approval`, () => {
+      expect(isApprovalIntent(prompt)).toBe(true);
+    });
+  }
+
+  const notApprovals = [
+    '', // empty
+    '/approve', // slash command, not a chat approval
+    'how do I approve gate 0?', // a question
+    'why do I need to approve this?',
+    // A long build request that happens to contain "approve" must NOT sign the gate.
+    'build me an approvals dashboard where a manager can approve expense reports and sign them',
+    'add an approve button to the settings page',
+  ];
+  for (const prompt of notApprovals) {
+    it(`does NOT treat "${prompt}" as an approval`, () => {
+      expect(isApprovalIntent(prompt)).toBe(false);
+    });
+  }
 });

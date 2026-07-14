@@ -31,8 +31,12 @@ declare global {
       path: string,
       name: string,
       profile?: string,
-    ) => Promise<{ governance: { filled: string[]; signed: boolean }; status: unknown | null }>;
-    instantiateGovernanceAndSignG0: () => Promise<{ filled: string[]; signed: boolean }>;
+    ) => Promise<{
+      governance: { filled: string[]; signed: boolean; awaitingApproval?: boolean };
+      status: unknown | null;
+    }>;
+    instantiateGovernance: () => Promise<{ filled: string[] }>;
+    approveGate0: (opts?: { via?: string }) => Promise<{ signed: boolean }>;
     approvePlan: (bubbleId: string) => Promise<void>;
     cancelWave: (bubbleId: string) => void;
     retryTask: (bubbleId: string, taskId: string) => Promise<void>;

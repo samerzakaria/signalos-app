@@ -8,6 +8,18 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Desktop-journey wave — close fail-open holes in the real desktop flow (2026-07-14)
+
+Five checkpoints (C1–C7) audited against the shipped desktop journey; C5 (G4 this-run attribution) and C7 (G5 verify-before-push) were already closed by the governance epoch (G-3 / G-5). The three real remaining holes:
+
+| # | Hole | Fix | Location | Verified |
+|---|---|---|---|---|
+| C1 | **G0 auto-signed as the founder at project creation** — New Project signed G0 under PO **and** PE (APPROVED) with no review: a rubber-stamp of the governance agreement (Soul / Constitution / Decision-DNA) the founder never read | Fill the docs but do **not** sign. `instantiateGovernance` (fill-only) + `approveGate0` (explicit sign). G0 signs only on a real human act: the **Approve Gate 0** button or a chat approval ("approve / accepted / signed / agree", tight classifier that excludes questions and build requests). New Project surfaces G0 as awaiting approval, not an error | `services/workspace.ts`, `js/ui/chat.js` (`isApprovalIntent`), `components/ChatBubbleSystem.tsx`, `js/app-v2.js` | ✅ `workspace.test.ts` (no sign at creation; `approveGate0` signs PO+PE), `chat.delivery-intent.test.ts` (approval vs build/question); tsc clean |
+| C4 | **A blocked gate was silent / read as accepted in the UI** — the engine emits `gate_blocked` and returns `not-reviewable` (e.g. G4's anti-fake-green wall), but the UI had no handler and `interpretVerdictAck` didn't list `not-reviewable`, so a refused verdict looked signed | Handle the `gate_blocked` event (transcript bubble with the reason) and treat `not-reviewable` / `conditions-need-text` as verdict refusals so the card reverts | `services/agentEvents.ts` | ✅ full vitest suite |
+| C6 | **Desktop delivery inherited the lenient `benchmark` profile** — `agent:deliver` built the orchestrator with no profile, so real desktop products skipped the production security gate + runtime-proof evidence | `agent_deliver` passes `profile="production"` (overridable via payload). Hang-safe: the proof stage runs only after `_g4_verify.ok`, so it never serves a stub. Benchmark harness keeps the default by not passing a profile | `signalos_ipc_server.py` | ✅ desktop e2e 5 passed; ipc + orchestrator 107 passed |
+
+---
+
 ## Build-time UX/DoD gate cluster (b43a89a) — follow-ups + delivery fail-fast (2026-07-13)
 
 The build-time UX/behavioral acceptance HARD gate (G4) + per-task DoD gate landed at b43a89a ("enforce what you grade"). Two defects surfaced while validating that cluster end-to-end and running the full suite as the integration gate. Full suite **2901 passed / 5 skipped / 37 subtests** (14:26).

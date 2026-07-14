@@ -62,6 +62,36 @@ export function isDeliveryIntent(text, context = {}) {
   return false;
 }
 
+// C1: approval intent -- the founder explicitly approving the governance
+// agreement (Gate 0) in chat: the spoken half of "click Approve, or say
+// approve / accepted / signed / agree". Kept tight (a short, affirmation-shaped
+// message) so a long build request that merely contains the word "approve"
+// never signs the gate, and a question ("how do I approve?") is excluded.
+const _APPROVAL_INTENT = /\b(approve[ds]?|accept(?:ed|s)?|agree[ds]?|sign(?:ed|s)?|confirm(?:ed|s)?|lgtm|looks good)\b/i;
+export function isApprovalIntent(text) {
+  const t = (text || '').trim();
+  if (!t || t.startsWith('/')) return false;
+  if (_PURE_QUESTION.test(t)) return false;      // "how do I approve?" is a question
+  if (t.split(/\s+/).length > 6) return false;   // an affirmation, not a paragraph
+  if (isDeliveryIntent(t)) return false;         // "add an approve button" is build work
+  return _APPROVAL_INTENT.test(t);
+}
+
+// C1: is Gate 0 (the setup / governance-agreement gate) still awaiting the
+// founder's approval? Reads the in-memory gate list via the state proxy
+// (state.govGates -> govGatesList). A gate is signed when its status is
+// 'signed' or its signed flag is true.
+function gate0AwaitingApproval() {
+  try {
+    const gates = state.govGates || [];
+    const g0 = gates.find((g) => String(g && g.id) === 'G0');
+    if (!g0) return false;
+    return !(g0.status === 'signed' || g0.signed === true);
+  } catch {
+    return false;
+  }
+}
+
 async function buildEntrypointAllowed() {
   const result = await ipc.enforcement.precheck('auto', { rules: ['wave-freeze'] });
   if (result && result.allowed === false) {
@@ -217,6 +247,35 @@ async function sendMsg() {
     } catch (e) {
       state.chatBubbles = [...state.chatBubbles, { id: nowId(), kind: 'error', text: 'Command failed: ' + (e.message || e) }];
       showError(e.message || 'Command failed');
+    } finally {
+      state.busy = false;
+    }
+    return;
+  }
+
+  // C1: an approval phrase while Gate 0 is still awaiting review signs G0 as the
+  // founder's EXPLICIT approval of the governance agreement -- the chat half of
+  // "click Approve, or say approve". Scoped to G0 only: it never fires once G0
+  // is signed, and a delivery drives later-gate review through cards, not chat.
+  // A clicked "Approve Gate 0" chip routes here too (sendChip sends its text).
+  if (gate0AwaitingApproval() && isApprovalIntent(val)) {
+    try {
+      const res = window.approveGate0
+        ? await window.approveGate0({ via: 'chat' })
+        : { signed: false };
+      state.chatBubbles = [...state.chatBubbles, {
+        id: nowId(),
+        kind: 'system',
+        text: res && res.signed
+          ? 'Gate 0 approved — your governance agreement is signed. You can start building now.'
+          : 'Could not record the Gate 0 approval. Check governance status and try again.',
+      }];
+    } catch (e) {
+      state.chatBubbles = [...state.chatBubbles, {
+        id: nowId(),
+        kind: 'error',
+        text: 'Gate 0 approval failed: ' + (e && e.message ? e.message : e),
+      }];
     } finally {
       state.busy = false;
     }

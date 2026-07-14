@@ -61,6 +61,8 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
 
   const isScopeDrift = bubble.waveAction === 'scope-drift-prompt';
   const isViolation = bubble.waveAction === 'violation-prompt';
+  // C1: Gate 0 (governance agreement) awaiting the founder's explicit approval.
+  const isGateApproval = bubble.waveAction === 'gate-approval';
   const resolved = bubble.waveResolved;
 
   async function handleScopeDrift(choice: string) {
@@ -126,6 +128,74 @@ export function ChatBubbleSystem({ bubble, onFollowup, onResolved }: Props) {
     } finally {
       busy.value = false;
     }
+  }
+
+  // C1: the founder clicks "Approve Gate 0" to sign the governance agreement —
+  // the explicit-click half of "click Approve or say approve in chat". Calls the
+  // same approveGate0 the chat path uses; never auto-signs.
+  async function handleApproveGate0() {
+    if (busy.value) return;
+    busy.value = true;
+    errorMsg.value = null;
+    try {
+      const approve = (window as unknown as {
+        approveGate0?: (o?: { via?: string }) => Promise<{ signed: boolean }>;
+      }).approveGate0;
+      const result = approve ? await approve({ via: 'button' }) : { signed: false };
+      if (!result.signed) {
+        errorMsg.value = 'Could not record the Gate 0 approval. Check governance status and try again.';
+        return;
+      }
+      const followup: ChatBubble = {
+        id: nowId(),
+        kind: 'system',
+        text: 'Gate 0 approved — your governance agreement is signed. You can start building now.',
+        gate: 'G0' as ChatBubble['gate'],
+        waveAction: 'gate-approved',
+      };
+      onFollowup?.(followup);
+      onResolved?.(bubble.id, { choice: 'approve', followupText: followup.text });
+    } catch (err) {
+      errorMsg.value = messageOf(err);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  if (isGateApproval) {
+    return (
+      <div className="msg spark" data-testid="chat-bubble-gate-approval">
+        <div className="msg-av"><i className="ti ti-signature"></i></div>
+        <div>
+          <div
+            className="bubble"
+            style={{ background: 'var(--info-soft)', color: 'var(--info-deep)', fontSize: '12.5px' }}
+          >
+            <div style={{ marginBottom: 8, whiteSpace: 'pre-wrap' }}>{bubble.text}</div>
+            {resolved ? (
+              <div style={{ fontSize: '11px', opacity: 0.75 }}>
+                {resolved.followupText || 'Gate 0 approved.'}
+              </div>
+            ) : (
+              <button
+                className="btn btn-primary"
+                type="button"
+                data-testid="approve-gate0"
+                disabled={busy.value}
+                onClick={handleApproveGate0}
+              >
+                Approve Gate 0 <i className="ti ti-check"></i>
+              </button>
+            )}
+            {errorMsg.value ? (
+              <div style={{ marginTop: 8, fontSize: '11px', color: 'var(--danger)' }}>
+                {errorMsg.value}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isScopeDrift) {
