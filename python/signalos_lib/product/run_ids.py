@@ -70,16 +70,17 @@ def safe_control_path(repo_root: Path, *parts: str) -> Path:
             raise ValueError(f"unsafe control path segment: {part!r}")
         cursor = cursor / part
         if cursor.exists() or cursor.is_symlink():
+            is_symlink = cursor.is_symlink()
             try:
                 resolved = cursor.resolve()
             except OSError as exc:
                 raise ValueError("control path cannot be resolved safely") from exc
+            # resolve() also exposes Windows directory junction/reparse aliases
+            # that Path.is_symlink() alone may not report.
+            if is_symlink or resolved != cursor.absolute():
+                raise ValueError("control path must not traverse a symlink or junction")
             try:
                 resolved.relative_to(root)
             except ValueError as exc:
                 raise ValueError("control path resolves outside the workspace") from exc
-            # resolve() also exposes Windows directory junction/reparse aliases
-            # that Path.is_symlink() alone may not report.
-            if cursor.is_symlink() or resolved != cursor.absolute():
-                raise ValueError("control path must not traverse a symlink or junction")
     return cursor
