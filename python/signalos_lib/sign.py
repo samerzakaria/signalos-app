@@ -2039,7 +2039,7 @@ def _auto_seal_on_g5(root: Path, *, project_id: str = "default") -> dict:
         "project_id": project_id,
         "sealed": sealed,
         "total": total,
-        "path": str(persisted_path.relative_to(root)).replace("\\", "/"),
+        "path": persisted_path.relative_to(Path(root).resolve()).as_posix(),
         "sha256": seal_sha256,
     }
 

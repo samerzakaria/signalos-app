@@ -178,6 +178,38 @@ class ArtifactMapTests(unittest.TestCase):
                     safe,
                     real_root.resolve() / ".signalos" / "AUDIT_TRAIL.jsonl",
                 )
+                canonical = real_root.resolve() / ".signalos" / "canonical.json"
+                self.assertEqual(
+                    sign._path_inside_workspace(alias_root, canonical),
+                    canonical,
+                )
+            finally:
+                if created_junction and alias_root.exists():
+                    alias_root.rmdir()
+                elif alias_root.is_symlink():
+                    alias_root.unlink()
+
+    def test_g5_seal_reports_a_path_relative_to_workspace_root_alias(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="signalos-artifacts-") as tmp:
+            real_root = Path(tmp) / "real-root"
+            alias_root = Path(tmp) / "workspace-alias"
+            real_root.mkdir()
+            created_junction = False
+            try:
+                alias_root.symlink_to(real_root, target_is_directory=True)
+            except OSError:
+                if os.name != "nt" or not _create_windows_junction(alias_root, real_root):
+                    self.skipTest("workspace directory aliases are unavailable")
+                created_junction = True
+
+            try:
+                outcome = sign._auto_seal_on_g5(alias_root)
+                self.assertEqual(outcome["status"], "ok", outcome)
+                self.assertEqual(
+                    outcome["path"],
+                    ".signalos/integrity/seal-unknown.json",
+                )
+                self.assertTrue((real_root / outcome["path"]).is_file())
             finally:
                 if created_junction and alias_root.exists():
                     alias_root.rmdir()
