@@ -8,6 +8,13 @@ For every selected model, the driver creates a new, isolated workspace and start
 
 The checked-in expense-tracker scenario covers adding and deleting expenses, reconciliation, category filtering, persistence across refresh, required expense fields, and accessibility expectations. Its requirement IDs are part of the prompt so their presence can be traced through gate artifacts.
 
+The primary calibration cohort is intentionally a capability/value frontier,
+not a price ranking: Claude Fable 5, GPT-5.6 Sol Pro, Grok 4.5, GLM 5.2,
+DeepSeek V4 Pro, Qwen3.7 Max, and GPT-OSS-120B. Qwen is part of the primary
+wave, while GPT-OSS remains the open-weight low-cost boundary control. Any
+expected grade is a pre-run hypothesis; only repeated accepted products can
+establish an allowlist tier.
+
 This is a **backend journey benchmark**, not proof that SignalOS is production- or enterprise-ready. It does not exercise the desktop UI or Tauri boundary, SaaS tenant isolation, SSO, deployment controls, compliance operations, production sandboxing, or real-world availability. The matrix explicitly requests the stable `benchmark` orchestrator profile by default; it never relies on the desktop sidecar's `production` default. Passing this matrix must not be represented as production runtime or security assurance. It also proves only the checked-in scenario and oracle, not arbitrary product generation.
 
 ## Commands
@@ -27,7 +34,7 @@ python scripts/backend_matrix/driver.py --preflight
 python scripts/backend_matrix/driver.py --preflight --env-file C:\path\to\benchmark.env
 
 # Run one paid benchmark row. Live model calls always require an explicit opt-in.
-python scripts/backend_matrix/driver.py --live --models gptoss120b `
+python scripts/backend_matrix/driver.py --live --models gpt56solpro `
   --orchestrator-profile benchmark `
   --max-cost-per-model 2.00 --acknowledge-key-exposure
 

@@ -290,11 +290,12 @@ export const attachments = {
   ),
 };
 
-// PANEL (War Room) -- fan out one question to several models independently.
-// Timeout 0 = no timeout: the panel is slow (same convention agent:deliver uses).
+// PANEL (War Room) -- governed independent advice, verification, jury, and chair.
+// Timeout 0 = no timeout: a quality-first council makes several bounded calls.
 export const panel = {
   consult: (question, opts = {}) =>
-    signal.runAndWait("panel:consult", [JSON.stringify({ question, ...opts })], 0),
+    // Keep the positional question authoritative; options must not replace it.
+    signal.runAndWait("panel:consult", [JSON.stringify({ ...opts, question })], 0),
 };
 
 // IDENTITY + ROLE (Wave 3)

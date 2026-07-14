@@ -27,11 +27,13 @@ DRIVER_PATH = ROOT / "scripts" / "backend_matrix" / "driver.py"
 MODEL_CONFIG = ROOT / "scripts" / "backend_matrix" / "models.json"
 
 EXPECTED_MODELS = [
-    ("gptoss120b", "openrouter", "openai/gpt-oss-120b", "OPENROUTER_API_KEY"),
+    ("fable5", "openrouter", "anthropic/claude-fable-5", "OPENROUTER_API_KEY"),
+    ("gpt56solpro", "openrouter", "openai/gpt-5.6-sol-pro", "OPENROUTER_API_KEY"),
+    ("grok45", "openrouter", "x-ai/grok-4.5", "OPENROUTER_API_KEY"),
     ("glm52", "openrouter", "z-ai/glm-5.2", "OPENROUTER_API_KEY"),
+    ("deepseekv4pro", "openrouter", "deepseek/deepseek-v4-pro", "OPENROUTER_API_KEY"),
     ("qwen37max", "openrouter", "qwen/qwen3.7-max", "OPENROUTER_API_KEY"),
-    ("sonnet5", "openrouter", "anthropic/claude-sonnet-5", "OPENROUTER_API_KEY"),
-    ("gpt55", "openrouter", "openai/gpt-5.5", "OPENROUTER_API_KEY"),
+    ("gptoss120b", "openrouter", "openai/gpt-oss-120b", "OPENROUTER_API_KEY"),
 ]
 
 
@@ -269,9 +271,9 @@ def test_model_selection_is_explicit_ordered_and_fail_closed(driver: ModuleType)
     assert [_model_tuple(model)[0] for model in driver.select_models(catalog, ["all"])] == [
         row[0] for row in EXPECTED_MODELS
     ]
-    assert [_model_tuple(model)[0] for model in driver.select_models(catalog, ["gpt55", "glm52"])] == [
-        "gpt55",
-        "glm52",
+    assert [_model_tuple(model)[0] for model in driver.select_models(catalog, ["qwen37max", "gpt56solpro"])] == [
+        "qwen37max",
+        "gpt56solpro",
     ]
 
     with pytest.raises(ValueError, match="not-configured"):

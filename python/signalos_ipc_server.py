@@ -2372,29 +2372,54 @@ def _resolve_openrouter_key() -> str:
 
 
 def panel_consult(req_id: str, args: Any, project_id: str = "default") -> dict:
-    """panel:consult -> fan the SAME question out to four cross-vendor OpenRouter
-    models in parallel (blind/independent) and return each candid answer plus the
-    exact OpenRouter cost delta.
+    """panel:consult -> run the universal independent/council panel engine.
 
-    Payload: {"question": str, "models"?: list|str, "system"?: str}. The
-    OpenRouter key is resolved server-side (never supplied by the frontend) and
-    NEVER appears in the response, an error string, or a log."""
+    The legacy ``question/models/system`` payload remains valid. Council callers
+    may additionally select mode, role models, bounded critique rounds, and
+    worker count. The OpenRouter key is always resolved server-side and must
+    never appear in a response, error, or log.
+    """
     try:
         payload = _parse_object_arg(args, "panel:consult")
     except (TypeError, ValueError) as exc:
         return err(req_id, f"panel:consult args invalid: {exc}")
     question = str(payload.get("question") or "")
-    models = payload.get("models")
+    models = payload.get("advisers", payload.get("models"))
     system = payload.get("system")
     if system is not None:
         system = str(system)
+    mode = payload.get("mode")
+    if mode is not None:
+        mode = str(mode)
+    config = payload.get("config")
+    if config is not None and not isinstance(config, dict):
+        return err(req_id, "panel:consult config must be an object")
 
     from signalos_lib import panel
+
+    # The War Room advertises this exact roster before a run. Keep the desktop
+    # truthful even when a global OPENROUTER_PANEL_MODELS override exists for
+    # CLI skills; explicit IPC advisers/models still win.
+    if models is None:
+        models = list(panel.DEFAULT_MODELS)
 
     key = ""
     try:
         key = _resolve_openrouter_key()
-        result = panel.consult(question, models=models, system=system, key=key)
+        result = panel.consult(
+            question,
+            config=config,
+            models=models,
+            system=system,
+            key=key,
+            mode=mode,
+            chair=payload.get("chair"),
+            verifier=payload.get("verifier"),
+            red_team=payload.get("red_team"),
+            jury=payload.get("jury"),
+            critique_rounds=payload.get("critique_rounds"),
+            max_workers=payload.get("max_workers"),
+        )
     except ValueError as exc:
         # Empty question / no key. panel.consult authors these messages and does
         # not embed the key, but redact defensively before it leaves the process.

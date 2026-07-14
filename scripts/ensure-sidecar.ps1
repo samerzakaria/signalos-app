@@ -8,13 +8,13 @@
   "Exists" is NOT sufficient (Claim 1b). A committed-but-stale sidecar (the
   shipped 0.0.9 binary answers "Unknown command: agent:deliver") must be
   caught. A fresh sidecar answers the `capabilities` handshake with a command
-  list that includes agent:deliver; a stale one does not.
+  list that includes both agent:deliver and panel:consult; a stale one does not.
 
   Modes (mirrors the .sh variant's --build / --check / lint-stub behavior):
     (default)   Lint: stub the file if missing so cargo proceeds. If a real but
                 stale binary is present, fail loudly (exit 1).
     -Build      Build the real sidecar via bundle-sidecar.ps1 when missing or
-                stale, then verify it reports agent:deliver.
+                stale, then verify it reports the required desktop commands.
     -Check      Verify freshness only (no build). Exit 1 if missing/stub/stale.
 
 .EXAMPLE
@@ -60,8 +60,9 @@ function Test-SidecarLooksLikeStub {
   catch { return $true }
 }
 
-# Probe the binary's capability handshake. Returns $true only when agent:deliver
-# is reported. The sidecar exits on stdin EOF, so one piped line is enough.
+# Probe the binary's capability handshake. Returns $true only when both required
+# desktop commands are reported. The sidecar exits on stdin EOF, so one piped
+# line is enough.
 #
 # BOM hazard (Windows): Process.StandardInput's StreamWriter inherits
 # [Console]::InputEncoding. On a UTF-8 console that encoding carries a byte-order
@@ -71,7 +72,7 @@ function Test-SidecarLooksLikeStub {
 # probe JSON fails to parse and a *fresh* binary is mis-reported as stale. Force
 # BOM-less UTF-8 for the duration of the probe (restored in finally) so the
 # handshake bytes reach the sidecar clean.
-function Test-SidecarReportsAgentDeliver {
+function Test-SidecarReportsRequiredCommands {
   param([string]$Path)
   $prevInputEncoding = $null
   try {
@@ -92,7 +93,7 @@ function Test-SidecarReportsAgentDeliver {
     if (-not $proc.WaitForExit(60000)) {
       try { $proc.Kill() } catch {}
     }
-    return ($out -match "agent:deliver")
+    return (($out -match '"agent:deliver"') -and ($out -match '"panel:consult"'))
   } catch {
     return $false
   } finally {
@@ -117,16 +118,16 @@ function Invoke-SidecarRebuild {
     Write-Host "[ensure-sidecar] FAIL: build did not produce $sidecarName"
     exit 1
   }
-  if (-not (Test-SidecarReportsAgentDeliver $sidecarPath)) {
-    Write-Host "[ensure-sidecar] FAIL: rebuilt sidecar still does not report agent:deliver."
+  if (-not (Test-SidecarReportsRequiredCommands $sidecarPath)) {
+    Write-Host "[ensure-sidecar] FAIL: rebuilt sidecar does not report both required commands (agent:deliver, panel:consult)."
     exit 1
   }
-  Write-Host "[ensure-sidecar] OK: rebuilt and verified fresh (agent:deliver present)."
+  Write-Host "[ensure-sidecar] OK: rebuilt and verified fresh (agent:deliver and panel:consult present)."
   exit 0
 }
 
 function Write-StaleMessage {
-  Write-Host "[ensure-sidecar] STALE sidecar: it does not report agent:deliver."
+  Write-Host "[ensure-sidecar] STALE sidecar: it does not report both required commands (agent:deliver, panel:consult)."
   Write-Host "[ensure-sidecar]   on-disk binary : $sidecarPath"
   $sv = Get-SourceVersion
   if ($sv) { Write-Host "[ensure-sidecar]   source version : $sv (package.json)" }
@@ -148,8 +149,8 @@ if (Test-Path -LiteralPath $sidecarPath) {
     Write-Host "[ensure-sidecar] existing file looks like a lint stub (<100KB); skipping freshness probe."
     exit 0
   }
-  if (Test-SidecarReportsAgentDeliver $sidecarPath) {
-    Write-Host "[ensure-sidecar] OK: real sidecar reports agent:deliver; fresh -- nothing to do."
+  if (Test-SidecarReportsRequiredCommands $sidecarPath) {
+    Write-Host "[ensure-sidecar] OK: real sidecar reports agent:deliver and panel:consult; fresh -- nothing to do."
     exit 0
   }
   # A real but stale binary: rebuild when asked, otherwise fail loudly.

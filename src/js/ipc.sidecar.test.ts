@@ -51,6 +51,28 @@ describe('ipc sidecar waits', () => {
     await expect(wait).resolves.toBe('{"ok":true}');
   });
 
+  it('sends panel options with an authoritative positional question and no timeout', async () => {
+    const { panel } = await import('./ipc.js');
+    const wait = panel.consult(
+      'Authoritative question',
+      { mode: 'council', question: 'must not override' } as any,
+    );
+    await invoke.mock.results[0].value;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const [, args] = invoke.mock.calls[0];
+    expect(args.command).toBe('panel:consult');
+    const payload = JSON.parse(args.args[0]);
+    expect(payload).toEqual({ mode: 'council', question: 'Authoritative question' });
+
+    vi.advanceTimersByTime(2 * 60 * 60 * 1000);
+    listeners.get('sidecar:response')?.({
+      payload: { id: 'req-1', ok: true, data: { status: 'complete' } },
+    });
+    await expect(wait).resolves.toEqual({ status: 'complete' });
+  });
+
   it('rejects a no-timeout wait when the sidecar terminates', async () => {
     const { signal } = await import('./ipc.js');
     const wait = signal.runAndWait('deliver', ['--json'], 0);

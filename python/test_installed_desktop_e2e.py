@@ -279,7 +279,7 @@ class _Sidecar:
 class TestShippedBinaryHandshake(unittest.TestCase):
     """Step 1 -- the capability handshake against the real packaged .exe."""
 
-    def test_capabilities_reports_version_and_agent_deliver(self):
+    def test_capabilities_reports_version_and_required_commands(self):
         ws = tempfile.mkdtemp(prefix="sos_e2e_hs_")
         sc = _Sidecar(ws)
         try:
@@ -287,10 +287,13 @@ class TestShippedBinaryHandshake(unittest.TestCase):
             self.assertIsNotNone(resp, "no capabilities response from the shipped binary")
             self.assertTrue(resp.get("ok"), msg=resp)
             data = resp.get("data") or {}
-            # The shipped binary must advertise the generation command; a stale
-            # sidecar (the 0.0.9 signature) would omit it.
+            # The shipped binary must advertise every desktop-critical command.
+            # Checking only the older generation command lets a binary built
+            # before the War Room panel incorrectly pass this freshness gate.
             self.assertIn("agent:deliver", data.get("commands", []),
                           "shipped binary does not advertise agent:deliver -- stale sidecar")
+            self.assertIn("panel:consult", data.get("commands", []),
+                          "shipped binary does not advertise panel:consult -- stale sidecar")
             self.assertEqual(data.get("protocol"), 1)
             if _PKG_VERSION:
                 self.assertEqual(data.get("version"), _PKG_VERSION,

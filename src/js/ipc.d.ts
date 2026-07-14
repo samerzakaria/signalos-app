@@ -83,8 +83,22 @@ export const policy: {
 
 export const attachments: { analyze(files: unknown): Promise<unknown> };
 
+export interface PanelConsultOptions {
+  mode?: 'council' | 'independent';
+  advisers?: string[] | string;
+  models?: string[] | string;
+  chair?: string;
+  verifier?: string;
+  red_team?: string;
+  jury?: string[] | string;
+  critique_rounds?: 0 | 1 | 2;
+  max_workers?: number;
+  system?: string;
+  config?: Record<string, unknown>;
+}
+
 export const panel: {
-  consult(question: string, opts?: Record<string, unknown>): Promise<unknown>;
+  consult(question: string, opts?: PanelConsultOptions): Promise<unknown>;
 };
 
 export const identity: {
