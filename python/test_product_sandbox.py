@@ -228,6 +228,14 @@ class TestContainerArgv:
             argv = r.build_argv("npm test", ws / "frontend", {"CI": "1"})
         assert argv[argv.index("-w") + 1] == CONTAINER_WORKSPACE + "/frontend"
 
+    @pytest.mark.skipif(
+        os.name != "nt",
+        reason="WSL translates a Windows drive path (C:\\ -> /mnt/c) only on "
+        "Windows; on POSIX Path('C:/Users/x/ws') is not an absolute drive path, "
+        "so this Windows-only mount translation cannot be asserted. The engine "
+        "argv wrapping itself is still covered cross-platform by "
+        "test_wsl_argv_is_hardened_too.",
+    )
     def test_wsl_engine_wraps_docker_and_translates_path(self):
         argv = build_container_argv(
             "pytest", Path("C:/Users/x/ws"), engine="wsl", image="python:3.12-slim"
