@@ -682,6 +682,12 @@ class GateOrchestrator:
             "reason": outcome.get("reason", ""),
             "loop_status": str(getattr(result, "status", "") or ""),
         }
+        failure_type = str(getattr(result, "failure_type", "") or "").strip()
+        if failure_type:
+            self.state.last_outcome["failure_type"] = failure_type
+            self.state.last_outcome["error"] = str(
+                getattr(result, "error", "") or outcome.get("reason", "")
+            )
         if outcome.get("ok"):
             self.state.status = "awaiting-verdict"
         else:

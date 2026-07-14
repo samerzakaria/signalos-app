@@ -18,9 +18,21 @@ from signalos_lib.product.provider_adapter import (  # noqa: E402
     ProviderAdapter,
     ProviderAuthError,
     ProviderCapabilities,
+    classify_error_scenario,
+    classify_provider_failure,
     _normalize_litellm_model,
     _normalize_tool_calls,
 )
+
+
+def test_provider_failures_have_stable_machine_categories():
+    assert classify_provider_failure(ProviderAuthError("bad key")) == "provider-auth"
+    assert classify_provider_failure(RuntimeError("HTTP 402 payment required")) == "provider-billing"
+    assert classify_provider_failure(RuntimeError("429 rate-limiting")) == "provider-rate-limit"
+    assert classify_provider_failure(TimeoutError("gateway timeout")) == "provider-transport"
+    assert classify_provider_failure(RuntimeError("no endpoints for model")) == "provider-route"
+    assert classify_provider_failure(RuntimeError("unexpected provider fault")) == "provider-error"
+    assert classify_error_scenario(RuntimeError("429 rate-limiting")) == "integration-outage"
 
 
 def _msg(arguments):

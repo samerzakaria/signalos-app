@@ -21,6 +21,7 @@ __all__ = [
     "LiteLLMAgentProvider",
     "detect_capabilities",
     "ProviderAuthError",
+    "classify_provider_failure",
     "classify_error_scenario",
     "normalize_provider_model",
     # Layer 2 seed — opt-in raw transcript capture (OFF by default).
@@ -92,19 +93,77 @@ class ProviderAuthError(RuntimeError):
     """
 
 
+def classify_provider_failure(exc: Exception) -> str:
+    """Return a stable machine-readable category for a failed provider call.
+
+    AgentLoop calls this only after the provider boundary raised, so the
+    fallback is deliberately ``provider-error`` rather than an application or
+    generated-product failure.  Benchmark callers can then keep provider
+    availability and credentials out of model-quality grades.
+    """
+    if isinstance(exc, ProviderAuthError):
+        return "provider-auth"
+
+    msg = str(exc).lower()
+    if any(
+        token in msg
+        for token in (
+            "api key", "api_key", "unauthorized", "authentication",
+            "permission denied", "forbidden", "401", "403",
+        )
+    ):
+        return "provider-auth"
+    if any(
+        token in msg
+        for token in (
+            "insufficient credit", "insufficient balance", "credit balance",
+            "payment required", "billing", "402",
+        )
+    ):
+        return "provider-billing"
+    if any(
+        token in msg
+        for token in (
+            "rate limit", "rate-limit", "rate limiting", "rate-limiting",
+            "too many requests", "quota", "429",
+        )
+    ):
+        return "provider-rate-limit"
+    if any(
+        token in msg
+        for token in (
+            "connection", "timeout", "timed out", "unreachable", "network",
+            "service unavailable", "bad gateway", "gateway timeout",
+            "502", "503", "504",
+        )
+    ):
+        return "provider-transport"
+    if any(
+        token in msg
+        for token in (
+            "model not found", "no endpoints", "no endpoint",
+            "unsupported model", "selected model for chat",
+            "provider routing", "route not found", "404",
+        )
+    ):
+        return "provider-route"
+    return "provider-error"
+
+
 def classify_error_scenario(exc: Exception) -> str | None:
     """1.10: map a provider exception to an `incidents.py` scenario key, so a
     live provider failure surfaces as a plain-words card instead of a bare
     error string. Returns None when the exception doesn't match a known
     scenario (caller falls back to the generic incident card)."""
-    if isinstance(exc, ProviderAuthError):
+    failure = classify_provider_failure(exc)
+    if failure == "provider-auth":
         return "credential-revoked"
-    msg = str(exc).lower()
-    if any(t in msg for t in ("api key", "api_key", "unauthorized", "authentication", "401")):
-        return "credential-revoked"
-    if "rate limit" in msg or "quota" in msg or "429" in msg:
-        return "integration-outage"
-    if any(t in msg for t in ("connection", "timeout", "timed out", "unreachable", "503", "502")):
+    if failure in {
+        "provider-billing",
+        "provider-rate-limit",
+        "provider-transport",
+        "provider-route",
+    }:
         return "integration-outage"
     return None
 

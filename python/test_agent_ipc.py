@@ -238,6 +238,24 @@ class TestAgentRun(_AgentIpcBase):
         self.assertIn("selected AI model", resp["error"])
         self.assertTrue(any(e.get("type") == "error" for e in events))
 
+    def test_run_provider_init_failure_has_infrastructure_error_code(self):
+        def factory(*_args, **_kwargs):
+            raise RuntimeError("adapter construction exploded")
+
+        srv._AGENT_ADAPTER_FACTORY = factory
+        resp, events = self._run(
+            {
+                "command": "agent:run",
+                "id": "req-provider-init",
+                "args": [_agent_args(prompt="go", run_id="run-provider-init")],
+            }
+        )
+
+        self.assertFalse(resp["ok"], msg=resp)
+        self.assertEqual(resp["error_code"], "provider-init")
+        self.assertIn("provider init failed", resp["error"])
+        self.assertTrue(any(e.get("type") == "error" for e in events))
+
 
     def test_run_provider_failure_surfaces_error_event_and_non_ok(self):
         # INV-4: a provider that raises during chat surfaces an error agent-event
@@ -264,6 +282,8 @@ class TestAgentRun(_AgentIpcBase):
         )
         self.assertFalse(resp["ok"], msg=resp)
         self.assertEqual(resp["data"]["status"], "error")
+        self.assertEqual(resp["data"]["failure_type"], "provider-error")
+        self.assertEqual(resp["error_code"], "provider-error")
         error_events = [
             e for e in events
             if e.get("kind") == "agent-event" and e.get("type") == "error"

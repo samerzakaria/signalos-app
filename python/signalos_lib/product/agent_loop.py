@@ -1051,6 +1051,8 @@ class LoopResult:
     # Provider turn errors observed during this run (finish_reason='error'
     # turns a provider normalized away): transport noise vs model weakness.
     provider_turn_errors: int | None = None
+    # Stable provider-boundary category when ``status == "error"``.
+    failure_type: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1064,6 +1066,7 @@ class LoopResult:
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "provider_turn_errors": self.provider_turn_errors,
+            "failure_type": self.failure_type,
         }
 
 
@@ -1512,7 +1515,10 @@ class AgentLoop:
                     )
                     self._track_usage(resp)
                 except Exception as exc:  # INV-4
+                    from .provider_adapter import classify_provider_failure
+
                     err = f"Provider call failed: {exc}"
+                    failure_type = classify_provider_failure(exc)
                     self._emit({"type": "error", "error": err})
                     # 1.10: also surface a plain-words incident card with recovery
                     # options -- a founder should never see a bare error string.
@@ -1531,6 +1537,7 @@ class AgentLoop:
                         tool_calls_made=tool_calls_made,
                         messages=messages,
                         error=err,
+                        failure_type=failure_type,
                     )
 
             if resp.content:
@@ -1716,7 +1723,10 @@ class AgentLoop:
             resp = self.adapter.chat(messages=messages, tools=None)
             self._track_usage(resp)
         except Exception as exc:  # INV-4
+            from .provider_adapter import classify_provider_failure
+
             err = f"Provider call failed (text-only): {exc}"
+            failure_type = classify_provider_failure(exc)
             self._emit({"type": "error", "error": err})
             return LoopResult(
                 run_id=self.run_id,
@@ -1726,6 +1736,7 @@ class AgentLoop:
                 messages=messages,
                 error=err,
                 text_only=True,
+                failure_type=failure_type,
             )
         text = resp.content or ""
         messages.append({"role": "assistant", "content": text})

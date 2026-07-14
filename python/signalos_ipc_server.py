@@ -1119,7 +1119,11 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
         )
     except Exception as exc:  # INV-4: surface
         _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
-        return err(req_id, f"agent:deliver provider init failed: {type(exc).__name__}: {exc}")
+        return err(
+            req_id,
+            f"agent:deliver provider init failed: {type(exc).__name__}: {exc}",
+            code="provider-init",
+        )
     enforcement = _build_agent_enforcement()
     from signalos_lib.product.gate_orchestrator import GateOrchestrator
     from signalos_lib.product.identity import format_signer, load_identity
@@ -1269,7 +1273,11 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
     except Exception as exc:  # INV-4: surface, do not swallow
         run_id_for_err = run_id or "agent-unstarted"
         _agent_emit(run_id_for_err)({"type": "error", "error": f"provider init failed: {exc}"})
-        return err(req_id, f"agent:run provider init failed: {type(exc).__name__}: {exc}")
+        return err(
+            req_id,
+            f"agent:run provider init failed: {type(exc).__name__}: {exc}",
+            code="provider-init",
+        )
 
     enforcement = _build_agent_enforcement()
     loop = AgentLoop(
@@ -1302,6 +1310,7 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
         "run_id": result.run_id,
         "status": result.status,
         "tool_calls_made": result.tool_calls_made,
+        "failure_type": result.failure_type,
     }
     if result.status == "error":
         # INV-4: a failed run is a non-ok response carrying the run summary.
@@ -1309,6 +1318,7 @@ def agent_run(req_id: str, args: Any, project_id: str = "default") -> dict:
             "id": req_id,
             "ok": False,
             "error": redact_text(result.error or "agent run failed"),
+            "error_code": result.failure_type or "agent-error",
             "data": redact_response(summary),
         }
     return ok(req_id, output=json.dumps(summary), data=summary)
@@ -1792,7 +1802,11 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
         adapter = _build_agent_adapter(model, provider)
     except Exception as exc:  # INV-4: surface, do not swallow
         _agent_emit(run_id)({"type": "error", "error": f"provider init failed: {exc}"})
-        return err(req_id, f"agent:resume provider init failed: {type(exc).__name__}: {exc}")
+        return err(
+            req_id,
+            f"agent:resume provider init failed: {type(exc).__name__}: {exc}",
+            code="provider-init",
+        )
 
     enforcement = _build_agent_enforcement()
 
@@ -2008,12 +2022,14 @@ def agent_resume(req_id: str, args: Any, project_id: str = "default") -> dict:
         "resumed": True,
         "status": result.status,
         "tool_calls_made": result.tool_calls_made,
+        "failure_type": result.failure_type,
     }
     if result.status == "error":
         return {
             "id": req_id,
             "ok": False,
             "error": redact_text(result.error or "agent resume failed"),
+            "error_code": result.failure_type or "agent-error",
             "data": redact_response(summary),
         }
     return ok(req_id, output=json.dumps(summary), data=summary)
@@ -3445,8 +3461,11 @@ def ok(req_id, output=None, data=None):
     }
 
 
-def err(req_id, message):
-    return {"id": req_id, "ok": False, "error": redact_text(message)}
+def err(req_id, message, *, code=None):
+    response = {"id": req_id, "ok": False, "error": redact_text(message)}
+    if code:
+        response["error_code"] = str(code)
+    return response
 
 
 def _try_intercept_cancel(line: str) -> bool:

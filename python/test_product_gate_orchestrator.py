@@ -90,6 +90,13 @@ class _EndAdapter:
                              stop_reason="end_turn", usage=TokenUsage())
 
 
+class _ProviderTimeoutAdapter:
+    supports_tool_calls = True
+
+    def chat(self, messages, model="test", tools=None, stream=False):
+        raise TimeoutError("provider connection timed out")
+
+
 class _BriefCapableAdapter:
     """1.3 + 1.8: serves both the main gate-agent loop (tools passed -> ends
     the turn) and, via _CriticChat, the brief-authoring call (no tools ->
@@ -1546,6 +1553,22 @@ class TestAgentOutcomeGate(unittest.TestCase):
             # the honest outcome is retained on the state
             self.assertFalse(orch.state.last_outcome["ok"])
             self.assertEqual(orch.state.last_outcome["loop_status"], "stalled_no_tool")
+
+    def test_provider_failure_category_survives_gate_persistence(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = []
+            orch = GateOrchestrator(
+                Path(d), _ProviderTimeoutAdapter(), events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                prompt="build an expense tracker",
+            )
+            orch.start()
+
+            self.assertEqual(orch.state.status, "blocked")
+            self.assertEqual(
+                orch.state.last_outcome["failure_type"], "provider-transport"
+            )
+            self.assertIn("timed out", orch.state.last_outcome["error"])
 
     def test_stalled_agent_not_approvable_even_with_artifacts_present(self):
         # STRONGEST fail-open proof: seed ALL FOUR G0 artifacts so the old

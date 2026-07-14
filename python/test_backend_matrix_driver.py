@@ -337,6 +337,44 @@ def test_cost_guard_refuses_a_decreasing_provider_counter(driver: ModuleType) ->
         guard.check(force=True)
 
 
+def test_provider_failures_are_not_graded_as_product_failures(driver: ModuleType) -> None:
+    with pytest.raises(driver.InfrastructureError, match="provider init"):
+        driver._require_ok(
+            "agent:deliver",
+            {
+                "ok": False,
+                "error": "agent:deliver provider init failed",
+                "error_code": "provider-init",
+            },
+        )
+
+    state = {
+        "run_id": "matrix-run",
+        "current_gate": "G0",
+        "status": "blocked",
+        "signed": [],
+        "last_outcome": {
+            "gate": "G0",
+            "ok": False,
+            "reason": "Provider call failed: timeout",
+            "failure_type": "provider-transport",
+        },
+    }
+    with pytest.raises(driver.InfrastructureError, match="provider-transport"):
+        driver._validate_review_checkpoint(
+            state,
+            run_id="matrix-run",
+            gate="G0",
+            signed_before=[],
+        )
+
+    with pytest.raises(driver.ProductFailure, match="ordinary product failure"):
+        driver._require_ok(
+            "agent:deliver",
+            {"ok": False, "error": "ordinary product failure"},
+        )
+
+
 def test_orchestrator_profile_is_explicit_and_has_one_evidence_value(
     driver: ModuleType,
 ) -> None:
