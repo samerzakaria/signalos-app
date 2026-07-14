@@ -882,11 +882,19 @@ def agent_deliver(req_id: str, args: Any, project_id: str = "default") -> dict:
     enforcement = _build_agent_enforcement()
     from signalos_lib.product.gate_orchestrator import GateOrchestrator
     from signalos_lib.product.identity import format_signer, load_identity
+    # C6: the desktop delivery ships a REAL product, so it runs under the
+    # stricter "production" profile -- the post-build release-safety stages
+    # (real security gate + runtime/UX proof evidence) are enabled, unlike the
+    # lenient "benchmark" default the funded matrix relies on. Overridable via
+    # the payload for callers that deliberately want benchmark semantics; the
+    # orchestrator falls back to its default for an unknown profile string.
+    profile = str(payload.get("profile") or "production").strip() or "production"
     orch = GateOrchestrator(
         repo_root, adapter, _agent_emit(run_id),
         enforcement_provider=enforcement, sign_fn=_DELIVERY_SIGN_FN,
         prompt=prompt, run_id=run_id,
         signer=format_signer(load_identity(repo_root)),
+        profile=profile,
         # §3.2: bind the request's project namespace into the delivery so
         # gate-artifact generation AND signing land under
         # projects.project_governance_dir(root, project_id).
