@@ -13,8 +13,9 @@ What runs, and how:
 
   1. HANDSHAKE (real .exe, $0)   -- spawn the shipped binary, send
      {"command":"capabilities"} and {"command":"ping"}; assert the version and
-     that agent:deliver is advertised. Proves the shipped binary is the fresh
-     one that can generate.
+     required desktop commands. Then invoke panel:consult with isolated keyless
+     credential sources and require its safe pre-network setup error. Proves the
+     shipped binary contains both generation and War Room engines.
   2. FRESH PROJECT + STATE (real .exe, $0) -- in a throwaway workspace, drive
      project:create and state:gates over IPC; assert real governance state.
   3. GOVERNED DELIVERY WALK (in-process, $0, deterministic) -- drive
@@ -303,6 +304,57 @@ class TestShippedBinaryHandshake(unittest.TestCase):
             self.assertTrue(ping and ping.get("ok"), msg=ping)
             self.assertEqual((ping.get("data") or {}).get("version"), data.get("version"),
                              "ping version disagrees with capabilities version")
+        finally:
+            sc.close()
+            self.assertTrue(_rmtree_retry(ws), f"failed to clean {ws}")
+
+    def test_panel_consult_imports_and_fails_safely_without_a_key(self):
+        ws = tempfile.mkdtemp(prefix="sos_e2e_panel_")
+        isolated_home = Path(ws) / "home"
+        isolated_home.mkdir()
+        env = _host_env()
+        for name in ("OPENROUTER_API_KEY", "OPENROUTER_KEY_FILE"):
+            env.pop(name, None)
+        env.update({
+            "HOME": str(isolated_home),
+            "USERPROFILE": str(isolated_home),
+            "CODEX_HOME": str(isolated_home / ".codex"),
+            # Defense in depth: even if a future resolver accidentally finds an
+            # ambient credential, this keyless smoke must not reach the network.
+            "HTTP_PROXY": "http://127.0.0.1:9",
+            "HTTPS_PROXY": "http://127.0.0.1:9",
+            "ALL_PROXY": "http://127.0.0.1:9",
+            "NO_PROXY": "",
+            "http_proxy": "http://127.0.0.1:9",
+            "https_proxy": "http://127.0.0.1:9",
+            "all_proxy": "http://127.0.0.1:9",
+            "no_proxy": "",
+        })
+        home_drive, home_path = os.path.splitdrive(str(isolated_home))
+        if home_drive:
+            env["HOMEDRIVE"] = home_drive
+            env["HOMEPATH"] = home_path
+
+        sc = _Sidecar(ws, env=env)
+        try:
+            resp = sc.call(
+                "panel:consult",
+                [json.dumps({"question": "Is the packaged panel available?", "mode": "council"})],
+                timeout=60,
+            )
+            self.assertIsNotNone(resp, "no panel:consult response from the shipped binary")
+            self.assertFalse(resp.get("ok"), msg=resp)
+            error = str(resp.get("error") or "")
+            self.assertRegex(error, r"(?i)no openrouter key (?:found|configured)")
+            for forbidden in (
+                "unknown command",
+                "importerror",
+                "modulenotfounderror",
+                "cannot import",
+                "openrouter request failed",
+                "openrouter http",
+            ):
+                self.assertNotIn(forbidden, error.casefold(), msg=resp)
         finally:
             sc.close()
             self.assertTrue(_rmtree_retry(ws), f"failed to clean {ws}")

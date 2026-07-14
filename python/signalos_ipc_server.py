@@ -2384,24 +2384,26 @@ def panel_consult(req_id: str, args: Any, project_id: str = "default") -> dict:
     except (TypeError, ValueError) as exc:
         return err(req_id, f"panel:consult args invalid: {exc}")
     question = str(payload.get("question") or "")
+    explicit_models = "advisers" in payload or "models" in payload
     models = payload.get("advisers", payload.get("models"))
+    if models == "" or models == []:
+        models = None
     system = payload.get("system")
     if system is not None:
         system = str(system)
     mode = payload.get("mode")
     if mode is not None:
         mode = str(mode)
+    elif explicit_models:
+        # Preserve the original desktop/API contract: supplying only `models`
+        # asks for sealed independent opinions. New War Room callers send
+        # mode="council" explicitly.
+        mode = "independent"
     config = payload.get("config")
     if config is not None and not isinstance(config, dict):
         return err(req_id, "panel:consult config must be an object")
 
     from signalos_lib import panel
-
-    # The War Room advertises this exact roster before a run. Keep the desktop
-    # truthful even when a global OPENROUTER_PANEL_MODELS override exists for
-    # CLI skills; explicit IPC advisers/models still win.
-    if models is None:
-        models = list(panel.DEFAULT_MODELS)
 
     key = ""
     try:
@@ -2419,6 +2421,9 @@ def panel_consult(req_id: str, args: Any, project_id: str = "default") -> dict:
             jury=payload.get("jury"),
             critique_rounds=payload.get("critique_rounds"),
             max_workers=payload.get("max_workers"),
+            request_timeout_seconds=payload.get("request_timeout_seconds"),
+            deadline_seconds=payload.get("deadline_seconds"),
+            use_environment=False,
         )
     except ValueError as exc:
         # Empty question / no key. panel.consult authors these messages and does

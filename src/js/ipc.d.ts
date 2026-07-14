@@ -93,6 +93,8 @@ export interface PanelConsultOptions {
   jury?: string[] | string;
   critique_rounds?: 0 | 1 | 2;
   max_workers?: number;
+  request_timeout_seconds?: number;
+  deadline_seconds?: number;
   system?: string;
   config?: Record<string, unknown>;
 }

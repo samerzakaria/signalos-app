@@ -8,12 +8,20 @@ For every selected model, the driver creates a new, isolated workspace and start
 
 The checked-in expense-tracker scenario covers adding and deleting expenses, reconciliation, category filtering, persistence across refresh, required expense fields, and accessibility expectations. Its requirement IDs are part of the prompt so their presence can be traced through gate artifacts.
 
-The primary calibration cohort is intentionally a capability/value frontier,
-not a price ranking: Claude Fable 5, GPT-5.6 Sol Pro, Grok 4.5, GLM 5.2,
-DeepSeek V4 Pro, Qwen3.7 Max, and GPT-OSS-120B. Qwen is part of the primary
-wave, while GPT-OSS remains the open-weight low-cost boundary control. Any
-expected grade is a pre-run hypothesis; only repeated accepted products can
-establish an allowlist tier.
+The catalog contains 18 models in three explicit cohorts. The primary cohort is
+the funded capability/value calibration frontier: Claude Fable 5, GPT-5.6 Sol
+Pro, Grok 4.5, GLM 5.2, DeepSeek V4 Pro, Qwen3.7 Max, MiMo V2.5 Pro, Kimi K2.7
+Code, DeepSeek V4 Flash, and GPT-OSS-120B. Qwen Max remains a flagship value
+candidate; DeepSeek Flash is the modern ultra-low-cost boundary; GPT-OSS stays
+as the older open-weight control.
+
+The challenger cohort tests whether less expensive tiers or different model
+families move the accepted-product frontier: GPT-5.6 Terra Pro, Claude Sonnet
+5, Qwen3.7 Plus, MiMo V2.5, MiniMax M3, and Nemotron 3 Ultra. The exploratory
+cohort contains Gemini 3.1 Pro Preview and KAT-Coder-Pro V2.5; preview/newly
+released routes must not enter a production allowlist merely because they pass
+one study. Any expected grade is a pre-run hypothesis; only repeated accepted
+products can establish an allowlist tier.
 
 This is a **backend journey benchmark**, not proof that SignalOS is production- or enterprise-ready. It does not exercise the desktop UI or Tauri boundary, SaaS tenant isolation, SSO, deployment controls, compliance operations, production sandboxing, or real-world availability. The matrix explicitly requests the stable `benchmark` orchestrator profile by default; it never relies on the desktop sidecar's `production` default. Passing this matrix must not be represented as production runtime or security assurance. It also proves only the checked-in scenario and oracle, not arbitrary product generation.
 
@@ -38,13 +46,36 @@ python scripts/backend_matrix/driver.py --live --models gpt56solpro `
   --orchestrator-profile benchmark `
   --max-cost-per-model 2.00 --acknowledge-key-exposure
 
+# Run one complete cohort. Cohort names are resolved from models.json.
+python scripts/backend_matrix/driver.py --live --models primary `
+  --orchestrator-profile benchmark `
+  --max-cost-per-model 2.00 --acknowledge-key-exposure
+
+python scripts/backend_matrix/driver.py --live --models challenger `
+  --orchestrator-profile benchmark `
+  --max-cost-per-model 2.00 --acknowledge-key-exposure
+
+python scripts/backend_matrix/driver.py --live --models exploratory `
+  --orchestrator-profile benchmark `
+  --max-cost-per-model 2.00 --acknowledge-key-exposure
+
 # Run the complete configured matrix.
 python scripts/backend_matrix/driver.py --live --models all `
   --orchestrator-profile benchmark `
   --max-cost-per-model 2.00 --acknowledge-key-exposure
 ```
 
-Use `--list-models` to see the authoritative aliases rather than guessing provider IDs. Unknown aliases and an empty selection are errors. Run `--preflight` immediately before a paid run; model availability, account limits, and the local browser installation can change independently of this repository. `--live` is deliberately required because it makes paid external API calls. `--orchestrator-profile` accepts only `benchmark` or `production`; the default is the explicit, deterministic `benchmark` comparison contract. Use `production` only when you intentionally want the extra release-safety stages included in the measured journey.
+Use `--list-models` to see the authoritative aliases, cohort, and provider model
+IDs rather than guessing them. `--models` accepts aliases, exact IDs, the cohort
+names `primary`, `challenger`, and `exploratory`, or `all`; cohort names can be
+combined when their members do not overlap. Unknown names, duplicate selection,
+and an empty selection are errors. Run `--preflight` immediately before a paid
+run; model availability, account limits, and the local browser installation can
+change independently of this repository. `--live` is deliberately required
+because it makes paid external API calls. `--orchestrator-profile` accepts only
+`benchmark` or `production`; the default is the explicit, deterministic
+`benchmark` comparison contract. Use `production` only when you intentionally
+want the extra release-safety stages included in the measured journey.
 
 ## API key handling
 

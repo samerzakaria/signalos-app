@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -44,19 +45,24 @@ except (AttributeError, OSError):
     pass
 
 
-ENGINE_VERSION = "3.1.0"
+ENGINE_VERSION = "3.2.0"
 SCHEMA_VERSION = "panel-run/1"
-COUNCIL_PROTOCOL = "council/1.1"
+COUNCIL_PROTOCOL = "council/1.2"
 OPINIONS_PROTOCOL = "opinions/1.0"
 MAX_CASE_CHARS = 120_000
 MAX_SYSTEM_CHARS = 20_000
 MAX_RESPONSE_CHARS = 200_000
+MAX_OUTBOUND_PACKET_CHARS = 1_000_000
 MAX_HTTP_RESPONSE_BYTES = 2_000_000
 MAX_USAGE_RESPONSE_BYTES = 256_000
 MAX_ERROR_RESPONSE_BYTES = 64_000
 MAX_ADVISERS = 8
 MAX_JURORS = 5
 MAX_PLANNED_CALLS = 40
+MAX_MODEL_ID_CHARS = 200
+MAX_MODEL_LABEL_CHARS = 120
+MAX_CALL_COST_USD = 10_000.0
+MAX_RUN_COST_USD = 100_000.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
 DEFAULT_DEADLINE_SECONDS = 900
 
@@ -68,8 +74,8 @@ class ModelSpec:
 
 
 # Initial authors are deliberately separate from the leadership roles.  This
-# prevents the chair, verifier, and dissenter from merely grading their own
-# first-round answer while retaining five genuinely different vendor families.
+# prevents the chair, verifier, dissenter, and jurors from grading their own
+# earlier artifacts while retaining nine genuinely separate model roles.
 DEFAULT_ADVISERS = (
     ModelSpec("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
     ModelSpec("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
@@ -78,7 +84,11 @@ DEFAULT_ADVISERS = (
 DEFAULT_CHAIR = ModelSpec("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro")
 DEFAULT_VERIFIER = ModelSpec("anthropic/claude-fable-5", "Claude Fable 5")
 DEFAULT_RED_TEAM = ModelSpec("x-ai/grok-4.5", "Grok 4.5")
-DEFAULT_JURY = (DEFAULT_CHAIR, DEFAULT_VERIFIER, DEFAULT_RED_TEAM)
+DEFAULT_JURY = (
+    ModelSpec("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+    ModelSpec("z-ai/glm-5.2", "GLM 5.2"),
+    ModelSpec("xiaomi/mimo-v2.5-pro", "MiMo V2.5 Pro"),
+)
 
 # Compatibility name retained for existing callers.
 DEFAULT_MODELS = tuple((spec.model, spec.label) for spec in DEFAULT_ADVISERS)
@@ -110,6 +120,13 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9._~:-]+/[A-Za-z0-9._~:+-]+$")
 _SECRET_RE = re.compile(r"(?i)sk-or(?:-v\d+)?-[A-Za-z0-9_-]{12,}")
 _EGRESS_SECRET_PATTERNS = (
     ("provider token", re.compile(r"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,})\b")),
+    (
+        "provider token",
+        re.compile(
+            r"(?i)(?<![A-Za-z0-9_])(?:AIza[A-Za-z0-9_-]{30,}|hf_[A-Za-z0-9]{20,}|"
+            r"npm_[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,})"
+        ),
+    ),
     ("cloud access key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
     ("private key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
@@ -138,7 +155,7 @@ _TERMINAL_UNSAFE_RE = re.compile(
     "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
 )
 _DECISION_STATES = {
-    "verified_consensus",
+    "panel_verified_consensus",
     "provisional_majority",
     "unresolved_escalate",
 }
@@ -333,6 +350,15 @@ def ask_with_usage(
     timeout: int = 300,
 ) -> tuple[str, Optional[float]]:
     """Make one model request and return text plus per-response cost."""
+    if len(model) + len(system) + len(user) > MAX_OUTBOUND_PACKET_CHARS:
+        raise ValueError(
+            f"OpenRouter request exceeded the {MAX_OUTBOUND_PACKET_CHARS:,}-character limit"
+        )
+    outbound_secret = _potential_secret(model + "\n" + system + "\n" + user)
+    if outbound_secret:
+        raise ValueError(
+            f"OpenRouter request contains a potential {outbound_secret}; call blocked"
+        )
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -363,7 +389,7 @@ def ask_with_usage(
         raise RuntimeError(_http_error_message(error)) from error
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"OpenRouter request failed: {error}") from error
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise RuntimeError("OpenRouter returned malformed JSON") from error
 
     try:
@@ -378,11 +404,25 @@ def ask_with_usage(
     text = str(content or "").strip()
     if not text:
         raise RuntimeError("OpenRouter returned an empty model response")
+    if len(text) > MAX_RESPONSE_CHARS:
+        raise RuntimeError(
+            f"OpenRouter response exceeded the {MAX_RESPONSE_CHARS:,}-character limit"
+        )
+    response_secret = _potential_secret(text)
+    if response_secret:
+        raise RuntimeError(
+            f"OpenRouter response contained a potential {response_secret}; response quarantined"
+        )
 
-    raw_cost = (payload.get("usage") or {}).get("cost")
+    usage = payload.get("usage") if isinstance(payload, Mapping) else None
+    raw_cost = usage.get("cost") if isinstance(usage, Mapping) else None
     try:
         cost = float(raw_cost) if raw_cost is not None else None
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        cost = None
+    if cost is not None and (
+        not math.isfinite(cost) or cost < 0 or cost > MAX_CALL_COST_USD
+    ):
         cost = None
     return text, cost
 
@@ -423,9 +463,25 @@ def _model_spec(value: Any, *, role: str) -> ModelSpec:
     else:
         model = str(value or "").strip()
         spec = ModelSpec(model, _label_for(model))
-    if not spec.model or not _MODEL_RE.fullmatch(spec.model):
-        raise ValueError(f"Invalid OpenRouter model ID for {role}: {spec.model!r}")
-    return ModelSpec(spec.model, spec.label or _label_for(spec.model))
+    if _potential_secret(spec.model):
+        raise ValueError(f"Potential credential detected in {role} model ID")
+    if (
+        not spec.model
+        or len(spec.model) > MAX_MODEL_ID_CHARS
+        or not _MODEL_RE.fullmatch(spec.model)
+    ):
+        raise ValueError(f"Invalid OpenRouter model ID for {role}")
+    label = spec.label or _label_for(spec.model)
+    if (
+        len(label) > MAX_MODEL_LABEL_CHARS
+        or _TERMINAL_UNSAFE_RE.search(label)
+        or "\n" in label
+        or "\r" in label
+    ):
+        raise ValueError(f"Invalid model label for {role}")
+    if _potential_secret(label):
+        raise ValueError(f"Potential credential detected in {role} model label")
+    return ModelSpec(spec.model, label)
 
 
 def _normalise_models(
@@ -439,7 +495,10 @@ def _normalise_models(
     if isinstance(models, str):
         values: list[Any] = [item.strip() for item in models.split(",") if item.strip()]
     else:
-        values = list(models)
+        try:
+            values = list(models)
+        except TypeError as error:
+            raise ValueError(f"{role} models must be a string or array") from error
     if not values:
         raise ValueError(f"At least one {role} model is required")
     specs = [_model_spec(value, role=role) for value in values]
@@ -473,7 +532,7 @@ def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
     try:
         parsed = json.loads(candidate)
         return dict(parsed) if isinstance(parsed, Mapping) else None
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
         pass
 
     start = candidate.find("{")
@@ -502,7 +561,7 @@ def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
                 try:
                     parsed = json.loads(candidate[start : index + 1])
                     return dict(parsed) if isinstance(parsed, Mapping) else None
-                except (json.JSONDecodeError, TypeError, ValueError):
+                except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
                     return None
     return None
 
@@ -516,25 +575,69 @@ def _string_list(value: Any) -> list[str]:
 def _confidence(value: Any) -> Optional[float]:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-    if not math.isfinite(number):
+    if not math.isfinite(number) or not 0 <= number <= 1:
         return None
-    return round(max(0.0, min(1.0, number)), 3)
+    return round(number, 3)
 
 
-def _scrub_author_identity(value: Any, spec: ModelSpec) -> tuple[Any, bool]:
+def _scrub_author_identity(
+    value: Any, spec: ModelSpec, *, include_family: bool = True
+) -> tuple[Any, bool]:
     """Remove exact author identifiers from artifacts sent to later roles."""
-    markers = [marker for marker in (spec.model, spec.label) if marker]
+    family_aliases = {
+        "anthropic": ("Anthropic", "Claude"),
+        "openai": ("OpenAI", "GPT"),
+        "deepseek": ("DeepSeek",),
+        "qwen": ("Qwen", "Alibaba"),
+        "x-ai": ("xAI", "Grok"),
+        "google": ("Google", "Gemini"),
+        "z-ai": ("Z.ai", "GLM"),
+        "xiaomi": ("Xiaomi", "MiMo"),
+    }
+    provider = spec.model.split("/", 1)[0].casefold()
+    common_labels = {"a", "ai", "the", "model", "assistant", "adviser", "advisor"}
+    normalized_label = re.sub(r"(?<=[A-Za-z])(?=\d)", " ", spec.label)
+    marker_candidates = [spec.model]
+    if include_family:
+        marker_candidates.extend(family_aliases.get(provider, ()))
+    if len(spec.label) >= 4 and spec.label.casefold() not in common_labels:
+        marker_candidates.extend((spec.label, normalized_label))
+    markers = list(dict.fromkeys(marker for marker in marker_candidates if marker))
+    markers.sort(key=len, reverse=True)
+    family_patterns = {
+        "anthropic": r"(?:Anthropic|Claude)(?:\s+(?:version|Sonnet|Fable|Opus|Haiku|\d+(?:\.\d+)*)){0,4}",
+        "openai": r"(?:OpenAI|GPT)(?:\s+(?:version|Sol|Terra|Luna|Pro|\d+(?:\.\d+)*)){0,5}",
+        "deepseek": r"DeepSeek(?:\s+(?:version|V?\d+(?:\.\d+)*|Pro|Coder)){0,4}",
+        "qwen": r"Qwen(?:\s*(?:version|\d+(?:\.\d+)*|Max|Plus|Coder)){0,4}",
+        "x-ai": r"(?:xAI|Grok)(?:\s+(?:version|\d+(?:\.\d+)*|Pro)){0,4}",
+        "google": r"(?:Google|Gemini)(?:\s+(?:version|\d+(?:\.\d+)*|Pro|Preview|Flash|Custom|Tools)){0,6}",
+        "z-ai": r"(?:Z\.ai|GLM)(?:\s+(?:version|\d+(?:\.\d+)*|Pro)){0,4}",
+        "xiaomi": r"(?:Xiaomi|MiMo)(?:[-\s]*(?:version|V?\d+(?:\.\d+)*|Pro)){0,5}",
+    }
     redacted = False
 
     def scrub(item: Any) -> Any:
         nonlocal redacted
         if isinstance(item, str):
             output = item
+            family_pattern = family_patterns.get(provider) if include_family else None
+            if family_pattern:
+                replaced = re.sub(
+                    rf"(?<![A-Za-z0-9_]){family_pattern}(?![A-Za-z0-9_])",
+                    "[AUTHOR_MODEL]",
+                    output,
+                    flags=re.IGNORECASE,
+                )
+                redacted = redacted or replaced != output
+                output = replaced
             for marker in markers:
                 replaced = re.sub(
-                    re.escape(marker), "[AUTHOR_MODEL]", output, flags=re.IGNORECASE
+                    rf"(?<![A-Za-z0-9_]){re.escape(marker)}(?![A-Za-z0-9_])",
+                    "[AUTHOR_MODEL]",
+                    output,
+                    flags=re.IGNORECASE,
                 )
                 redacted = redacted or replaced != output
                 output = replaced
@@ -550,7 +653,15 @@ def _scrub_author_identity(value: Any, spec: ModelSpec) -> tuple[Any, bool]:
 
 def _normalise_advice(text: str, candidate_id: str) -> tuple[dict[str, Any], bool]:
     parsed = _extract_json_object(text)
-    structured = parsed is not None
+    required_arrays = ("assumptions", "risks", "alternatives", "uncertainties")
+    structured = bool(
+        parsed
+        and str(parsed.get("position") or "").strip()
+        and str(parsed.get("recommendation") or "").strip()
+        and all(isinstance(parsed.get(name), list) for name in required_arrays)
+        and "confidence" in parsed
+        and _confidence(parsed.get("confidence")) is not None
+    )
     data = parsed or {}
     recommendation = str(data.get("recommendation") or "").strip()
     position = str(data.get("position") or "").strip()
@@ -590,24 +701,56 @@ def _normalise_critiques(
         candidate_id = str(raw.get("candidate_id") or "")
         if candidate_id not in candidate_ids:
             continue
-        verdict = str(raw.get("verdict") or "revise").lower()
-        if verdict not in {"accept", "revise", "reject"}:
+        verdict = str(raw.get("verdict") or "").lower()
+        verdict_valid = verdict in {"accept", "revise", "reject"}
+        if not verdict_valid:
             verdict = "revise"
+        fatal_errors = _string_list(raw.get("fatal_errors"))
+        major_concerns = _string_list(raw.get("major_concerns"))
+        minor_concerns = _string_list(raw.get("minor_concerns"))
+        strongest_point = str(raw.get("strongest_point") or "").strip()
+        verification_needed = _string_list(raw.get("verification_needed"))
+        schema_valid = (
+            verdict_valid
+            and all(
+                isinstance(raw.get(name), list)
+                for name in (
+                    "fatal_errors",
+                    "major_concerns",
+                    "minor_concerns",
+                    "verification_needed",
+                )
+            )
+            and "strongest_point" in raw
+            and bool(
+                fatal_errors
+                or major_concerns
+                or minor_concerns
+                or strongest_point
+                or verification_needed
+            )
+        )
         critiques.append(
             {
                 "candidate_id": candidate_id,
-                "fatal_errors": _string_list(raw.get("fatal_errors")),
-                "major_concerns": _string_list(raw.get("major_concerns")),
-                "minor_concerns": _string_list(raw.get("minor_concerns")),
-                "strongest_point": str(raw.get("strongest_point") or "").strip(),
-                "verification_needed": _string_list(raw.get("verification_needed")),
+                "fatal_errors": fatal_errors,
+                "major_concerns": major_concerns,
+                "minor_concerns": minor_concerns,
+                "strongest_point": strongest_point,
+                "verification_needed": verification_needed,
                 "verdict": verdict,
+                "_schema_valid": schema_valid,
             }
         )
     valid = (
         len(critiques) == len(candidate_ids)
         and {item["candidate_id"] for item in critiques} == candidate_ids
+        and all(item["_schema_valid"] for item in critiques)
+        and isinstance(parsed.get("claim_conflicts"), list)
+        and isinstance(parsed.get("verification_needed"), list)
     )
+    for item in critiques:
+        item.pop("_schema_valid", None)
     return (
         {
             "critiques": critiques,
@@ -621,26 +764,54 @@ def _normalise_critiques(
 def _normalise_dissent(text: str) -> tuple[dict[str, Any], bool]:
     parsed = _extract_json_object(text)
     if not parsed:
+        thesis = text.strip()
         return {
             "status": "available",
-            "thesis": text.strip(),
-            "counter_recommendation": text.strip(),
+            "thesis": thesis,
+            "counter_recommendation": thesis,
+            "severity": "material",
             "evidence": [],
             "failure_modes": [],
             "conditions_that_make_it_right": [],
+            "objections": [{"objection_id": "D00", "claim": thesis}],
         }, False
     thesis = str(parsed.get("thesis") or "").strip()
     counter = str(parsed.get("counter_recommendation") or "").strip()
-    valid = bool(thesis and counter)
+    evidence = _string_list(parsed.get("evidence"))
+    failure_modes = _string_list(parsed.get("failure_modes"))
+    conditions = _string_list(parsed.get("conditions_that_make_it_right"))
+    raw_severity = str(parsed.get("severity") or "").strip().lower()
+    severity_valid = raw_severity in {"critical", "material", "minor"}
+    severity = raw_severity
+    if not severity_valid:
+        severity = "material"
+    valid = bool(
+        thesis
+        and counter
+        and all(
+            isinstance(parsed.get(name), list)
+            for name in (
+                "evidence",
+                "failure_modes",
+                "conditions_that_make_it_right",
+            )
+        )
+        and (evidence or failure_modes or conditions)
+        and severity_valid
+    )
+    objection_claims = list(dict.fromkeys([thesis, *failure_modes]))
     return {
         "status": "available",
         "thesis": thesis or counter or text.strip(),
         "counter_recommendation": counter or thesis or text.strip(),
-        "evidence": _string_list(parsed.get("evidence")),
-        "failure_modes": _string_list(parsed.get("failure_modes")),
-        "conditions_that_make_it_right": _string_list(
-            parsed.get("conditions_that_make_it_right")
-        ),
+        "severity": severity,
+        "evidence": evidence,
+        "failure_modes": failure_modes,
+        "conditions_that_make_it_right": conditions,
+        "objections": [
+            {"objection_id": f"D{index:02d}", "claim": claim}
+            for index, claim in enumerate(objection_claims)
+        ],
     }, valid
 
 
@@ -668,37 +839,51 @@ def _normalise_ballot(
                 if not 0 <= value <= 10:
                     raise ValueError
                 criterion[name] = round(value, 3)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue
         scores[candidate_id] = criterion
     if set(scores) != expected:
         return None, "ballot must score every candidate exactly once"
 
     raw_ranking = parsed.get("ranking")
-    ranking = [str(item) for item in raw_ranking] if isinstance(raw_ranking, list) else []
+    if not isinstance(raw_ranking, list):
+        return None, "ballot ranking must be an array"
+    ranking = [str(item) for item in raw_ranking]
     if len(ranking) != len(expected) or set(ranking) != expected:
-        ranking = sorted(
-            candidate_ids,
-            key=lambda candidate_id: (
-                -sum(
-                    Decimal(str(scores[candidate_id][name])) * weight
-                    for name, weight in SCORE_WEIGHTS.items()
-                ),
-                candidate_id,
-            ),
-        )
+        return None, "ballot ranking must include every candidate exactly once"
+    for field in ("vetoes", "vetoed_candidate_ids", "unresolved_risks"):
+        if not isinstance(parsed.get(field), list):
+            return None, f"ballot {field} must be an array"
+    if not isinstance(parsed.get("abstain"), bool):
+        return None, "ballot abstain must be a boolean"
+    if "preferred_candidate_id" not in parsed:
+        return None, "ballot preferred_candidate_id is required"
     raw_preferred = parsed.get("preferred_candidate_id")
-    abstain = parsed.get("abstain") is True or (
-        "preferred_candidate_id" in parsed
-        and (raw_preferred is None or raw_preferred == "")
-    )
+    abstain = parsed.get("abstain") is True
+    if abstain != (raw_preferred is None or raw_preferred == ""):
+        return None, "ballot abstain and preferred_candidate_id contradict each other"
     preferred: Optional[str]
     if abstain:
         preferred = None
     else:
-        preferred = str(parsed.get("preferred_candidate_id") or ranking[0])
+        preferred = str(raw_preferred)
         if preferred not in expected:
-            preferred = ranking[0]
+            return None, "ballot preferred_candidate_id is unknown"
+    abstain_reason = str(parsed.get("abstain_reason") or "").strip()
+    if abstain and not abstain_reason:
+        return None, "an abstaining ballot must include abstain_reason"
+    if "confidence" not in parsed or _confidence(parsed.get("confidence")) is None:
+        return None, "ballot confidence must be a finite number from 0 to 1"
+    raw_vetoed = _string_list(parsed.get("vetoed_candidate_ids"))
+    raw_vetoes = _string_list(parsed.get("vetoes"))
+    unknown_vetoes = [candidate_id for candidate_id in raw_vetoed if candidate_id not in expected]
+    if unknown_vetoes:
+        return None, "ballot vetoed_candidate_ids contains an unknown candidate"
+    vetoed_candidate_ids = sorted(
+        {candidate_id for candidate_id in (*raw_vetoed, *raw_vetoes) if candidate_id in expected}
+    )
+    if preferred is not None and preferred in vetoed_candidate_ids:
+        return None, "ballot cannot prefer and veto the same candidate"
     return {
         "scores": [
             {"candidate_id": candidate_id, **scores[candidate_id]}
@@ -707,8 +892,9 @@ def _normalise_ballot(
         "ranking": ranking,
         "preferred_candidate_id": preferred,
         "abstain": abstain,
-        "abstain_reason": str(parsed.get("abstain_reason") or "").strip(),
-        "vetoes": _string_list(parsed.get("vetoes")),
+        "abstain_reason": abstain_reason,
+        "vetoes": raw_vetoes,
+        "vetoed_candidate_ids": vetoed_candidate_ids,
         "unresolved_risks": _string_list(parsed.get("unresolved_risks")),
         "confidence": _confidence(parsed.get("confidence")),
     }, ""
@@ -723,6 +909,8 @@ def _aggregate_ballots(
         weighted: list[float] = []
         borda = 0
         first_places = 0
+        preference_votes = 0
+        veto_count = 0
         criterion_values: dict[str, list[float]] = {
             name: [] for name in SCORE_WEIGHTS
         }
@@ -739,11 +927,16 @@ def _aggregate_ballots(
             weighted.append(total)
             for name in SCORE_WEIGHTS:
                 criterion_values[name].append(float(score_row[name]))
-            ranking = list(ballot["ranking"])
-            rank = ranking.index(candidate_id)
-            borda += total_candidates - rank - 1
-            if rank == 0:
-                first_places += 1
+            if ballot.get("preferred_candidate_id") is not None:
+                ranking = list(ballot["ranking"])
+                rank = ranking.index(candidate_id)
+                borda += total_candidates - rank - 1
+                if rank == 0:
+                    first_places += 1
+            if ballot.get("preferred_candidate_id") == candidate_id:
+                preference_votes += 1
+            if candidate_id in ballot.get("vetoed_candidate_ids", []):
+                veto_count += 1
         rows.append(
             {
                 "candidate_id": candidate_id,
@@ -754,6 +947,8 @@ def _aggregate_ballots(
                 },
                 "borda_points": borda,
                 "first_place_votes": first_places,
+                "preference_votes": preference_votes,
+                "veto_count": veto_count,
             }
         )
     rows.sort(
@@ -761,11 +956,40 @@ def _aggregate_ballots(
             -row["median_weighted_score"],
             -row["borda_points"],
             -row["first_place_votes"],
+            -row["preference_votes"],
             row["candidate_id"],
         )
     )
+    eligible = [
+        row
+        for row in rows
+        if row["preference_votes"] > 0 and row["veto_count"] < len(ballots)
+    ]
+    tied_candidate_ids: list[str] = []
+    winner_candidate_id: Optional[str] = None
+    if eligible:
+        top = eligible[0]
+        tied_candidate_ids = [
+            row["candidate_id"]
+            for row in eligible
+            if (
+                row["median_weighted_score"],
+                row["borda_points"],
+                row["first_place_votes"],
+                row["preference_votes"],
+            )
+            == (
+                top["median_weighted_score"],
+                top["borda_points"],
+                top["first_place_votes"],
+                top["preference_votes"],
+            )
+        ]
+        if len(tied_candidate_ids) == 1:
+            winner_candidate_id = top["candidate_id"]
     return {
-        "winner_candidate_id": rows[0]["candidate_id"] if rows else None,
+        "winner_candidate_id": winner_candidate_id,
+        "tied_candidate_ids": tied_candidate_ids if len(tied_candidate_ids) > 1 else [],
         "scoreboard": rows,
         "ballot_count": len(ballots),
         "abstention_count": sum(
@@ -775,6 +999,7 @@ def _aggregate_ballots(
             "median_weighted_score",
             "borda_points",
             "first_place_votes",
+            "preference_votes",
             "candidate_id",
         ],
     }
@@ -791,10 +1016,16 @@ def _normalise_decision(
     selected = parsed.get("selected_candidate_id")
     selected = str(selected) if selected is not None else None
     state = str(parsed.get("decision_state") or "").strip().lower()
+    if state == "verified_consensus":
+        # Normalize the legacy label so no caller can mistake model-panel
+        # verification for objective or externally proven truth.
+        state = "panel_verified_consensus"
     recommendation = str(parsed.get("recommendation") or "").strip()
     rationale = str(parsed.get("rationale") or "").strip()
     dissent_summary = str(parsed.get("dissent_summary") or "").strip()
     response_to_dissent = str(parsed.get("response_to_dissent") or "").strip()
+    dissent_disposition = str(parsed.get("dissent_disposition") or "").strip().lower()
+    dissent_evidence = _string_list(parsed.get("dissent_evidence"))
     override = parsed.get("override_reason")
     override = str(override).strip() if override is not None else None
     if selected is not None and selected not in candidate_ids:
@@ -805,8 +1036,25 @@ def _normalise_decision(
         return None, "chair must select a candidate for a resolved decision state"
     if state == "unresolved_escalate" and selected is not None:
         return None, "chair must not select a winner for unresolved_escalate"
+    if expected_winner is None and state != "unresolved_escalate":
+        return None, "chair must escalate when the jury has no non-tied supported winner"
     if not recommendation or not rationale or not dissent_summary or not response_to_dissent:
         return None, "chair omitted recommendation, rationale, or dissent treatment"
+    if dissent_disposition not in {"accepted", "mitigated_with_evidence", "unresolved"}:
+        return None, "chair dissent_disposition is invalid"
+    required_arrays = (
+        "consensus",
+        "disagreements",
+        "dissent_evidence",
+        "conditions_to_reconsider",
+        "next_actions",
+    )
+    if not all(isinstance(parsed.get(name), list) for name in required_arrays):
+        return None, "chair list fields must be arrays"
+    if "confidence" not in parsed or _confidence(parsed.get("confidence")) is None:
+        return None, "chair confidence must be a finite number from 0 to 1"
+    if dissent_disposition in {"accepted", "mitigated_with_evidence"} and not dissent_evidence:
+        return None, "chair dissent disposition must cite dissent_evidence"
     if selected and expected_winner and selected != expected_winner and not override:
         return None, "chair overrode the jury winner without override_reason"
     return {
@@ -818,6 +1066,8 @@ def _normalise_decision(
         "disagreements": _string_list(parsed.get("disagreements")),
         "dissent_summary": dissent_summary,
         "response_to_dissent": response_to_dissent,
+        "dissent_disposition": dissent_disposition,
+        "dissent_evidence": dissent_evidence,
         "override_reason": override,
         "conditions_to_reconsider": _string_list(parsed.get("conditions_to_reconsider")),
         "next_actions": _string_list(parsed.get("next_actions")),
@@ -837,6 +1087,11 @@ def _normalise_audit(text: str) -> tuple[Optional[dict[str, Any]], str]:
     omissions = _string_list(parsed.get("omissions"))
     overstatements = _string_list(parsed.get("overstatements"))
     required_changes = _string_list(parsed.get("required_changes"))
+    if not all(
+        isinstance(parsed.get(name), list)
+        for name in ("issues", "omissions", "overstatements", "required_changes")
+    ):
+        return None, "fidelity audit issue fields must be arrays"
     if status == "pass" and (issues or omissions or overstatements or required_changes):
         status = "revise"
     return {
@@ -846,6 +1101,69 @@ def _normalise_audit(text: str) -> tuple[Optional[dict[str, Any]], str]:
         "overstatements": overstatements,
         "required_changes": required_changes,
         "text": text,
+    }, ""
+
+
+def _normalise_reconciliation(
+    text: str, expected_objection_ids: set[str]
+) -> tuple[Optional[dict[str, Any]], str]:
+    parsed = _extract_json_object(text)
+    if not parsed:
+        return None, "dissent reconciliation was not a JSON object"
+    status = str(parsed.get("status") or "").strip().lower()
+    if status not in {"resolved", "unresolved"}:
+        return None, "dissent reconciliation status must be resolved or unresolved"
+    rationale = str(parsed.get("rationale") or "").strip()
+    if not rationale:
+        return None, "dissent reconciliation requires a rationale"
+    array_fields = (
+        "addressed_objection_ids",
+        "evidence_references",
+        "unresolved_objection_ids",
+        "evidence_gaps",
+    )
+    if not all(isinstance(parsed.get(name), list) for name in array_fields):
+        return None, "dissent reconciliation point fields must be arrays"
+    addressed = _string_list(parsed.get("addressed_objection_ids"))
+    unresolved = _string_list(parsed.get("unresolved_objection_ids"))
+    if (
+        set(addressed) & set(unresolved)
+        or set(addressed) | set(unresolved) != expected_objection_ids
+        or len(addressed) != len(set(addressed))
+        or len(unresolved) != len(set(unresolved))
+    ):
+        return None, "dissent reconciliation must classify every objection ID exactly once"
+    raw_references = parsed.get("evidence_references")
+    evidence_references: list[dict[str, Any]] = []
+    referenced_ids: set[str] = set()
+    for raw in raw_references:
+        if not isinstance(raw, Mapping):
+            return None, "dissent reconciliation evidence references must be objects"
+        objection_id = str(raw.get("objection_id") or "")
+        references = _string_list(raw.get("references"))
+        if objection_id not in expected_objection_ids or not references:
+            return None, "each dissent evidence reference needs a known objection and sources"
+        evidence_references.append(
+            {"objection_id": objection_id, "references": references}
+        )
+        referenced_ids.add(objection_id)
+    evidence_gaps = _string_list(parsed.get("evidence_gaps"))
+    if status == "resolved" and (
+        unresolved
+        or evidence_gaps
+        or set(addressed) != expected_objection_ids
+        or not set(addressed) <= referenced_ids
+    ):
+        status = "unresolved"
+    if status == "unresolved" and not (unresolved or evidence_gaps):
+        return None, "unresolved reconciliation must preserve unresolved objections or gaps"
+    return {
+        "status": status,
+        "rationale": rationale,
+        "addressed_objection_ids": addressed,
+        "evidence_references": evidence_references,
+        "unresolved_objection_ids": unresolved,
+        "evidence_gaps": evidence_gaps,
     }, ""
 
 
@@ -1022,15 +1340,29 @@ def consult(
     if selected_mode == "council" and len(jurors) < 2:
         raise ValueError("council mode requires at least two configured jurors")
     if selected_mode == "council":
-        adviser_ids = {spec.model for spec in advisers}
-        leadership = {chair_spec.model, verifier_spec.model, red_team_spec.model}
+        adviser_by_id = {spec.model.casefold(): spec.model for spec in advisers}
+        adviser_ids = set(adviser_by_id)
+        leadership = {
+            chair_spec.model.casefold(),
+            verifier_spec.model.casefold(),
+            red_team_spec.model.casefold(),
+        }
         if len(leadership) != 3:
             raise ValueError("chair, verifier, and red-team models must be distinct")
-        overlap = adviser_ids & (leadership | {spec.model for spec in jurors})
+        jury_ids = {spec.model.casefold() for spec in jurors}
+        leadership_jury_overlap = leadership & jury_ids
+        if leadership_jury_overlap:
+            raise ValueError(
+                "jury models must be independent from chair, verifier, and red team: "
+                + ", ".join(sorted(leadership_jury_overlap))
+            )
+        overlap = adviser_ids & (
+            leadership | jury_ids
+        )
         if overlap:
             raise ValueError(
                 "adviser models must be independent from council leadership and jury: "
-                + ", ".join(sorted(overlap))
+                + ", ".join(sorted(adviser_by_id[model_id] for model_id in overlap))
             )
         jury_families = {spec.model.split("/", 1)[0].casefold() for spec in jurors}
         if len(jury_families) < 2:
@@ -1043,7 +1375,7 @@ def consult(
     )
     try:
         rounds = int(raw_rounds)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ValueError("critique_rounds must be an integer from 0 to 2") from error
     if not 0 <= rounds <= 2:
         raise ValueError("critique_rounds must be between 0 and 2")
@@ -1054,7 +1386,7 @@ def consult(
     )
     try:
         workers = int(raw_workers)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ValueError("max_workers must be a positive integer") from error
     if not 1 <= workers <= 32:
         raise ValueError("max_workers must be between 1 and 32")
@@ -1076,7 +1408,7 @@ def consult(
     try:
         request_timeout = int(raw_timeout)
         deadline = int(raw_deadline)
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ValueError("request timeout and panel deadline must be integers") from error
     if not 5 <= request_timeout <= 300:
         raise ValueError("request_timeout_seconds must be between 5 and 300")
@@ -1097,7 +1429,7 @@ def consult(
         )
     planned_calls = len(advisers) * (1 + rounds)
     if selected_mode == "council":
-        planned_calls += rounds + len(jurors) + 5
+        planned_calls += rounds + len(jurors) + 6
     if planned_calls > MAX_PLANNED_CALLS:
         raise ValueError(
             f"panel plan requires {planned_calls} calls; maximum is {MAX_PLANNED_CALLS}"
@@ -1106,6 +1438,12 @@ def consult(
     role_fingerprint = {
         "advisers": [spec.model for spec in advisers],
         "mode": selected_mode,
+        "policy": {
+            "critique_rounds": rounds,
+            "max_workers": workers,
+            "request_timeout_seconds": request_timeout,
+            "deadline_seconds": deadline,
+        },
     }
     if selected_mode == "council":
         role_fingerprint.update(
@@ -1122,6 +1460,29 @@ def consult(
             "utf-8"
         )
     ).hexdigest()
+    execution_advisers = sorted(
+        advisers,
+        key=lambda spec: hmac.new(
+            api_key.encode("utf-8"),
+            f"{fingerprint}:{spec.model.casefold()}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest(),
+    )
+    blind_specs: list[ModelSpec] = []
+    for spec in (*advisers, chair_spec, verifier_spec, red_team_spec, *jurors):
+        if all(existing.model.casefold() != spec.model.casefold() for existing in blind_specs):
+            blind_specs.append(spec)
+
+    def scrub_for_blind_review(value: Any, author: ModelSpec) -> tuple[Any, bool]:
+        output, redacted = _scrub_author_identity(value, author)
+        for spec in blind_specs:
+            if spec.model.casefold() == author.model.casefold():
+                continue
+            output, changed = _scrub_author_identity(
+                output, spec, include_family=False
+            )
+            redacted = redacted or changed
+        return output, redacted
 
     ask_callable = _ask
     ledger: list[dict[str, Any]] = []
@@ -1138,7 +1499,15 @@ def consult(
     ) -> dict[str, Any]:
         started = _clock()
         try:
-            outbound_secret = _potential_secret(stage_system + "\n" + user)
+            outbound_size = len(spec.model) + len(stage_system) + len(user)
+            if outbound_size > MAX_OUTBOUND_PACKET_CHARS:
+                raise RuntimeError(
+                    f"outbound {stage} packet exceeded the "
+                    f"{MAX_OUTBOUND_PACKET_CHARS:,}-character limit"
+                )
+            outbound_secret = _potential_secret(
+                spec.model + "\n" + stage_system + "\n" + user
+            )
             if outbound_secret:
                 raise RuntimeError(
                     f"outbound {stage} packet contains a potential {outbound_secret}; call blocked"
@@ -1158,6 +1527,10 @@ def consult(
                 )
             else:
                 reply = ask_callable(api_key, spec.model, stage_system, user)
+            if _clock() > deadline_at:
+                raise TimeoutError(
+                    f"panel-wide {deadline}-second deadline exceeded during {stage}"
+                )
             if isinstance(reply, tuple) and len(reply) >= 2:
                 text, raw_cost = reply[0], reply[1]
             elif isinstance(reply, Mapping):
@@ -1179,10 +1552,12 @@ def consult(
                 )
             try:
                 parsed_cost = float(raw_cost) if raw_cost is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 parsed_cost = None
             if parsed_cost is not None and (
-                not math.isfinite(parsed_cost) or parsed_cost < 0
+                not math.isfinite(parsed_cost)
+                or parsed_cost < 0
+                or parsed_cost > MAX_CALL_COST_USD
             ):
                 parsed_cost = None
             record = {
@@ -1257,15 +1632,19 @@ def consult(
             order=100 + index,
         )
 
-    with ThreadPoolExecutor(max_workers=min(workers, len(advisers))) as pool:
-        initial_calls = list(pool.map(run_adviser, enumerate(advisers, start=1)))
+    with ThreadPoolExecutor(max_workers=min(workers, len(execution_advisers))) as pool:
+        initial_calls = list(
+            pool.map(run_adviser, enumerate(execution_advisers, start=1))
+        )
 
     candidates: list[dict[str, Any]] = []
-    for index, (spec, call) in enumerate(zip(advisers, initial_calls), start=1):
+    for index, (spec, call) in enumerate(
+        zip(execution_advisers, initial_calls), start=1
+    ):
         candidate_id = f"A{index:02d}"
         if call["ok"]:
             artifact, structured = _normalise_advice(call["text"], candidate_id)
-            artifact, identity_redacted = _scrub_author_identity(artifact, spec)
+            artifact, identity_redacted = scrub_for_blind_review(artifact, spec)
             if not structured:
                 warnings.append(f"{candidate_id} advice was usable but not fully structured")
             if identity_redacted:
@@ -1345,7 +1724,7 @@ def consult(
                     critique_call["text"],
                     {candidate["candidate_id"] for candidate in successful_candidates},
                 )
-                critique_artifact, verifier_identity_redacted = _scrub_author_identity(
+                critique_artifact, verifier_identity_redacted = scrub_for_blind_review(
                     critique_artifact, verifier_spec
                 )
                 if verifier_identity_redacted:
@@ -1431,7 +1810,7 @@ def consult(
                     candidate_spec = _model_spec(
                         (candidate["model"], candidate["name"]), role="adviser"
                     )
-                    artifact, identity_redacted = _scrub_author_identity(
+                    artifact, identity_redacted = scrub_for_blind_review(
                         artifact, candidate_spec
                     )
                     candidate["text"] = revision_call["text"]
@@ -1503,6 +1882,9 @@ def consult(
     audit: Optional[dict[str, Any]] = None
     audit_follow_up: Optional[dict[str, Any]] = None
     audit_resolved = False
+    reconciliation: dict[str, Any] = {"status": "not_run"}
+    reconciliation_structured = False
+    reconciliation_call: Optional[dict[str, Any]] = None
     decision: Optional[dict[str, Any]] = None
 
     if selected_mode == "council" and len(successful_candidates) >= 2:
@@ -1523,8 +1905,9 @@ def consult(
                 "You are the independent red team. Do not summarize the majority. "
                 "Construct the strongest credible minority position and identify how "
                 "the leading advice could fail. Return JSON: thesis, "
-                "counter_recommendation, evidence, failure_modes, and "
-                "conditions_that_make_it_right (arrays where appropriate)."
+                "counter_recommendation, severity (critical|material|minor), evidence, "
+                "failure_modes, and conditions_that_make_it_right (arrays where "
+                "appropriate)."
             ),
         )
         dissent_call = invoke(
@@ -1537,7 +1920,7 @@ def consult(
         )
         if dissent_call["ok"]:
             dissent, dissent_structured = _normalise_dissent(dissent_call["text"])
-            dissent, dissent_identity_redacted = _scrub_author_identity(
+            dissent, dissent_identity_redacted = scrub_for_blind_review(
                 dissent, red_team_spec
             )
             dissent["model"] = red_team_spec.model
@@ -1599,8 +1982,8 @@ def consult(
                     "for correctness, evidence, feasibility, risk_governance, and "
                     "completeness. Return JSON: scores (one object per candidate), "
                     "ranking (all candidate IDs), preferred_candidate_id (or null "
-                    "to abstain), abstain, abstain_reason, vetoes, unresolved_risks, "
-                    "confidence (0..1)."
+                    "to abstain), abstain, abstain_reason, vetoes (explanations), "
+                    "vetoed_candidate_ids, unresolved_risks, confidence (0..1)."
                 ),
             )
             return invoke(
@@ -1628,7 +2011,7 @@ def consult(
                     {"stage": "jury", "model": call["model"], "error": ballot_error}
                 )
             else:
-                ballot, juror_identity_redacted = _scrub_author_identity(
+                ballot, juror_identity_redacted = scrub_for_blind_review(
                     ballot, _model_spec((call["model"], call["name"]), role="juror")
                 )
                 if juror_identity_redacted:
@@ -1672,12 +2055,14 @@ def consult(
             (
                 "You are the decision chair. Synthesize the verified record without "
                 "erasing material dissent. Agreement alone is not correctness. Use "
-                "decision_state verified_consensus only when critical claims are "
+                "decision_state panel_verified_consensus only when critical claims are "
                 "verified and no critical objection remains; otherwise use "
                 "provisional_majority or unresolved_escalate. Return JSON: "
                 "decision_state, selected_candidate_id (or null), recommendation, "
                 "rationale, consensus, disagreements, dissent_summary, "
-                "response_to_dissent, override_reason (required if overriding the "
+                "response_to_dissent, dissent_disposition "
+                "(accepted|mitigated_with_evidence|unresolved), dissent_evidence, "
+                "override_reason (required if overriding the "
                 "jury winner), conditions_to_reconsider, next_actions, confidence."
             ),
         )
@@ -1707,7 +2092,7 @@ def consult(
             warnings.append("Chair synthesis failed validation")
 
         if decision is not None:
-            anonymous_decision, chair_identity_redacted = _scrub_author_identity(
+            anonymous_decision, chair_identity_redacted = scrub_for_blind_review(
                 {key: value for key, value in decision.items() if key != "text"},
                 chair_spec,
             )
@@ -1745,7 +2130,7 @@ def consult(
                         {"stage": "audit", "model": verifier_spec.model, "error": audit_error}
                     )
                 else:
-                    audit, audit_identity_redacted = _scrub_author_identity(
+                    audit, audit_identity_redacted = scrub_for_blind_review(
                         audit, verifier_spec
                     )
                     if audit_identity_redacted:
@@ -1790,7 +2175,7 @@ def consult(
                     if revised is not None:
                         decision = revised
                         anonymous_revision, revised_identity_redacted = (
-                            _scrub_author_identity(
+                            scrub_for_blind_review(
                                 {
                                     key: value
                                     for key, value in revised.items()
@@ -1833,7 +2218,7 @@ def consult(
                                 follow_up_call["text"]
                             )
                             if audit_follow_up is not None:
-                                audit_follow_up, _ = _scrub_author_identity(
+                                audit_follow_up, _ = scrub_for_blind_review(
                                     audit_follow_up, verifier_spec
                                 )
                                 audit_resolved = audit_follow_up["status"] == "pass"
@@ -1872,6 +2257,94 @@ def consult(
                         {"stage": "chair_revision", "model": chair_spec.model, "error": final_call["error"]}
                     )
 
+        # One bounded closure check lets the original dissenter judge whether
+        # the *final* audited decision actually answers its objections.  This
+        # is never fed back into another chair loop.
+        if decision is not None and not decision.get("fallback"):
+            public_decision, _ = scrub_for_blind_review(
+                {key: value for key, value in decision.items() if key != "text"},
+                chair_spec,
+            )
+            reconciliation_user = (
+                "FULL ANONYMIZED SOURCE RECORD:\n"
+                + chair_packet
+                + "\n\nYOUR ORIGINAL RED-TEAM DISSENT WITH OBJECTION IDS:\n"
+                + _json(
+                    {
+                        key: value
+                        for key, value in dissent.items()
+                        if key not in {"model", "name", "text", "raw_text"}
+                    }
+                )
+                + "\n\nFINAL AUDITED DECISION:\n"
+                + _json(public_decision)
+                + "\n\nAUDIT RECORD:\n"
+                + _json(
+                    {
+                        "initial": audit,
+                        "follow_up": audit_follow_up,
+                        "resolved": audit_resolved,
+                    }
+                )
+            )
+            reconciliation_system = _stage_system(
+                base_system,
+                "dissent_reconciliation",
+                (
+                    "Re-evaluate only whether the final decision substantively resolves "
+                    "each material objection in your original dissent. Do not invent a "
+                    "new consensus and do not accept authority or assertion as evidence. "
+                    "Return JSON: status resolved|unresolved, rationale, "
+                    "addressed_objection_ids, evidence_references (one object per addressed "
+                    "objection: objection_id and references array), "
+                    "unresolved_objection_ids, evidence_gaps. Classify every supplied "
+                    "objection ID exactly once. A resolved status requires a concrete "
+                    "source-record evidence reference for every material objection."
+                ),
+            )
+            reconciliation_call = invoke(
+                red_team_spec,
+                stage="dissent_reconciliation",
+                role="red_team_reconciler",
+                user=reconciliation_user,
+                stage_system=reconciliation_system,
+                order=950,
+            )
+            if reconciliation_call["ok"]:
+                parsed_reconciliation, reconciliation_error = _normalise_reconciliation(
+                    reconciliation_call["text"],
+                    {
+                        str(item.get("objection_id"))
+                        for item in dissent.get("objections", [])
+                        if isinstance(item, Mapping) and item.get("objection_id")
+                    },
+                )
+                if parsed_reconciliation is not None:
+                    reconciliation, _ = scrub_for_blind_review(
+                        parsed_reconciliation, red_team_spec
+                    )
+                    reconciliation_structured = True
+                else:
+                    warnings.append(
+                        f"Dissent reconciliation invalid: {reconciliation_error}"
+                    )
+                    failures.append(
+                        {
+                            "stage": "dissent_reconciliation",
+                            "model": red_team_spec.model,
+                            "error": reconciliation_error,
+                        }
+                    )
+            else:
+                warnings.append("Dissent reconciliation failed")
+                failures.append(
+                    {
+                        "stage": "dissent_reconciliation",
+                        "model": red_team_spec.model,
+                        "error": reconciliation_call["error"],
+                    }
+                )
+
         if decision is None and aggregation.get("winner_candidate_id"):
             winner_id = str(aggregation["winner_candidate_id"])
             winner = next(
@@ -1889,6 +2362,8 @@ def consult(
                 "disagreements": [],
                 "dissent_summary": dissent.get("thesis", "Independent dissent unavailable."),
                 "response_to_dissent": "Not adjudicated by a valid chair; human review required.",
+                "dissent_disposition": "unresolved",
+                "dissent_evidence": [],
                 "override_reason": None,
                 "conditions_to_reconsider": ["A valid chair synthesis becomes available"],
                 "next_actions": ["Review the complete jury and dissent record"],
@@ -1898,7 +2373,31 @@ def consult(
             }
             warnings.append("Decision uses deterministic jury fallback")
 
-        if decision is not None and decision.get("decision_state") == "verified_consensus":
+        if decision is not None:
+            chair_dissent_addressed = (
+                decision.get("dissent_disposition")
+                in {"accepted", "mitigated_with_evidence"}
+                and bool(decision.get("dissent_evidence"))
+            )
+            dissent_resolved = (
+                chair_dissent_addressed
+                and reconciliation_structured
+                and reconciliation.get("status") == "resolved"
+            )
+            if dissent.get("severity") == "critical" and not dissent_resolved:
+                decision["decision_state"] = "unresolved_escalate"
+                decision["selected_candidate_id"] = None
+                decision["engine_state_adjustment"] = (
+                    "Forced escalation because a critical dissent remained unresolved."
+                )
+                warnings.append(
+                    "Critical red-team dissent remained unresolved; decision forced to escalation"
+                )
+
+        if (
+            decision is not None
+            and decision.get("decision_state") == "panel_verified_consensus"
+        ):
             selected_id = decision.get("selected_candidate_id")
             unanimous = (
                 bool(selected_id)
@@ -1906,6 +2405,7 @@ def consult(
                 and all(
                     ballot.get("preferred_candidate_id") == selected_id
                     and not ballot.get("vetoes")
+                    and selected_id not in ballot.get("vetoed_candidate_ids", [])
                     and not ballot.get("unresolved_risks")
                     for ballot in valid_ballots
                 )
@@ -1916,12 +2416,13 @@ def consult(
             if not (
                 unanimous
                 and dissent_structured
+                and dissent_resolved
                 and verification_structured
                 and audit_resolved
             ):
                 decision["decision_state"] = "provisional_majority"
                 decision["engine_state_adjustment"] = (
-                    "Downgraded from verified_consensus because the deterministic "
+                    "Downgraded from panel_verified_consensus because the deterministic "
                     "evidence, jury, dissent, or audit guarantees were incomplete."
                 )
                 warnings.append(
@@ -1935,11 +2436,24 @@ def consult(
     ]
     successful_calls = [record for record in clean_ledger if record["ok"]]
     known_costs = [record["cost_usd"] for record in successful_calls if record["cost_usd"] is not None]
-    known_subtotal = round(sum(known_costs), 6) if known_costs else None
+    raw_subtotal = sum(known_costs) if known_costs else None
+    known_subtotal = (
+        round(raw_subtotal, 6)
+        if raw_subtotal is not None
+        and math.isfinite(raw_subtotal)
+        and raw_subtotal <= MAX_RUN_COST_USD
+        else None
+    )
     account_delta: Optional[float] = None
     if before is not None and after is not None:
-        account_delta = round(max(0.0, after - before), 6)
-    if clean_ledger and len(known_costs) == len(clean_ledger):
+        raw_delta = max(0.0, after - before)
+        if math.isfinite(raw_delta) and raw_delta <= MAX_RUN_COST_USD:
+            account_delta = round(raw_delta, 6)
+    if (
+        clean_ledger
+        and len(known_costs) == len(clean_ledger)
+        and known_subtotal is not None
+    ):
         reported_cost = known_subtotal
         cost_source = "per_response_usage"
     elif account_delta is not None:
@@ -1976,14 +2490,22 @@ def consult(
             warnings.append("Council requires at least two successful independent advisers")
     else:
         quorum = min(2, len(jurors))
+        valid_juror_families = {
+            str(ballot.get("juror_model") or "").split("/", 1)[0].casefold()
+            for ballot in valid_ballots
+            if ballot.get("juror_model")
+        }
         guarantees_ok = (
             rounds >= 1
             and len(successful_candidates) == len(advisers)
-            and len(valid_ballots) >= quorum
+            and len(valid_ballots) == len(jurors)
+            and len(valid_juror_families) >= 2
             and dissent.get("status") == "available"
             and dissent_structured
+            and reconciliation_structured
             and audit_resolved
             and not decision.get("fallback")
+            and not decision.get("engine_state_adjustment")
             and all(candidate.get("structured") for candidate in successful_candidates)
             and all(
                 stage["verifier"]["ok"] and stage.get("structured") is True
@@ -1999,6 +2521,10 @@ def consult(
         if len(valid_ballots) < quorum:
             warnings.append(
                 f"Jury quorum not met: {len(valid_ballots)}/{quorum} valid ballots"
+            )
+        elif len(valid_ballots) < len(jurors):
+            warnings.append(
+                f"Jury quorum met but panel incomplete: {len(valid_ballots)}/{len(jurors)} valid ballots"
             )
 
     all_models: list[str] = []
@@ -2066,10 +2592,24 @@ def consult(
                 "follow_up": audit_follow_up,
                 "resolved": audit_resolved,
             },
+            "dissent_reconciliation": {
+                "artifact": reconciliation,
+                "structured": reconciliation_structured,
+                "call": (
+                    {
+                        key: value
+                        for key, value in reconciliation_call.items()
+                        if not key.startswith("_")
+                    }
+                    if reconciliation_call is not None
+                    else None
+                ),
+            },
         },
         "decision": decision,
         "synthesis": decision.get("recommendation", "") if decision else "",
         "decision_state": decision.get("decision_state") if decision else None,
+        "verification_scope": "model_panel_only",
         "dissent": dissent,
         "cost": cost,
         "cost_usd": reported_cost,
@@ -2080,6 +2620,11 @@ def consult(
     serialized = json.dumps(result, ensure_ascii=False)
     if api_key and api_key in serialized:
         raise RuntimeError("panel result failed credential redaction invariant")
+    leaked_secret = _potential_secret(serialized)
+    if leaked_secret:
+        raise RuntimeError(
+            f"panel result failed potential {leaked_secret} redaction invariant"
+        )
     return result
 
 
@@ -2123,13 +2668,33 @@ def _print_human(result: Mapping[str, Any]) -> None:
     dissent = result.get("dissent")
     if isinstance(dissent, Mapping) and dissent.get("status") not in {None, "not_run"}:
         print(f"\n{'=' * 68}\n### MINORITY REPORT\n{'=' * 68}")
-        print(
-            _terminal_safe(
-                dissent.get("counter_recommendation")
-                or dissent.get("text")
-                or dissent.get("error")
-            )
-        )
+        for label, field in (
+            ("Thesis", "thesis"),
+            ("Counter-recommendation", "counter_recommendation"),
+            ("Severity", "severity"),
+        ):
+            if dissent.get(field):
+                print(f"{label}: {_terminal_safe(dissent.get(field))}")
+        for label, field in (
+            ("Evidence", "evidence"),
+            ("Failure modes", "failure_modes"),
+            ("Conditions", "conditions_that_make_it_right"),
+        ):
+            values = dissent.get(field)
+            if isinstance(values, list) and values:
+                print(f"{label}: " + "; ".join(_terminal_safe(value) for value in values))
+        if dissent.get("error"):
+            print(f"Error: {_terminal_safe(dissent.get('error'))}")
+    failures = result.get("failures", [])
+    if isinstance(failures, list) and failures:
+        print(f"\n{'=' * 68}\n### ROLE FAILURES\n{'=' * 68}")
+        for failure in failures:
+            if isinstance(failure, Mapping):
+                print(
+                    f"- {_terminal_safe(failure.get('stage'))} / "
+                    f"{_terminal_safe(failure.get('model'))}: "
+                    f"{_terminal_safe(failure.get('error'))}"
+                )
     for warning in result.get("warnings", []):
         print(f"WARNING: {_terminal_safe(warning)}")
     print(f"\n{'=' * 68}\n{_cost_line(result)}")
@@ -2157,6 +2722,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--critique-rounds", type=int, choices=(0, 1, 2), default=None
     )
     parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument("--request-timeout-seconds", type=int, default=None)
+    parser.add_argument("--deadline-seconds", type=int, default=None)
     parser.add_argument("--system", default="", help="Optional UTF-8 system prompt file")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     parser.add_argument(
@@ -2208,6 +2775,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             jury=args.jury or None,
             critique_rounds=args.critique_rounds,
             max_workers=args.max_workers,
+            request_timeout_seconds=args.request_timeout_seconds,
+            deadline_seconds=args.deadline_seconds,
         )
     except ValueError as error:
         print(f"ERROR: {error}", file=sys.stderr)

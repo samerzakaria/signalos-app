@@ -33,8 +33,31 @@ EXPECTED_MODELS = [
     ("glm52", "openrouter", "z-ai/glm-5.2", "OPENROUTER_API_KEY"),
     ("deepseekv4pro", "openrouter", "deepseek/deepseek-v4-pro", "OPENROUTER_API_KEY"),
     ("qwen37max", "openrouter", "qwen/qwen3.7-max", "OPENROUTER_API_KEY"),
+    ("mimov25pro", "openrouter", "xiaomi/mimo-v2.5-pro", "OPENROUTER_API_KEY"),
+    ("kimik27code", "openrouter", "moonshotai/kimi-k2.7-code", "OPENROUTER_API_KEY"),
+    ("deepseekv4flash", "openrouter", "deepseek/deepseek-v4-flash", "OPENROUTER_API_KEY"),
     ("gptoss120b", "openrouter", "openai/gpt-oss-120b", "OPENROUTER_API_KEY"),
+    ("gpt56terrapro", "openrouter", "openai/gpt-5.6-terra-pro", "OPENROUTER_API_KEY"),
+    ("sonnet5", "openrouter", "anthropic/claude-sonnet-5", "OPENROUTER_API_KEY"),
+    ("qwen37plus", "openrouter", "qwen/qwen3.7-plus", "OPENROUTER_API_KEY"),
+    ("mimov25", "openrouter", "xiaomi/mimo-v2.5", "OPENROUTER_API_KEY"),
+    ("minimaxm3", "openrouter", "minimax/minimax-m3", "OPENROUTER_API_KEY"),
+    ("nemotron3ultra", "openrouter", "nvidia/nemotron-3-ultra-550b-a55b", "OPENROUTER_API_KEY"),
+    ("gemini31propreview", "openrouter", "google/gemini-3.1-pro-preview", "OPENROUTER_API_KEY"),
+    ("katcoderprov25", "openrouter", "kwaipilot/kat-coder-pro-v2.5", "OPENROUTER_API_KEY"),
 ]
+
+EXPECTED_COHORTS = {
+    **{alias: "primary" for alias in (
+        "fable5", "gpt56solpro", "grok45", "glm52", "deepseekv4pro",
+        "qwen37max", "mimov25pro", "kimik27code", "deepseekv4flash", "gptoss120b",
+    )},
+    **{alias: "challenger" for alias in (
+        "gpt56terrapro", "sonnet5", "qwen37plus", "mimov25", "minimaxm3", "nemotron3ultra",
+    )},
+    "gemini31propreview": "exploratory",
+    "katcoderprov25": "exploratory",
+}
 
 
 def _load_driver() -> ModuleType:
@@ -102,6 +125,7 @@ def test_versioned_catalog_is_the_requested_openrouter_matrix(driver: ModuleType
 
     assert [_model_tuple(spec) for spec in catalog] == EXPECTED_MODELS
     assert len({spec[0] for spec in EXPECTED_MODELS}) == len(EXPECTED_MODELS)
+    assert {spec.alias: spec.cohort for spec in catalog} == EXPECTED_COHORTS
     # LiteLLM's adapter adds the provider route itself.  Persisting
     # ``openrouter/`` here would double-prefix model IDs at runtime.
     assert all(not model.startswith("openrouter/") for _, _, model, _ in EXPECTED_MODELS)
@@ -274,6 +298,15 @@ def test_model_selection_is_explicit_ordered_and_fail_closed(driver: ModuleType)
     assert [_model_tuple(model)[0] for model in driver.select_models(catalog, ["qwen37max", "gpt56solpro"])] == [
         "qwen37max",
         "gpt56solpro",
+    ]
+    assert [model.alias for model in driver.select_models(catalog, ["primary"])] == [
+        alias for alias, cohort in EXPECTED_COHORTS.items() if cohort == "primary"
+    ]
+    assert [model.alias for model in driver.select_models(catalog, ["challenger"])] == [
+        alias for alias, cohort in EXPECTED_COHORTS.items() if cohort == "challenger"
+    ]
+    assert [model.alias for model in driver.select_models(catalog, ["exploratory"])] == [
+        alias for alias, cohort in EXPECTED_COHORTS.items() if cohort == "exploratory"
     ]
 
     with pytest.raises(ValueError, match="not-configured"):

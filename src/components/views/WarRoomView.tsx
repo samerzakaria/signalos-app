@@ -13,7 +13,7 @@ interface PanelAnswer {
 }
 
 interface PanelDecision {
-  decision_state: 'verified_consensus' | 'provisional_majority' | 'unresolved_escalate';
+  decision_state: 'panel_verified_consensus' | 'verified_consensus' | 'provisional_majority' | 'unresolved_escalate';
   selected_candidate_id?: string | null;
   recommendation: string;
   rationale: string;
@@ -60,9 +60,12 @@ const COUNCIL_ROLES: Array<{ role: string; name: string; id: string }> = [
   { role: 'Adviser', name: 'Sonnet 5', id: 'anthropic/claude-sonnet-5' },
   { role: 'Adviser', name: 'DeepSeek V4 Pro', id: 'deepseek/deepseek-v4-pro' },
   { role: 'Adviser', name: 'Qwen3.7 Max', id: 'qwen/qwen3.7-max' },
-  { role: 'Verifier · Juror', name: 'Fable 5', id: 'anthropic/claude-fable-5' },
-  { role: 'Red team · Juror', name: 'Grok 4.5', id: 'x-ai/grok-4.5' },
-  { role: 'Chair · Juror', name: 'GPT-5.6 Sol Pro', id: 'openai/gpt-5.6-sol-pro' },
+  { role: 'Verifier', name: 'Fable 5', id: 'anthropic/claude-fable-5' },
+  { role: 'Red team', name: 'Grok 4.5', id: 'x-ai/grok-4.5' },
+  { role: 'Chair', name: 'GPT-5.6 Sol Pro', id: 'openai/gpt-5.6-sol-pro' },
+  { role: 'Juror', name: 'Gemini 3.1 Pro Preview', id: 'google/gemini-3.1-pro-preview' },
+  { role: 'Juror', name: 'GLM 5.2', id: 'z-ai/glm-5.2' },
+  { role: 'Juror', name: 'MiMo V2.5 Pro', id: 'xiaomi/mimo-v2.5-pro' },
 ];
 
 const warQuestion = signal<string>('');
@@ -78,7 +81,7 @@ export function __resetWarRoomForTests(): void {
 }
 
 function readableState(state: PanelDecision['decision_state']): string {
-  if (state === 'verified_consensus') return 'Verified consensus';
+  if (state === 'panel_verified_consensus' || state === 'verified_consensus') return 'Panel-verified consensus';
   if (state === 'provisional_majority') return 'Provisional majority';
   return 'Unresolved — escalate';
 }

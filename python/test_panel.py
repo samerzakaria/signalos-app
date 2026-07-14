@@ -29,12 +29,14 @@ class ScriptedPanel:
         failures: set[tuple[str, str]] | None = None,
         invalid_ballots: set[str] | None = None,
         audit_status: str = "pass",
+        follow_up_audit_status: str = "pass",
         decision_state: str = "provisional_majority",
         cost: float | None = 0.01,
     ) -> None:
         self.failures = failures or set()
         self.invalid_ballots = invalid_ballots or set()
         self.audit_status = audit_status
+        self.follow_up_audit_status = follow_up_audit_status
         self.decision_state = decision_state
         self.cost = cost
         self.calls: list[dict[str, str]] = []
@@ -81,6 +83,7 @@ class ScriptedPanel:
             value = {
                 "thesis": "The apparent readiness may hide a shared test blind spot.",
                 "counter_recommendation": "Delay until an independent rollback exercise succeeds.",
+                "severity": "material",
                 "evidence": ["All candidates depend on the same supplied evidence"],
                 "failure_modes": ["Shared evidence can create correlated error"],
                 "conditions_that_make_it_right": ["Rollback evidence is stale"],
@@ -103,6 +106,7 @@ class ScriptedPanel:
                 "ranking": sorted(ids),
                 "preferred_candidate_id": "A01",
                 "vetoes": [],
+                "vetoed_candidate_ids": [],
                 "unresolved_risks": ["Production evidence remains bounded"],
                 "confidence": 0.8,
             }
@@ -116,18 +120,37 @@ class ScriptedPanel:
                 "disagreements": ["Whether current evidence is sufficient"],
                 "dissent_summary": "A shared evidence blind spot could invalidate the majority.",
                 "response_to_dissent": "Require a separately executed rollback exercise.",
+                "dissent_disposition": "mitigated_with_evidence",
+                "dissent_evidence": ["The rollback exercise is an independent release gate"],
                 "override_reason": None,
                 "conditions_to_reconsider": ["Rollback or load evidence fails"],
                 "next_actions": ["Run the pilot", "Capture rollback evidence"],
                 "confidence": 0.78,
             }
-        elif stage == "audit":
+        elif stage in {"audit", "audit_revision"}:
+            status = self.audit_status if stage == "audit" else self.follow_up_audit_status
             value = {
-                "status": self.audit_status,
-                "issues": [] if self.audit_status == "pass" else ["Clarify the dissent response"],
+                "status": status,
+                "issues": [] if status == "pass" else ["Clarify the dissent response"],
                 "omissions": [],
                 "overstatements": [],
-                "required_changes": [] if self.audit_status == "pass" else ["Retain the rollback condition"],
+                "required_changes": [] if status == "pass" else ["Retain the rollback condition"],
+            }
+        elif stage == "dissent_reconciliation":
+            objection_ids = list(dict.fromkeys(re.findall(r'"objection_id":"(D\d+)"', user)))
+            value = {
+                "status": "resolved",
+                "rationale": "The independent rollback gate directly addresses the shared-evidence risk.",
+                "addressed_objection_ids": objection_ids,
+                "evidence_references": [
+                    {
+                        "objection_id": objection_id,
+                        "references": ["Final decision: independent rollback release gate"],
+                    }
+                    for objection_id in objection_ids
+                ],
+                "unresolved_objection_ids": [],
+                "evidence_gaps": [],
             }
         else:  # pragma: no cover - catches protocol drift loudly
             raise AssertionError(f"unexpected stage {stage}")
@@ -148,12 +171,12 @@ def test_default_council_runs_complete_bounded_protocol():
     result = _run(script)
 
     assert result["status"] == "complete"
-    assert result["protocol_version"] == "council/1.0"
+    assert result["protocol_version"] == "council/1.2"
     assert result["decision_state"] == "provisional_majority"
     assert result["decision"]["recommendation"].startswith("Run the bounded pilot")
     assert result["dissent"]["status"] == "available"
     assert result["dissent"]["counter_recommendation"].startswith("Delay")
-    assert result["cost_usd"] == pytest.approx(0.13)
+    assert result["cost_usd"] == pytest.approx(0.14)
     assert result["cost"]["source"] == "per_response_usage"
 
     stages = [call["stage"] for call in script.calls]
@@ -164,7 +187,8 @@ def test_default_council_runs_complete_bounded_protocol():
     assert stages.count("jury") == 3
     assert stages.count("chair") == 1
     assert stages.count("audit") == 1
-    assert len(stages) == 13
+    assert stages.count("dissent_reconciliation") == 1
+    assert len(stages) == 14
 
     assert "qwen/qwen3.7-max" in result["models"]
     assert result["roles"]["chair"]["model"] == "openai/gpt-5.6-sol-pro"
@@ -188,6 +212,9 @@ def test_advice_is_sealed_and_jury_packet_is_anonymous():
         "openai/gpt-5.6-sol-pro",
         "anthropic/claude-fable-5",
         "x-ai/grok-4.5",
+        "google/gemini-3.1-pro-preview",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
     }
     for call in script.calls:
         if call["stage"] in {"critique", "dissent", "jury", "chair", "audit"}:
@@ -200,8 +227,10 @@ def test_audit_revision_is_bounded_to_one_extra_chair_call():
     stages = [call["stage"] for call in script.calls]
     assert stages.count("audit") == 1
     assert stages.count("chair_revision") == 1
+    assert stages.count("audit_revision") == 1
+    assert stages.count("dissent_reconciliation") == 1
     assert result["status"] == "complete"
-    assert result["cost_usd"] == pytest.approx(0.14)
+    assert result["cost_usd"] == pytest.approx(0.16)
 
 
 def test_unresolved_audit_revision_cannot_report_complete():
@@ -295,7 +324,7 @@ def test_invalid_jury_ballots_are_visible_and_degrade():
     invalid = {spec.model for spec in panel.DEFAULT_JURY}
     script = ScriptedPanel(invalid_ballots=invalid)
     result = _run(script)
-    assert result["status"] == "degraded"
+    assert result["status"] == "failed"
     assert result["stages"]["jury"]["aggregation"]["ballot_count"] == 0
     assert len([failure for failure in result["failures"] if failure["stage"] == "jury"]) == 3
 
@@ -367,7 +396,7 @@ def test_usage_endpoint_failure_or_malformed_body_never_aborts_council():
     assert result["cost"]["source"] == "unavailable"
 
 
-def test_deterministic_jury_tie_breaker_prefers_stable_candidate_id():
+def test_exact_jury_tie_requires_escalation_instead_of_manufacturing_a_winner():
     candidates = ["A02", "A01"]
     ballots = [
         {
@@ -388,15 +417,17 @@ def test_deterministic_jury_tie_breaker_prefers_stable_candidate_id():
         },
     ]
     aggregation = panel._aggregate_ballots(ballots, candidates)
-    assert aggregation["winner_candidate_id"] == "A01"
+    assert aggregation["winner_candidate_id"] is None
+    assert set(aggregation["tied_candidate_ids"]) == {"A01", "A02"}
 
 
 class _FakeResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
 
-    def read(self) -> bytes:
-        return json.dumps(self.payload).encode("utf-8")
+    def read(self, size: int = -1) -> bytes:
+        payload = json.dumps(self.payload).encode("utf-8")
+        return payload if size < 0 else payload[:size]
 
 
 def test_real_request_builder_asks_for_usage_without_exposing_key():

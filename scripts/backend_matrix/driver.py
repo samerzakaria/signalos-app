@@ -129,6 +129,7 @@ class ModelSpec:
     provider: str
     model: str
     key_env: str
+    cohort: str
 
 
 def _read_json(path: Path) -> Any:
@@ -162,17 +163,22 @@ def load_model_catalog(path: Path) -> list[ModelSpec]:
             raise ValueError(f"models[{index}] must be an object")
         alias = str(row.get("alias") or "").strip()
         model = str(row.get("id") or "").strip()
+        cohort = str(row.get("cohort") or "primary").strip().lower()
         if not alias or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", alias):
             raise ValueError(f"models[{index}] has an invalid alias")
         if not model or "/" not in model or model.startswith("openrouter/"):
             raise ValueError(
                 f"models[{index}] has an invalid provider model id; do not add an openrouter/ prefix"
             )
+        if cohort not in {"primary", "challenger", "exploratory"}:
+            raise ValueError(
+                f"models[{index}] cohort must be primary, challenger, or exploratory"
+            )
         if alias in seen_aliases or model in seen_models:
             raise ValueError(f"duplicate model alias or id at models[{index}]")
         seen_aliases.add(alias)
         seen_models.add(model)
-        result.append(ModelSpec(alias, provider, model, key_env))
+        result.append(ModelSpec(alias, provider, model, key_env, cohort))
     return result
 
 
@@ -202,13 +208,18 @@ def select_models(catalog: Sequence[ModelSpec], requested: Sequence[str] | None)
     selected: list[ModelSpec] = []
     seen: set[str] = set()
     for choice in choices:
-        spec = by_name.get(choice)
-        if spec is None:
-            raise ValueError(f"model {choice!r} is not-configured; use --list-models")
-        if spec.alias in seen:
-            raise ValueError(f"model {choice!r} was selected more than once")
-        seen.add(spec.alias)
-        selected.append(spec)
+        matches = (
+            [model for model in catalog if model.cohort == choice]
+            if choice in {"primary", "challenger", "exploratory"}
+            else [by_name[choice]] if choice in by_name else []
+        )
+        if not matches:
+            raise ValueError(f"model or cohort {choice!r} is not-configured; use --list-models")
+        for spec in matches:
+            if spec.alias in seen:
+                raise ValueError(f"model {choice!r} was selected more than once")
+            seen.add(spec.alias)
+            selected.append(spec)
     return selected
 
 
@@ -750,7 +761,14 @@ def _provider_preflight(
         row = catalog.get(spec.model)
         if row is None:
             missing.append(spec.model)
-            model_rows.append({"alias": spec.alias, "id": spec.model, "available": False})
+            model_rows.append(
+                {
+                    "alias": spec.alias,
+                    "cohort": spec.cohort,
+                    "id": spec.model,
+                    "available": False,
+                }
+            )
             continue
         supported = row.get("supported_parameters") or []
         has_tools = isinstance(supported, list) and (
@@ -761,6 +779,7 @@ def _provider_preflight(
         model_rows.append(
             {
                 "alias": spec.alias,
+                "cohort": spec.cohort,
                 "id": spec.model,
                 "available": True,
                 "tool_calling": has_tools,
@@ -1525,6 +1544,7 @@ def _run_row(
         "started_at": _utc_now(),
         "provider": spec.provider,
         "model_alias": spec.alias,
+        "model_cohort": spec.cohort,
         "model": spec.model,
         "key_source": key_source,
         "run_id": run_id,
@@ -1871,7 +1891,15 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--list-models", action="store_true", help="List configured models; no network or key needed.")
     action.add_argument("--preflight", action="store_true", help="Verify local tools, key, and live model availability without generation.")
     action.add_argument("--live", action="store_true", help="Explicitly enable paid provider calls and product generation.")
-    parser.add_argument("--models", nargs="+", default=None, help="Aliases/model IDs in order, comma-separated values, or all.")
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        help=(
+            "Aliases/model IDs or cohort names (primary, challenger, exploratory) "
+            "in order, comma-separated values, or all."
+        ),
+    )
     parser.add_argument("--models-config", type=Path, default=DEFAULT_MODELS_CONFIG)
     parser.add_argument("--scenario", type=Path, default=DEFAULT_SCENARIO)
     parser.add_argument(
@@ -1895,9 +1923,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _print_models(catalog: Sequence[ModelSpec]) -> None:
-    print("alias\tprovider\tmodel")
+    print("alias\tcohort\tprovider\tmodel")
     for spec in catalog:
-        print(f"{spec.alias}\t{spec.provider}\t{spec.model}")
+        print(f"{spec.alias}\t{spec.cohort}\t{spec.provider}\t{spec.model}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2010,6 +2038,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest["results"].append(
                 {
                     "alias": spec.alias,
+                    "cohort": spec.cohort,
                     "model": spec.model,
                     "status": row.get("status"),
                     "failure_type": row.get("failure_type"),

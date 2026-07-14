@@ -61,9 +61,12 @@ describe('WarRoomView', () => {
     expect(screen.getByText('Sonnet 5 · Adviser')).toBeInTheDocument();
     expect(screen.getByText('DeepSeek V4 Pro · Adviser')).toBeInTheDocument();
     expect(screen.getByText('Qwen3.7 Max · Adviser')).toBeInTheDocument();
-    expect(screen.getByText('Fable 5 · Verifier · Juror')).toBeInTheDocument();
-    expect(screen.getByText('Grok 4.5 · Red team · Juror')).toBeInTheDocument();
-    expect(screen.getByText('GPT-5.6 Sol Pro · Chair · Juror')).toBeInTheDocument();
+    expect(screen.getByText('Fable 5 · Verifier')).toBeInTheDocument();
+    expect(screen.getByText('Grok 4.5 · Red team')).toBeInTheDocument();
+    expect(screen.getByText('GPT-5.6 Sol Pro · Chair')).toBeInTheDocument();
+    expect(screen.getByText('Gemini 3.1 Pro Preview · Juror')).toBeInTheDocument();
+    expect(screen.getByText('GLM 5.2 · Juror')).toBeInTheDocument();
+    expect(screen.getByText('MiMo V2.5 Pro · Juror')).toBeInTheDocument();
   });
 
   it('disables the council button when the case is empty', () => {
