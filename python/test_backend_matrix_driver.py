@@ -225,7 +225,7 @@ def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType
             {**clean, "pushed": False}, live=True,
             verified_ci_sha=clean["commit"],
         )
-    with pytest.raises(driver.InfrastructureError, match="CI-verified SHA"):
+    with pytest.raises(driver.InfrastructureError, match="ci-verified-sha"):
         driver._require_reproducible_engine(clean, live=True)
     with pytest.raises(driver.InfrastructureError, match="does not match"):
         driver._require_reproducible_engine(
