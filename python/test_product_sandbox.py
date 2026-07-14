@@ -29,6 +29,7 @@ from signalos_lib.product.sandbox import (
     build_container_argv,
     container_engine_available,
     select_runner,
+    validate_pinned_image,
 )
 from signalos_lib.product.sandbox import _ENGINE_CLI  # CLI prefixes, for image probe
 
@@ -142,6 +143,52 @@ class TestBackendSelection:
             which=lambda n: "/usr/bin/docker",
         )
         assert r.tmpfs_size == "1g"
+
+    def test_funded_profile_selects_only_hardened_pinned_container(self, tmp_path):
+        image = "node:20-bookworm@sha256:" + "a" * 64
+        r = select_runner(
+            tmp_path,
+            environ={
+                "SIGNALOS_SANDBOX": "docker",
+                "SIGNALOS_SANDBOX_PROFILE": "funded",
+                "SIGNALOS_SANDBOX_IMAGE": image,
+            },
+            which=lambda n: "/usr/bin/docker" if n == "docker" else None,
+        )
+        assert isinstance(r, ContainerRunner)
+        assert r.hardened is True
+        assert r.workspace_read_only is True
+        assert r.network == "none"
+        assert r.pull == "never"
+        assert r.image == image
+
+    @pytest.mark.parametrize(
+        "env,match",
+        [
+            ({"SIGNALOS_SANDBOX": "inprocess"}, "requires SIGNALOS_SANDBOX"),
+            ({"SIGNALOS_SANDBOX": "wsl"}, "requires SIGNALOS_SANDBOX"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_IMAGE": "node:20"},
+             "sha256"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_NETWORK": "bridge"},
+             "network"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_READONLY": "0"},
+             "read-only"),
+            ({"SIGNALOS_SANDBOX": "docker", "SIGNALOS_SANDBOX_PULL": "missing"},
+             "pull policy"),
+        ],
+    )
+    def test_funded_profile_rejects_every_safety_downgrade(self, tmp_path, env, match):
+        values = {
+            "SIGNALOS_SANDBOX_PROFILE": "funded",
+            "SIGNALOS_SANDBOX_IMAGE": "node:20@sha256:" + "b" * 64,
+            **env,
+        }
+        with pytest.raises(SandboxUnavailableError, match=match):
+            select_runner(
+                tmp_path,
+                environ=values,
+                which=lambda n: "/usr/bin/" + n,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +385,54 @@ class TestReadOnlyHardening:
         assert "--read-only" in argv
         assert any("size=200m" in a for a in argv)
 
+    def test_hardened_argv_has_no_privilege_or_source_write_escape(self, tmp_path):
+        image = validate_pinned_image("node:20@sha256:" + "c" * 64)
+        argv = build_container_argv(
+            "npm test",
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            writable_paths=("node_modules", "dist"),
+            container_name="signalos-funded-test",
+            cidfile=str(tmp_path / "container.cid"),
+        )
+        joined = " ".join(argv)
+        assert "--init" in argv
+        assert "--cap-drop ALL" in joined
+        assert "--security-opt no-new-privileges:true" in joined
+        assert "--memory-swap" in argv
+        assert "--user" in argv
+        assert "--network none" in joined
+        assert "--pull never" in joined
+        assert "--name signalos-funded-test" in joined
+        assert "--cidfile" in argv
+        mounts = [argv[i + 1] for i, token in enumerate(argv) if token == "-v"]
+        assert mounts[0].endswith(":/workspace:ro")
+        assert any(m.endswith(":/workspace/node_modules:rw") for m in mounts)
+        assert any(m.endswith(":/workspace/dist:rw") for m in mounts)
+        assert all("docker.sock" not in mount for mount in mounts)
+        assert "HOME=/home/signalos" in argv
+        assert argv[-4:] == [image, "sh", "-lc", "npm test"]
+
+    def test_hardened_argv_rejects_mutable_image_and_policy_downgrades(self, tmp_path):
+        with pytest.raises(ValueError, match="sha256"):
+            build_container_argv("true", tmp_path, image="node:20", hardened=True)
+        image = "node:20@sha256:" + "d" * 64
+        with pytest.raises(ValueError, match="network"):
+            build_container_argv(
+                "true", tmp_path, image=image, hardened=True, network="bridge"
+            )
+        with pytest.raises(ValueError, match="read-only"):
+            build_container_argv(
+                "true", tmp_path, image=image, hardened=True, read_only=False
+            )
+        with pytest.raises(ValueError, match="pull"):
+            build_container_argv(
+                "true", tmp_path, image=image, hardened=True, pull="missing"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Image pull policy — digest-pin / offline determinism: --pull=never by default
@@ -419,6 +514,51 @@ class TestContainerRunnerRun:
             r = ContainerRunner(ws, engine="docker", runner=fake)
             exit_code, out = r.run("sleep 999", ws, 1, {})
         assert out.timed_out is True
+
+    def test_hardened_run_forces_named_container_cleanup(self, tmp_path):
+        image = "node:20@sha256:" + "e" * 64
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok\n", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="not found"),
+        ])
+        runner = ContainerRunner(
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            writable_paths=("node_modules", "dist"),
+            runner=fake,
+        )
+
+        exit_code, output = runner.run("npm test", tmp_path, 30, {"CI": "1"})
+
+        assert exit_code == 0
+        assert output.stdout == "ok\n"
+        calls = [call.args[0] for call in fake.call_args_list]
+        assert calls[0][:2] == ["docker", "run"]
+        name = calls[0][calls[0].index("--name") + 1]
+        assert calls[1] == ["docker", "rm", "-f", name]
+        assert calls[2] == ["docker", "inspect", name]
+
+    def test_hardened_cleanup_failure_is_an_infrastructure_error(self, tmp_path):
+        image = "node:20@sha256:" + "f" * 64
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="denied"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="still there", stderr=""),
+        ])
+        runner = ContainerRunner(
+            tmp_path,
+            engine="docker",
+            image=image,
+            hardened=True,
+            workspace_read_only=True,
+            runner=fake,
+        )
+        with pytest.raises(SandboxUnavailableError, match="still exists"):
+            runner.run("true", tmp_path, 30, {})
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from signalos_lib.product.subagent_build import (
     Task,
@@ -432,6 +433,45 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
         ok, reason = _run_single_test(d, tpath, stack_fail)
         self.assertFalse(ok)
         self.assertIn("FAIL", reason)
+
+    def test_real_runner_uses_selected_container_verifier(self):
+        from signalos_lib.product.sandbox import CommandOutput
+        from signalos_lib.product.subagent_build import _run_single_test, _StackContext
+
+        class _Verifier:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, command, repo_root, timeout_s, env):
+                self.calls.append((command, repo_root, timeout_s, env))
+                return 0, CommandOutput(stdout="PASS", stderr="")
+
+        d = Path(tempfile.mkdtemp())
+        tpath = "core/execution/tests/T1.test.ts"
+        (d / tpath).parent.mkdir(parents=True, exist_ok=True)
+        (d / tpath).write_text("test('x', () => {})", encoding="utf-8")
+        stack = _StackContext(
+            test_file_command=lambda repo, rel: [
+                sys.executable, "-c", "raise SystemExit(0)", rel,
+            ]
+        )
+        verifier = _Verifier()
+
+        with mock.patch(
+            "signalos_lib.product.validation._select_verifier_runner",
+            return_value=verifier,
+        ), mock.patch(
+            "signalos_lib.product.subagent_build.subprocess.run",
+        ) as host_run:
+            self.assertEqual(_run_single_test(d, tpath, stack), (True, ""))
+
+        host_run.assert_not_called()
+        self.assertEqual(len(verifier.calls), 1)
+        command, repo_root, timeout_s, env = verifier.calls[0]
+        self.assertIn("T1.test.ts", command)
+        self.assertEqual(repo_root, d)
+        self.assertEqual(timeout_s, 240)
+        self.assertEqual(env, {"CI": "1", "FORCE_COLOR": "0"})
 
     def test_no_runner_stack_does_not_stamp_pre_existing_green(self):
         # Caller path (CONTROL DECISION 2): with the honest no-runner result the

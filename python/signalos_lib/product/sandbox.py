@@ -54,7 +54,9 @@ __all__ = [
     "select_runner",
     "build_container_argv",
     "container_engine_available",
+    "validate_pinned_image",
     "CONTAINER_WORKSPACE",
+    "FUNDED_PROFILE",
 ]
 
 import logging
@@ -62,6 +64,8 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -97,6 +101,18 @@ DEFAULT_READ_ONLY = True
 # Size cap for every writable tmpfs. A single knob (SIGNALOS_SANDBOX_TMPFS_SIZE)
 # keeps a runaway write inside the container from exhausting host memory.
 DEFAULT_TMPFS_SIZE = "512m"
+FUNDED_PROFILE = "funded"
+FUNDED_WRITABLE_PATHS = (
+    "node_modules",
+    "dist",
+    ".vite",
+    "coverage",
+    "target",
+    "build",
+    ".next",
+    ".cache",
+)
+_PINNED_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 
 
 def _default_tmpfs(size: str) -> dict[str, str]:
@@ -119,6 +135,33 @@ def _default_tmpfs(size: str) -> dict[str, str]:
         "/tmp": f"rw,size={size},mode=1777",
         "/root": f"rw,size={size}",
     }
+
+
+def validate_pinned_image(image: str) -> str:
+    """Validate and normalize a digest-pinned container image reference."""
+    value = str(image or "").strip()
+    if not _PINNED_IMAGE_RE.fullmatch(value):
+        raise ValueError(
+            "funded sandbox image must be an exact name@sha256:<64 hex> reference"
+        )
+    return value
+
+
+def _default_container_user() -> str:
+    if hasattr(os, "getuid") and hasattr(os, "getgid"):
+        return f"{os.getuid()}:{os.getgid()}"
+    return "1000:1000"
+
+
+def _validated_writable_relpaths(paths: tuple[str, ...]) -> tuple[str, ...]:
+    result: list[str] = []
+    for raw in paths:
+        value = str(raw).replace("\\", "/").strip("/")
+        parts = value.split("/") if value else []
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"invalid funded sandbox writable path: {raw!r}")
+        result.append("/".join(parts))
+    return tuple(dict.fromkeys(result))
 
 _TIMEOUT_EXIT_CODE = 124  # GNU `timeout` convention (unused by the caller, which
 #                            short-circuits on CommandOutput.timed_out).
@@ -293,6 +336,12 @@ def build_container_argv(
     tmpfs: Mapping[str, str] | None = None,
     tmpfs_size: str = DEFAULT_TMPFS_SIZE,
     pull: str | None = DEFAULT_PULL,
+    hardened: bool = False,
+    workspace_read_only: bool = False,
+    writable_paths: tuple[str, ...] = (),
+    container_user: str | None = None,
+    container_name: str | None = None,
+    cidfile: str | None = None,
 ) -> list[str]:
     """Construct the container CLI argv that runs *command* inside a throwaway
     container with a READ-ONLY root filesystem, ONLY *workspace* bind-mounted
@@ -319,6 +368,14 @@ def build_container_argv(
     """
     if engine not in _ENGINE_CLI:
         raise ValueError(f"unknown container engine: {engine!r}")
+    if hardened:
+        image = validate_pinned_image(image)
+        if network != "none":
+            raise ValueError("hardened sandbox requires --network none")
+        if not read_only:
+            raise ValueError("hardened sandbox requires a read-only root filesystem")
+        if pull != "never":
+            raise ValueError("hardened sandbox requires --pull=never")
     mount_src = _mount_source(workspace, engine)
     workdir = CONTAINER_WORKSPACE
     if workdir_rel:
@@ -328,6 +385,10 @@ def build_container_argv(
         "run",
         "--rm",                 # throwaway: no state survives the command.
     ]
+    if container_name:
+        argv += ["--name", container_name]
+    if cidfile:
+        argv += ["--cidfile", cidfile]
     if pull:
         # Digest-pin / offline determinism: never reach the network to pull. The
         # image must be pre-present (consistent with --network none); `run` then
@@ -339,16 +400,47 @@ def build_container_argv(
         "--memory", memory,
         "--pids-limit", pids,   # bound child/process fan-out.
     ]
+    if hardened:
+        argv += [
+            "--init",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--memory-swap", memory,
+            "--user", container_user or _default_container_user(),
+        ]
     if read_only:
         argv.append("--read-only")  # immutable rootfs; only the mounts below write.
-    tmpfs_mounts = _default_tmpfs(tmpfs_size) if tmpfs is None else dict(tmpfs)
+    if hardened and tmpfs is None:
+        tmpfs_mounts = {
+            "/tmp": f"rw,nosuid,nodev,noexec,size={tmpfs_size},mode=1777",
+            "/home/signalos": f"rw,nosuid,nodev,size={tmpfs_size},mode=700",
+        }
+    else:
+        tmpfs_mounts = _default_tmpfs(tmpfs_size) if tmpfs is None else dict(tmpfs)
     for path, opts in tmpfs_mounts.items():
         # size-capped writable scratch/HOME, discarded with the container.
         argv += ["--tmpfs", f"{path}:{opts}" if opts else path]
     argv += [
-        "-v", f"{mount_src}:{CONTAINER_WORKSPACE}",  # ONLY the workspace (rw).
+        "-v", (
+            f"{mount_src}:{CONTAINER_WORKSPACE}:ro"
+            if workspace_read_only
+            else f"{mount_src}:{CONTAINER_WORKSPACE}"
+        ),
         "-w", workdir,          # cwd = the mount (or a contained subdir).
     ]
+    for rel in _validated_writable_relpaths(tuple(writable_paths)):
+        root = Path(workspace).resolve()
+        candidate = (root / Path(rel)).resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError(f"funded sandbox writable path escapes workspace: {rel!r}")
+        host = str(candidate).replace("\\", "/")
+        argv += ["-v", f"{host}:{CONTAINER_WORKSPACE}/{rel}:rw"]
+    if hardened:
+        argv += [
+            "-e", "HOME=/home/signalos",
+            "-e", "NPM_CONFIG_CACHE=/tmp/npm-cache",
+            "-e", "PYTHONPYCACHEPREFIX=/tmp/pycache",
+        ]
     for key, val in _safe_env_overlay(env).items():
         argv += ["-e", f"{key}={val}"]  # overlay env INTO the container only.
     argv += [image, "sh", "-lc", command]
@@ -480,6 +572,10 @@ class ContainerRunner(SandboxRunner):
         read_only: bool = DEFAULT_READ_ONLY,
         tmpfs_size: str = DEFAULT_TMPFS_SIZE,
         pull: str | None = DEFAULT_PULL,
+        hardened: bool = False,
+        workspace_read_only: bool = False,
+        writable_paths: tuple[str, ...] = (),
+        container_user: str | None = None,
         runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         if engine not in _ENGINE_CLI:
@@ -494,11 +590,47 @@ class ContainerRunner(SandboxRunner):
         self.read_only = read_only
         self.tmpfs_size = tmpfs_size
         self.pull = pull
+        self.hardened = bool(hardened)
+        self.workspace_read_only = bool(workspace_read_only)
+        self.writable_paths = _validated_writable_relpaths(tuple(writable_paths))
+        self.container_user = container_user or _default_container_user()
         self._runner = runner
         self.name = f"container:{engine}"
+        if self.hardened:
+            if self.engine == "wsl":
+                raise ValueError(
+                    "funded sandbox requires the native docker or podman CLI; "
+                    "the WSL transport cannot safely bind a host CID file"
+                )
+            self.image = validate_pinned_image(self.image)
+            if self.network != "none" or not self.read_only or self.pull != "never":
+                raise ValueError(
+                    "hardened container requires network=none, read_only=true, pull=never"
+                )
+            for rel in self.writable_paths:
+                candidate = self.workspace / Path(rel)
+                cursor = self.workspace
+                for part in Path(rel).parts:
+                    cursor = cursor / part
+                    if cursor.exists() and cursor.is_symlink():
+                        raise ValueError(
+                            f"funded sandbox writable path crosses a symlink: {rel!r}"
+                        )
+                candidate.mkdir(parents=True, exist_ok=True)
+                resolved = candidate.resolve()
+                if resolved != self.workspace and self.workspace not in resolved.parents:
+                    raise ValueError(
+                        f"funded sandbox writable path escapes workspace: {rel!r}"
+                    )
 
     def build_argv(
-        self, cmd: str, cwd: str | os.PathLike[str], env: Mapping[str, str] | None
+        self,
+        cmd: str,
+        cwd: str | os.PathLike[str],
+        env: Mapping[str, str] | None,
+        *,
+        container_name: str | None = None,
+        cidfile: str | None = None,
     ) -> list[str]:
         return build_container_argv(
             cmd,
@@ -514,7 +646,43 @@ class ContainerRunner(SandboxRunner):
             tmpfs_size=self.tmpfs_size,
             pull=self.pull,
             workdir_rel=_rel_subdir(self.workspace, cwd),
+            hardened=self.hardened,
+            workspace_read_only=self.workspace_read_only,
+            writable_paths=self.writable_paths,
+            container_user=self.container_user,
+            container_name=container_name,
+            cidfile=cidfile,
         )
+
+    def _runtime_call(self, args: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess:
+        return self._runner(
+            [*_ENGINE_CLI[self.engine], *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=_child_process_env(),
+        )
+
+    def _cleanup_hardened_container(self, name: str, cidfile: Path) -> None:
+        cleanup_errors: list[str] = []
+        try:
+            self._runtime_call(["rm", "-f", name])
+        except Exception as exc:
+            cleanup_errors.append(f"remove failed: {type(exc).__name__}: {exc}")
+        try:
+            inspected = self._runtime_call(["inspect", name])
+            if inspected.returncode == 0:
+                cleanup_errors.append("container still exists after forced cleanup")
+        except Exception as exc:
+            cleanup_errors.append(f"cleanup verification failed: {type(exc).__name__}: {exc}")
+        try:
+            cidfile.unlink(missing_ok=True)
+        except OSError as exc:
+            cleanup_errors.append(f"CID file cleanup failed: {exc}")
+        if cleanup_errors:
+            raise SandboxUnavailableError("; ".join(cleanup_errors))
 
     def run(
         self,
@@ -523,7 +691,23 @@ class ContainerRunner(SandboxRunner):
         timeout: float,
         env: Mapping[str, str] | None = None,
     ) -> tuple[int, CommandOutput]:
-        argv = self.build_argv(cmd, cwd, env)
+        container_name: str | None = None
+        cidfile: Path | None = None
+        if self.hardened:
+            token = f"{os.getpid()}-{uuid.uuid4().hex}"
+            container_name = f"signalos-funded-{token}"[:63]
+            cid_dir = Path(tempfile.gettempdir()) / "signalos-sandbox-cids"
+            cid_dir.mkdir(parents=True, exist_ok=True)
+            cidfile = cid_dir / f"{token}.cid"
+            cidfile.unlink(missing_ok=True)
+        argv = self.build_argv(
+            cmd,
+            cwd,
+            env,
+            container_name=container_name,
+            cidfile=str(cidfile) if cidfile is not None else None,
+        )
+        result: tuple[int, CommandOutput]
         try:
             # The overlay env goes INTO the container via -e (built into argv);
             # the OUTER docker/podman/wsl process inherits the host env (env=None)
@@ -542,8 +726,20 @@ class ContainerRunner(SandboxRunner):
                 env=_child_process_env(),
             )
         except subprocess.TimeoutExpired:
-            return _TIMEOUT_EXIT_CODE, CommandOutput("", "", timed_out=True)
-        return proc.returncode, CommandOutput(proc.stdout or "", proc.stderr or "")
+            result = (_TIMEOUT_EXIT_CODE, CommandOutput("", "", timed_out=True))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SandboxUnavailableError(
+                f"container runtime execution failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        else:
+            result = (
+                proc.returncode,
+                CommandOutput(proc.stdout or "", proc.stderr or ""),
+            )
+        finally:
+            if self.hardened and container_name is not None and cidfile is not None:
+                self._cleanup_hardened_container(container_name, cidfile)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +780,13 @@ def select_runner(
     """
     env = os.environ if environ is None else environ
     raw = (env.get("SIGNALOS_SANDBOX") or "").strip().lower()
-    strict = _is_true(env.get("SIGNALOS_SANDBOX_STRICT"))
+    profile = (env.get("SIGNALOS_SANDBOX_PROFILE") or "").strip().lower()
+    funded = profile == FUNDED_PROFILE
+    if profile not in ("", FUNDED_PROFILE):
+        raise SandboxUnavailableError(
+            f"unknown SIGNALOS_SANDBOX_PROFILE={profile!r}"
+        )
+    strict = funded or _is_true(env.get("SIGNALOS_SANDBOX_STRICT"))
     # read-only rootfs is the default; only an explicit falsey value drops it.
     read_only = not (env.get("SIGNALOS_SANDBOX_READONLY") or "").strip().lower() \
         in {"0", "false", "no", "off"}
@@ -595,6 +797,11 @@ def select_runner(
                 emit(event)
             except Exception:
                 pass
+
+    if funded and raw not in {"docker", "podman"}:
+        raise SandboxUnavailableError(
+            "funded sandbox requires SIGNALOS_SANDBOX=docker or podman"
+        )
 
     if raw in _INPROCESS_ALIASES:
         return InProcessRunner()
@@ -623,17 +830,35 @@ def select_runner(
         _emit({"type": "sandbox_fallback", "requested": raw, "reason": "runtime_unavailable"})
         return InProcessRunner()
 
+    image = env.get("SIGNALOS_SANDBOX_IMAGE") or DEFAULT_IMAGE
+    if funded:
+        try:
+            image = validate_pinned_image(image)
+        except ValueError as exc:
+            raise SandboxUnavailableError(str(exc)) from exc
+        requested_network = (env.get("SIGNALOS_SANDBOX_NETWORK") or "none").strip().lower()
+        if requested_network != "none":
+            raise SandboxUnavailableError("funded sandbox network must be 'none'")
+        if not read_only:
+            raise SandboxUnavailableError("funded sandbox root filesystem must be read-only")
+        requested_pull = (env.get("SIGNALOS_SANDBOX_PULL") or "never").strip().lower()
+        if requested_pull != "never":
+            raise SandboxUnavailableError("funded sandbox pull policy must be 'never'")
+
     runner = ContainerRunner(
         workspace,
         engine=raw,
-        image=env.get("SIGNALOS_SANDBOX_IMAGE") or DEFAULT_IMAGE,
+        image=image,
         cpus=env.get("SIGNALOS_SANDBOX_CPUS") or DEFAULT_CPUS,
         memory=env.get("SIGNALOS_SANDBOX_MEMORY") or DEFAULT_MEMORY,
         pids=env.get("SIGNALOS_SANDBOX_PIDS") or DEFAULT_PIDS,
-        network=env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK,
+        network="none" if funded else (env.get("SIGNALOS_SANDBOX_NETWORK") or DEFAULT_NETWORK),
         read_only=read_only,
         tmpfs_size=env.get("SIGNALOS_SANDBOX_TMPFS_SIZE") or DEFAULT_TMPFS_SIZE,
-        pull=(env.get("SIGNALOS_SANDBOX_PULL") or DEFAULT_PULL),
+        pull="never" if funded else (env.get("SIGNALOS_SANDBOX_PULL") or DEFAULT_PULL),
+        hardened=funded,
+        workspace_read_only=funded,
+        writable_paths=FUNDED_WRITABLE_PATHS if funded else (),
     )
     _LOGGER.info("runtime containment active: %s", runner.name)
     _emit({"type": "sandbox_selected", "engine": raw, "backend": runner.name})

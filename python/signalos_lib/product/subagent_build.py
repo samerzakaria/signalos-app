@@ -44,10 +44,12 @@ __all__ = [
     "task_dod_violations",
     "is_vacuous_test",
     "BuildCancelled",
+    "ProviderExecutionError",
 ]
 
 import os
 import re
+import shlex
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -1296,13 +1298,28 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
         rel = str(phys)
     try:
         argv = stack.test_file_command(repo_root, rel)
-        p = subprocess.run(argv, cwd=str(repo_root), capture_output=True,
-                           text=True, encoding="utf-8", errors="replace",
-                           timeout=240, shell=False)
+        from .validation import _select_verifier_runner
+
+        verifier = _select_verifier_runner(repo_root)
+        if verifier is not None:
+            exit_code, output = verifier.run(
+                shlex.join(argv), repo_root, 240,
+                {"CI": "1", "FORCE_COLOR": "0"},
+            )
+            if output.timed_out:
+                return False, f"could not run test {test_path}: timed out"
+            stdout, stderr = output.stdout, output.stderr
+            returncode = exit_code
+        else:
+            p = subprocess.run(argv, cwd=str(repo_root), capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=240, shell=False)
+            stdout, stderr = p.stdout, p.stderr
+            returncode = p.returncode
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"could not run test {test_path}: {exc}"
-    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", (p.stdout or "") + "\n" + (p.stderr or ""))
-    if p.returncode == 0:
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", (stdout or "") + "\n" + (stderr or ""))
+    if returncode == 0:
         return True, ""
     fails = [l for l in out.splitlines()
              if re.search(r"FAIL|Error[:\s]|error TS|AssertionError|expected|"
