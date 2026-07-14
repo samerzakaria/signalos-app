@@ -630,6 +630,88 @@ def _prepare_local_release_remote(
     }
 
 
+def _checkout_pushed_release(
+    remote: Path,
+    destination: Path,
+    finalization: dict[str, Any],
+    *,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Materialize and verify the exact remote bytes named by the G5 receipt."""
+
+    outcome = finalization.get("outcome")
+    if not isinstance(outcome, dict):
+        raise ProductFailure("release finalization has no outcome receipt")
+    commit = outcome.get("commit")
+    push = outcome.get("push")
+    if not isinstance(commit, dict) or not isinstance(push, dict):
+        raise ProductFailure("release finalization omits commit or push receipt")
+    expected_sha = str(commit.get("sha") or "").strip().lower()
+    pushed_sha = str(push.get("sha") or "").strip().lower()
+    ref = str(push.get("ref") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", expected_sha):
+        raise ProductFailure("release commit receipt has an invalid object id")
+    if pushed_sha != expected_sha:
+        raise ProductFailure("release push receipt does not match the release commit")
+    if not re.fullmatch(r"refs/heads/[A-Za-z0-9._/-]+", ref) or ".." in ref:
+        raise ProductFailure("release push receipt has an invalid branch ref")
+    if push.get("status") != "ok" or push.get("verified") is not True:
+        raise ProductFailure("release push receipt is not independently verified")
+    branch = ref.removeprefix("refs/heads/")
+    remote = Path(remote).resolve()
+    if not remote.is_dir():
+        raise InfrastructureError("row-local release origin is missing")
+    if destination.exists():
+        raise InfrastructureError("release checkout destination already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    commands: dict[str, Any] = {}
+    commands["ls_remote"] = _run_command(
+        ["git", "ls-remote", "--exit-code", str(remote), ref],
+        cwd=destination.parent,
+        env=env,
+        timeout=60,
+    )
+    rows = [
+        line.split()
+        for line in commands["ls_remote"].get("stdout_tail", "").splitlines()
+        if line.strip()
+    ]
+    if not commands["ls_remote"].get("ok") or rows != [[expected_sha, ref]]:
+        raise ProductFailure("row-local origin no longer exposes the exact G5 commit")
+
+    commands["clone"] = _run_command(
+        [
+            "git", "clone", "--no-local", "--no-hardlinks", "--single-branch",
+            "--branch", branch, str(remote), str(destination),
+        ],
+        cwd=destination.parent,
+        env=env,
+        timeout=120,
+    )
+    if not commands["clone"].get("ok"):
+        raise InfrastructureError("could not clone the G5 release origin")
+    commands["head"] = _run_command(
+        ["git", "rev-parse", "HEAD"], cwd=destination, env=env, timeout=30,
+    )
+    actual_sha = str(commands["head"].get("stdout_tail") or "").strip().lower()
+    if not commands["head"].get("ok") or actual_sha != expected_sha:
+        raise ProductFailure("fresh release checkout HEAD does not match the G5 receipt")
+    commands["status"] = _run_command(
+        ["git", "status", "--porcelain"], cwd=destination, env=env, timeout=30,
+    )
+    if not commands["status"].get("ok") or str(
+        commands["status"].get("stdout_tail") or ""
+    ).strip():
+        raise ProductFailure("fresh release checkout is not clean")
+    return {
+        "verified": True,
+        "ref": ref,
+        "commit": expected_sha,
+        "commands": commands,
+    }
+
+
 def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
     """Stop only the owned process group/tree; never use a global image kill."""
 
@@ -1967,17 +2049,30 @@ def _run_row(
         sidecar.close()
         sidecar = None
 
-        final_tree = _snapshot_product_tree(workspace)
+        local_final_tree = _snapshot_product_tree(workspace)
+        release_checkout = row_dir / "release-checkout"
+        row["release_checkout"] = _checkout_pushed_release(
+            Path(row["release_origin"]["path"]),
+            release_checkout,
+            finalization,
+            env=sidecar_env,
+        )
+        final_tree = _snapshot_product_tree(release_checkout)
+        if final_tree != local_final_tree:
+            raise ProductFailure(
+                "pushed release product bytes differ from the finalized local workspace"
+            )
         changed_sources = _changed_product_sources(baseline, final_tree)
         if not changed_sources:
             raise ProductFailure("this run produced no new or changed real product source files")
         row["product_tree"] = {
             "baseline": baseline,
             "final": final_tree,
+            "local_matches_remote": True,
             "changed_source_files": changed_sources,
         }
 
-        scan = _secret_scan(workspace, key)
+        scan = _secret_scan(release_checkout, key)
         row["secret_scan"] = scan
         if not scan["ok"]:
             raise InfrastructureError(
@@ -1987,7 +2082,7 @@ def _run_row(
         acceptance: dict[str, Any] = {"commands": {}}
         row["acceptance"] = acceptance
         _clean_room_acceptance(
-            workspace,
+            release_checkout,
             row_dir / "clean-room",
             scenario_path,
             timeout=command_timeout,

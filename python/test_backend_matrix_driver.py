@@ -192,6 +192,81 @@ def test_row_local_release_origin_supports_offline_commit_and_push(
     assert Path(remote).resolve() == (tmp_path / "origin.git").resolve()
 
 
+def test_fresh_release_checkout_is_bound_to_exact_remote_commit(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("baseline\n", encoding="utf-8")
+    env = dict(os.environ)
+    evidence = driver._prepare_local_release_remote(
+        workspace, tmp_path / "origin.git", env=env
+    )
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.js").write_text(
+        "export const ready = true;\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Release product"], cwd=workspace, check=True,
+        capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "push", "origin", "HEAD"], cwd=workspace, check=True,
+        capture_output=True, text=True,
+    )
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=workspace, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=workspace, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    finalization = {
+        "outcome": {
+            "commit": {"status": "committed", "sha": sha},
+            "push": {
+                "status": "ok",
+                "verified": True,
+                "remote": "origin",
+                "ref": f"refs/heads/{branch}",
+                "sha": sha,
+            },
+        }
+    }
+
+    checkout = tmp_path / "release-checkout"
+    result = driver._checkout_pushed_release(
+        Path(evidence["path"]), checkout, finalization, env=env
+    )
+
+    assert result["verified"] is True
+    assert result["commit"] == sha
+    assert (checkout / "src" / "app.js").read_text(encoding="utf-8") == (
+        "export const ready = true;\n"
+    )
+
+    moved = subprocess.run(
+        ["git", "rev-parse", "HEAD^"], cwd=workspace, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "git", f"--git-dir={evidence['path']}", "update-ref",
+            f"refs/heads/{branch}", moved,
+        ],
+        check=True, capture_output=True, text=True,
+    )
+    with pytest.raises(driver.ProductFailure, match="exact G5 commit"):
+        driver._checkout_pushed_release(
+            Path(evidence["path"]),
+            tmp_path / "moved-checkout",
+            finalization,
+            env=env,
+        )
+
+
 def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType) -> None:
     clean = {
         "commit": "a" * 40,
