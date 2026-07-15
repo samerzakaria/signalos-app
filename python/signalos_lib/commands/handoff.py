@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from signalos_lib.git_process import GitProcessPolicyError, run_git
 from signalos_lib.product.closeout import load_closeout
 
 
@@ -58,14 +59,15 @@ def _resolve_root(repo_root: str | Path | None) -> Path:
 
 def _git(root: Path, args: list[str]) -> str | None:
     try:
-        proc = subprocess.run(
-            ["git", *args],
+        proc = run_git(
+            args,
             cwd=root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return None
     if proc.returncode != 0:
         return None

@@ -52,6 +52,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .git_process import GitProcessPolicyError, run_git
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -97,15 +99,16 @@ def ensure_github_remote(workspace_root: Path) -> str | None:
     if not (workspace_root / ".git").exists():
         return None
     try:
-        proc = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=str(workspace_root),
+        proc = run_git(
+            ["remote", "get-url", "origin"],
+            cwd=workspace_root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             check=False,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return None
     if proc.returncode != 0:
         return None

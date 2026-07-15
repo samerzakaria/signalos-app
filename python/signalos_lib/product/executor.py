@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..git_process import run_git
+
 __all__ = [
     "TaskOutcome",
     "ExecutionReport",
@@ -230,9 +232,10 @@ _GIT_IDENTITY = (
 
 
 def _git(cwd: Path, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", *_GIT_IDENTITY, *args],
-        cwd=str(cwd),
+    proc = run_git(
+        [*_GIT_IDENTITY, *args],
+        cwd=cwd,
+        runner=subprocess.run,
         capture_output=True,
         text=True,
         check=False,

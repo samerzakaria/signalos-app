@@ -767,10 +767,22 @@ class FundedRunContext:
         *,
         spec: ModelSpec | None = None,
         provider_key: str = "",
+        expected_git_remote: Path | None = None,
     ) -> dict[str, str]:
         if (spec is None) != (not provider_key):
             raise ValueError("provider model and key must be supplied together")
+        if spec is not None and expected_git_remote is None:
+            raise InfrastructureError(
+                "funded model execution requires an expected local Git remote"
+            )
         docker_binding = self.docker_binding()
+        runtime_home = Path(runtime_home).resolve()
+        disabled_hooks = runtime_home / "git-hooks-disabled"
+        disabled_hooks.mkdir(parents=True, exist_ok=True)
+        if any(disabled_hooks.iterdir()):
+            raise InfrastructureError(
+                "funded Git disabled-hooks directory is not empty"
+            )
         env: dict[str, str] = {}
         try:
             env = _isolated_subprocess_env(
@@ -786,14 +798,19 @@ class FundedRunContext:
                     "SIGNALOS_DEPENDENCY_POLICY": str(self.policy_path),
                     "SIGNALOS_DEPENDENCY_BUNDLE": str(self.bundle_dir),
                     "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY": self._key_hex(),
+                    "SIGNALOS_FUNDED_GIT_HOOKS_DIR": str(disabled_hooks),
                     "DOCKER_HOST": docker_binding["docker_endpoint"],
                 },
             )
             if spec is not None:
+                expected_remote = Path(expected_git_remote).resolve()
                 env.update(
                     {
                         "SIGNALOS_LLM_PROVIDER": spec.provider,
                         "SIGNALOS_LLM_MODEL": spec.model,
+                        "SIGNALOS_FUNDED_EXPECTED_GIT_REMOTE": str(
+                            expected_remote
+                        ),
                         spec.key_env: provider_key,
                     }
                 )
@@ -3413,10 +3430,12 @@ def _run_row(
     try:
         tool_env = _tool_subprocess_env(row_dir / "tool-runtime-home")
         baseline = _snapshot_product_tree(workspace)
+        release_origin = row_dir / "release-origin.git"
         sidecar_env = funded_context.sidecar_environment(
             row_dir / "runtime-home",
             spec=spec,
             provider_key=key,
+            expected_git_remote=release_origin,
         )
         sidecar = SidecarClient(workspace, sidecar_env, row_secrets)
 
@@ -3492,7 +3511,7 @@ def _run_row(
         )
         row["release_origin"] = _prepare_local_release_remote(
             workspace,
-            row_dir / "release-origin.git",
+            release_origin,
             env=tool_env,
         )
         _safe_json_write(result_path, row, row_secrets)

@@ -44,6 +44,11 @@ from pathlib import Path
 _BASH_WARNED = False
 
 from signalos_lib.adoption import scan_existing_repo, write_adoption_artifacts
+from signalos_lib.git_process import (
+    GitProcessPolicyError,
+    is_funded_git_mode,
+    run_git,
+)
 from signalos_lib.ide import detect_ide
 from signalos_lib.profiles import (
     ProfileNotFoundError,
@@ -629,12 +634,18 @@ def _git_init(target: Path) -> None:
     if (target / ".git").is_dir():
         return
     try:
-        subprocess.run(
-            ["git", "init", "--quiet"],
-            cwd=str(target), check=False,
+        run_git(
+            ["init", "--quiet"],
+            cwd=target,
+            runner=subprocess.run,
+            check=False,
             timeout=15,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except GitProcessPolicyError:
+        sys.stderr.write(
+            "  warn: funded Git policy unavailable; skipping repository initialization.\n"
         )
     except (OSError, FileNotFoundError):  # pragma: no cover — git missing
         sys.stderr.write(
@@ -728,6 +739,10 @@ def _register_ide_hooks(target: Path, ide: str) -> None:
     emit.sh will fire on first invocation.
     """
     global _BASH_WARNED
+    # Workspace-owned scripts must never inherit funded provider/HMAC
+    # credentials. Hook emission can be performed later by the desktop host.
+    if is_funded_git_mode():
+        return
     if not ide:
         return
 

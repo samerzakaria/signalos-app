@@ -28,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
+from .git_process import GitProcessPolicyError, run_git
 from .sign import (
     GATE_MAP,
     GATE_LABELS,
@@ -497,20 +498,24 @@ def handle_sign_post(
 
     if commit:
         try:
-            subprocess.run(
-                ["git", "add"] + signed,
+            run_git(
+                ["add", *signed],
                 cwd=repo_root,
+                runner=subprocess.run,
                 check=True,
                 capture_output=True,
             )
             msg = f"sign({gate}): {signer} [{role}] — {verdict}"
-            subprocess.run(
-                ["git", "commit", "-m", msg],
+            run_git(
+                ["commit", "-m", msg],
                 cwd=repo_root,
+                runner=subprocess.run,
                 check=True,
                 capture_output=True,
             )
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, GitProcessPolicyError) as exc:
+            if isinstance(exc, GitProcessPolicyError):
+                return False, f"Signature written but Git policy blocked commit: {exc}"
             return False, f"Signature written but git commit failed: {exc.stderr.decode()}"
 
     skip_note = f" ({len(skipped)} artifact(s) skipped — not present)" if skipped else ""

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import harness as harness_lib
+from .git_process import GitProcessPolicyError, is_funded_git_mode, run_git
 from .harness import _resolve_provider, LLMProvider
 from .status import print_status_card
 
@@ -121,6 +122,8 @@ def _bash_available() -> bool:
     On Windows this is typically Git Bash (C:/Program Files/Git/bin/bash.exe);
     a missing or non-functional bash falls back to no-worktree mode.
     """
+    if is_funded_git_mode():
+        return False
     import shutil
     if shutil.which("bash") is None:
         return False
@@ -207,6 +210,10 @@ def _run_wm(
     check: bool = False,
     project_id: str = "default",
 ) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
+    if is_funded_git_mode():
+        raise RuntimeError(
+            "funded execution cannot invoke workspace-owned worktree scripts"
+        )
     wm = _worktree_manager(root)
     if not wm.is_file():
         raise RuntimeError(
@@ -546,6 +553,8 @@ def _run_pre_write_guard(root: Path, rel_path: str, content: str) -> tuple[bool,
     entries so silent bypass is visible; the lenient default keeps existing
     flows working for users who have not re-init'd.
     """
+    if is_funded_git_mode():
+        return False, "guard-blocked-funded-workspace-script"
     guard = root / "core" / "execution" / "hooks" / "pre-tool-use-guard.sh"
     if not guard.is_file():
         return True, "guard-missing"
@@ -659,15 +668,16 @@ def _auto_commit_wave(
 
     # 1. Is there anything to commit?
     try:
-        status_proc = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root),
+        status_proc = run_git(
+            ["status", "--porcelain"],
+            cwd=root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             check=False,
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
         _append_audit_entry(root, {
             "ts": datetime.now(timezone.utc).isoformat(),
             "action": "auto-commit-failed",
@@ -721,9 +731,10 @@ def _auto_commit_wave(
 
     # 3. Stage and commit.
     try:
-        add_proc = subprocess.run(
-            ["git", "add", "-A"],
-            cwd=str(root),
+        add_proc = run_git(
+            ["add", "-A"],
+            cwd=root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             check=False,
@@ -738,15 +749,16 @@ def _auto_commit_wave(
             })
             return {"status": "failed", "reason": "git-add-failed"}
 
-        commit_proc = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            cwd=str(root),
+        commit_proc = run_git(
+            ["commit", "-m", commit_msg],
+            cwd=root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             check=False,
             timeout=60,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
         _append_audit_entry(root, {
             "ts": datetime.now(timezone.utc).isoformat(),
             "action": "auto-commit-failed",

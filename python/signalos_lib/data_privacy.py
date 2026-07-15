@@ -18,6 +18,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from .git_process import run_git
+
 __all__ = [
     "DataPrivacyError",
     "export_subject",
@@ -34,14 +36,19 @@ REDACT_TAG = "[REDACTED:GDPR17]"
 
 def _default_repo_root() -> Path:
     try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
+        proc = run_git(
+            ["rev-parse", "--show-toplevel"],
+            cwd=Path.cwd(),
+            runner=subprocess.run,
+            capture_output=True,
             text=True,
-            stderr=subprocess.DEVNULL,
+            check=False,
         )
-        return Path(out.strip())
+        if proc.returncode == 0 and proc.stdout.strip():
+            return Path(proc.stdout.strip())
     except Exception:
-        return Path.cwd()
+        pass
+    return Path.cwd()
 
 
 def _signalos_dir(root: Path) -> Path:

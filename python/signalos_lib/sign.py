@@ -55,6 +55,13 @@ from .artifacts import (
     list_gates,
     resolve_gate_artifacts,
 )
+from .git_process import (
+    GitProcessPolicyError,
+    configured_remote_matches_expected,
+    funded_expected_remote,
+    is_funded_git_mode,
+    run_git,
+)
 from .product.release_tree import (
     ReleaseTreeError,
     commit_control_tree,
@@ -852,6 +859,12 @@ def _call_brain_ingest(path: Path, gate: str) -> None:
     hook if present. Swallows every error so the signing flow never
     blocks on the brain.
     """
+    # Funded delivery signs while the backend holds provider and dependency
+    # credentials.  No repository hook is allowed to inherit that process
+    # environment; the durable artifacts are indexed through the normal
+    # post-run path instead.
+    if is_funded_git_mode():
+        return
     try:
         # Find repo root by walking up from artifact path
         root = path.resolve().parent
@@ -2113,11 +2126,15 @@ def _release_governance_paths(root: Path, project_id: str) -> list[str]:
 def _git_tree_paths(root: Path, treeish: str) -> set[str]:
     """Return every leaf path in a Git tree, including control-plane paths."""
     try:
-        proc = subprocess.run(
-            ["git", "ls-tree", "-rz", "--name-only", treeish],
-            cwd=str(root), capture_output=True, check=False, timeout=30,
+        proc = run_git(
+            ["ls-tree", "-rz", "--name-only", treeish],
+            cwd=root,
+            runner=subprocess.run,
+            capture_output=True,
+            check=False,
+            timeout=30,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
         raise ReleaseTreeError(f"cannot inspect full Git tree: {exc}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).decode("utf-8", "replace")[:300]
@@ -2147,11 +2164,16 @@ def _release_commit_at_head(
     if not release_id or not release_digest:
         return ""
     try:
-        proc = subprocess.run(
-            ["git", "show", "-s", "--format=%H%x00%B", "HEAD"],
-            cwd=str(root), capture_output=True, text=True, check=False, timeout=15,
+        proc = run_git(
+            ["show", "-s", "--format=%H%x00%B", "HEAD"],
+            cwd=root,
+            runner=subprocess.run,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return ""
     if proc.returncode != 0:
         return ""
@@ -2165,12 +2187,17 @@ def _release_commit_at_head(
         r"^SignalOS-Release-Commit-Tree:\s*(.+?)\s*$", body, re.MULTILINE,
     )
     try:
-        tree_proc = subprocess.run(
-            ["git", "rev-parse", f"{sha.strip()}^{{tree}}"],
-            cwd=str(root), capture_output=True, text=True, check=False, timeout=15,
+        tree_proc = run_git(
+            ["rev-parse", f"{sha.strip()}^{{tree}}"],
+            cwd=root,
+            runner=subprocess.run,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
         )
         full_tree_oid = tree_proc.stdout.strip() if tree_proc.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return ""
     if (
         ids != [release_id]
@@ -2215,11 +2242,22 @@ def _stage_and_commit_for_release(
     independently re-hashed before HEAD moves, creating the backend receipt
     that later retries and pushes validate.
     """
-    def _run(args: list[str], timeout: int = 60, *, data: bytes | None = None,
-             env: dict[str, str] | None = None):
-        return subprocess.run(
-            args, cwd=str(root), input=data, capture_output=True,
-            check=False, timeout=timeout, env=env,
+    def _run(
+        args: list[str],
+        timeout: int = 60,
+        *,
+        data: bytes | None = None,
+        extra_env: dict[str, str] | None = None,
+    ):
+        return run_git(
+            args[1:] if args and args[0] == "git" else args,
+            cwd=root,
+            runner=subprocess.run,
+            input=data,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+            extra_env=extra_env,
         )
 
     def _detail(proc: subprocess.CompletedProcess[bytes], fallback: str) -> str:
@@ -2279,15 +2317,14 @@ def _stage_and_commit_for_release(
     try:
         # Git expects a missing path (not a zero-byte file) for a fresh index.
         temp_index.unlink(missing_ok=True)
-        isolated_env = dict(os.environ)
-        isolated_env["GIT_INDEX_FILE"] = str(temp_index)
+        isolated_env = {"GIT_INDEX_FILE": str(temp_index)}
         head = _run(["git", "rev-parse", "--verify", "HEAD"], timeout=15)
         parent = head.stdout.decode("ascii", "replace").strip() if head.returncode == 0 else ""
         # Start from an empty index and add the complete approved set.  Seeding
         # from HEAD silently retained tracked `.signalos/**` identity/run state
         # and non-canonical `core/**` files outside both the G4 digest and the
         # selected governance comparison.
-        read = _run(["git", "read-tree", "--empty"], env=isolated_env)
+        read = _run(["git", "read-tree", "--empty"], extra_env=isolated_env)
         if read.returncode != 0:
             return "add-failed", _detail(read, "git read-tree failed"), ""
 
@@ -2312,7 +2349,7 @@ def _stage_and_commit_for_release(
                 if not exists:
                     remove = _run(
                         ["git", "update-index", "--force-remove", "--", rel],
-                        env=target_env,
+                        extra_env=target_env,
                     )
                     if remove.returncode != 0:
                         return False, _detail(remove, f"cannot remove {rel} from index")
@@ -2345,7 +2382,7 @@ def _stage_and_commit_for_release(
                 update = _run([
                     "git", "update-index", "--add", "--cacheinfo",
                     f"{mode},{oid},{rel}",
-                ], env=target_env)
+                ], extra_env=target_env)
                 if update.returncode != 0:
                     return False, _detail(update, f"cannot stage {rel}")
             return True, ""
@@ -2353,7 +2390,7 @@ def _stage_and_commit_for_release(
         populated, populate_reason = populate_index(isolated_env)
         if not populated:
             return "add-failed", populate_reason, ""
-        write = _run(["git", "write-tree"], env=isolated_env)
+        write = _run(["git", "write-tree"], extra_env=isolated_env)
         if write.returncode != 0:
             return "commit-failed", _detail(write, "git write-tree failed"), ""
         tree_oid = write.stdout.decode("ascii", "replace").strip()
@@ -2396,15 +2433,20 @@ def _stage_and_commit_for_release(
                f"\nSignalOS-Release-Tree: {release_digest}"
                f"\nSignalOS-Release-Commit-Tree: {tree_oid}\n")
 
-        identity_env = dict(os.environ)
-        identity_env.setdefault("GIT_AUTHOR_NAME", "SignalOS Foundry")
-        identity_env.setdefault("GIT_AUTHOR_EMAIL", "foundry@signalos.local")
-        identity_env.setdefault("GIT_COMMITTER_NAME", "SignalOS Foundry")
-        identity_env.setdefault("GIT_COMMITTER_EMAIL", "foundry@signalos.local")
+        identity_env = {
+            "GIT_AUTHOR_NAME": "SignalOS Foundry",
+            "GIT_AUTHOR_EMAIL": "foundry@signalos.local",
+            "GIT_COMMITTER_NAME": "SignalOS Foundry",
+            "GIT_COMMITTER_EMAIL": "foundry@signalos.local",
+        }
         commit_args = ["git", "commit-tree", tree_oid]
         if parent:
             commit_args.extend(["-p", parent])
-        commit = _run(commit_args, data=msg.encode("utf-8"), env=identity_env)
+        commit = _run(
+            commit_args,
+            data=msg.encode("utf-8"),
+            extra_env=identity_env,
+        )
         if commit.returncode != 0:
             return "commit-failed", _detail(commit, "git commit-tree failed"), ""
         sha = commit.stdout.decode("ascii", "replace").strip()
@@ -2439,7 +2481,12 @@ def _stage_and_commit_for_release(
         if receipt != sha:
             return "verification-failed", "release backend receipt validation failed", sha
         return "committed", "", sha
-    except (OSError, subprocess.SubprocessError, ReleaseTreeError) as exc:
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ReleaseTreeError,
+        GitProcessPolicyError,
+    ) as exc:
         return "commit-failed", _redact_release_detail(f"subprocess-error: {exc}"), ""
     finally:
         try:
@@ -2546,29 +2593,48 @@ def _auto_push_on_g5(
         _record_g5_push_outcome(root, "failed", reason, project_id=project_id)
         return {"commit": commit, "push": {"status": "failed", "reason": reason}}
 
+    try:
+        funded_remote = funded_expected_remote(root)
+    except GitProcessPolicyError as exc:
+        reason = _redact_release_detail(f"funded-remote-policy: {exc}")
+        _record_g5_push_outcome(root, "failed", reason, project_id=project_id)
+        return {"commit": commit, "push": {"status": "failed", "reason": reason}}
+    if funded_remote is not None and not configured_remote_matches_expected(
+        str(remote_url or ""), funded_remote,
+    ):
+        reason = "configured origin does not match the driver-attested local remote"
+        _record_g5_push_outcome(root, "failed", reason, project_id=project_id)
+        return {"commit": commit, "push": {"status": "failed", "reason": reason}}
+
     def _try_push(remote_label: str) -> tuple[dict, str]:
         if cancelled():
             reason = "cancelled before push"
             return {"status": "cancelled", "reason": reason}, reason
+        remote_target = str(funded_remote) if funded_remote is not None else "origin"
         try:
-            branch = subprocess.run(
-                ["git", "symbolic-ref", "--quiet", "HEAD"],
-                cwd=str(root), capture_output=True, text=True, check=False,
+            branch = run_git(
+                ["symbolic-ref", "--quiet", "HEAD"],
+                cwd=root,
+                runner=subprocess.run,
+                capture_output=True,
+                text=True,
+                check=False,
                 timeout=15,
             )
             destination = branch.stdout.strip() if branch.returncode == 0 else ""
             if not destination.startswith("refs/heads/"):
                 reason = "detached HEAD has no safe remote branch destination"
                 return {"status": "failed", "reason": reason}, reason
-            proc = subprocess.run(
-                ["git", "push", "origin", f"{commit_sha}:{destination}"],
-                cwd=str(root),
+            proc = run_git(
+                ["push", remote_target, f"{commit_sha}:{destination}"],
+                cwd=root,
+                runner=subprocess.run,
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=120,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
             reason = _redact_release_detail(f"subprocess-error: {exc}")
             return {"status": "failed", "reason": reason}, reason
         if proc.returncode != 0:
@@ -2581,15 +2647,16 @@ def _auto_push_on_g5(
         # receipt. Read the exact destination ref back from origin and bind the
         # durable outcome to the commit we just proved locally.
         try:
-            remote = subprocess.run(
-                ["git", "ls-remote", "--exit-code", "origin", destination],
-                cwd=str(root),
+            remote = run_git(
+                ["ls-remote", "--exit-code", remote_target, destination],
+                cwd=root,
+                runner=subprocess.run,
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=60,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
             reason = _redact_release_detail(f"remote verification failed: {exc}")
             return {"status": "failed", "reason": reason}, reason
         remote_rows = []
@@ -2622,6 +2689,12 @@ def _auto_push_on_g5(
 
     def _attempt_oauth_create_and_push(reason: str) -> dict:
         """OAuth path: create the repo on GitHub, set as origin, push."""
+        if funded_remote is not None:
+            detail = "funded Git is file-only; OAuth/network remote creation is disabled"
+            _record_g5_push_outcome(
+                root, "failed", detail, project_id=project_id,
+            )
+            return {"status": "failed", "reason": detail}
         if not os.environ.get("SIGNALOS_GH_CLIENT_ID", "").strip():
             detail = (
                 f"{reason}; SIGNALOS_GH_CLIENT_ID not set "
@@ -2660,18 +2733,20 @@ def _auto_push_on_g5(
         # Wire the new remote and retry push.
         try:
             if remote_url is None:
-                configured = subprocess.run(
-                    ["git", "remote", "add", "origin", clone_url],
-                    cwd=str(root),
+                configured = run_git(
+                    ["remote", "add", "origin", clone_url],
+                    cwd=root,
+                    runner=subprocess.run,
                     capture_output=True,
                     text=True,
                     check=False,
                     timeout=15,
                 )
             else:
-                configured = subprocess.run(
-                    ["git", "remote", "set-url", "origin", clone_url],
-                    cwd=str(root),
+                configured = run_git(
+                    ["remote", "set-url", "origin", clone_url],
+                    cwd=root,
+                    runner=subprocess.run,
                     capture_output=True,
                     text=True,
                     check=False,
@@ -2683,7 +2758,12 @@ def _auto_push_on_g5(
                     or f"exit {configured.returncode}"
                 ).strip()
                 raise RuntimeError(detail)
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        except (
+            OSError,
+            RuntimeError,
+            subprocess.SubprocessError,
+            GitProcessPolicyError,
+        ) as exc:
             detail = _redact_release_detail(f"remote-set-error: {exc}")
             _record_g5_push_outcome(
                 root, "failed", detail, project_id=project_id,
@@ -2716,6 +2796,11 @@ def _auto_push_on_g5(
         return {"commit": commit, "push": push}
     if push.get("status") == "cancelled":
         return {"commit": commit, "push": push}
+
+    if funded_remote is not None:
+        reason = msg[:500]
+        _record_g5_push_outcome(root, "failed", reason, project_id=project_id)
+        return {"commit": commit, "push": {"status": "failed", "reason": reason}}
 
     if _looks_like_missing_remote_repo(msg):
         push = _attempt_oauth_create_and_push(f"remote-missing: {msg[:200]}")

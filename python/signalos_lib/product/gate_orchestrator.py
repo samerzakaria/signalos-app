@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .. import agent_loader, wave_engine, sign
+from ..git_process import (
+    GitProcessPolicyError,
+    configured_remote_matches_expected,
+    funded_expected_remote,
+    run_git,
+)
 from ..projects import validate_project_id
 from .agent_loop import AgentLoop, LoopResult
 from .wiring_check import CODE_SUFFIXES, SCAFFOLD_NAMES, find_unwired_modules
@@ -3034,39 +3040,72 @@ class GateOrchestrator:
                 # stdout/stderr here: either may contain credential-bearing
                 # remote URLs.
                 try:
-                    configured = subprocess.run(
-                        ["git", "remote", "get-url", "origin"],
-                        cwd=str(self.repo_root),
+                    configured = run_git(
+                        ["remote", "get-url", "origin"],
+                        cwd=self.repo_root,
+                        runner=subprocess.run,
                         capture_output=True,
                         text=True,
                         check=False,
                         timeout=10,
                     )
-                except (OSError, subprocess.SubprocessError):
+                except (
+                    OSError,
+                    subprocess.SubprocessError,
+                    GitProcessPolicyError,
+                ):
                     configured = None
                 remote_url = (
                     (configured.stdout or "").strip()
                     if configured is not None and configured.returncode == 0
                     else ""
                 )
+                try:
+                    expected_remote = funded_expected_remote(self.repo_root)
+                except GitProcessPolicyError:
+                    expected_remote = None
+                    remote_policy_ok = False
+                    reasons.append("funded release remote policy could not be verified")
+                else:
+                    remote_policy_ok = True
+                remote_identity = remote_url
+                remote_target = "origin"
+                if expected_remote is not None:
+                    if not configured_remote_matches_expected(
+                        remote_url, expected_remote,
+                    ):
+                        reasons.append(
+                            "origin remote no longer matches the driver-attested local remote"
+                        )
+                    remote_identity = str(expected_remote)
+                    remote_target = str(expected_remote)
                 if not remote_url:
                     reasons.append("origin remote URL could not be verified")
                 elif (
-                    hashlib.sha256(remote_url.encode("utf-8")).hexdigest()
+                    hashlib.sha256(remote_identity.encode("utf-8")).hexdigest()
                     != remote_hash
                 ):
                     reasons.append("origin remote URL no longer matches release receipt")
 
                 try:
-                    remote = subprocess.run(
-                        ["git", "ls-remote", "--exit-code", "origin", ref],
-                        cwd=str(self.repo_root),
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=60,
+                    remote = (
+                        run_git(
+                            ["ls-remote", "--exit-code", remote_target, ref],
+                            cwd=self.repo_root,
+                            runner=subprocess.run,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=60,
+                        )
+                        if remote_policy_ok
+                        else None
                     )
-                except (OSError, subprocess.SubprocessError):
+                except (
+                    OSError,
+                    subprocess.SubprocessError,
+                    GitProcessPolicyError,
+                ):
                     remote = None
                 remote_rows: list[str] = []
                 if remote is not None and remote.returncode == 0:

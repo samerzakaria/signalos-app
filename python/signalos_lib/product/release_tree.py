@@ -17,6 +17,8 @@ import subprocess
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from ..git_process import GitProcessPolicyError, run_git
+
 
 UNTRACKED_EXCLUDED_DIRS = frozenset({
     ".git", ".signalos", "node_modules", "vendor", ".venv", "venv",
@@ -125,11 +127,16 @@ def _is_untracked_payload(rel: str) -> bool:
 def _run_git(root: Path, args: list[str], *, data: bytes | None = None,
              timeout: int = 60) -> subprocess.CompletedProcess[bytes]:
     try:
-        return subprocess.run(
-            ["git", *args], cwd=str(root), input=data, capture_output=True,
-            check=False, timeout=timeout,
+        return run_git(
+            args,
+            cwd=root,
+            runner=subprocess.run,
+            input=data,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
         raise ReleaseTreeError(f"git {' '.join(args)} failed: {exc}") from exc
 
 

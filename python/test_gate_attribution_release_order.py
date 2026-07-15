@@ -638,6 +638,94 @@ class TestG5VerifyBeforeCommitPush(unittest.TestCase):
                 for reason in orch._release_success_reasons(outcome, release_digest)
             ))
 
+    def test_funded_push_uses_attested_path_even_if_origin_changes_after_lookup(self):
+        from signalos_lib import git_remote
+
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            root = base / "repo"
+            remote = base / "origin.git"
+            replacement = base / "replacement.git"
+            hooks = base / "disabled-hooks"
+            root.mkdir()
+            hooks.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+            subprocess.run(
+                ["git", "init", "--bare", "-q", str(replacement)], check=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "SignalOS Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "test@signalos.local"],
+                cwd=root,
+                check=True,
+            )
+            source = root / "src" / "App.tsx"
+            source.parent.mkdir(parents=True)
+            source.write_text("export const funded = true;\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-q", "-m", "seed"], cwd=root, check=True
+            )
+            subprocess.run(
+                ["git", "remote", "add", "origin", str(remote)],
+                cwd=root,
+                check=True,
+            )
+            source.write_text("export const funded = 'sealed';\n", encoding="utf-8")
+            release_digest = tree_digest(workspace_release_tree(root))
+            real_lookup = git_remote.ensure_github_remote
+
+            def lookup_then_swap(workspace: Path) -> str | None:
+                configured = real_lookup(workspace)
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", str(replacement)],
+                    cwd=root,
+                    check=True,
+                )
+                return configured
+
+            funded_env = {
+                "SIGNALOS_SANDBOX_PROFILE": "funded",
+                "SIGNALOS_FUNDED_GIT_HOOKS_DIR": str(hooks),
+                "SIGNALOS_FUNDED_EXPECTED_GIT_REMOTE": str(remote),
+                "OPENROUTER_API_KEY": "must-not-reach-git",
+                "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY": "ab" * 32,
+            }
+            with mock.patch.dict(os.environ, funded_env, clear=False), mock.patch.object(
+                git_remote,
+                "ensure_github_remote",
+                side_effect=lookup_then_swap,
+            ):
+                result = sign_mod._auto_push_on_g5(
+                    root,
+                    release_id="default:funded-remote-binding",
+                    release_digest=release_digest,
+                    project_id="default",
+                )
+
+            self.assertEqual(result["push"]["status"], "ok", result)
+            self.assertTrue(result["push"]["verified"])
+            destination = result["push"]["ref"]
+            expected_sha = subprocess.run(
+                ["git", "--git-dir", str(remote), "rev-parse", destination],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(expected_sha, result["commit"]["sha"])
+            replacement_probe = subprocess.run(
+                ["git", "--git-dir", str(replacement), "rev-parse", destination],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(replacement_probe.returncode, 0)
+
     def test_release_receipt_rejects_cross_project_seal_path_replay(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

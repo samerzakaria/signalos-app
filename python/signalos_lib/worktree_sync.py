@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .git_process import GitProcessPolicyError, run_git
+
 SCHEMA_VERSION = "signalos.worktree_snapshot.v1"
 VALIDATION_SCHEMA_VERSION = "signalos.validate_worktree_sync.v1"
 
@@ -214,8 +216,10 @@ def validate_worktree_sync(
 
 def _git(cwd: Path, *args: str) -> str:
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(cwd), *args],
+        proc = run_git(
+            list(args),
+            cwd=cwd,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -223,7 +227,7 @@ def _git(cwd: Path, *args: str) -> str:
             shell=False,
             timeout=20,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, GitProcessPolicyError) as exc:
         raise WorktreeSyncError(f"unable to run git {' '.join(args)}: {exc}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()

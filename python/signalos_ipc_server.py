@@ -28,6 +28,7 @@ from signalos_secret_guard import (
     scan_secret_files,
 )
 from signalos_attachments import analyze_payload
+from signalos_lib.git_process import GitProcessPolicyError, run_git
 from signalos_lib.product.run_ids import (
     agent_run_dir,
     safe_control_path,
@@ -2661,13 +2662,17 @@ def git_status_text(repo_root: Path) -> str:
         return "No git repository is active for this workspace."
 
     def _git(*argv: str) -> str:
-        proc = subprocess.run(
-            ["git", *argv],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        try:
+            proc = run_git(
+                list(argv),
+                cwd=repo_root,
+                runner=subprocess.run,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except GitProcessPolicyError as exc:
+            return f"Git policy blocked the status read: {exc}"
         if proc.returncode != 0:
             return (proc.stderr or proc.stdout or "").strip()
         return (proc.stdout or "").strip()
@@ -3063,16 +3068,17 @@ def _checkpoint_path(cwd: str, wave_id: str) -> str:
 
 def _run_git(args: list[str], cwd: str) -> tuple[int, str, str]:
     try:
-        proc = subprocess.run(
-            ["git", *args],
-            cwd=cwd,
+        proc = run_git(
+            args,
+            cwd=Path(cwd),
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             timeout=30,
             shell=False,
         )
         return (proc.returncode, proc.stdout or "", proc.stderr or "")
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, GitProcessPolicyError) as exc:
         return (127, "", str(exc))
 
 

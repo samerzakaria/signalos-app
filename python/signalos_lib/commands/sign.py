@@ -88,12 +88,21 @@ def main(argv: list[str]) -> int:  # noqa: C901
     else:
         try:
             import subprocess
-            out = subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"],
+            from signalos_lib.git_process import run_git
+
+            proc = run_git(
+                ["rev-parse", "--show-toplevel"],
+                cwd=Path.cwd(),
+                runner=subprocess.run,
+                capture_output=True,
                 text=True,
-                stderr=subprocess.DEVNULL,
+                check=False,
             )
-            root = Path(out.strip())
+            root = (
+                Path(proc.stdout.strip())
+                if proc.returncode == 0 and proc.stdout.strip()
+                else Path.cwd()
+            )
         except Exception:
             root = Path.cwd()
 

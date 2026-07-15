@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from .git_process import run_git
+
 HEARTBEAT_STALE_SECS: int = 300  # 5 minutes
 
 
@@ -67,9 +69,13 @@ def _check_git() -> HealthItem:
     if shutil.which("git") is None:
         return HealthItem("git", HealthStatus.DOWN, "git not found on PATH")
     try:
-        out = subprocess.run(
-            ["git", "--version"],
-            capture_output=True, text=True, timeout=5
+        out = run_git(
+            ["--version"],
+            cwd=Path.cwd(),
+            runner=subprocess.run,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         ver = out.stdout.strip()
         return HealthItem("git", HealthStatus.OK, ver)

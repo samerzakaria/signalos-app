@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..git_process import GitProcessPolicyError, run_git
+
 
 _REQUIRED_GENERATION_VALIDATORS = {
     "gate-signature-guard",
@@ -990,16 +992,17 @@ def _collect_git_touched_paths(
 
 def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(repo_root),
+        return run_git(
+            args,
+            cwd=repo_root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return None
 
 

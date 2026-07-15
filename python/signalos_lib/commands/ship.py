@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from signalos_lib.git_process import GitProcessPolicyError, run_git
 from signalos_lib.sign import check_gate, check_gate_signed_strict
 
 SCHEMA_VERSION = "signalos.ship.v1"
@@ -487,14 +488,15 @@ def _load_json(path: Path) -> Any:
 
 def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(
-            ["git", *args],
+        return run_git(
+            args,
             cwd=root,
+            runner=subprocess.run,
             capture_output=True,
             text=True,
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, GitProcessPolicyError):
         return None
 
 

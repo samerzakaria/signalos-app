@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..git_process import GitProcessPolicyError, run_git
+
 __all__ = [
     "create_delivery_state",
     "load_delivery_state",
@@ -235,9 +237,10 @@ def capture_git_state(repo_root: Path) -> dict[str, Any]:
 
     def _git(*args: str) -> str | None:
         try:
-            proc = subprocess.run(
-                ["git", *args],
-                cwd=str(repo_root),
+            proc = run_git(
+                list(args),
+                cwd=repo_root,
+                runner=subprocess.run,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -246,7 +249,12 @@ def capture_git_state(repo_root: Path) -> dict[str, Any]:
             )
             if proc.returncode == 0:
                 return proc.stdout.strip()
-        except (OSError, FileNotFoundError, subprocess.TimeoutExpired):
+        except (
+            OSError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+            GitProcessPolicyError,
+        ):
             pass
         return None
 

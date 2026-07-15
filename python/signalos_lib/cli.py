@@ -20,14 +20,23 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .git_process import run_git
+
 def _repo_root() -> Path:
     try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL
+        proc = run_git(
+            ["rev-parse", "--show-toplevel"],
+            cwd=Path.cwd(),
+            runner=subprocess.run,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        return Path(out.strip())
+        if proc.returncode == 0 and proc.stdout.strip():
+            return Path(proc.stdout.strip())
     except Exception:
-        return Path.cwd()
+        pass
+    return Path.cwd()
 
 
 def _build_parser() -> argparse.ArgumentParser:

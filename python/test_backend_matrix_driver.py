@@ -1455,6 +1455,7 @@ def test_funded_and_tool_environments_are_separate_and_exact(
         tmp_path / "sidecar-home",
         spec=spec,
         provider_key=provider_key,
+        expected_git_remote=tmp_path / "release-origin.git",
     )
     tool_env = driver._tool_subprocess_env(tmp_path / "tool-home")
 
@@ -1468,6 +1469,12 @@ def test_funded_and_tool_environments_are_separate_and_exact(
     assert sidecar_env["SIGNALOS_DEPENDENCY_POLICY"] == str(context.policy_path)
     assert sidecar_env["SIGNALOS_DEPENDENCY_BUNDLE"] == str(context.bundle_dir)
     assert sidecar_env["SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY"] == (b"K" * 32).hex()
+    assert sidecar_env["SIGNALOS_FUNDED_GIT_HOOKS_DIR"] == str(
+        (tmp_path / "sidecar-home" / "git-hooks-disabled").resolve()
+    )
+    assert sidecar_env["SIGNALOS_FUNDED_EXPECTED_GIT_REMOTE"] == str(
+        (tmp_path / "release-origin.git").resolve()
+    )
     assert sidecar_env["DOCKER_HOST"] == "npipe:////./pipe/dockerDesktopLinuxEngine"
     assert sidecar_env[spec.key_env] == provider_key
     assert sidecar_env["SIGNALOS_LLM_PROVIDER"] == spec.provider
@@ -1481,6 +1488,26 @@ def test_funded_and_tool_environments_are_separate_and_exact(
     assert tool_env["GCM_INTERACTIVE"] == "Never"
     driver._clear_parent_environment(sidecar_env)
     assert sidecar_env == {}
+    context.close()
+
+
+def test_funded_model_environment_requires_attested_local_git_remote(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    spec = driver.load_model_catalog(MODEL_CONFIG)[0]
+
+    with pytest.raises(
+        driver.InfrastructureError,
+        match="expected local Git remote",
+    ):
+        context.sidecar_environment(
+            tmp_path / "sidecar-home",
+            spec=spec,
+            provider_key="provider-key-sentinel",
+        )
+
     context.close()
 
 
