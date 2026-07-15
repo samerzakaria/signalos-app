@@ -88,9 +88,55 @@ jobs:
           docker info --format '{{.ServerVersion}}'
       - name: Pre-pull alpine
         run: docker pull alpine:latest
+      - name: Pre-cache pinned funded dependency image
+        shell: bash
+        run: |
+          image="$(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          policy = json.loads(
+              Path("scripts/backend_matrix/dependencies/policy.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          print(policy["buildImage"])
+          PY
+          )"
+          if [[ ! "$image" =~ ^docker\.io/library/node:[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "Funded dependency image is not digest pinned" >&2
+            exit 1
+          fi
+          docker pull --platform linux/amd64 "$image"
+          docker image inspect "$image" >/dev/null
       - name: Run sandbox integration tests
         working-directory: python
         run: python -m unittest test_sandbox_integration -v
+      - name: Run funded dependency broker Docker integration
+        working-directory: python
+        timeout-minutes: 25
+        env:
+          SIGNALOS_RUN_DEPENDENCY_PROXY_INTEGRATION: "1"
+        run: |
+          test "$SIGNALOS_RUN_DEPENDENCY_PROXY_INTEGRATION" = "1"
+          python -m unittest test_dependency_broker_integration -v
+      - name: Verify funded dependency Docker cleanup
+        if: always()
+        shell: bash
+        run: |
+          endpoint="$(docker context inspect --format '{{json .Endpoints.docker.Host}}' | python -c 'import json,sys; print(json.load(sys.stdin))')"
+          containers="$(docker --host "$endpoint" ps -aq \
+            --filter label=signalos.owner=dependency-broker \
+            --filter label=signalos.scope=funded-dependency)"
+          networks="$(docker --host "$endpoint" network ls -q \
+            --filter label=signalos.owner=dependency-broker \
+            --filter label=signalos.scope=funded-dependency)"
+          if [[ -n "$containers" || -n "$networks" ]]; then
+            echo "Funded dependency Docker residue detected" >&2
+            echo "containers=$containers" >&2
+            echo "networks=$networks" >&2
+            exit 1
+          fi
 
   l1-build:
     name: L1 build and verify
@@ -186,7 +232,7 @@ jobs:
 
   l2-installer-smoke:
     name: L2 installer smoke
-    needs: l1-build
+    needs: [l1-build, l1-sandbox-integration]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
