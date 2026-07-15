@@ -1309,10 +1309,17 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
     phys = _workspace_path(repo_root, test_path, project_id)
     if phys is None or not phys.is_file():
         return False, f"plan test not found: {test_path}"
+    # ``resolve_workspace_path`` canonicalizes the workspace root.  Compare the
+    # returned path with the same canonical root: on Windows the caller may use
+    # a lexical alias (``..``, short-name expansion, or different path casing),
+    # which must not make us fall back to an absolute host path inside a Linux
+    # verifier command.  If the containment invariant cannot be established,
+    # fail closed instead of exposing a host-only path to the container.
+    canonical_root = Path(repo_root).expanduser().resolve(strict=False)
     try:
-        rel = phys.relative_to(repo_root).as_posix()
+        rel = phys.relative_to(canonical_root).as_posix()
     except ValueError:
-        rel = str(phys)
+        return False, f"plan test is outside workspace: {test_path}"
     try:
         argv = stack.test_file_command(repo_root, rel)
         from .validation import _select_verifier_runner

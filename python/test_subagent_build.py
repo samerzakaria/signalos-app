@@ -447,6 +447,12 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
                 return 0, CommandOutput(stdout="PASS", stderr="")
 
         d = Path(tempfile.mkdtemp())
+        # Exercise a lexical workspace alias so this regression is deterministic
+        # on every platform.  The production failure appeared on Windows when
+        # canonical path resolution did not lexically match the caller's root.
+        alias_component = d.parent / f"{d.name}-path-alias"
+        alias_component.mkdir()
+        repo_root = alias_component / ".." / d.name
         tpath = "core/execution/tests/T1.test.ts"
         (d / tpath).parent.mkdir(parents=True, exist_ok=True)
         (d / tpath).write_text("test('x', () => {})", encoding="utf-8")
@@ -463,15 +469,14 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
         ), mock.patch(
             "signalos_lib.product.subagent_build.subprocess.run",
         ) as host_run:
-            self.assertEqual(_run_single_test(d, tpath, stack), (True, ""))
+            self.assertEqual(_run_single_test(repo_root, tpath, stack), (True, ""))
 
         host_run.assert_not_called()
         self.assertEqual(len(verifier.calls), 1)
         command, repo_root, timeout_s, env = verifier.calls[0]
-        self.assertTrue(command.startswith("npx vitest run "))
-        self.assertIn("T1.test.ts", command)
+        self.assertEqual(command, "npx vitest run core/execution/tests/T1.test.ts")
         self.assertNotIn("\\", command)
-        self.assertEqual(repo_root, d)
+        self.assertEqual(repo_root, alias_component / ".." / d.name)
         self.assertEqual(timeout_s, 240)
         self.assertEqual(env, {"CI": "1", "FORCE_COLOR": "0"})
 
