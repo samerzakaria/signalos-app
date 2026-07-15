@@ -642,7 +642,13 @@ class TestG5VerifyBeforeCommitPush(unittest.TestCase):
         from signalos_lib import git_remote
 
         with tempfile.TemporaryDirectory() as d:
-            base = Path(d)
+            # Resolve the temp root so the funded-Git disabled-hooks directory
+            # is a canonical path, exactly as the production driver does
+            # (FundedRunContext resolves runtime_home before deriving it). On
+            # macOS the temp root is /var -> /private/var and on the Windows CI
+            # runner it carries an 8.3 short name, so an unresolved path would
+            # trip the "not independently owned" (lexical != canonical) guard.
+            base = Path(d).resolve()
             root = base / "repo"
             remote = base / "origin.git"
             replacement = base / "replacement.git"

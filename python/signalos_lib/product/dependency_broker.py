@@ -60,6 +60,12 @@ PROXY_LISTEN_PORT = 3128
 PROXY_TLS_MODE = "end-to-end-strict"
 PROXY_INSTALLER_NETWORK = "docker-internal"
 PROXY_EGRESS_NETWORK = "dedicated-bridge"
+# The proxy container's entrypoint is the base image's node binary, and
+# reviewed images install it at different absolute paths (the Debian node
+# image at /usr/local/bin/node, the Playwright noble oracle image at
+# /usr/bin/node). The policy declares which one, checked against this
+# reviewed allowlist so the entrypoint stays an exact, audited absolute path.
+APPROVED_PROXY_NODE_BINARIES = frozenset({"/usr/local/bin/node", "/usr/bin/node"})
 FIXED_INSTALL_COMMAND = (
     "npm",
     "ci",
@@ -255,6 +261,7 @@ class DependencyPolicy:
     package_json: Path
     package_lock: Path
     proxy_image: str
+    proxy_node_path: str
     proxy_script_path: Path
     proxy_script_bytes: bytes
     proxy_script_sha256: str
@@ -320,6 +327,7 @@ def load_dependency_policy(
     if set(proxy) != {
         "egressPolicy",
         "image",
+        "nodePath",
         "script",
         "scriptSha256",
         "listenPort",
@@ -337,6 +345,11 @@ def load_dependency_policy(
         raise DependencyBrokerError(str(exc)) from exc
     if proxy_image != image:
         raise DependencyBrokerError("registry proxy must use the exact funded build image")
+    proxy_node_path = str(proxy.get("nodePath") or "")
+    if proxy_node_path not in APPROVED_PROXY_NODE_BINARIES:
+        raise DependencyBrokerError(
+            "funded registry proxy node binary path is not in the reviewed allowlist"
+        )
     if proxy.get("script") != PROXY_SCRIPT_RELATIVE_PATH.as_posix():
         raise DependencyBrokerError("funded registry proxy script path is not fixed")
     script_root = _real_directory(path.parent / "proxy", label="registry proxy directory")
@@ -390,6 +403,7 @@ def load_dependency_policy(
         package_json=package_json,
         package_lock=package_lock,
         proxy_image=proxy_image,
+        proxy_node_path=proxy_node_path,
         proxy_script_path=proxy_script_path,
         proxy_script_bytes=proxy_script_bytes,
         proxy_script_sha256=proxy_script_sha256,

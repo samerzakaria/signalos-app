@@ -17,6 +17,7 @@
   "registryProxy": {
     "egressPolicy": "npm-registry-connect-v2",
     "image": "docker.io/library/node:20-bookworm@sha256:cacf10e99285cbbc891452e31249c1b5ec3ba225f40028fae946b75aeaf1b66a",
+    "nodePath": "/usr/local/bin/node",
     "script": "proxy/connect-proxy.cjs",
     "scriptSha256": "a1492b238bd4d3f329a9e2965802fe981d26432aa060050c62f17c0e93bca622",
     "listenPort": 3128,

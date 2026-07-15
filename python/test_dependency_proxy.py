@@ -15,6 +15,7 @@ import pytest
 
 from signalos_lib.product.dependency_broker import (
     APPROVED_CONNECT_AUTHORITY,
+    APPROVED_PROXY_NODE_BINARIES,
     TRUSTED_INSTALL_SHELL_COMMAND,
     TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
     TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
@@ -1325,6 +1326,9 @@ def test_policy_binds_exact_proxy_script_hash_and_same_image(tmp_path: Path) -> 
         ("tlsMode", "intercept", "TLS mode"),
         ("installerNetwork", "bridge", "installer network"),
         ("proxyEgressNetwork", "default-bridge", "egress network"),
+        ("nodePath", "/tmp/evil/node", "node binary path"),
+        ("nodePath", "node", "node binary path"),
+        ("nodePath", "/usr/local/bin/node ; rm -rf /", "node binary path"),
     ],
 )
 def test_policy_rejects_every_proxy_boundary_downgrade(
@@ -1339,6 +1343,19 @@ def test_policy_rejects_every_proxy_boundary_downgrade(
 
     with pytest.raises(Exception, match=match):
         load_dependency_policy(policy_path)
+
+
+def test_reviewed_policies_declare_allowlisted_proxy_node_binaries() -> None:
+    # The proxy entrypoint is the base image's node binary. Each reviewed
+    # policy must pin an absolute path from the approved allowlist, and the
+    # funded (Debian node) and source-blind oracle (Playwright noble) images
+    # legitimately differ.
+    funded = load_dependency_policy(DEPENDENCIES / "policy.json")
+    oracle = load_dependency_policy(DEPENDENCIES / "oracle-policy.json")
+    assert funded.proxy_node_path == "/usr/local/bin/node"
+    assert oracle.proxy_node_path == "/usr/bin/node"
+    for policy in (funded, oracle):
+        assert policy.proxy_node_path in APPROVED_PROXY_NODE_BINARIES
 
 
 def test_proxy_source_has_one_fixed_connect_authority_and_no_runtime_configuration() -> None:

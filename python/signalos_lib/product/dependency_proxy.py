@@ -922,7 +922,7 @@ class DockerRegistryProxyRunner:
                 "--log-opt", "max-size=1m",
                 "--log-opt", "max-file=1",
                 "--log-opt", "compress=false",
-                "--entrypoint", "/usr/local/bin/node",
+                "--entrypoint", self.policy.proxy_node_path,
                 self.proxy_image,
                 "--input-type=commonjs",
                 "-e",
@@ -1081,7 +1081,7 @@ class DockerRegistryProxyRunner:
             data.get("Image") != runtime_image_id
             or config.get("Image") != self.proxy_image
             or config.get("User") != "1000:1000"
-            or config.get("Entrypoint") != ["/usr/local/bin/node"]
+            or config.get("Entrypoint") != [self.policy.proxy_node_path]
             or config.get("Cmd") != [
                 "--input-type=commonjs",
                 "-e",
@@ -1195,7 +1195,7 @@ class DockerRegistryProxyRunner:
         last_detail = "proxy did not accept local connections"
         while self._monotonic() < ready_deadline:
             probe = self._call(
-                ["exec", name, "/usr/local/bin/node", "-e", _READY_PROBE],
+                ["exec", name, self.policy.proxy_node_path, "-e", _READY_PROBE],
                 phase="proxy-readiness",
                 deadline=ready_deadline,
                 control_cap=2.0,
