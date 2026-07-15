@@ -779,8 +779,7 @@ mod persist_tests {
     }
 
     fn tmp_ws() -> std::path::PathBuf {
-        static NEXT_ID: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let mut p = std::env::temp_dir();
         p.push(format!(
             "signalos-enf-{}-{}-{}",
@@ -900,8 +899,7 @@ mod precheck_rule_tests {
     use std::path::PathBuf;
 
     fn tmp_ws() -> PathBuf {
-        static NEXT_ID: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        static NEXT_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let mut p = std::env::temp_dir();
         p.push(format!(
             "signalos-precheck-{}-{}-{}",
