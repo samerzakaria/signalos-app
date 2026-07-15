@@ -1,6 +1,6 @@
 # Internal Testing Build — attested by name, not signed
 
-This file documents how to produce a v3.3.0-internal.1 build for **internal testing**
+This file documents how to produce a v3.3.0-internal.2 build for **internal testing**
 without code-signing certificates, Apple Developer ID, or minisign release
 keys. The artifact is **attested by your name** (via git config + a
 machine-readable JSON), not signed by a CA. Distribute only to named
@@ -47,7 +47,7 @@ When you run `scripts/build-internal.ps1`, the script:
      "schema": "signalos.attestation.v1",
      "release_type": "internal-testing-unsigned",
      "product": "Foundry",
-     "version": "3.3.0-internal.1",
+     "version": "3.3.0-internal.2",
      "builder": {
        "name": "Samer Zakaria",
        "email": "noreply@signalos.app"
@@ -60,7 +60,7 @@ When you run `scripts/build-internal.ps1`, the script:
      },
      "artifacts": [
        {
-         "path": "src-tauri/target/release/bundle/nsis/Foundry_3.3.0-internal.1_x64-setup.exe",
+         "path": "src-tauri/target/release/bundle/nsis/Foundry_3.3.0-internal.2_x64-setup.exe",
          "size": 22118400,
          "sha256": "abc123..."
        }
@@ -102,8 +102,8 @@ Optional flags:
 
 Expected outputs:
 ```
-src-tauri/target/release/bundle/nsis/Foundry_3.3.0-internal.1_x64-setup.exe
-src-tauri/target/release/bundle/msi/Foundry_3.3.0-internal.1_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/Foundry_3.3.0-internal.2_x64-setup.exe
+src-tauri/target/release/bundle/msi/Foundry_3.3.0-internal.2_x64_en-US.msi
 distribution/internal/attestation-<short-commit>.json
 ```
 
@@ -116,8 +116,8 @@ bash scripts/build-internal.sh
 Optional flags: `--skip-build`, `--strict`.
 
 Outputs by platform:
-- macOS: `src-tauri/target/release/bundle/dmg/Foundry_3.3.0-internal.1_*.dmg`
-- Linux: `src-tauri/target/release/bundle/{deb,appimage}/Foundry_3.3.0-internal.1_*.{deb,AppImage}`
+- macOS: `src-tauri/target/release/bundle/dmg/Foundry_3.3.0-internal.2_*.dmg`
+- Linux: `src-tauri/target/release/bundle/{deb,appimage}/Foundry_3.3.0-internal.2_*.{deb,AppImage}`
 
 ---
 
@@ -133,12 +133,12 @@ Outputs by platform:
 
 ### What to tell testers
 
-> Hi — this is an **internal testing build** of Foundry v3.3.0-internal.1.
+> Hi — this is an **internal testing build** of Foundry v3.3.0-internal.2.
 > It is **not code-signed**, so the OS will warn you that the publisher
 > is unknown. That's expected. The build was attested by **Samer Zakaria
 > <samer.zakaria@gmail.com>** on **2026-05-15** from commit `5284391...`.
 >
-> **On Windows:** double-click `Foundry_3.3.0-internal.1_x64-setup.exe`. SmartScreen
+> **On Windows:** double-click `Foundry_3.3.0-internal.2_x64-setup.exe`. SmartScreen
 > will say "Windows protected your PC — Unknown publisher". Click **More info**,
 > then **Run anyway**.
 >
@@ -146,13 +146,13 @@ Outputs by platform:
 > launch Gatekeeper will say "cannot be opened because the developer cannot
 > be verified". **Right-click → Open → Open**.
 >
-> **On Linux:** `chmod +x Foundry_3.3.0-internal.1_amd64.AppImage && ./Foundry_…AppImage`,
+> **On Linux:** `chmod +x Foundry_3.3.0-internal.2_amd64.AppImage && ./Foundry_…AppImage`,
 > or install the .deb with `sudo dpkg -i …`.
 >
 > If you want to verify the build wasn't tampered with in transit:
 >
 > ```bash
-> sha256sum Foundry_3.3.0-internal.1_x64-setup.exe
+> sha256sum Foundry_3.3.0-internal.2_x64-setup.exe
 > # compare against the "sha256" field in attestation-<short-commit>.json
 > ```
 >
@@ -184,9 +184,9 @@ alongside the signing step when you have the materials) and follow
 Each attestation file is self-contained. To verify a build a tester received:
 
 ```bash
-# 1. Tester downloads Foundry_3.3.0-internal.1_x64-setup.exe + attestation-5284391.json
+# 1. Tester downloads Foundry_3.3.0-internal.2_x64-setup.exe + attestation-5284391.json
 # 2. They compute the local hash
-sha256sum Foundry_3.3.0-internal.1_x64-setup.exe
+sha256sum Foundry_3.3.0-internal.2_x64-setup.exe
 # 3. They compare against the attestation:
 jq -r '.artifacts[] | select(.path | endswith("setup.exe")) | .sha256' attestation-5284391.json
 # 4. If equal → the file matches what the builder produced. Identity comes
