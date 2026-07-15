@@ -6,10 +6,10 @@ NDJSON sidecar used by the desktop host, but it does not import or construct the
 GateOrchestrator.  That keeps the system boundary under test honest while still
 allowing deterministic, independent review of persisted gate evidence.
 
-Live runs spend provider credit and currently expose the selected provider key
-to product subprocesses spawned by the backend.  Consequently live execution
-requires both an explicit ``--live`` switch and an explicit acknowledgement.
-No credential is accepted on the command line or written to result bundles.
+Live runs spend provider credit and provide the selected provider key only to
+the trusted long-lived backend process.  Consequently live execution requires
+both an explicit ``--live`` switch and an explicit acknowledgement.  No
+credential is accepted on the command line or written to result bundles.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shutil
 import signal
 import stat as stat_module
@@ -45,6 +46,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS_CONFIG = Path(__file__).with_name("models.json")
 DEFAULT_SCENARIO = Path(__file__).with_name("scenarios") / "expense_tracker.json"
 DEFAULT_CI_POLICY = Path(__file__).with_name("ci_policy.json")
+DEFAULT_DEPENDENCY_POLICY = Path(__file__).with_name("dependencies") / "policy.json"
+SCENARIO_ROOT = Path(__file__).with_name("scenarios")
+ORACLE_ROOT = Path(__file__).with_name("oracles")
 SIDECAR = ROOT / "python" / "signalos_ipc_server.py"
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
 ORCHESTRATOR_PROFILES = ("benchmark", "production")
@@ -113,6 +117,17 @@ SUBPROCESS_ENV_ALLOWLIST = {
     "PLAYWRIGHT_BROWSERS_PATH",
 }
 
+PROXY_ENV_NAMES = {
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+}
+
 SECRET_SHAPES = (
     re.compile(r"\bsk-or-v1-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b"),
@@ -154,10 +169,16 @@ def _read_json(path: Path) -> Any:
         raise ValueError(f"invalid JSON in {path}: {exc}") from exc
 
 
-def load_model_catalog(path: Path) -> list[ModelSpec]:
-    """Load and validate the versioned provider/model catalog."""
+def _read_json_bytes(payload: bytes, *, label: str) -> Any:
+    """Decode one already-sealed JSON payload without reopening its path."""
 
-    raw = _read_json(path)
+    try:
+        return json.loads(bytes(payload).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid JSON in {label}: {exc}") from exc
+
+
+def _parse_model_catalog(raw: Any) -> list[ModelSpec]:
     if not isinstance(raw, dict):
         raise ValueError("model configuration must be a JSON object")
     provider = str(raw.get("provider") or "").strip().lower()
@@ -193,6 +214,16 @@ def load_model_catalog(path: Path) -> list[ModelSpec]:
         seen_models.add(model)
         result.append(ModelSpec(alias, provider, model, key_env, cohort))
     return result
+
+
+def load_model_catalog(path: Path) -> list[ModelSpec]:
+    """Load and validate the versioned provider/model catalog."""
+
+    return _parse_model_catalog(_read_json(path))
+
+
+def _load_model_catalog_bytes(payload: bytes, *, label: str) -> list[ModelSpec]:
+    return _parse_model_catalog(_read_json_bytes(payload, label=label))
 
 
 def _flatten_model_args(requested: Sequence[str] | None) -> list[str] | None:
@@ -447,6 +478,626 @@ def _isolated_subprocess_env(
     return _scrub_provider_keys(env)
 
 
+def _credential_free_host_env() -> dict[str, str]:
+    """Return only local runtime discovery variables, never credentials."""
+
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name in SUBPROCESS_ENV_ALLOWLIST
+        and name not in PROXY_ENV_NAMES
+        and value
+    }
+
+
+def _tool_subprocess_env(runtime_home: Path) -> dict[str, str]:
+    """Return a credential-free environment for trusted Git/tool subprocesses."""
+
+    env = _isolated_subprocess_env(runtime_home)
+    for name in PROXY_ENV_NAMES:
+        env.pop(name, None)
+    env.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "Never",
+        }
+    )
+    return env
+
+
+def _clear_parent_environment(env: dict[str, str]) -> None:
+    """Best-effort overwrite, then release, a parent-owned child environment."""
+
+    for name, value in tuple(env.items()):
+        env[name] = "\0" * len(value)
+    env.clear()
+
+
+def _zero_bytearray(value: bytearray) -> None:
+    for index in range(len(value)):
+        value[index] = 0
+
+
+def _remove_directory_with_readback(
+    path: Path,
+    *,
+    attempts: int = 4,
+) -> tuple[bool, str]:
+    """Remove one already-authorized directory and verify it is absent."""
+
+    target = Path(path)
+    last_error = ""
+
+    def make_writable_and_retry(
+        function: Callable[[str], Any],
+        name: str,
+        _error: tuple[type[BaseException], BaseException, Any],
+    ) -> None:
+        os.chmod(name, stat_module.S_IWRITE)
+        function(name)
+
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(target, onerror=make_writable_and_retry)
+        except FileNotFoundError:
+            return True, ""
+        except OSError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        if not target.exists() and not target.is_symlink():
+            return True, ""
+        if attempt + 1 < attempts:
+            time.sleep(0.05 * (attempt + 1))
+    return False, last_error or "directory still exists after cleanup"
+
+
+def _assert_external_owned_root(path: Path) -> Path:
+    """Validate a unique run root before it can ever be recursively removed."""
+
+    raw = Path(path)
+    try:
+        info = raw.lstat()
+    except OSError as exc:
+        raise InfrastructureError("registered run root is not a real directory") from exc
+    attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+    if (
+        not stat_module.S_ISDIR(info.st_mode)
+        or stat_module.S_ISLNK(info.st_mode)
+        or attributes & 0x0400
+    ):
+        raise InfrastructureError("registered run root must not be a link/reparse point")
+    resolved = raw.resolve(strict=True)
+    if (
+        resolved.parent == resolved
+        or resolved == ROOT
+        or resolved in ROOT.parents
+        or ROOT in resolved.parents
+    ):
+        raise InfrastructureError(
+            "registered run root must be a unique directory outside the repository"
+        )
+    return resolved
+
+
+def _purge_external_owned_root(path: Path) -> None:
+    target = Path(path)
+    if not target.exists() and not target.is_symlink():
+        return
+    resolved = _assert_external_owned_root(target)
+    removed, error = _remove_directory_with_readback(resolved)
+    if not removed:
+        raise InfrastructureError(
+            "unsafe retained run output could not be removed: " + error
+        )
+
+
+def _dependency_broker_module() -> Any:
+    _lazy_signalos_path()
+    from signalos_lib.product import dependency_broker
+
+    return dependency_broker
+
+
+@dataclasses.dataclass
+class FundedRunContext:
+    """Own one funded dependency bundle and its run-scoped HMAC key."""
+
+    policy_path: Path
+    policy: Any
+    scratch_root: Path
+    bundle_dir: Path
+    _receipt: dict[str, Any] = dataclasses.field(repr=False)
+    _attestation_key: bytearray = dataclasses.field(repr=False)
+    _scan_roots: list[Path] = dataclasses.field(default_factory=list, repr=False)
+    _registered_secrets: list[tuple[str, bytearray]] = dataclasses.field(
+        default_factory=list,
+        repr=False,
+    )
+    _closed: bool = dataclasses.field(default=False, init=False, repr=False)
+    _close_evidence: dict[str, Any] = dataclasses.field(default_factory=dict, init=False, repr=False)
+
+    @classmethod
+    def prepare(
+        cls,
+        policy_path: Path,
+        *,
+        timeout: float,
+        expected_profile: str | None = None,
+    ) -> "FundedRunContext":
+        broker = _dependency_broker_module()
+        resolved_policy = Path(policy_path).expanduser().resolve()
+        scratch_root = Path(tempfile.mkdtemp(prefix="signalos-funded-dependencies-"))
+        bundle_dir = scratch_root / "bundle"
+        key = bytearray()
+        try:
+            policy = broker.load_dependency_policy(resolved_policy)
+            if expected_profile is not None and policy.profile != expected_profile:
+                raise InfrastructureError(
+                    "scenario profile does not match the reviewed dependency policy"
+                )
+            generated = secrets.token_bytes(32)
+            if type(generated) is not bytes or len(generated) != 32:
+                raise InfrastructureError("dependency attestation key generation failed closed")
+            key.extend(generated)
+            generated = b""
+            receipt = broker.prepare_dependency_bundle(
+                resolved_policy,
+                bundle_dir,
+                engine="docker",
+                timeout=timeout,
+                attestation_key=bytes(key),
+            )
+            verified = broker.verify_dependency_bundle(
+                resolved_policy,
+                bundle_dir,
+                attestation_key=bytes(key),
+            )
+            provisioner = verified.get("provisioner") if isinstance(verified, dict) else None
+            if verified != receipt or not isinstance(provisioner, dict):
+                raise InfrastructureError("trusted dependency bundle verification disagreed with preparation")
+            if provisioner.get("cleanup_verified") is not True:
+                raise InfrastructureError("dependency proxy cleanup was not independently verified")
+            return cls(
+                policy_path=resolved_policy,
+                policy=policy,
+                scratch_root=scratch_root,
+                bundle_dir=bundle_dir,
+                _receipt=dict(verified),
+                _attestation_key=key,
+            )
+        except BaseException as exc:
+            sanitized_error = str(
+                redact(
+                    f"{type(exc).__name__}: {exc}",
+                    (bytes(key).hex(),) if key else (),
+                )
+            )
+            scan: dict[str, Any] = {"ok": False, "hits": [], "errors": []}
+            removed = False
+            cleanup_error = "cleanup did not run"
+            try:
+                scan = _scan_exact_secret_values(
+                    (scratch_root,), _attestation_needles(key)
+                )
+                removed, cleanup_error = _remove_directory_with_readback(
+                    scratch_root
+                )
+            finally:
+                _zero_bytearray(key)
+            if not scan["ok"]:
+                raise InfrastructureError(
+                    "dependency bundle preparation left unverifiable secret evidence"
+                ) from None
+            if not removed:
+                raise InfrastructureError(
+                    "failed dependency bundle preparation could not clean its scratch root: "
+                    + cleanup_error
+                ) from None
+            if not isinstance(exc, Exception):
+                raise
+            if isinstance(exc, HarnessError):
+                raise
+            raise InfrastructureError(
+                "trusted dependency bundle preparation failed: " + sanitized_error
+            ) from None
+
+    def __enter__(self) -> "FundedRunContext":
+        if self._closed:
+            raise InfrastructureError("funded run context is already closed")
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _traceback: Any) -> None:
+        self.close()
+
+    def _key_bytes(self) -> bytes:
+        if self._closed or len(self._attestation_key) != 32:
+            raise InfrastructureError("funded dependency attestation key is unavailable")
+        return bytes(self._attestation_key)
+
+    def _key_hex(self) -> str:
+        return self._key_bytes().hex()
+
+    def redaction_secrets(self, provider_key: str = "") -> tuple[str, ...]:
+        values = [self._key_hex()]
+        if provider_key:
+            values.insert(0, provider_key)
+        return tuple(values)
+
+    def attestation_scan_needles(self) -> tuple[tuple[str, bytes], ...]:
+        """Return exact in-memory secret forms for retained-file scanning only."""
+
+        return _attestation_needles(self._attestation_key)
+
+    def register_scan_root(self, root: Path) -> None:
+        resolved = _assert_external_owned_root(root)
+        if resolved not in self._scan_roots:
+            self._scan_roots.append(resolved)
+
+    def register_exact_secret(self, kind: str, value: str) -> None:
+        if self._closed:
+            raise InfrastructureError("cannot register a secret on a closed funded context")
+        encoded = bytearray(value.encode("utf-8"))
+        if encoded:
+            self._registered_secrets.append((str(kind), encoded))
+
+    def docker_binding(self) -> dict[str, str]:
+        provisioner = self._receipt.get("provisioner")
+        if not isinstance(provisioner, dict):
+            raise InfrastructureError("dependency receipt has no provisioner binding")
+        binding = {
+            "host_trust_profile": str(
+                provisioner.get("host_trust_profile") or ""
+            ),
+            "docker_endpoint": str(provisioner.get("docker_endpoint") or ""),
+            "daemon_os_type": str(provisioner.get("daemon_os_type") or ""),
+        }
+        if (
+            not binding["host_trust_profile"]
+            or not binding["docker_endpoint"]
+            or binding["daemon_os_type"] != "linux"
+        ):
+            raise InfrastructureError(
+                "dependency receipt has an invalid Docker endpoint binding"
+            )
+        return binding
+
+    def sidecar_environment(
+        self,
+        runtime_home: Path,
+        *,
+        spec: ModelSpec | None = None,
+        provider_key: str = "",
+    ) -> dict[str, str]:
+        if (spec is None) != (not provider_key):
+            raise ValueError("provider model and key must be supplied together")
+        docker_binding = self.docker_binding()
+        env: dict[str, str] = {}
+        try:
+            env = _isolated_subprocess_env(
+                runtime_home,
+                extra={
+                    "SIGNALOS_SANDBOX": "docker",
+                    "SIGNALOS_SANDBOX_PROFILE": "funded",
+                    "SIGNALOS_SANDBOX_IMAGE": str(self.policy.image),
+                    "SIGNALOS_SANDBOX_NETWORK": "none",
+                    "SIGNALOS_SANDBOX_PULL": "never",
+                    "SIGNALOS_SANDBOX_READONLY": "1",
+                    "SIGNALOS_SANDBOX_STRICT": "1",
+                    "SIGNALOS_DEPENDENCY_POLICY": str(self.policy_path),
+                    "SIGNALOS_DEPENDENCY_BUNDLE": str(self.bundle_dir),
+                    "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY": self._key_hex(),
+                    "DOCKER_HOST": docker_binding["docker_endpoint"],
+                },
+            )
+            if spec is not None:
+                env.update(
+                    {
+                        "SIGNALOS_LLM_PROVIDER": spec.provider,
+                        "SIGNALOS_LLM_MODEL": spec.model,
+                        spec.key_env: provider_key,
+                    }
+                )
+            return env
+        except BaseException:
+            _clear_parent_environment(env)
+            raise
+
+    def _receipt_evidence(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        def selected(name: str, allowed: tuple[str, ...]) -> dict[str, Any]:
+            value = receipt.get(name)
+            if not isinstance(value, dict):
+                return {}
+            return {key: value.get(key) for key in allowed if key in value}
+
+        return {
+            "schema": receipt.get("schema"),
+            "status": receipt.get("status"),
+            "profile": receipt.get("profile"),
+            "platform": receipt.get("platform"),
+            "image": receipt.get("image"),
+            "policy_sha256": receipt.get("policy_sha256"),
+            "broker_sha256": receipt.get("broker_sha256"),
+            "attestation_key_id": receipt.get("attestation_key_id"),
+            "receipt_sha256": receipt.get("receipt_sha256"),
+            "inputs": selected(
+                "inputs",
+                (
+                    "package_json_sha256",
+                    "package_lock_sha256",
+                    "lockfile_version",
+                    "resolved_urls_sha256",
+                    "package_count",
+                ),
+            ),
+            "provisioner": selected(
+                "provisioner",
+                (
+                    "schema",
+                    "engine",
+                    "host_trust_profile",
+                    "docker_endpoint",
+                    "daemon_os_type",
+                    "platform",
+                    "installer_image",
+                    "proxy_image",
+                    "runtime_image_id",
+                    "proxy_script_sha256",
+                    "runner_sha256",
+                    "egress_policy",
+                    "allowed_connect_authorities",
+                    "installer_network",
+                    "proxy_egress_network",
+                    "tls_mode",
+                    "pull_policy",
+                    "cleanup_verified",
+                ),
+            ),
+            "bundle": selected(
+                "bundle",
+                (
+                    "tree_sha256",
+                    "file_count",
+                    "total_bytes",
+                    "archive_sha256",
+                ),
+            ),
+        }
+
+    def public_evidence(self) -> dict[str, Any]:
+        return self._receipt_evidence(self._receipt)
+
+    def evidence_hashes(self) -> dict[str, str]:
+        evidence = self.public_evidence()
+        inputs = evidence["inputs"]
+        bundle = evidence["bundle"]
+        provisioner = evidence["provisioner"]
+        return {
+            "dependency_policy_sha256": str(evidence.get("policy_sha256") or ""),
+            "dependency_package_json_sha256": str(inputs.get("package_json_sha256") or ""),
+            "dependency_package_lock_sha256": str(inputs.get("package_lock_sha256") or ""),
+            "dependency_proxy_script_sha256": str(provisioner.get("proxy_script_sha256") or ""),
+            "dependency_bundle_archive_sha256": str(bundle.get("archive_sha256") or ""),
+            "dependency_attestation_key_id": str(evidence.get("attestation_key_id") or ""),
+        }
+
+    def materialize_after_init(self, workspace: Path) -> dict[str, Any]:
+        root = Path(workspace).resolve()
+        if not (root / ".signalos" / "INIT_COMPLETE.json").is_file():
+            raise InfrastructureError("dependency materialization requires completed signal-init")
+        broker = _dependency_broker_module()
+        try:
+            receipt = broker.materialize_dependency_bundle(
+                root,
+                self.policy_path,
+                self.bundle_dir,
+                attestation_key=self._key_bytes(),
+            )
+        except Exception as exc:
+            raise InfrastructureError(
+                "trusted dependency materialization failed: "
+                + str(redact(f"{type(exc).__name__}: {exc}", self.redaction_secrets()))
+            ) from None
+        return self._receipt_evidence(receipt)
+
+    def verify_materialized_after_init(self, workspace: Path) -> dict[str, Any]:
+        root = Path(workspace).resolve()
+        if not (root / ".signalos" / "INIT_COMPLETE.json").is_file():
+            raise InfrastructureError("dependency verification requires completed signal-init")
+        broker = _dependency_broker_module()
+        try:
+            receipt = broker.verify_materialized_dependencies(
+                root,
+                self.policy_path,
+                attestation_key=self._key_bytes(),
+            )
+        except Exception as exc:
+            raise InfrastructureError(
+                "materialized dependency verification failed: "
+                + str(redact(f"{type(exc).__name__}: {exc}", self.redaction_secrets()))
+            ) from None
+        return self._receipt_evidence(receipt)
+
+    def offline_probe(self, workspace: Path, *, timeout: float) -> dict[str, Any]:
+        receipt = self.verify_materialized_after_init(workspace)
+        bundle = receipt["bundle"]
+        docker_binding = self.docker_binding()
+        docker_endpoint = docker_binding["docker_endpoint"]
+        _lazy_signalos_path()
+        from signalos_lib.product.sandbox import ContainerRunner, DependencyMount
+
+        mount = DependencyMount(
+            archive_path=Path(workspace).resolve()
+            / ".signalos"
+            / "dependencies"
+            / "node_modules.tar",
+            archive_sha256=str(bundle.get("archive_sha256") or ""),
+            tree_sha256=str(bundle.get("tree_sha256") or ""),
+            file_count=int(bundle.get("file_count") or 0),
+            total_bytes=int(bundle.get("total_bytes") or 0),
+        )
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="signalos-funded-docker-control-"
+            ) as control_home:
+                docker_env = _tool_subprocess_env(Path(control_home))
+                docker_env["DOCKER_HOST"] = docker_endpoint
+                try:
+                    def bound_docker_runtime(
+                        argv: Sequence[str], **kwargs: Any
+                    ) -> subprocess.CompletedProcess[str]:
+                        command = list(argv)
+                        executable = Path(command[0]).name.lower() if command else ""
+                        if executable not in {"docker", "docker.exe"}:
+                            raise InfrastructureError(
+                                "funded runner attempted a non-Docker control-plane command"
+                            )
+                        command = [
+                            command[0], "--host", docker_endpoint, *command[1:]
+                        ]
+                        kwargs["env"] = dict(docker_env)
+                        return subprocess.run(command, **kwargs)
+
+                    daemon_probe = bound_docker_runtime(
+                        ["docker", "info", "--format", "{{.OSType}}"],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=min(timeout, 30.0),
+                        check=False,
+                    )
+                    if (
+                        daemon_probe.returncode != 0
+                        or daemon_probe.stdout.strip()
+                        != docker_binding["daemon_os_type"]
+                    ):
+                        raise InfrastructureError(
+                            "funded Docker endpoint does not expose the attested Linux daemon"
+                        )
+                    runner = ContainerRunner(
+                        workspace,
+                        engine="docker",
+                        image=str(self.policy.image),
+                        network="none",
+                        read_only=True,
+                        pull="never",
+                        hardened=True,
+                        workspace_read_only=True,
+                        writable_paths=("dist",),
+                        platform=str(self.policy.platform),
+                        dependency_mount=mount,
+                        require_funded_dependencies=True,
+                        runner=bound_docker_runtime,
+                    )
+                    exit_code, output = runner.run(
+                        "node -e \"for (const name of ['react','vite','vitest']) "
+                        "require.resolve(name); process.stdout.write('SIGNALOS_DEPENDENCIES_OK')\"",
+                        workspace,
+                        timeout,
+                        {"CI": "1", "FORCE_COLOR": "0"},
+                    )
+                finally:
+                    _clear_parent_environment(docker_env)
+        except Exception as exc:
+            raise InfrastructureError(
+                "offline funded dependency probe failed: "
+                + str(redact(f"{type(exc).__name__}: {exc}", self.redaction_secrets()))
+            ) from None
+        if output.timed_out or exit_code != 0 or "SIGNALOS_DEPENDENCIES_OK" not in output.stdout:
+            raise InfrastructureError("offline funded dependency probe did not complete successfully")
+        return {
+            "ok": True,
+            "engine": "docker",
+            "network": "none",
+            "pull": "never",
+            "image": str(self.policy.image),
+            **docker_binding,
+            "dependencies_read_only": True,
+        }
+
+    def close(self) -> dict[str, Any]:
+        if self._closed:
+            evidence = dict(self._close_evidence)
+            if evidence.get("scratch_removed") is not True:
+                removed, _error = _remove_directory_with_readback(self.scratch_root)
+                evidence["scratch_removed"] = removed
+                self._close_evidence = dict(evidence)
+                if not removed:
+                    raise InfrastructureError(
+                        "funded dependency scratch cleanup failed"
+                    )
+            if (evidence.get("secret_scan") or {}).get("ok") is not True:
+                if evidence.get("retained_roots_removed") is not True:
+                    removal_ok = True
+                    for root in self._scan_roots:
+                        removed, _error = _remove_directory_with_readback(root)
+                        removal_ok = removal_ok and removed
+                    evidence["retained_roots_removed"] = removal_ok
+                    self._close_evidence = dict(evidence)
+                    if not removal_ok:
+                        raise InfrastructureError(
+                            "funded-run secret evidence was unverifiable and retained "
+                            "output could not be removed"
+                        )
+                raise InfrastructureError(
+                    "funded-run secret evidence was unverifiable"
+                )
+            return evidence
+        registered_roots = list(self._scan_roots)
+        roots = [self.scratch_root, *registered_roots]
+        needles = list(_attestation_needles(self._attestation_key))
+        needles.extend(
+            (kind, bytes(value)) for kind, value in self._registered_secrets
+        )
+        scan = _scan_exact_secret_values(roots, needles)
+        scratch_removed = False
+        cleanup_error = ""
+        retained_cleanup_errors: list[str] = []
+        retained_roots_removed = False
+        try:
+            scratch_removed, cleanup_error = _remove_directory_with_readback(
+                self.scratch_root
+            )
+            if not scan["ok"]:
+                for root in registered_roots:
+                    removed, error = _remove_directory_with_readback(root)
+                    if not removed:
+                        retained_cleanup_errors.append(error)
+                retained_roots_removed = all(
+                    not root.exists() and not root.is_symlink()
+                    for root in registered_roots
+                )
+        finally:
+            _zero_bytearray(self._attestation_key)
+            for _kind, value in self._registered_secrets:
+                _zero_bytearray(value)
+            self._registered_secrets.clear()
+            self._closed = True
+            self._close_evidence = {
+                "secret_scan": scan,
+                "scratch_removed": scratch_removed
+                and not self.scratch_root.exists(),
+                "retained_roots_removed": retained_roots_removed
+                if not scan["ok"]
+                else None,
+                "key_zeroed": all(value == 0 for value in self._attestation_key),
+            }
+            if scratch_removed and (scan["ok"] or retained_roots_removed):
+                self._scan_roots.clear()
+        if not scan["ok"]:
+            if retained_cleanup_errors or not retained_roots_removed:
+                raise InfrastructureError(
+                    "funded-run secret evidence was unverifiable and retained output "
+                    "could not be removed"
+                )
+            raise InfrastructureError(
+                "funded-run secret evidence was unverifiable; retained output was removed"
+            )
+        if cleanup_error or not scratch_removed or self.scratch_root.exists():
+            raise InfrastructureError("funded dependency scratch cleanup failed")
+        return dict(self._close_evidence)
+
+
 class OpenRouterClient:
     def __init__(self, key: str, timeout: float = 30.0) -> None:
         self._key = key
@@ -579,7 +1230,7 @@ def _run_command(
     process = subprocess.Popen(
         list(argv),
         cwd=str(cwd),
-        env=env,
+        env=env if env is not None else _credential_free_host_env(),
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -750,6 +1401,7 @@ def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
                 timeout=15,
                 check=False,
                 shell=False,
+                env=_credential_free_host_env(),
             )
     else:
         with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -763,6 +1415,8 @@ def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
         process.kill()
     with contextlib.suppress(Exception):
         process.wait(timeout=5)
+    if process.poll() is None:
+        raise InfrastructureError("owned subprocess tree did not terminate")
 
 
 def _local_preflight() -> dict[str, Any]:
@@ -799,7 +1453,13 @@ def _local_preflight() -> dict[str, Any]:
     return result
 
 
-def _backend_preflight(scenario: dict[str, Any], *, init_timeout: float) -> dict[str, Any]:
+def _backend_preflight(
+    scenario: dict[str, Any],
+    *,
+    init_timeout: float,
+    dependency_timeout: float,
+    funded_context: FundedRunContext,
+) -> dict[str, Any]:
     """Exercise the real source-sidecar handshake and init path without an LLM.
 
     This disposable journey is deliberately stronger than an import or file
@@ -812,9 +1472,15 @@ def _backend_preflight(scenario: dict[str, Any], *, init_timeout: float) -> dict
         base = Path(temporary)
         workspace = base / "workspace"
         workspace.mkdir()
-        env = _isolated_subprocess_env(base / "runtime-home")
-        sidecar = SidecarClient(workspace, env, ())
+        env: dict[str, str] = {}
+        sidecar: SidecarClient | None = None
         try:
+            env = funded_context.sidecar_environment(base / "runtime-home")
+            sidecar = SidecarClient(
+                workspace,
+                env,
+                funded_context.redaction_secrets(),
+            )
             _events, terminal = sidecar.call("capabilities", [], timeout=60)
             capabilities = _require_ok("capabilities", terminal)
             required = {
@@ -845,6 +1511,26 @@ def _backend_preflight(scenario: dict[str, Any], *, init_timeout: float) -> dict
                 raise InfrastructureError(
                     "disposable signal-init returned success without INIT_COMPLETE.json"
                 )
+            _lazy_signalos_path()
+            from signalos_lib.product.stacks import get_adapter
+
+            scaffold = get_adapter(str(scenario["profile"])).scaffold(
+                workspace,
+                {"product_name": "Backend Matrix Preflight"},
+            )
+            if (
+                scaffold.get("can_deliver_ui") is not True
+                or scaffold.get("can_deliver_runnable") is not True
+            ):
+                raise InfrastructureError(
+                    "funded scenario scaffold is not a runnable UI product"
+                )
+            materialized = funded_context.materialize_after_init(workspace)
+            verified = funded_context.verify_materialized_after_init(workspace)
+            offline_probe = funded_context.offline_probe(
+                workspace,
+                timeout=dependency_timeout,
+            )
             return {
                 "ready": True,
                 "protocol": capabilities.get("protocol"),
@@ -852,9 +1538,31 @@ def _backend_preflight(scenario: dict[str, Any], *, init_timeout: float) -> dict
                 "required_commands": sorted(required),
                 "signal_init_profile": scenario["profile"],
                 "init_complete": True,
+                "scaffold": {
+                    "created": sorted(str(path) for path in scaffold.get("created") or []),
+                    "can_deliver_ui": scaffold.get("can_deliver_ui") is True,
+                    "can_deliver_runnable": scaffold.get("can_deliver_runnable") is True,
+                },
+                "funded_dependencies": {
+                    "materialized": materialized,
+                    "verified": verified,
+                    "offline_probe": offline_probe,
+                },
             }
         finally:
-            sidecar.close()
+            try:
+                if sidecar is not None:
+                    sidecar.close()
+            finally:
+                _clear_parent_environment(env)
+                preflight_scan = _scan_exact_secret_values(
+                    (base,),
+                    funded_context.attestation_scan_needles(),
+                )
+                if not preflight_scan["ok"]:
+                    raise InfrastructureError(
+                        "keyless backend preflight retained dependency attestation secret data"
+                    )
 
 
 def _provider_preflight(
@@ -1034,40 +1742,84 @@ class SidecarClient:
 
     def __init__(self, workspace: Path, env: dict[str, str], secrets: Iterable[str]) -> None:
         self.workspace = Path(workspace)
-        self.secrets = tuple(secrets)
-        creationflags = 0
-        kwargs: dict[str, Any] = {}
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            kwargs["start_new_session"] = True
-        self.proc = subprocess.Popen(
-            [sys.executable, "-u", str(SIDECAR)],
-            cwd=str(self.workspace),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            creationflags=creationflags,
-            **kwargs,
-        )
-        self._stdout: queue.Queue[str | None] = queue.Queue()
-        self._stderr: deque[str] = deque(maxlen=250)
-        self._counter = 0
-        threading.Thread(target=self._pump_stdout, daemon=True).start()
-        threading.Thread(target=self._pump_stderr, daemon=True).start()
-        ready = self._wait_for("init", timeout=90, guard=None)
-        if not ready or not ready[1] or ready[1].get("ok") is not True:
-            self.terminate_tree()
-            raise InfrastructureError("source sidecar did not produce a valid init handshake")
-        data = ready[1].get("data") or {}
-        if not isinstance(data, dict) or data.get("ready") is not True:
-            self.terminate_tree()
-            raise InfrastructureError("source sidecar init handshake did not report ready=true")
+        self.secrets: tuple[str, ...] = ()
+        try:
+            self.secrets = tuple(secrets)
+            self._stdout: queue.Queue[str | None] = queue.Queue()
+            self._stderr: deque[str] = deque(maxlen=250)
+            self._counter = 0
+            creationflags = 0
+            kwargs: dict[str, Any] = {}
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                kwargs["start_new_session"] = True
+            try:
+                self.proc = subprocess.Popen(
+                    [sys.executable, "-u", str(SIDECAR)],
+                    cwd=str(self.workspace),
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=creationflags,
+                    **kwargs,
+                )
+            finally:
+                # Popen has copied the child environment by the time it
+                # returns.  Destroy the parent-side credential/HMAC mapping on
+                # both success and constructor failure.
+                _clear_parent_environment(env)
+            threading.Thread(target=self._pump_stdout, daemon=True).start()
+            threading.Thread(target=self._pump_stderr, daemon=True).start()
+            ready = self._wait_for("init", timeout=90, guard=None)
+            if not ready or not ready[1] or ready[1].get("ok") is not True:
+                raise InfrastructureError("source sidecar did not produce a valid init handshake")
+            data = ready[1].get("data") or {}
+            if not isinstance(data, dict) or data.get("ready") is not True:
+                raise InfrastructureError("source sidecar init handshake did not report ready=true")
+        except BaseException as initialization_error:
+            _clear_parent_environment(env)
+            cleanup_failed = False
+            if hasattr(self, "proc"):
+                try:
+                    self.terminate_tree()
+                except Exception:
+                    cleanup_failed = True
+                with contextlib.suppress(Exception):
+                    if self.proc.stdin:
+                        self.proc.stdin.close()
+            self._clear_raw_buffers()
+            self.secrets = ()
+            if cleanup_failed:
+                raise InfrastructureError(
+                    "source sidecar initialization failed and process-tree cleanup "
+                    "could not be verified"
+                ) from initialization_error
+            raise
+
+    def _clear_raw_buffers(self) -> None:
+        proc = getattr(self, "proc", None)
+        if proc is not None:
+            for name in ("stdout", "stderr"):
+                stream = getattr(proc, name, None)
+                with contextlib.suppress(Exception):
+                    if stream is not None:
+                        stream.close()
+        stderr = getattr(self, "_stderr", None)
+        if stderr is not None:
+            stderr.clear()
+        stdout = getattr(self, "_stdout", None)
+        if stdout is not None:
+            while True:
+                try:
+                    stdout.get_nowait()
+                except queue.Empty:
+                    break
 
     def _pump_stdout(self) -> None:
         assert self.proc.stdout is not None
@@ -1184,6 +1936,7 @@ class SidecarClient:
                     timeout=15,
                     check=False,
                     shell=False,
+                    env=_credential_free_host_env(),
                 )
         else:
             with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -1197,15 +1950,21 @@ class SidecarClient:
             self.proc.kill()
         with contextlib.suppress(Exception):
             self.proc.wait(timeout=5)
+        if self.proc.poll() is None:
+            raise InfrastructureError("source sidecar process tree did not terminate")
 
     def close(self) -> None:
         # Terminate the owned tree while the parent PID is still live; closing
         # stdin first can let a fast sidecar exit and orphan a background child
         # before Windows taskkill has a tree root to target.
-        self.terminate_tree()
-        with contextlib.suppress(Exception):
-            if self.proc.stdin:
-                self.proc.stdin.close()
+        try:
+            self.terminate_tree()
+            with contextlib.suppress(Exception):
+                if self.proc.stdin:
+                    self.proc.stdin.close()
+        finally:
+            self._clear_raw_buffers()
+            self.secrets = ()
 
     def stderr_tail(self) -> list[str]:
         return [str(redact(line, self.secrets)) for line in self._stderr]
@@ -1446,32 +2205,168 @@ def _changed_product_sources(before: dict[str, str], after: dict[str, str]) -> l
     )
 
 
-def _secret_scan(workspace: Path, exact_secret: str) -> dict[str, Any]:
-    exact = exact_secret.encode("utf-8")
+def _attestation_needles(key: bytes | bytearray) -> tuple[tuple[str, bytes], ...]:
+    raw = bytes(key)
+    if not raw:
+        return ()
+    return (
+        ("exact-dependency-attestation-key", raw),
+        ("exact-dependency-attestation-key-hex", raw.hex().encode("ascii")),
+    )
+
+
+def _scan_exact_secret_values(
+    roots: Iterable[Path],
+    needles: Iterable[tuple[str, bytes]],
+) -> dict[str, Any]:
+    """Fail-closed scan of every owned path and regular-file byte."""
+
+    exact = tuple((str(kind), bytes(value)) for kind, value in needles if value)
     hits: list[dict[str, str]] = []
+    errors: list[str] = []
+    scanned: set[Path] = set()
+
+    def display(path: Path, root: Path) -> str:
+        try:
+            label = path.relative_to(root).as_posix()
+        except ValueError:
+            label = str(path)
+        if not label or label == ".":
+            label = path.name or str(path)
+        for _kind, value in exact:
+            with contextlib.suppress(UnicodeDecodeError):
+                decoded = value.decode("utf-8")
+                if decoded:
+                    label = label.replace(decoded, REDACTED)
+        return label
+
+    def scan_path_bytes(path: Path, root: Path, payload: bytes) -> None:
+        for kind, value in exact:
+            if value in payload:
+                hits.append({"path": display(path, root), "kind": kind})
+
+    for raw_root in roots:
+        root = Path(raw_root)
+        try:
+            root_info = root.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            errors.append(f"retained root cannot be inspected: {type(exc).__name__}")
+            continue
+        scan_path_bytes(root, root, os.fsencode(str(root)))
+        pending = [root] if stat_module.S_ISDIR(root_info.st_mode) else []
+        if stat_module.S_ISREG(root_info.st_mode):
+            pending_files = [root]
+        elif pending:
+            pending_files = []
+        else:
+            scan_path_bytes(root, root, os.fsencode(str(root)))
+            continue
+        while pending:
+            directory = pending.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError as exc:
+                errors.append(
+                    f"retained directory cannot be scanned: {type(exc).__name__}"
+                )
+                continue
+            for entry in entries:
+                path = Path(entry.path)
+                scan_path_bytes(path, root, os.fsencode(str(path)))
+                if _entry_is_reparse(entry):
+                    try:
+                        scan_path_bytes(
+                            path,
+                            root,
+                            os.fsencode(os.readlink(path)),
+                        )
+                    except OSError as exc:
+                        errors.append(
+                            "retained reparse target cannot be inspected: "
+                            + type(exc).__name__
+                        )
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path)
+                    elif entry.is_file(follow_symlinks=False):
+                        pending_files.append(path)
+                    else:
+                        errors.append("retained tree contains an unsupported special path")
+                except OSError as exc:
+                    errors.append(
+                        f"retained path cannot be inspected: {type(exc).__name__}"
+                    )
+        for path in pending_files:
+            try:
+                resolved = path.resolve(strict=True)
+                if resolved in scanned:
+                    continue
+                scanned.add(resolved)
+                for kind, value in exact:
+                    if _file_contains_bytes(path, value):
+                        hits.append({"path": display(path, root), "kind": kind})
+            except OSError as exc:
+                errors.append(f"retained file cannot be scanned: {type(exc).__name__}")
+    return {
+        "ok": not hits and not errors,
+        "hits": hits,
+        "errors": errors,
+        "files_scanned": len(scanned),
+    }
+
+
+def _secret_scan(
+    workspace: Path,
+    exact_secret: str,
+    *,
+    exact_values: Iterable[tuple[str, bytes]] = (),
+) -> dict[str, Any]:
+    exact_needles = []
+    if exact_secret:
+        exact_needles.append(("exact-selected-key", exact_secret.encode("utf-8")))
+    exact_needles.extend((str(kind), bytes(value)) for kind, value in exact_values if value)
+    exact_result = _scan_exact_secret_values((workspace,), exact_needles)
+    hits: list[dict[str, str]] = list(exact_result["hits"])
+    errors: list[str] = list(exact_result["errors"])
+    exact_hit_paths = {str(hit["path"]) for hit in hits}
     skipped = {".git", "node_modules"}
     for path in _owned_tree_files(workspace):
-        with contextlib.suppress(OSError):
+        try:
             rel = path.relative_to(workspace)
-            if any(part in skipped for part in rel.parts) or not path.is_file():
+            if not path.is_file():
+                continue
+            if rel.as_posix() in exact_hit_paths:
                 continue
             size = path.stat().st_size
-            kind = "exact-selected-key" if exact and _file_contains_bytes(path, exact) else ""
-            if not kind:
-                # Generic shape matching is diagnostic and intentionally skips
-                # dependency/cache content where package documentation often
-                # contains fake key examples.  Exact selected-key matching
-                # above still scans every byte of every owned regular file.
-                generic_excluded = {"cache", ".cache", "npm", "pip"}
-                if size > 20 * 1024 * 1024 or any(part.lower() in generic_excluded for part in rel.parts):
-                    continue
-                data = path.read_bytes()
-                text = data.decode("utf-8", errors="ignore")
-                if any(pattern.search(text) for pattern in SECRET_SHAPES):
-                    kind = "provider-key-shaped-text"
+            kind = ""
+            # Generic shape matching is diagnostic and intentionally skips
+            # dependency/cache content where package documentation often
+            # contains fake key examples.  The fail-closed exact scan above
+            # still scanned every byte of every owned regular file.
+            generic_excluded = {"cache", ".cache", "npm", "pip"}
+            if (
+                any(part in skipped for part in rel.parts)
+                or size > 20 * 1024 * 1024
+                or any(part.lower() in generic_excluded for part in rel.parts)
+            ):
+                continue
+            data = path.read_bytes()
+            text = data.decode("utf-8", errors="ignore")
+            if any(pattern.search(text) for pattern in SECRET_SHAPES):
+                kind = "provider-key-shaped-text"
             if kind:
                 hits.append({"path": rel.as_posix(), "kind": kind})
-    return {"ok": not hits, "hits": hits}
+        except OSError as exc:
+            errors.append(f"generic secret scan failed: {type(exc).__name__}")
+    return {
+        "ok": not hits and not errors,
+        "hits": hits,
+        "errors": errors,
+        "files_scanned": exact_result["files_scanned"],
+    }
 
 
 def _file_contains_bytes(path: Path, needle: bytes) -> bool:
@@ -1544,7 +2439,7 @@ def _copy_clean_room(workspace: Path, destination: Path) -> None:
 def _clean_room_acceptance(
     workspace: Path,
     clean_room: Path,
-    scenario_path: Path,
+    oracle_asset: dict[str, Any],
     *,
     timeout: float,
     secrets: Iterable[str],
@@ -1599,11 +2494,21 @@ def _clean_room_acceptance(
     if index.stat().st_mtime_ns + 2_000_000_000 < build_started_ns:
         raise ProductFailure("dist/index.html is not fresh evidence from the clean-room build")
 
-    scenario = _read_json(scenario_path)
-    oracle_rel = str(scenario.get("oracle") or "") if isinstance(scenario, dict) else ""
-    oracle = scenario_path.parent.parent / oracle_rel
-    if not oracle.is_file():
-        raise InfrastructureError(f"scenario oracle is missing: {oracle}")
+    oracle_source = oracle_asset.get("source")
+    oracle_name = str(oracle_asset.get("name") or "")
+    oracle_sha256 = str(oracle_asset.get("sha256") or "")
+    if (
+        not isinstance(oracle_source, bytes)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+\.(?:js|mjs|cjs)", oracle_name)
+        or hashlib.sha256(oracle_source).hexdigest() != oracle_sha256
+    ):
+        raise InfrastructureError("trusted browser oracle asset is invalid")
+    oracle_root = clean_room.parent / "trusted-oracle"
+    oracle_root.mkdir(exist_ok=False)
+    oracle = oracle_root / oracle_name
+    oracle.write_bytes(oracle_source)
+    with contextlib.suppress(OSError):
+        oracle.chmod(0o400)
     evidence_path = clean_room.parent / "oracle-evidence.json"
     artifacts_path = clean_room.parent / "oracle-artifacts"
     oracle_result = _run_command(
@@ -2172,6 +3077,14 @@ def _verify_ci_attestation(
 def _engine_metadata(
     *, git_reader: Callable[[tuple[str, ...]], str] | None = None
 ) -> dict[str, Any]:
+    runtime_home: tempfile.TemporaryDirectory[str] | None = None
+    git_env: dict[str, str] | None = None
+    if git_reader is None:
+        runtime_home = tempfile.TemporaryDirectory(
+            prefix="signalos-engine-git-"
+        )
+        git_env = _tool_subprocess_env(Path(runtime_home.name))
+
     def git(*args: str) -> str:
         if git_reader is not None:
             value = git_reader(tuple(args))
@@ -2179,31 +3092,42 @@ def _engine_metadata(
         completed = subprocess.run(
             ["git", *args], cwd=str(ROOT), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=20, check=False,
+            env=git_env,
         )
         return completed.stdout.strip() if completed.returncode == 0 else "unknown"
 
-    status = git("status", "--porcelain")
-    commit = git("rev-parse", "HEAD")
-    upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-    upstream_commit = git("rev-parse", "@{upstream}")
-    pushed = (
-        commit != "unknown"
-        and upstream != "unknown"
-        and upstream_commit != "unknown"
-        and commit == upstream_commit
-    )
-    return {
-        "commit": commit,
-        "tree": git("rev-parse", "HEAD^{tree}"),
-        "branch": git("branch", "--show-current"),
-        "upstream": upstream,
-        "upstream_commit": upstream_commit,
-        "pushed": pushed,
-        "dirty": bool(status),
-        "dirty_paths": [line[3:] for line in status.splitlines() if len(line) > 3],
-        "python": sys.version.split()[0],
-        "platform": sys.platform,
-    }
+    try:
+        status = git("status", "--porcelain")
+        commit = git("rev-parse", "HEAD")
+        upstream = git(
+            "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"
+        )
+        upstream_commit = git("rev-parse", "@{upstream}")
+        pushed = (
+            commit != "unknown"
+            and upstream != "unknown"
+            and upstream_commit != "unknown"
+            and commit == upstream_commit
+        )
+        return {
+            "commit": commit,
+            "tree": git("rev-parse", "HEAD^{tree}"),
+            "branch": git("branch", "--show-current"),
+            "upstream": upstream,
+            "upstream_commit": upstream_commit,
+            "pushed": pushed,
+            "dirty": bool(status),
+            "dirty_paths": [
+                line[3:] for line in status.splitlines() if len(line) > 3
+            ],
+            "python": sys.version.split()[0],
+            "platform": sys.platform,
+        }
+    finally:
+        if git_env is not None:
+            _clear_parent_environment(git_env)
+        if runtime_home is not None:
+            runtime_home.cleanup()
 
 
 def _require_reproducible_engine(engine: dict[str, Any], *, live: bool) -> None:
@@ -2263,8 +3187,113 @@ def _require_engine_unchanged(expected: dict[str, Any]) -> dict[str, Any]:
     return current
 
 
-def _load_scenario(path: Path) -> dict[str, Any]:
-    raw = _read_json(path)
+def _regular_owned_file(path: Path, root: Path, *, label: str) -> Path:
+    raw = Path(path)
+    try:
+        info = raw.lstat()
+        resolved = raw.resolve(strict=True)
+    except OSError as exc:
+        raise InfrastructureError(f"{label} is not a readable regular file") from exc
+    attributes = int(getattr(info, "st_file_attributes", 0) or 0)
+    owned_root = Path(root).resolve(strict=True)
+    if (
+        not stat_module.S_ISREG(info.st_mode)
+        or stat_module.S_ISLNK(info.st_mode)
+        or attributes & 0x0400
+        or (resolved != owned_root and owned_root not in resolved.parents)
+    ):
+        raise InfrastructureError(f"{label} escapes its repository-owned directory")
+    return resolved
+
+
+def _committed_file_bytes(
+    path: Path,
+    *,
+    commit: str,
+    max_bytes: int = 4 * 1024 * 1024,
+) -> bytes:
+    resolved = Path(path).resolve(strict=True)
+    try:
+        rel = resolved.relative_to(ROOT).as_posix()
+    except ValueError as exc:
+        raise InfrastructureError("trusted matrix asset is outside the repository") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", str(commit).lower()):
+        raise InfrastructureError("trusted matrix asset has no committed engine identity")
+    with tempfile.TemporaryDirectory(prefix="signalos-asset-git-") as temporary:
+        env = _tool_subprocess_env(Path(temporary))
+        try:
+            completed = subprocess.run(
+                ["git", "show", f"{commit}:{rel}"],
+                cwd=str(ROOT),
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env=env,
+            )
+        finally:
+            _clear_parent_environment(env)
+    if completed.returncode != 0:
+        raise InfrastructureError("trusted matrix asset is not tracked at the attested commit")
+    payload = bytes(completed.stdout)
+    if not payload or len(payload) > max_bytes:
+        raise InfrastructureError("trusted matrix asset has an invalid size")
+    return payload
+
+
+def _trusted_oracle_asset(
+    scenario_path: Path,
+    scenario: dict[str, Any],
+    *,
+    engine: dict[str, Any],
+    live: bool,
+    scenario_source: bytes | None = None,
+) -> dict[str, Any]:
+    scenario_file = _regular_owned_file(
+        scenario_path,
+        SCENARIO_ROOT,
+        label="matrix scenario",
+    )
+    oracle_rel = Path(str(scenario.get("oracle") or ""))
+    if oracle_rel.is_absolute() or ".." in oracle_rel.parts:
+        raise InfrastructureError("matrix oracle path must be repository-relative")
+    oracle_file = _regular_owned_file(
+        scenario_file.parent.parent / oracle_rel,
+        ORACLE_ROOT,
+        label="matrix oracle",
+    )
+    if oracle_file.suffix.lower() not in {".js", ".mjs", ".cjs"}:
+        raise InfrastructureError("matrix oracle must be a tracked JavaScript module")
+    current_scenario = scenario_file.read_bytes()
+    sealed_scenario = (
+        bytes(scenario_source)
+        if scenario_source is not None
+        else current_scenario
+    )
+    current_oracle = oracle_file.read_bytes()
+    if live:
+        commit = str(engine.get("commit") or "").lower()
+        committed_scenario = _committed_file_bytes(scenario_file, commit=commit)
+        committed_oracle = _committed_file_bytes(oracle_file, commit=commit)
+        if (
+            sealed_scenario != committed_scenario
+            or current_scenario != committed_scenario
+            or current_oracle != committed_oracle
+        ):
+            raise InfrastructureError(
+                "matrix scenario/oracle bytes differ from the CI-attested commit"
+            )
+        oracle_source = committed_oracle
+    else:
+        oracle_source = current_oracle
+    return {
+        "name": oracle_file.name,
+        "source": oracle_source,
+        "sha256": hashlib.sha256(oracle_source).hexdigest(),
+        "repository_path": oracle_file.relative_to(ROOT).as_posix(),
+    }
+
+
+def _parse_scenario(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("scenario must be a JSON object")
     required = ("id", "name", "profile", "prompt", "requirements", "expected_gates", "oracle")
@@ -2290,6 +3319,14 @@ def _load_scenario(path: Path) -> dict[str, Any]:
         raise ValueError("trace_requirements_through_gates contains an invalid gate")
     raw["requirement_ids"] = ids
     return raw
+
+
+def _load_scenario(path: Path) -> dict[str, Any]:
+    return _parse_scenario(_read_json(path))
+
+
+def _load_scenario_bytes(payload: bytes, *, label: str) -> dict[str, Any]:
+    return _parse_scenario(_read_json_bytes(payload, label=label))
 
 
 def _validate_orchestrator_profile(value: str) -> str:
@@ -2325,7 +3362,7 @@ def _delivery_request(
 def _run_row(
     spec: ModelSpec,
     scenario: dict[str, Any],
-    scenario_path: Path,
+    oracle_asset: dict[str, Any],
     row_dir: Path,
     *,
     key: str,
@@ -2339,6 +3376,7 @@ def _run_row(
     engine: dict[str, Any],
     hashes: dict[str, str],
     provider_model_metadata: dict[str, Any],
+    funded_context: FundedRunContext,
 ) -> dict[str, Any]:
     orchestrator_profile = _validate_orchestrator_profile(orchestrator_profile)
     workspace = row_dir / "workspace"
@@ -2365,24 +3403,22 @@ def _run_row(
         "gates": [],
     }
     result_path = row_dir / "result.json"
-    _safe_json_write(result_path, row, (key,))
+    row_secrets = funded_context.redaction_secrets(key)
+    _safe_json_write(result_path, row, row_secrets)
 
-    sidecar_env = _isolated_subprocess_env(
-        row_dir / "runtime-home",
-        extra={
-            spec.key_env: key,
-            "SIGNALOS_LLM_PROVIDER": spec.provider,
-            "SIGNALOS_LLM_MODEL": spec.model,
-        },
-    )
-    # _isolated_subprocess_env removes every provider key after applying extra;
-    # add back only the one credential selected for this row.
-    sidecar_env[spec.key_env] = key
+    tool_env: dict[str, str] = {}
+    sidecar_env: dict[str, str] = {}
     sidecar: SidecarClient | None = None
     cost: CostGuard | None = None
     try:
+        tool_env = _tool_subprocess_env(row_dir / "tool-runtime-home")
         baseline = _snapshot_product_tree(workspace)
-        sidecar = SidecarClient(workspace, sidecar_env, (key,))
+        sidecar_env = funded_context.sidecar_environment(
+            row_dir / "runtime-home",
+            spec=spec,
+            provider_key=key,
+        )
+        sidecar = SidecarClient(workspace, sidecar_env, row_secrets)
 
         def invoke(command: str, args: Any, timeout: float, *, guarded: bool = True) -> dict[str, Any]:
             started = time.monotonic()
@@ -2395,10 +3431,10 @@ def _run_row(
             if guarded and cost is not None:
                 cost.check(force=True)
             evidence = _terminal_evidence(
-                command, terminal, events, time.monotonic() - started, (key,)
+                command, terminal, events, time.monotonic() - started, row_secrets
             )
             row["calls"].append(evidence)
-            _safe_json_write(result_path, row, (key,))
+            _safe_json_write(result_path, row, row_secrets)
             return terminal
 
         capabilities = _require_ok(
@@ -2457,9 +3493,9 @@ def _run_row(
         row["release_origin"] = _prepare_local_release_remote(
             workspace,
             row_dir / "release-origin.git",
-            env=sidecar_env,
+            env=tool_env,
         )
-        _safe_json_write(result_path, row, (key,))
+        _safe_json_write(result_path, row, row_secrets)
         baseline = _snapshot_product_tree(workspace)
 
         # Start cost accounting only after local initialization.  Every model
@@ -2495,6 +3531,14 @@ def _run_row(
         for index, gate in enumerate(GATES):
             signed_before = list(GATES[:index])
             state = _load_delivery(workspace, run_id)
+            dependency_receipt: dict[str, Any] | None = None
+            if gate == "G4":
+                # G4 owns dependency materialization through the real backend.
+                # Verify that receipt at the first G4 checkpoint, before any
+                # review or approval can treat the workspace as build-ready.
+                dependency_receipt = funded_context.verify_materialized_after_init(
+                    workspace
+                )
             _validate_review_checkpoint(
                 state, run_id=run_id, gate=gate, signed_before=signed_before
             )
@@ -2504,6 +3548,8 @@ def _run_row(
                 "last_outcome": state.get("last_outcome"),
                 "signed_before": signed_before,
             }
+            if dependency_receipt is not None:
+                gate_evidence["funded_dependencies"] = dependency_receipt
             if gate in trace_gates:
                 trace = _gate_requirement_trace(
                     workspace, gate, scenario["requirement_ids"]
@@ -2550,7 +3596,7 @@ def _run_row(
             gate_evidence["strict_signature"] = strict
             gate_evidence["verdict_result"] = verdict_data
             row["gates"].append(gate_evidence)
-            _safe_json_write(result_path, row, (key,))
+            _safe_json_write(result_path, row, row_secrets)
             if not strict["signed"]:
                 raise ProductFailure(
                     f"{gate} did not pass strict signature validation: "
@@ -2621,7 +3667,7 @@ def _run_row(
             Path(row["release_origin"]["path"]),
             release_checkout,
             finalization,
-            env=sidecar_env,
+            env=tool_env,
         )
         final_tree = _snapshot_product_tree(release_checkout)
         if final_tree != local_final_tree:
@@ -2638,7 +3684,11 @@ def _run_row(
             "changed_source_files": changed_sources,
         }
 
-        scan = _secret_scan(release_checkout, key)
+        scan = _secret_scan(
+            release_checkout,
+            key,
+            exact_values=funded_context.attestation_scan_needles(),
+        )
         row["secret_scan"] = scan
         if not scan["ok"]:
             raise InfrastructureError(
@@ -2650,9 +3700,9 @@ def _run_row(
         _clean_room_acceptance(
             release_checkout,
             row_dir / "clean-room",
-            scenario_path,
+            oracle_asset,
             timeout=command_timeout,
-            secrets=(key,),
+            secrets=row_secrets,
             evidence=acceptance,
         )
         final_spent = cost.check(force=True)
@@ -2666,25 +3716,45 @@ def _run_row(
     except ProductFailure as exc:
         row["status"] = "fail"
         row["failure_type"] = "product"
-        row["error"] = str(redact(str(exc), (key,)))
+        row["error"] = str(redact(str(exc), row_secrets))
     except (InfrastructureError, CostGuardError, ValueError) as exc:
         row["status"] = "error"
         row["failure_type"] = "infrastructure" if not isinstance(exc, CostGuardError) else "cost-guard"
-        row["error"] = str(redact(str(exc), (key,)))
+        row["error"] = str(redact(str(exc), row_secrets))
     except Exception as exc:  # Never make a row disappear without evidence.
         row["status"] = "error"
         row["failure_type"] = "unexpected-harness-error"
-        row["error"] = str(redact(f"{type(exc).__name__}: {exc}", (key,)))
+        row["error"] = str(redact(f"{type(exc).__name__}: {exc}", row_secrets))
     finally:
-        if sidecar is not None:
-            row["sidecar_stderr_tail"] = sidecar.stderr_tail()
-            sidecar.close()
+        close_error = ""
+        try:
+            if sidecar is not None:
+                row["sidecar_stderr_tail"] = sidecar.stderr_tail()
+                sidecar.close()
+        except Exception as exc:
+            close_error = str(
+                redact(
+                    f"{type(exc).__name__}: {exc}",
+                    row_secrets,
+                )
+            )
+        finally:
+            _clear_parent_environment(sidecar_env)
+            _clear_parent_environment(tool_env)
+        if close_error:
+            row["status"] = "error"
+            row["failure_type"] = "process-cleanup"
+            row["error"] = "source sidecar cleanup failed: " + close_error
         # Scan the entire retained row (workspace, isolated runtime home,
         # clean-room, and evidence), even after a partial failure.  This must
         # happen after the sidecar stops so it cannot write a secret after our
         # check.
         if row_dir.exists():
-            final_scan = _secret_scan(row_dir, key)
+            final_scan = _secret_scan(
+                row_dir,
+                key,
+                exact_values=funded_context.attestation_scan_needles(),
+            )
             final_scan["scope"] = "entire-retained-row"
             row["secret_scan"] = final_scan
             if not final_scan["ok"]:
@@ -2702,8 +3772,20 @@ def _run_row(
                 },
             )
         row["finished_at"] = _utc_now()
-        _safe_json_write(result_path, row, (key,))
+        _safe_json_write(result_path, row, row_secrets)
     return row
+
+
+def _bounded_dependency_timeout(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("dependency timeout must be a number") from exc
+    if not 1.0 <= seconds <= 3600.0:
+        raise argparse.ArgumentTypeError(
+            "dependency timeout must be between 1 and 3600 seconds"
+        )
+    return seconds
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -2726,6 +3808,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--models-config", type=Path, default=DEFAULT_MODELS_CONFIG)
     parser.add_argument("--scenario", type=Path, default=DEFAULT_SCENARIO)
     parser.add_argument(
+        "--dependency-policy",
+        type=Path,
+        default=DEFAULT_DEPENDENCY_POLICY,
+        help="Reviewed funded dependency policy (live runs require the repository default).",
+    )
+    parser.add_argument(
         "--orchestrator-profile",
         choices=ORCHESTRATOR_PROFILES,
         default=DEFAULT_ORCHESTRATOR_PROFILE,
@@ -2741,6 +3829,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--init-timeout", type=float, default=240.0, metavar="SECONDS")
     parser.add_argument("--gate-timeout", type=float, default=1800.0, metavar="SECONDS")
     parser.add_argument("--command-timeout", type=float, default=900.0, metavar="SECONDS")
+    parser.add_argument(
+        "--dependency-timeout",
+        type=_bounded_dependency_timeout,
+        default=900.0,
+        metavar="SECONDS",
+    )
     parser.add_argument("--fail-fast", action="store_true")
     return parser
 
@@ -2754,15 +3848,16 @@ def _print_models(catalog: Sequence[ModelSpec]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    key = ""
+    active_secrets: tuple[str, ...] = ()
+    router: OpenRouterClient | None = None
     try:
-        catalog = load_model_catalog(args.models_config)
+        models_config_path = args.models_config.expanduser().resolve()
         if args.list_models:
+            catalog = load_model_catalog(models_config_path)
             _print_models(catalog)
             return 0
 
-        # Model selection deliberately precedes key lookup and all network or
-        # subprocess work.  A typo must fail without spending or touching state.
-        selected = select_models(catalog, args.models)
         if not args.preflight and not args.live:
             parser.error("choose --preflight or explicitly opt in to paid work with --live")
         if args.live:
@@ -2770,140 +3865,332 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parser.error("--live requires --acknowledge-key-exposure; see the backend matrix README")
             if args.max_cost_per_model is None or args.max_cost_per_model <= 0:
                 parser.error("--live requires a positive --max-cost-per-model USD cap")
-        scenario_path = args.scenario.resolve()
-        scenario = _load_scenario(scenario_path)
+            if models_config_path != DEFAULT_MODELS_CONFIG.resolve():
+                raise ValueError(
+                    "live funded runs require the repository-owned model catalog"
+                )
+        dependency_policy = args.dependency_policy.expanduser().resolve()
+        if args.live and dependency_policy != DEFAULT_DEPENDENCY_POLICY.resolve():
+            raise ValueError(
+                "live funded runs require the repository-owned dependency policy"
+            )
+        scenario_path = args.scenario.expanduser().resolve()
         orchestrator_profile = _validate_orchestrator_profile(args.orchestrator_profile)
         engine = _engine_metadata()
         _require_reproducible_engine(engine, live=bool(args.live))
+
+        if args.live:
+            commit = str(engine.get("commit") or "").lower()
+            models_file = _regular_owned_file(
+                models_config_path,
+                DEFAULT_MODELS_CONFIG.parent,
+                label="matrix model catalog",
+            )
+            reviewed_models_bytes = _committed_file_bytes(
+                models_file,
+                commit=commit,
+            )
+            if models_file.read_bytes() != reviewed_models_bytes:
+                raise InfrastructureError(
+                    "matrix model catalog differs from the CI-attested commit"
+                )
+        else:
+            reviewed_models_bytes = models_config_path.read_bytes()
+        catalog = _load_model_catalog_bytes(
+            reviewed_models_bytes,
+            label=str(models_config_path),
+        )
+
+        # Selection uses the sealed catalog and deliberately precedes key
+        # lookup and every provider/GitHub request.  Only local Git identity
+        # discovery is allowed ahead of it for a live run.
+        selected = select_models(catalog, args.models)
+        if any(
+            spec.key_env != selected[0].key_env
+            or spec.provider != selected[0].provider
+            for spec in selected
+        ):
+            raise ValueError(
+                "a single run may use only one provider and API key environment"
+            )
+
+        scenario_file = _regular_owned_file(
+            scenario_path,
+            SCENARIO_ROOT,
+            label="matrix scenario",
+        )
+        current_scenario_bytes = scenario_file.read_bytes()
+        if args.live:
+            reviewed_scenario_bytes = _committed_file_bytes(
+                scenario_file,
+                commit=str(engine.get("commit") or "").lower(),
+            )
+            if current_scenario_bytes != reviewed_scenario_bytes:
+                raise InfrastructureError(
+                    "matrix scenario differs from the CI-attested commit"
+                )
+        else:
+            reviewed_scenario_bytes = current_scenario_bytes
+        scenario = _load_scenario_bytes(
+            reviewed_scenario_bytes,
+            label=str(scenario_file),
+        )
+
         # This authoritative GitHub check deliberately precedes provider-key
-        # lookup, local subprocess startup, and every provider request.  A
+        # lookup, backend-sidecar startup, and every provider request.  A
         # caller-supplied SHA is not evidence that CI passed.
         ci_attestation = (
             _verify_ci_attestation(engine) if args.live else None
         )
+        oracle_asset = _trusted_oracle_asset(
+            scenario_path,
+            scenario,
+            engine=engine,
+            live=bool(args.live),
+            scenario_source=reviewed_scenario_bytes,
+        )
+        reviewed_policy_bytes = dependency_policy.read_bytes()
+        if args.live:
+            committed_policy = _committed_file_bytes(
+                dependency_policy,
+                commit=str(engine.get("commit") or "").lower(),
+            )
+            if reviewed_policy_bytes != committed_policy:
+                raise InfrastructureError(
+                    "dependency policy differs from the CI-attested commit"
+                )
+            reviewed_policy_bytes = committed_policy
+        reviewed_policy_sha256 = hashlib.sha256(reviewed_policy_bytes).hexdigest()
         output_root = (
             _require_external_output_root(args.output_root)
             if args.live
             else args.output_root.expanduser().resolve()
         )
-        key, key_source = _resolve_api_key(selected[0], args.env_file)
-        if any(spec.key_env != selected[0].key_env or spec.provider != selected[0].provider for spec in selected):
-            raise ValueError("a single run may use only one provider and API key environment")
-        router = OpenRouterClient(key)
         local = _local_preflight()
-        backend = _backend_preflight(scenario, init_timeout=args.init_timeout)
-        provider = _provider_preflight(
-            router,
-            selected,
-            required_remaining=float(args.max_cost_per_model or 0.0) * len(selected),
-            require_provider_limit=bool(args.live),
-        )
-        provider_stack = _provider_stack_preflight(selected, provider["models"])
-        if args.preflight:
+        if args.live:
+            _require_engine_unchanged(engine)
+        final_output: dict[str, Any] | None = None
+        manifest_path: Path | None = None
+        exit_code = 0
+        with FundedRunContext.prepare(
+            dependency_policy,
+            timeout=args.dependency_timeout,
+            expected_profile=str(scenario["profile"]),
+        ) as funded_context:
+            active_secrets = funded_context.redaction_secrets()
+            if (
+                funded_context.public_evidence().get("policy_sha256")
+                != reviewed_policy_sha256
+                or _sha256_file(dependency_policy) != reviewed_policy_sha256
+            ):
+                raise InfrastructureError(
+                    "prepared dependency receipt is not bound to the reviewed policy bytes"
+                )
+            if args.live:
+                _require_engine_unchanged(engine)
+            backend = _backend_preflight(
+                scenario,
+                init_timeout=args.init_timeout,
+                dependency_timeout=args.dependency_timeout,
+                funded_context=funded_context,
+            )
+            # Credential lookup and all provider construction happen only
+            # after the keyless funded backend path proves scaffold,
+            # materialization, verification, and offline execution.
+            if args.live:
+                _require_engine_unchanged(engine)
+            key, key_source = _resolve_api_key(selected[0], args.env_file)
+            funded_context.register_exact_secret("exact-selected-key", key)
+            active_secrets = funded_context.redaction_secrets(key)
+            router = OpenRouterClient(key)
+            provider = _provider_preflight(
+                router,
+                selected,
+                required_remaining=float(args.max_cost_per_model or 0.0)
+                * len(selected),
+                require_provider_limit=bool(args.live),
+            )
+            provider_stack = _provider_stack_preflight(
+                selected,
+                provider["models"],
+            )
+            if args.live:
+                _require_engine_unchanged(engine)
+            if args.preflight:
+                final_output = {
+                    "status": "pass",
+                    "mode": "preflight",
+                    "key_source": key_source,
+                    "local": local,
+                    "backend": backend,
+                    "dependencies": funded_context.public_evidence(),
+                    "provider": provider,
+                    "provider_stack": provider_stack,
+                    "orchestrator_profile": orchestrator_profile,
+                }
+            else:
+                stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                run_root = output_root / f"{stamp}-{uuid.uuid4().hex[:8]}"
+                run_root.mkdir(parents=True, exist_ok=False)
+                funded_context.register_scan_root(run_root)
+                hashes = {
+                    "models_config_sha256": hashlib.sha256(
+                        reviewed_models_bytes
+                    ).hexdigest(),
+                    "scenario_sha256": hashlib.sha256(
+                        reviewed_scenario_bytes
+                    ).hexdigest(),
+                    "oracle_sha256": str(oracle_asset["sha256"]),
+                    "driver_sha256": _sha256_file(Path(__file__).resolve()),
+                    "sidecar_sha256": _sha256_file(SIDECAR),
+                    "ci_policy_sha256": _sha256_file(DEFAULT_CI_POLICY),
+                    **funded_context.evidence_hashes(),
+                }
+                manifest = {
+                    "schema": "signalos.backend-matrix.run.v1",
+                    "started_at": _utc_now(),
+                    "status": "running",
+                    "run_root": str(run_root),
+                    "scenario": scenario["id"],
+                    "stack_profile": scenario["profile"],
+                    "orchestrator_profile": orchestrator_profile,
+                    "models": [dataclasses.asdict(spec) for spec in selected],
+                    "engine": engine,
+                    "ci_attestation": ci_attestation,
+                    "hashes": hashes,
+                    "preflight": {
+                        "local": local,
+                        "backend": backend,
+                        "dependencies": funded_context.public_evidence(),
+                        "provider": provider,
+                        "provider_stack": provider_stack,
+                        "key_source": key_source,
+                    },
+                    "results": [],
+                }
+                manifest_path = run_root / "matrix-result.json"
+                _safe_json_write(manifest_path, manifest, active_secrets)
+                provider_models = {
+                    str(row["id"]): row for row in provider["models"]
+                }
+                for spec in selected:
+                    _require_engine_unchanged(engine)
+                    print(f"[{spec.alias}] starting fresh backend journey", flush=True)
+                    row = _run_row(
+                        spec,
+                        scenario,
+                        oracle_asset,
+                        run_root / spec.alias,
+                        key=key,
+                        key_source=key_source,
+                        router=router,
+                        cost_cap=float(args.max_cost_per_model),
+                        init_timeout=args.init_timeout,
+                        gate_timeout=args.gate_timeout,
+                        command_timeout=args.command_timeout,
+                        orchestrator_profile=orchestrator_profile,
+                        engine=engine,
+                        hashes=hashes,
+                        provider_model_metadata=provider_models[spec.model],
+                        funded_context=funded_context,
+                    )
+                    _require_engine_unchanged(engine)
+                    manifest["results"].append(
+                        {
+                            "alias": spec.alias,
+                            "cohort": spec.cohort,
+                            "model": spec.model,
+                            "status": row.get("status"),
+                            "failure_type": row.get("failure_type"),
+                            "error": row.get("error"),
+                            "result": str(
+                                (run_root / spec.alias / "result.json").relative_to(
+                                    run_root
+                                )
+                            ),
+                        }
+                    )
+                    _safe_json_write(manifest_path, manifest, active_secrets)
+                    print(f"[{spec.alias}] {row.get('status')}", flush=True)
+                    if args.fail_fast and row.get("status") != "pass":
+                        break
+                exit_code = results_exit_code(manifest["results"])
+                manifest["status"] = "finalizing"
+                manifest["provisional_status"] = (
+                    "pass" if exit_code == 0 else "fail"
+                )
+                _safe_json_write(manifest_path, manifest, active_secrets)
+                retained_scan = _secret_scan(
+                    run_root,
+                    key,
+                    exact_values=funded_context.attestation_scan_needles(),
+                )
+                if not retained_scan["ok"]:
+                    _purge_external_owned_root(run_root)
+                    raise InfrastructureError(
+                        "unsafe secret evidence was found; retained run output was removed"
+                    )
+
+                # A result may become final only after the shared dependency
+                # scratch is absent, registered secrets are scanned, and the
+                # mutable key owner is zeroed.  __exit__ calls close again;
+                # close is deliberately idempotent.
+                attestation_hex = active_secrets[-1]
+                cleanup_evidence = funded_context.close()
+                manifest.pop("provisional_status", None)
+                manifest["status"] = "pass" if exit_code == 0 else "fail"
+                manifest["finished_at"] = _utc_now()
+                cleanup_scan = cleanup_evidence.get("secret_scan") or {}
+                manifest["dependency_cleanup"] = {
+                    "secret_scan": {
+                        "ok": cleanup_scan.get("ok") is True,
+                        "files_scanned": int(cleanup_scan.get("files_scanned") or 0),
+                        "error_count": len(cleanup_scan.get("errors") or []),
+                    },
+                    "scratch_removed": cleanup_evidence.get("scratch_removed") is True,
+                    "key_zeroed": cleanup_evidence.get("key_zeroed") is True,
+                }
+                _safe_json_write(manifest_path, manifest, active_secrets)
+                final_scan = _secret_scan(
+                    run_root,
+                    key,
+                    exact_values=(
+                        (
+                            "exact-dependency-attestation-key-hex",
+                            attestation_hex.encode("ascii"),
+                        ),
+                    ),
+                )
+                if not final_scan["ok"]:
+                    _purge_external_owned_root(run_root)
+                    raise InfrastructureError(
+                        "final result secret scan failed; retained run output was removed"
+                    )
+
+        if final_output is not None:
             print(
                 json.dumps(
-                    redact(
-                        {
-                            "status": "pass",
-                            "mode": "preflight",
-                            "key_source": key_source,
-                            "local": local,
-                            "backend": backend,
-                            "provider": provider,
-                            "provider_stack": provider_stack,
-                            "orchestrator_profile": orchestrator_profile,
-                        },
-                        (key,),
-                    ),
+                    redact(final_output, active_secrets),
                     indent=2,
                     sort_keys=True,
                 )
             )
             return 0
-
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        run_root = output_root / f"{stamp}-{uuid.uuid4().hex[:8]}"
-        run_root.mkdir(parents=True, exist_ok=False)
-        oracle_path = scenario_path.parent.parent / str(scenario["oracle"])
-        hashes = {
-            "models_config_sha256": _sha256_file(args.models_config.resolve()),
-            "scenario_sha256": _sha256_file(scenario_path),
-            "oracle_sha256": _sha256_file(oracle_path),
-            "driver_sha256": _sha256_file(Path(__file__).resolve()),
-            "sidecar_sha256": _sha256_file(SIDECAR),
-            "ci_policy_sha256": _sha256_file(DEFAULT_CI_POLICY),
-        }
-        manifest: dict[str, Any] = {
-            "schema": "signalos.backend-matrix.run.v1",
-            "started_at": _utc_now(),
-            "status": "running",
-            "run_root": str(run_root),
-            "scenario": scenario["id"],
-            "stack_profile": scenario["profile"],
-            "orchestrator_profile": orchestrator_profile,
-            "models": [dataclasses.asdict(spec) for spec in selected],
-            "engine": engine,
-            "ci_attestation": ci_attestation,
-            "hashes": hashes,
-            "preflight": {
-                "local": local,
-                "backend": backend,
-                "provider": provider,
-                "provider_stack": provider_stack,
-                "key_source": key_source,
-            },
-            "results": [],
-        }
-        manifest_path = run_root / "matrix-result.json"
-        _safe_json_write(manifest_path, manifest, (key,))
-        provider_models = {
-            str(row["id"]): row for row in provider["models"]
-        }
-        for spec in selected:
-            _require_engine_unchanged(engine)
-            print(f"[{spec.alias}] starting fresh backend journey", flush=True)
-            row = _run_row(
-                spec,
-                scenario,
-                scenario_path,
-                run_root / spec.alias,
-                key=key,
-                key_source=key_source,
-                router=router,
-                cost_cap=float(args.max_cost_per_model),
-                init_timeout=args.init_timeout,
-                gate_timeout=args.gate_timeout,
-                command_timeout=args.command_timeout,
-                orchestrator_profile=orchestrator_profile,
-                engine=engine,
-                hashes=hashes,
-                provider_model_metadata=provider_models[spec.model],
-            )
-            _require_engine_unchanged(engine)
-            manifest["results"].append(
-                {
-                    "alias": spec.alias,
-                    "cohort": spec.cohort,
-                    "model": spec.model,
-                    "status": row.get("status"),
-                    "failure_type": row.get("failure_type"),
-                    "error": row.get("error"),
-                    "result": str((run_root / spec.alias / "result.json").relative_to(run_root)),
-                }
-            )
-            _safe_json_write(manifest_path, manifest, (key,))
-            print(f"[{spec.alias}] {row.get('status')}", flush=True)
-            if args.fail_fast and row.get("status") != "pass":
-                break
-        exit_code = results_exit_code(manifest["results"])
-        manifest["status"] = "pass" if exit_code == 0 else "fail"
-        manifest["finished_at"] = _utc_now()
-        _safe_json_write(manifest_path, manifest, (key,))
+        if manifest_path is None:
+            raise InfrastructureError("live run completed without a result bundle")
         print(f"Result bundle: {manifest_path}")
         return exit_code
     except (ValueError, HarnessError, OSError) as exc:
-        print(f"backend matrix error: {redact(str(exc))}", file=sys.stderr)
+        print(
+            f"backend matrix error: {redact(str(exc), active_secrets)}",
+            file=sys.stderr,
+        )
         return 2
+    finally:
+        if router is not None:
+            router._key = ""
+        key = ""
+        active_secrets = ()
 
 
 if __name__ == "__main__":

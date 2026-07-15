@@ -1663,6 +1663,60 @@ class TestAgentOutcomeGate(unittest.TestCase):
             self.assertEqual(result.failure_type, "dependency-broker-unavailable")
             self.assertIn("bundle unavailable", result.error)
 
+    def test_g4_scaffolds_then_materializes_before_dispatch_and_verification(self):
+        from signalos_lib.product.agent_loop import LoopResult
+
+        order = []
+        completed = LoopResult(
+            run_id="g4-build",
+            status="completed",
+            final_text="done",
+            tool_calls_made=1,
+            messages=[],
+        )
+
+        def scaffold():
+            order.append("scaffold")
+
+        def materialize(root):
+            order.append("materialize")
+            return {"schema": "signalos.dependency-receipt.v3", "status": "ready"}
+
+        def checkpoint():
+            order.append("checkpoint")
+
+        def dispatch(*args, **kwargs):
+            order.append("dispatch")
+            return completed
+
+        def verify(result):
+            order.append("verify")
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as d:
+            orch = _bare_orch(d)
+            with mock.patch.object(
+                orch, "_scaffold_shell_if_greenfield", side_effect=scaffold
+            ), mock.patch(
+                "signalos_lib.product.dependency_broker."
+                "materialize_funded_dependencies_from_environment",
+                side_effect=materialize,
+            ), mock.patch.object(
+                orch, "_prepare_g4_attribution", side_effect=checkpoint
+            ), mock.patch(
+                "signalos_lib.product.subagent_build.run_subagent_driven_build",
+                side_effect=dispatch,
+            ), mock.patch.object(
+                orch, "_verify_g4_build", side_effect=verify
+            ):
+                result = orch._execute_build_gate("G4", "system", [0, 1, 2, 3])
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            order,
+            ["scaffold", "materialize", "checkpoint", "dispatch", "verify"],
+        )
+
     def test_stalled_agent_not_approvable_even_with_artifacts_present(self):
         # STRONGEST fail-open proof: seed ALL FOUR G0 artifacts so the old
         # _default_sign would happily sign + advance a gate whose agent actually

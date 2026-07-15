@@ -16,7 +16,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -705,6 +705,11 @@ def test_live_main_verifies_ci_before_provider_key_lookup(
         raise AssertionError("provider key lookup happened before CI verification")
 
     monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
+    monkeypatch.setattr(
+        driver,
+        "_committed_file_bytes",
+        lambda path, **kwargs: Path(path).read_bytes(),
+    )
     monkeypatch.setattr(driver, "_verify_ci_attestation", refuse_ci)
     monkeypatch.setattr(driver, "_resolve_api_key", forbidden_key_lookup)
 
@@ -944,12 +949,51 @@ def test_backend_preflight_runs_real_keyless_source_sidecar(
     ):
         monkeypatch.delenv(key, raising=False)
 
-    scenario = driver._load_scenario(ROOT / "scripts" / "backend_matrix" / "scenarios" / "expense_tracker.json")
-    result = driver._backend_preflight(scenario, init_timeout=120)
+    class FakeFundedContext:
+        materialized = False
+
+        def sidecar_environment(self, runtime_home: Path) -> dict[str, str]:
+            return driver._isolated_subprocess_env(runtime_home)
+
+        def redaction_secrets(self) -> tuple[str, ...]:
+            return ()
+
+        def attestation_scan_needles(self) -> tuple[tuple[str, bytes], ...]:
+            return ()
+
+        def materialize_after_init(self, workspace: Path) -> dict[str, Any]:
+            assert (workspace / ".signalos" / "INIT_COMPLETE.json").is_file()
+            assert (workspace / "package.json").is_file()
+            self.materialized = True
+            return {"status": "verified", "receipt_sha256": "materialized"}
+
+        def verify_materialized_after_init(self, workspace: Path) -> dict[str, Any]:
+            assert self.materialized
+            assert (workspace / "package.json").is_file()
+            return {"status": "verified", "receipt_sha256": "verified"}
+
+        def offline_probe(self, workspace: Path, *, timeout: float) -> dict[str, Any]:
+            assert self.materialized
+            assert timeout == 120
+            assert (workspace / "package.json").is_file()
+            return {"ok": True, "network": "none", "pull": "never"}
+
+    scenario = driver._load_scenario(
+        ROOT / "scripts" / "backend_matrix" / "scenarios" / "expense_tracker.json"
+    )
+    funded_context = FakeFundedContext()
+    result = driver._backend_preflight(
+        scenario,
+        init_timeout=120,
+        dependency_timeout=120,
+        funded_context=funded_context,
+    )
 
     assert result["ready"] is True
     assert result["protocol"] == 1
     assert result["init_complete"] is True
+    assert result["scaffold"]["can_deliver_runnable"] is True
+    assert result["funded_dependencies"]["offline_probe"]["network"] == "none"
     assert result["signal_init_profile"] == "react-vite"
     assert {"agent:deliver", "agent:verdict", "agent:cancel", "agent:resume"}.issubset(
         result["required_commands"]
@@ -1252,3 +1296,936 @@ def test_default_cli_invocation_cannot_start_a_paid_run() -> None:
     combined = f"{proc.stdout}\n{proc.stderr}".lower()
     assert proc.returncode != 0
     assert "--live" in combined
+
+
+def _fake_dependency_receipt() -> dict[str, Any]:
+    return {
+        "schema": "signalos.dependency-receipt.v3",
+        "status": "ready",
+        "profile": "react-vite",
+        "platform": "linux/amd64",
+        "image": "docker.io/library/node:20-bookworm@sha256:" + "a" * 64,
+        "policy_sha256": "1" * 64,
+        "broker_sha256": "2" * 64,
+        "attestation_key_id": "3" * 64,
+        "receipt_sha256": "4" * 64,
+        "provenance_hmac_sha256": "must-never-be-persisted",
+        "inputs": {
+            "package_json_sha256": "5" * 64,
+            "package_lock_sha256": "6" * 64,
+        },
+        "provisioner": {
+            "cleanup_verified": True,
+            "proxy_script_sha256": "7" * 64,
+            "host_trust_profile": "trusted-local-docker-desktop-v1",
+            "docker_endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+            "daemon_os_type": "linux",
+        },
+        "bundle": {
+            "archive_sha256": "8" * 64,
+            "tree_sha256": "9" * 64,
+            "file_count": 123,
+            "total_bytes": 456,
+        },
+    }
+
+
+def _direct_funded_context(
+    driver: ModuleType,
+    tmp_path: Path,
+    *,
+    key: bytes = b"K" * 32,
+) -> Any:
+    scratch = tmp_path / "funded-scratch"
+    bundle = scratch / "bundle"
+    bundle.mkdir(parents=True)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+    policy = SimpleNamespace(
+        profile="react-vite",
+        image="docker.io/library/node:20-bookworm@sha256:" + "a" * 64,
+        platform="linux/amd64",
+    )
+    return driver.FundedRunContext(
+        policy_path=policy_path.resolve(),
+        policy=policy,
+        scratch_root=scratch,
+        bundle_dir=bundle,
+        _receipt=_fake_dependency_receipt(),
+        _attestation_key=bytearray(key),
+    )
+
+
+def test_funded_context_uses_public_broker_api_and_zeroes_its_key(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, Any]] = []
+    receipt = _fake_dependency_receipt()
+    policy = SimpleNamespace(
+        profile="react-vite",
+        image=receipt["image"],
+        platform=receipt["platform"],
+    )
+
+    class FakeBroker:
+        def load_dependency_policy(self, path: Path) -> Any:
+            calls.append(("load", Path(path)))
+            return policy
+
+        def prepare_dependency_bundle(
+            self,
+            policy_path: Path,
+            bundle_dir: Path,
+            *,
+            engine: str,
+            timeout: float,
+            attestation_key: bytes,
+        ) -> dict[str, Any]:
+            calls.append(
+                (
+                    "prepare",
+                    {
+                        "policy": Path(policy_path),
+                        "engine": engine,
+                        "timeout": timeout,
+                        "key": attestation_key,
+                    },
+                )
+            )
+            Path(bundle_dir).mkdir(parents=True, exist_ok=True)
+            (Path(bundle_dir) / "safe.txt").write_text("bundle\n", encoding="utf-8")
+            return dict(receipt)
+
+        def verify_dependency_bundle(
+            self,
+            policy_path: Path,
+            bundle_dir: Path,
+            *,
+            attestation_key: bytes,
+        ) -> dict[str, Any]:
+            assert Path(bundle_dir).is_dir()
+            calls.append(
+                (
+                    "verify",
+                    {"policy": Path(policy_path), "key": attestation_key},
+                )
+            )
+            return dict(receipt)
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+    fixed_key = bytes(range(32))
+    monkeypatch.setattr(driver, "_dependency_broker_module", lambda: FakeBroker())
+    monkeypatch.setattr(driver.secrets, "token_bytes", lambda length: fixed_key)
+
+    context = driver.FundedRunContext.prepare(policy_path, timeout=77)
+    owned_key = context._attestation_key
+    public = context.public_evidence()
+    serialized = json.dumps(public, sort_keys=True)
+
+    assert calls[0] == ("load", policy_path.resolve())
+    assert calls[1][0] == "prepare"
+    assert calls[1][1]["engine"] == "docker"
+    assert calls[1][1]["timeout"] == 77
+    assert calls[1][1]["key"] == fixed_key
+    assert calls[2][1]["key"] == fixed_key
+    assert len(calls[2][1]["key"]) == 32
+    assert "provenance_hmac_sha256" not in serialized
+    assert fixed_key.hex() not in serialized
+    assert context.evidence_hashes()["dependency_package_lock_sha256"] == "6" * 64
+
+    first_close = context.close()
+    second_close = context.close()
+    assert first_close == second_close
+    assert first_close["scratch_removed"] is True
+    assert first_close["key_zeroed"] is True
+    assert all(value == 0 for value in owned_key)
+
+
+def test_funded_and_tool_environments_are_separate_and_exact(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    spec = driver.load_model_catalog(MODEL_CONFIG)[0]
+    provider_key = "provider-key-environment-sentinel"
+    sidecar_env = context.sidecar_environment(
+        tmp_path / "sidecar-home",
+        spec=spec,
+        provider_key=provider_key,
+    )
+    tool_env = driver._tool_subprocess_env(tmp_path / "tool-home")
+
+    assert sidecar_env["SIGNALOS_SANDBOX"] == "docker"
+    assert sidecar_env["SIGNALOS_SANDBOX_PROFILE"] == "funded"
+    assert sidecar_env["SIGNALOS_SANDBOX_IMAGE"] == context.policy.image
+    assert sidecar_env["SIGNALOS_SANDBOX_NETWORK"] == "none"
+    assert sidecar_env["SIGNALOS_SANDBOX_PULL"] == "never"
+    assert sidecar_env["SIGNALOS_SANDBOX_READONLY"] == "1"
+    assert sidecar_env["SIGNALOS_SANDBOX_STRICT"] == "1"
+    assert sidecar_env["SIGNALOS_DEPENDENCY_POLICY"] == str(context.policy_path)
+    assert sidecar_env["SIGNALOS_DEPENDENCY_BUNDLE"] == str(context.bundle_dir)
+    assert sidecar_env["SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY"] == (b"K" * 32).hex()
+    assert sidecar_env["DOCKER_HOST"] == "npipe:////./pipe/dockerDesktopLinuxEngine"
+    assert sidecar_env[spec.key_env] == provider_key
+    assert sidecar_env["SIGNALOS_LLM_PROVIDER"] == spec.provider
+    assert sidecar_env["SIGNALOS_LLM_MODEL"] == spec.model
+
+    assert provider_key not in tool_env.values()
+    assert not any(name in tool_env for name in driver.PROVIDER_KEY_ENVS)
+    assert not any(name.startswith("SIGNALOS_DEPENDENCY_") for name in tool_env)
+    assert tool_env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert tool_env["GIT_TERMINAL_PROMPT"] == "0"
+    assert tool_env["GCM_INTERACTIVE"] == "Never"
+    driver._clear_parent_environment(sidecar_env)
+    assert sidecar_env == {}
+    context.close()
+
+
+def test_sidecar_destroys_parent_environment_and_immutable_secrets(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    child_env = context.sidecar_environment(tmp_path / "runtime-home")
+
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+        stdin = SimpleNamespace(close=lambda: None)
+        stdout: tuple[str, ...] = ()
+        stderr: tuple[str, ...] = ()
+
+        def poll(self) -> int:
+            return 0
+
+    class FakeThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(driver.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    monkeypatch.setattr(driver.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        driver.SidecarClient,
+        "_wait_for",
+        lambda self, req_id, timeout, guard: (
+            [],
+            {"ok": True, "data": {"ready": True}},
+        ),
+    )
+
+    client = driver.SidecarClient(
+        tmp_path,
+        child_env,
+        context.redaction_secrets(),
+    )
+    assert child_env == {}
+    assert isinstance(client.secrets, tuple)
+    assert client.secrets
+    client._stderr.append("raw-provider-secret")
+    client._stdout.put("raw-provider-secret")
+    client.close()
+    assert client.secrets == ()
+    assert list(client._stderr) == []
+    assert client._stdout.empty()
+    context.close()
+
+
+def test_sidecar_constructor_failure_still_destroys_environment_and_secrets(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    child_env = context.sidecar_environment(tmp_path / "runtime-home")
+    client = object.__new__(driver.SidecarClient)
+
+    def fail_popen(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("deterministic Popen failure")
+
+    monkeypatch.setattr(driver.subprocess, "Popen", fail_popen)
+    with pytest.raises(OSError, match="deterministic Popen failure"):
+        client.__init__(tmp_path, child_env, context.redaction_secrets())
+
+    assert child_env == {}
+    assert client.secrets == ()
+    context.close()
+
+
+def test_sidecar_constructor_reports_unverified_process_tree_cleanup(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    child_env = context.sidecar_environment(tmp_path / "runtime-home")
+
+    class FakeStream:
+        def close(self) -> None:
+            return None
+
+    class RefusesToExit:
+        pid = 12345
+        returncode = None
+        stdin = FakeStream()
+        stdout = FakeStream()
+        stderr = FakeStream()
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float) -> None:
+            raise TimeoutError("still running")
+
+        def kill(self) -> None:
+            return None
+
+    class FakeThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def start(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        driver.subprocess,
+        "Popen",
+        lambda *args, **kwargs: RefusesToExit(),
+    )
+    monkeypatch.setattr(
+        driver.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1),
+    )
+    monkeypatch.setattr(driver.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        driver.SidecarClient,
+        "_wait_for",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            driver.InfrastructureError("deterministic handshake failure")
+        ),
+    )
+
+    with pytest.raises(
+        driver.InfrastructureError,
+        match="process-tree cleanup could not be verified",
+    ) as captured:
+        driver.SidecarClient(
+            tmp_path,
+            child_env,
+            context.redaction_secrets(),
+        )
+
+    assert isinstance(captured.value.__cause__, driver.InfrastructureError)
+    assert child_env == {}
+    context.close()
+
+
+def test_dependency_parser_is_fixed_and_timeout_is_bounded(driver: ModuleType) -> None:
+    parser = driver._build_parser()
+    args = parser.parse_args([])
+
+    assert args.dependency_policy == driver.DEFAULT_DEPENDENCY_POLICY
+    assert args.dependency_timeout == 900.0
+    assert parser.parse_args(["--dependency-timeout", "1"]).dependency_timeout == 1.0
+    assert parser.parse_args(["--dependency-timeout", "3600"]).dependency_timeout == 3600.0
+    for invalid in ("0", "3600.01", "nan", "inf", "not-a-number"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--dependency-timeout", invalid])
+
+
+def test_live_rejects_an_arbitrary_dependency_policy_before_work(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        driver,
+        "_engine_metadata",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("engine/subprocess work must not start")
+        ),
+    )
+    exit_code = driver.main(
+        [
+            "--live",
+            "--models",
+            "fable5",
+            "--max-cost-per-model",
+            "1",
+            "--acknowledge-key-exposure",
+            "--dependency-policy",
+            str(tmp_path / "unreviewed-policy.json"),
+        ]
+    )
+
+    assert exit_code == 2
+
+
+def test_live_activation_orders_keyless_gates_before_key_lookup(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    class FakeFundedContext:
+        def __enter__(self) -> "FakeFundedContext":
+            events.append("enter")
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            events.append("close")
+
+        def redaction_secrets(self, provider_key: str = "") -> tuple[str, ...]:
+            return (provider_key,) if provider_key else ()
+
+        def public_evidence(self) -> dict[str, Any]:
+            return {
+                "policy_sha256": driver._sha256_file(
+                    driver.DEFAULT_DEPENDENCY_POLICY
+                )
+            }
+
+    def fake_prepare(
+        cls: Any,
+        policy_path: Path,
+        *,
+        timeout: float,
+        expected_profile: str | None = None,
+    ) -> Any:
+        assert Path(policy_path) == driver.DEFAULT_DEPENDENCY_POLICY.resolve()
+        assert timeout == 900.0
+        assert expected_profile == "react-vite"
+        events.append("bundle")
+        return FakeFundedContext()
+
+    def fake_backend(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["funded_context"], FakeFundedContext)
+        events.append("backend")
+        return {"ready": True}
+
+    def stop_at_key(*args: Any, **kwargs: Any) -> tuple[str, str]:
+        events.append("key")
+        raise driver.InfrastructureError("intentional stop after ordering proof")
+
+    monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
+    monkeypatch.setattr(
+        driver,
+        "_committed_file_bytes",
+        lambda path, **kwargs: Path(path).read_bytes(),
+    )
+    monkeypatch.setattr(
+        driver,
+        "_verify_ci_attestation",
+        lambda engine: events.append("ci") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        driver,
+        "_require_external_output_root",
+        lambda path: events.append("output") or Path(path).resolve(),
+    )
+    monkeypatch.setattr(
+        driver,
+        "_local_preflight",
+        lambda: events.append("local") or {"ready": True},
+    )
+    monkeypatch.setattr(
+        driver.FundedRunContext,
+        "prepare",
+        classmethod(fake_prepare),
+    )
+    monkeypatch.setattr(driver, "_backend_preflight", fake_backend)
+    monkeypatch.setattr(driver, "_resolve_api_key", stop_at_key)
+
+    exit_code = driver.main(
+        [
+            "--live",
+            "--models",
+            "fable5",
+            "--max-cost-per-model",
+            "1",
+            "--acknowledge-key-exposure",
+            "--output-root",
+            str(tmp_path / "outside-engine"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert events == [
+        "ci",
+        "output",
+        "local",
+        "bundle",
+        "enter",
+        "backend",
+        "key",
+        "close",
+    ]
+
+
+def test_exact_secret_scans_include_git_and_node_modules(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    provider_key = "provider-key-retention-sentinel"
+    attestation_key = bytearray(b"A" * 32)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / ".git" / "config").write_text(provider_key, encoding="utf-8")
+    (tmp_path / "node_modules" / "binary.dat").write_bytes(bytes(attestation_key))
+    (tmp_path / "attestation.txt").write_text(
+        bytes(attestation_key).hex(),
+        encoding="ascii",
+    )
+
+    result = driver._secret_scan(
+        tmp_path,
+        provider_key,
+        exact_values=driver._attestation_needles(attestation_key),
+    )
+
+    assert result["ok"] is False
+    assert {hit["kind"] for hit in result["hits"]} == {
+        "exact-selected-key",
+        "exact-dependency-attestation-key",
+        "exact-dependency-attestation-key-hex",
+    }
+    assert {hit["path"] for hit in result["hits"]} == {
+        ".git/config",
+        "node_modules/binary.dat",
+        "attestation.txt",
+    }
+
+
+def test_real_rows_verify_funded_receipt_at_first_g4_checkpoint() -> None:
+    source = DRIVER_PATH.read_text(encoding="utf-8")
+    start = source.index("def _run_row(")
+    end = source.index("def _bounded_dependency_timeout", start)
+    run_row = source[start:end]
+    g4 = run_row.index('if gate == "G4":')
+    verify = run_row.index("funded_context.verify_materialized_after_init", g4)
+    checkpoint = run_row.index("_validate_review_checkpoint", verify)
+
+    assert g4 < verify < checkpoint
+    assert "funded_context.materialize_after_init" not in run_row
+
+
+def test_local_and_engine_subprocesses_never_inherit_ambient_credentials(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-provider-secret")
+    monkeypatch.setenv("SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY", "ab" * 32)
+    monkeypatch.setenv("HTTPS_PROXY", "https://proxy-user:proxy-password@example.invalid")
+    popen_envs: list[dict[str, str]] = []
+
+    class FakePopen:
+        returncode = 0
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            popen_envs.append(dict(kwargs["env"]))
+
+        def communicate(self, timeout: float) -> tuple[str, str]:
+            return "ok", ""
+
+    monkeypatch.setattr(driver.subprocess, "Popen", FakePopen)
+    result = driver._run_command(["fake-tool"], cwd=tmp_path)
+    assert result["ok"] is True
+    assert len(popen_envs) == 1
+    assert "OPENROUTER_API_KEY" not in popen_envs[0]
+    assert "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY" not in popen_envs[0]
+    assert "HTTPS_PROXY" not in popen_envs[0]
+
+    git_envs: list[dict[str, str]] = []
+
+    def fake_git(argv: list[str], **kwargs: Any) -> Any:
+        git_envs.append(dict(kwargs["env"]))
+        args = tuple(argv[1:])
+        outputs = {
+            ("status", "--porcelain"): "",
+            ("rev-parse", "HEAD"): "a" * 40,
+            (
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ): "origin/main",
+            ("rev-parse", "@{upstream}"): "a" * 40,
+            ("rev-parse", "HEAD^{tree}"): "b" * 40,
+            ("branch", "--show-current"): "main",
+        }
+        return SimpleNamespace(returncode=0, stdout=outputs[args] + "\n")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_git)
+    metadata = driver._engine_metadata()
+    assert metadata["commit"] == "a" * 40
+    assert git_envs
+    for env in git_envs:
+        assert "OPENROUTER_API_KEY" not in env
+        assert "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY" not in env
+        assert "HTTPS_PROXY" not in env
+        assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+
+
+def test_failed_prepare_removes_scratch_and_rejects_profile_before_runner(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scratch = tmp_path / "prepare-scratch"
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+
+    class FakeBroker:
+        def load_dependency_policy(self, path: Path) -> Any:
+            return SimpleNamespace(profile="wrong-profile")
+
+        def prepare_dependency_bundle(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("runner must not start for a profile mismatch")
+
+    monkeypatch.setattr(driver, "_dependency_broker_module", lambda: FakeBroker())
+    monkeypatch.setattr(
+        driver.tempfile,
+        "mkdtemp",
+        lambda **kwargs: scratch.mkdir() or str(scratch),
+    )
+    with pytest.raises(driver.InfrastructureError, match="scenario profile"):
+        driver.FundedRunContext.prepare(
+            policy_path,
+            timeout=10,
+            expected_profile="react-vite",
+        )
+    assert not scratch.exists()
+
+
+def test_failed_broker_prepare_removes_secret_bearing_scratch(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scratch = tmp_path / "failed-broker-scratch"
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+
+    class FakeBroker:
+        def load_dependency_policy(self, path: Path) -> Any:
+            return SimpleNamespace(profile="react-vite")
+
+        def prepare_dependency_bundle(
+            self,
+            policy_path: Path,
+            bundle_dir: Path,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            Path(bundle_dir).mkdir(parents=True)
+            (Path(bundle_dir) / "leak.txt").write_text(
+                bytes(kwargs["attestation_key"]).hex(),
+                encoding="ascii",
+            )
+            raise RuntimeError("deterministic broker failure")
+
+    monkeypatch.setattr(driver, "_dependency_broker_module", lambda: FakeBroker())
+    monkeypatch.setattr(
+        driver.tempfile,
+        "mkdtemp",
+        lambda **kwargs: scratch.mkdir() or str(scratch),
+    )
+    with pytest.raises(driver.InfrastructureError, match="unverifiable secret evidence"):
+        driver.FundedRunContext.prepare(
+            policy_path,
+            timeout=10,
+            expected_profile="react-vite",
+        )
+    assert not scratch.exists()
+
+
+def test_context_purges_retained_root_and_zeroes_every_owned_secret_on_leak(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    context = _direct_funded_context(driver, tmp_path)
+    retained = tmp_path / "retained-run"
+    retained.mkdir()
+    provider = "provider-secret-that-must-be-purged"
+    (retained / "leak.txt").write_text(
+        provider + "\n" + context._key_hex(),
+        encoding="utf-8",
+    )
+    context.register_scan_root(retained)
+    context.register_exact_secret("exact-selected-key", provider)
+    owned_key = context._attestation_key
+    registered = context._registered_secrets[0][1]
+
+    with pytest.raises(driver.InfrastructureError, match="retained output was removed"):
+        context.close()
+
+    assert not retained.exists()
+    assert not context.scratch_root.exists()
+    assert all(value == 0 for value in owned_key)
+    assert all(value == 0 for value in registered)
+
+
+def test_exact_scanner_fails_closed_on_unreadable_file(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "owned.txt").write_text("ordinary", encoding="utf-8")
+    monkeypatch.setattr(
+        driver,
+        "_file_contains_bytes",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError("locked")),
+    )
+    result = driver._scan_exact_secret_values(
+        (tmp_path,),
+        (("exact-test-secret", b"secret"),),
+    )
+    assert result["ok"] is False
+    assert result["hits"] == []
+    assert result["errors"]
+
+
+def test_directory_cleanup_retries_and_reads_back_absence(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "transient-lock"
+    target.mkdir()
+    (target / "file.txt").write_text("safe", encoding="utf-8")
+    original = driver.shutil.rmtree
+    calls = 0
+
+    def flaky(path: Path, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("transient Windows lock")
+        original(path, **kwargs)
+
+    monkeypatch.setattr(driver.shutil, "rmtree", flaky)
+    removed, error = driver._remove_directory_with_readback(target)
+    assert removed is True
+    assert error == ""
+    assert calls == 2
+    assert not target.exists()
+
+
+def test_sidecar_termination_failure_is_not_suppressed(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RefusesToExit:
+        pid = 12345
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float) -> None:
+            raise TimeoutError("still running")
+
+        def kill(self) -> None:
+            return None
+
+    client = object.__new__(driver.SidecarClient)
+    client.proc = RefusesToExit()
+    monkeypatch.setattr(driver.os, "name", "nt")
+    monkeypatch.setattr(
+        driver.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1),
+    )
+    with pytest.raises(driver.InfrastructureError, match="did not terminate"):
+        client.terminate_tree()
+
+
+def test_offline_probe_binds_every_docker_call_to_attested_endpoint(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from signalos_lib.product import sandbox
+
+    context = _direct_funded_context(driver, tmp_path)
+    workspace = tmp_path / "workspace"
+    (workspace / ".signalos" / "dependencies").mkdir(parents=True)
+    (workspace / ".signalos" / "INIT_COMPLETE.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-provider-secret")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://attacker.invalid:2375")
+    monkeypatch.setenv("DOCKER_CONTEXT", "attacker")
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "attacker-config"))
+    docker_calls: list[tuple[list[str], dict[str, str]]] = []
+
+    class FakeBroker:
+        def verify_materialized_dependencies(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return _fake_dependency_receipt()
+
+    def fake_runtime(argv: list[str], **kwargs: Any) -> Any:
+        docker_calls.append((list(argv), dict(kwargs["env"])))
+        stdout = "linux\n" if "info" in argv else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    class FakeContainerRunner:
+        def __init__(self, workspace: Path, **kwargs: Any) -> None:
+            assert kwargs["runner"] is not None
+            self.runtime = kwargs["runner"]
+
+        def run(self, *args: Any, **kwargs: Any) -> tuple[int, Any]:
+            self.runtime(
+                ["docker", "version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return 0, sandbox.CommandOutput(
+                stdout="SIGNALOS_DEPENDENCIES_OK",
+                stderr="",
+            )
+
+    monkeypatch.setattr(driver, "_dependency_broker_module", lambda: FakeBroker())
+    monkeypatch.setattr(driver.subprocess, "run", fake_runtime)
+    monkeypatch.setattr(sandbox, "ContainerRunner", FakeContainerRunner)
+
+    result = context.offline_probe(workspace, timeout=30)
+    expected = "npipe:////./pipe/dockerDesktopLinuxEngine"
+    assert result["docker_endpoint"] == expected
+    assert len(docker_calls) == 2
+    for argv, env in docker_calls:
+        assert argv[:3] == ["docker", "--host", expected]
+        assert env["DOCKER_HOST"] == expected
+        assert "DOCKER_CONTEXT" not in env
+        assert "DOCKER_CONFIG" not in env
+        assert "OPENROUTER_API_KEY" not in env
+    context.close()
+
+
+def test_teardown_failure_can_never_leave_a_pass_manifest(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    policy_sha = driver._sha256_file(driver.DEFAULT_DEPENDENCY_POLICY)
+
+    class FakeFundedContext:
+        def __enter__(self) -> "FakeFundedContext":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def redaction_secrets(self, provider_key: str = "") -> tuple[str, ...]:
+            return ((provider_key,) if provider_key else ()) + ("ab" * 32,)
+
+        def public_evidence(self) -> dict[str, Any]:
+            return {"policy_sha256": policy_sha}
+
+        def register_exact_secret(self, *args: Any) -> None:
+            return None
+
+        def register_scan_root(self, root: Path) -> None:
+            self.run_root = Path(root)
+
+        def evidence_hashes(self) -> dict[str, str]:
+            return {"dependency_policy_sha256": policy_sha}
+
+        def attestation_scan_needles(self) -> tuple[tuple[str, bytes], ...]:
+            return (("exact-dependency-attestation-key-hex", ("ab" * 32).encode()),)
+
+        def close(self) -> dict[str, Any]:
+            raise driver.InfrastructureError("deterministic teardown failure")
+
+    context = FakeFundedContext()
+    monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
+    monkeypatch.setattr(driver, "_verify_ci_attestation", lambda engine: {"ok": True})
+    monkeypatch.setattr(driver, "_require_engine_unchanged", lambda engine: engine)
+    monkeypatch.setattr(
+        driver,
+        "_trusted_oracle_asset",
+        lambda *args, **kwargs: {
+            "name": "oracle.mjs",
+            "source": b"export {};",
+            "sha256": "a" * 64,
+            "repository_path": "scripts/backend_matrix/oracles/oracle.mjs",
+        },
+    )
+    monkeypatch.setattr(
+        driver,
+        "_committed_file_bytes",
+        lambda path, **kwargs: Path(path).read_bytes(),
+    )
+    monkeypatch.setattr(driver, "_local_preflight", lambda: {"ready": True})
+    monkeypatch.setattr(
+        driver.FundedRunContext,
+        "prepare",
+        classmethod(lambda cls, *args, **kwargs: context),
+    )
+    monkeypatch.setattr(driver, "_backend_preflight", lambda *args, **kwargs: {"ready": True})
+    monkeypatch.setattr(driver, "_resolve_api_key", lambda *args: ("provider-secret", "test"))
+    selected = driver.load_model_catalog(MODEL_CONFIG)[0]
+    monkeypatch.setattr(
+        driver,
+        "_provider_preflight",
+        lambda *args, **kwargs: {
+            "models": [{"id": selected.model, "context_length": 200_000}]
+        },
+    )
+    monkeypatch.setattr(driver, "_provider_stack_preflight", lambda *args: {"ready": True})
+    monkeypatch.setattr(
+        driver,
+        "_run_row",
+        lambda *args, **kwargs: {"status": "pass"},
+    )
+    output_root = tmp_path / "matrix-output"
+    monkeypatch.setattr(
+        driver,
+        "_require_external_output_root",
+        lambda path: output_root,
+    )
+
+    exit_code = driver.main(
+        [
+            "--live",
+            "--models",
+            selected.alias,
+            "--max-cost-per-model",
+            "1",
+            "--acknowledge-key-exposure",
+            "--output-root",
+            str(output_root),
+        ]
+    )
+
+    assert exit_code == 2
+    manifests = list(output_root.glob("*/matrix-result.json"))
+    assert len(manifests) == 1
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    assert manifest["status"] == "finalizing"
+    assert manifest["status"] != "pass"
+
+
+def test_scenario_and_oracle_must_be_repository_owned(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    scenario = driver._load_scenario(
+        ROOT / "scripts" / "backend_matrix" / "scenarios" / "expense_tracker.json"
+    )
+    outside = tmp_path / "scenario.json"
+    outside.write_text(json.dumps(scenario), encoding="utf-8")
+    with pytest.raises(driver.InfrastructureError, match="matrix scenario"):
+        driver._trusted_oracle_asset(
+            outside,
+            scenario,
+            engine=_green_engine(),
+            live=False,
+        )
