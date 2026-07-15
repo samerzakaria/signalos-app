@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import inspect
+import os
 import shutil
 import stat
 from pathlib import Path
@@ -41,19 +43,30 @@ def _mutate_first_lock_entry(policy_path: Path, **changes) -> None:
 
 
 class _FakeInstaller:
-    dependency_egress_policy = "npm-registry-proxy-v1"
+    dependency_egress_policy = "npm-registry-connect-v2"
     platform = "linux/amd64"
     engine = "docker"
     image = (
         "docker.io/library/node:20-bookworm@sha256:"
         "cacf10e99285cbbc891452e31249c1b5ec3ba225f40028fae946b75aeaf1b66a"
     )
+    proxy_image = image
+    proxy_script_sha256 = hashlib.sha256(
+        (SOURCE_DEPENDENCIES / "proxy" / "connect-proxy.cjs").read_bytes()
+    ).hexdigest()
 
     def __init__(self) -> None:
         self.calls = []
+        self.staging_mode = None
+        self.input_modes = None
 
     def run(self, command, cwd, timeout, env):
         self.calls.append((command, Path(cwd), timeout, dict(env)))
+        self.staging_mode = stat.S_IMODE(Path(cwd).stat().st_mode)
+        self.input_modes = {
+            name: stat.S_IMODE((Path(cwd) / name).stat().st_mode)
+            for name in ("package.json", "package-lock.json")
+        }
         manifest = json.loads((Path(cwd) / "package.json").read_text(encoding="utf-8"))
         packages = {**manifest["dependencies"], **manifest["devDependencies"]}
         for name in packages:
@@ -66,10 +79,44 @@ class _FakeInstaller:
         broker._write_dependency_archive(
             Path(cwd) / "node_modules", Path(cwd) / "node_modules.tar"
         )
-        return 0, CommandOutput(
-            stdout="SIGNALOS_RUNTIME=linux/x64\n10.8.2\n\nadded 1 package\n",
-            stderr="",
+        evidence = broker.TrustedDependencyRunEvidence(
+            schema=broker.RUNNER_EVIDENCE_SCHEMA,
+            engine="docker",
+            platform=self.platform,
+            installer_image=self.image,
+            proxy_image=self.proxy_image,
+            runtime_image_id="sha256:" + "a" * 64,
+            proxy_script_sha256=self.proxy_script_sha256,
+            runner_sha256=broker._trusted_runner_sha256(),
+            egress_policy=self.dependency_egress_policy,
+            allowed_connect_authorities=(broker.APPROVED_CONNECT_AUTHORITY,),
+            installer_network=broker.PROXY_INSTALLER_NETWORK,
+            proxy_egress_network=broker.PROXY_EGRESS_NETWORK,
+            tls_mode=broker.PROXY_TLS_MODE,
+            pull_policy="never",
+            cleanup_verified=True,
         )
+        return (
+            0,
+            CommandOutput(
+                stdout="SIGNALOS_RUNTIME=linux/x64\n10.8.2\n\nadded 1 package\n",
+                stderr="",
+            ),
+            evidence,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _fake_runner_factory(monkeypatch):
+    created: list[_FakeInstaller] = []
+
+    def factory(_policy):
+        runner = _FakeInstaller()
+        created.append(runner)
+        return runner
+
+    monkeypatch.setattr(broker, "_new_dependency_runner", factory)
+    return created
 
 
 def test_reviewed_policy_and_lock_are_strictly_valid() -> None:
@@ -84,8 +131,8 @@ def test_reviewed_policy_and_lock_are_strictly_valid() -> None:
 def test_policy_rejects_duplicate_json_keys(tmp_path: Path) -> None:
     policy_path = _policy_copy(tmp_path)
     policy_path.write_text(
-        '{"schema":"signalos.funded-dependency-policy.v1",'
-        '"schema":"signalos.funded-dependency-policy.v1"}\n',
+        '{"schema":"signalos.funded-dependency-policy.v2",'
+        '"schema":"signalos.funded-dependency-policy.v2"}\n',
         encoding="utf-8",
     )
 
@@ -146,27 +193,49 @@ def test_manifest_rejects_git_file_workspace_alias_and_tags(tmp_path: Path) -> N
             validate_package_lock(load_dependency_policy(policy_path))
 
 
-def test_prepare_bundle_uses_only_fixed_scriptless_command_and_env(tmp_path: Path) -> None:
+def test_prepare_bundle_uses_only_fixed_scriptless_command_and_env(
+    tmp_path: Path, _fake_runner_factory
+) -> None:
     policy_path = _policy_copy(tmp_path)
-    runner = _FakeInstaller()
     bundle = tmp_path / "bundle"
 
     receipt = prepare_dependency_bundle(
         policy_path,
         bundle,
         engine="docker",
-        runner=runner,
         timeout=321,
         attestation_key=ATTESTATION_KEY,
     )
+    runner = _fake_runner_factory[0]
 
     assert receipt["status"] == "ready"
+    assert receipt["schema"] == "signalos.dependency-receipt.v2"
+    assert receipt["provisioner"] == {
+        "schema": broker.RUNNER_EVIDENCE_SCHEMA,
+        "engine": "docker",
+        "platform": "linux/amd64",
+        "installer_image": runner.image,
+        "proxy_image": runner.proxy_image,
+        "runtime_image_id": "sha256:" + "a" * 64,
+        "proxy_script_sha256": runner.proxy_script_sha256,
+        "runner_sha256": broker._trusted_runner_sha256(),
+        "egress_policy": "npm-registry-connect-v2",
+        "allowed_connect_authorities": ["registry.npmjs.org:443"],
+        "installer_network": "docker-internal",
+        "proxy_egress_network": "dedicated-bridge",
+        "tls_mode": "end-to-end-strict",
+        "pull_policy": "never",
+        "cleanup_verified": True,
+    }
     assert len(runner.calls) == 1
     command, cwd, timeout, env = runner.calls[0]
     assert "npm --version && npm ci --ignore-scripts --no-audit --no-fund" in command
     assert "--no-recursion" in command and "--mtime='@0'" in command
     assert cwd.name.startswith(".bundle.staging-")
     assert timeout == 321
+    if os.name != "nt":
+        assert runner.staging_mode == 0o700
+        assert runner.input_modes == {"package.json": 0o600, "package-lock.json": 0o600}
     assert env["NPM_CONFIG_IGNORE_SCRIPTS"] == "true"
     assert env["NPM_CONFIG_REGISTRY"] == "https://registry.npmjs.org/"
     assert all("KEY" not in key and "TOKEN" not in key for key in env)
@@ -181,7 +250,7 @@ def test_materialize_verifies_every_byte_and_detects_tampering(tmp_path: Path) -
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     workspace = tmp_path / "workspace"
@@ -212,7 +281,7 @@ def test_bundle_receipt_tampering_is_rejected(tmp_path: Path) -> None:
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     receipt_path = bundle / ".signalos-dependency-receipt.json"
@@ -230,7 +299,7 @@ def test_workspace_manifest_drift_blocks_before_materialization(tmp_path: Path) 
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     workspace = tmp_path / "workspace"
@@ -244,9 +313,55 @@ def test_workspace_manifest_drift_blocks_before_materialization(tmp_path: Path) 
     assert not (workspace / "node_modules").exists()
 
 
-def test_prepare_fails_closed_without_registry_proxy_runner(tmp_path: Path) -> None:
+def test_prepare_api_has_no_caller_supplied_runner_boundary() -> None:
+    parameters = inspect.signature(prepare_dependency_bundle).parameters
+
+    assert "runner" not in parameters
+
+
+def test_broker_rehashes_staged_inputs_after_runner_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class MutatingInstaller(_FakeInstaller):
+        def run(self, command, cwd, timeout, env):
+            result = super().run(command, cwd, timeout, env)
+            (Path(cwd) / "package.json").write_text("{}\n", encoding="utf-8")
+            return result
+
+    monkeypatch.setattr(broker, "_new_dependency_runner", lambda _policy: MutatingInstaller())
     policy_path = _policy_copy(tmp_path)
-    with pytest.raises(DependencyBrokerError, match="registry-proxy runner"):
+
+    with pytest.raises(DependencyBrokerError, match="staged dependency inputs changed"):
+        prepare_dependency_bundle(
+            policy_path,
+            tmp_path / "bundle",
+            engine="docker",
+            attestation_key=ATTESTATION_KEY,
+        )
+
+
+def test_broker_rehashes_reviewed_sources_after_runner_returns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class SourceMutatingInstaller(_FakeInstaller):
+        def __init__(self, lock_path: Path) -> None:
+            super().__init__()
+            self.lock_path = lock_path
+
+        def run(self, command, cwd, timeout, env):
+            result = super().run(command, cwd, timeout, env)
+            self.lock_path.write_bytes(self.lock_path.read_bytes() + b" ")
+            return result
+
+    policy_path = _policy_copy(tmp_path)
+    lock_path = policy_path.parent / "react-vite" / "package-lock.json"
+    monkeypatch.setattr(
+        broker,
+        "_new_dependency_runner",
+        lambda _policy: SourceMutatingInstaller(lock_path),
+    )
+
+    with pytest.raises(DependencyBrokerError):
         prepare_dependency_bundle(
             policy_path,
             tmp_path / "bundle",
@@ -259,7 +374,7 @@ def test_recomputed_public_receipt_hash_cannot_forge_provenance(tmp_path: Path) 
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     receipt_path = bundle / ".signalos-dependency-receipt.json"
@@ -280,11 +395,36 @@ def test_recomputed_public_receipt_hash_cannot_forge_provenance(tmp_path: Path) 
         )
 
 
+def test_runner_topology_tampering_cannot_forge_provenance(tmp_path: Path) -> None:
+    policy_path = _policy_copy(tmp_path)
+    bundle = tmp_path / "bundle"
+    prepare_dependency_bundle(
+        policy_path, bundle, engine="docker",
+        attestation_key=ATTESTATION_KEY,
+    )
+    receipt_path = bundle / ".signalos-dependency-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["provisioner"]["installer_network"] = "bridge"
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256", None)
+    receipt["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(DependencyBrokerError, match="provenance HMAC"):
+        verify_dependency_bundle(
+            policy_path, bundle, attestation_key=ATTESTATION_KEY
+        )
+
+
 def test_wrong_attestation_key_is_rejected(tmp_path: Path) -> None:
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     with pytest.raises(DependencyBrokerError, match="HMAC"):
@@ -297,7 +437,7 @@ def test_preexisting_node_modules_symlink_is_never_materialized(tmp_path: Path) 
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     workspace = tmp_path / "workspace"
@@ -320,7 +460,7 @@ def test_materialization_never_follows_governance_directory_symlink(tmp_path: Pa
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     workspace = tmp_path / "workspace"
@@ -358,7 +498,7 @@ def test_materialization_filesystem_errors_are_typed(tmp_path: Path, monkeypatch
     policy_path = _policy_copy(tmp_path)
     bundle = tmp_path / "bundle"
     prepare_dependency_bundle(
-        policy_path, bundle, engine="docker", runner=_FakeInstaller(),
+        policy_path, bundle, engine="docker",
         attestation_key=ATTESTATION_KEY,
     )
     workspace = tmp_path / "workspace"

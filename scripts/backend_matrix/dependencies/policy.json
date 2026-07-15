@@ -1,5 +1,5 @@
 {
-  "schema": "signalos.funded-dependency-policy.v1",
+  "schema": "signalos.funded-dependency-policy.v2",
   "profile": "react-vite",
   "platform": "linux/amd64",
   "packageManager": "npm",
@@ -14,6 +14,19 @@
     "--no-audit",
     "--no-fund"
   ],
+  "registryProxy": {
+    "egressPolicy": "npm-registry-connect-v2",
+    "image": "docker.io/library/node:20-bookworm@sha256:cacf10e99285cbbc891452e31249c1b5ec3ba225f40028fae946b75aeaf1b66a",
+    "script": "proxy/connect-proxy.cjs",
+    "scriptSha256": "a1492b238bd4d3f329a9e2965802fe981d26432aa060050c62f17c0e93bca622",
+    "listenPort": 3128,
+    "allowedConnectAuthorities": [
+      "registry.npmjs.org:443"
+    ],
+    "tlsMode": "end-to-end-strict",
+    "installerNetwork": "docker-internal",
+    "proxyEgressNetwork": "dedicated-bridge"
+  },
   "maxFiles": 100000,
   "maxBytes": 1073741824
 }

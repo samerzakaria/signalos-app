@@ -12,6 +12,7 @@ from __future__ import annotations
 __all__ = [
     "DependencyBrokerError",
     "DependencyPolicy",
+    "TrustedDependencyRunEvidence",
     "load_dependency_policy",
     "materialize_dependency_bundle",
     "materialize_funded_dependencies_from_environment",
@@ -21,6 +22,8 @@ __all__ = [
     "verify_dependency_bundle",
     "verify_materialized_dependencies",
     "verify_funded_dependencies_from_environment",
+    "TRUSTED_INSTALL_SHELL_COMMAND",
+    "trusted_install_environment",
 ]
 
 import base64
@@ -33,6 +36,7 @@ import shlex
 import shutil
 import stat
 import tarfile
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,11 +45,18 @@ from urllib.parse import unquote, urlsplit
 
 from .sandbox import SandboxUnavailableError, validate_pinned_image
 
-POLICY_SCHEMA = "signalos.funded-dependency-policy.v1"
-RECEIPT_SCHEMA = "signalos.dependency-receipt.v1"
+POLICY_SCHEMA = "signalos.funded-dependency-policy.v2"
+RECEIPT_SCHEMA = "signalos.dependency-receipt.v2"
+RUNNER_EVIDENCE_SCHEMA = "signalos.dependency-runner-evidence.v1"
 SUPPORTED_PROFILE = "react-vite"
 SUPPORTED_PLATFORM = "linux/amd64"
 APPROVED_ORIGIN = "https://registry.npmjs.org"
+APPROVED_CONNECT_AUTHORITY = "registry.npmjs.org:443"
+PROXY_SCRIPT_RELATIVE_PATH = Path("proxy") / "connect-proxy.cjs"
+PROXY_LISTEN_PORT = 3128
+PROXY_TLS_MODE = "end-to-end-strict"
+PROXY_INSTALLER_NETWORK = "docker-internal"
+PROXY_EGRESS_NETWORK = "dedicated-bridge"
 FIXED_INSTALL_COMMAND = (
     "npm",
     "ci",
@@ -60,11 +71,18 @@ FIXED_ARCHIVE_COMMAND = (
     "--pax-option=delete=atime,delete=ctime --mtime='@0' "
     "--owner=0 --group=0 --numeric-owner -cf ../node_modules.tar)"
 )
+TRUSTED_INSTALL_SHELL_COMMAND = (
+    "node -p '\"SIGNALOS_RUNTIME=\"+process.platform+\"/\"+process.arch'"
+    " && npm --version && "
+    + shlex.join(FIXED_INSTALL_COMMAND)
+    + " && "
+    + FIXED_ARCHIVE_COMMAND
+)
 RECEIPT_NAME = "dependency-receipt.json"
 _BUNDLE_RECEIPT_NAME = ".signalos-dependency-receipt.json"
 ARCHIVE_NAME = "node_modules.tar"
 ATTESTATION_KEY_ENV = "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY"
-TRUSTED_EGRESS_POLICY = "npm-registry-proxy-v1"
+TRUSTED_EGRESS_POLICY = "npm-registry-connect-v2"
 _MATERIALIZED_ARCHIVE_REL = Path(".signalos") / "dependencies" / ARCHIVE_NAME
 _SEMVER_SPEC_RE = re.compile(r"^[~^]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 _EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -73,8 +91,67 @@ _NPM_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 _WINDOWS_REPARSE_POINT = 0x0400
 
 
+def trusted_install_environment() -> dict[str, str]:
+    """Return the only caller-supplied environment accepted by the runner."""
+
+    return {
+        "CI": "1",
+        "NPM_CONFIG_REGISTRY": APPROVED_ORIGIN + "/",
+        "NPM_CONFIG_IGNORE_SCRIPTS": "true",
+        "NPM_CONFIG_AUDIT": "false",
+        "NPM_CONFIG_FUND": "false",
+        "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+    }
+
+
 class DependencyBrokerError(SandboxUnavailableError):
     """The trusted dependency boundary could not be established or verified."""
+
+
+@dataclass(frozen=True)
+class TrustedDependencyRunEvidence:
+    """Immutable facts returned by the concrete Docker dependency runner.
+
+    The broker, which alone holds the run-scoped HMAC key, validates and signs
+    these facts into the dependency receipt.  Ephemeral Docker object names are
+    deliberately excluded so receipts remain portable and disclose no host
+    lifecycle details.
+    """
+
+    schema: str
+    engine: str
+    platform: str
+    installer_image: str
+    proxy_image: str
+    runtime_image_id: str
+    proxy_script_sha256: str
+    runner_sha256: str
+    egress_policy: str
+    allowed_connect_authorities: tuple[str, ...]
+    installer_network: str
+    proxy_egress_network: str
+    tls_mode: str
+    pull_policy: str
+    cleanup_verified: bool
+
+    def as_receipt(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "engine": self.engine,
+            "platform": self.platform,
+            "installer_image": self.installer_image,
+            "proxy_image": self.proxy_image,
+            "runtime_image_id": self.runtime_image_id,
+            "proxy_script_sha256": self.proxy_script_sha256,
+            "runner_sha256": self.runner_sha256,
+            "egress_policy": self.egress_policy,
+            "allowed_connect_authorities": list(self.allowed_connect_authorities),
+            "installer_network": self.installer_network,
+            "proxy_egress_network": self.proxy_egress_network,
+            "tls_mode": self.tls_mode,
+            "pull_policy": self.pull_policy,
+            "cleanup_verified": self.cleanup_verified,
+        }
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -155,6 +232,15 @@ class DependencyPolicy:
     policy_sha256: str
     package_json: Path
     package_lock: Path
+    proxy_image: str
+    proxy_script_path: Path
+    proxy_script_bytes: bytes
+    proxy_script_sha256: str
+    proxy_listen_port: int
+    proxy_allowed_connect_authorities: tuple[str, ...]
+    proxy_tls_mode: str
+    proxy_installer_network: str
+    proxy_egress_network: str
 
 
 @dataclass(frozen=True)
@@ -200,6 +286,64 @@ def load_dependency_policy(
         raise DependencyBrokerError("dependency maxFiles is outside the safe range")
     if not 64 * 1024 * 1024 <= max_bytes <= 2 * 1024 * 1024 * 1024:
         raise DependencyBrokerError("dependency maxBytes is outside the safe range")
+    proxy = raw.get("registryProxy")
+    if not isinstance(proxy, dict):
+        raise DependencyBrokerError("funded registry proxy policy is missing")
+    if set(proxy) != {
+        "egressPolicy",
+        "image",
+        "script",
+        "scriptSha256",
+        "listenPort",
+        "allowedConnectAuthorities",
+        "tlsMode",
+        "installerNetwork",
+        "proxyEgressNetwork",
+    }:
+        raise DependencyBrokerError("funded registry proxy policy has unknown or missing fields")
+    if proxy.get("egressPolicy") != TRUSTED_EGRESS_POLICY:
+        raise DependencyBrokerError("funded registry proxy egress policy is not approved")
+    try:
+        proxy_image = validate_pinned_image(str(proxy.get("image") or ""))
+    except ValueError as exc:
+        raise DependencyBrokerError(str(exc)) from exc
+    if proxy_image != image:
+        raise DependencyBrokerError("registry proxy must use the exact funded build image")
+    if proxy.get("script") != PROXY_SCRIPT_RELATIVE_PATH.as_posix():
+        raise DependencyBrokerError("funded registry proxy script path is not fixed")
+    script_root = _real_directory(path.parent / "proxy", label="registry proxy directory")
+    proxy_script_path = _real_file(
+        path.parent / PROXY_SCRIPT_RELATIVE_PATH,
+        label="registry proxy script",
+    )
+    if proxy_script_path.parent != script_root:
+        raise DependencyBrokerError("registry proxy script escapes its reviewed directory")
+    try:
+        proxy_script_bytes = proxy_script_path.read_bytes()
+        proxy_script_bytes.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise DependencyBrokerError("registry proxy script is unreadable UTF-8") from exc
+    if not proxy_script_bytes or len(proxy_script_bytes) > 32 * 1024 or b"\x00" in proxy_script_bytes:
+        raise DependencyBrokerError("registry proxy script size or content is invalid")
+    proxy_script_sha256 = str(proxy.get("scriptSha256") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", proxy_script_sha256) is None
+        or not hmac.compare_digest(proxy_script_sha256, _sha256_bytes(proxy_script_bytes))
+    ):
+        raise DependencyBrokerError("registry proxy script hash does not match policy")
+    if proxy.get("listenPort") != PROXY_LISTEN_PORT:
+        raise DependencyBrokerError("funded registry proxy listen port is not fixed")
+    authorities = tuple(
+        str(value) for value in (proxy.get("allowedConnectAuthorities") or [])
+    )
+    if authorities != (APPROVED_CONNECT_AUTHORITY,):
+        raise DependencyBrokerError("funded CONNECT authority is not the approved exact authority")
+    if proxy.get("tlsMode") != PROXY_TLS_MODE:
+        raise DependencyBrokerError("funded registry proxy TLS mode is not strict end-to-end")
+    if proxy.get("installerNetwork") != PROXY_INSTALLER_NETWORK:
+        raise DependencyBrokerError("funded installer network mode is not internal")
+    if proxy.get("proxyEgressNetwork") != PROXY_EGRESS_NETWORK:
+        raise DependencyBrokerError("funded proxy egress network is not dedicated")
     fixture = path.parent / profile
     package_json = fixture / "package.json"
     package_lock = fixture / "package-lock.json"
@@ -217,6 +361,15 @@ def load_dependency_policy(
         policy_sha256=_sha256_file(path),
         package_json=package_json,
         package_lock=package_lock,
+        proxy_image=proxy_image,
+        proxy_script_path=proxy_script_path,
+        proxy_script_bytes=proxy_script_bytes,
+        proxy_script_sha256=proxy_script_sha256,
+        proxy_listen_port=PROXY_LISTEN_PORT,
+        proxy_allowed_connect_authorities=authorities,
+        proxy_tls_mode=PROXY_TLS_MODE,
+        proxy_installer_network=PROXY_INSTALLER_NETWORK,
+        proxy_egress_network=PROXY_EGRESS_NETWORK,
     )
 
 
@@ -582,6 +735,44 @@ def _receipt_mac(receipt: dict[str, Any], key: bytes) -> str:
     return hmac.new(key, _receipt_mac_payload(receipt), hashlib.sha256).hexdigest()
 
 
+def _trusted_runner_sha256() -> str:
+    # Delayed import avoids a module cycle: dependency_proxy implements the
+    # concrete runner and imports this module's immutable contract types.
+    from . import dependency_proxy
+
+    return _sha256_file(Path(dependency_proxy.__file__).resolve())
+
+
+def _validate_runner_evidence(
+    evidence: TrustedDependencyRunEvidence,
+    policy: DependencyPolicy,
+) -> dict[str, Any]:
+    if not isinstance(evidence, TrustedDependencyRunEvidence):
+        raise DependencyBrokerError("dependency runner returned no trusted attestation")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", evidence.runtime_image_id) is None:
+        raise DependencyBrokerError("dependency runner image identity is invalid")
+    expected = TrustedDependencyRunEvidence(
+        schema=RUNNER_EVIDENCE_SCHEMA,
+        engine="docker",
+        platform=policy.platform,
+        installer_image=policy.image,
+        proxy_image=policy.proxy_image,
+        runtime_image_id=evidence.runtime_image_id,
+        proxy_script_sha256=policy.proxy_script_sha256,
+        runner_sha256=_trusted_runner_sha256(),
+        egress_policy=TRUSTED_EGRESS_POLICY,
+        allowed_connect_authorities=policy.proxy_allowed_connect_authorities,
+        installer_network=policy.proxy_installer_network,
+        proxy_egress_network=policy.proxy_egress_network,
+        tls_mode=policy.proxy_tls_mode,
+        pull_policy="never",
+        cleanup_verified=True,
+    )
+    if evidence != expected:
+        raise DependencyBrokerError("dependency runner attestation does not match policy")
+    return evidence.as_receipt()
+
+
 def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -638,6 +829,31 @@ def _validate_receipt(
         or _NPM_VERSION_RE.fullmatch(package_manager["version"]) is None
     ):
         raise DependencyBrokerError("dependency receipt has an invalid npm version")
+    provisioner = receipt.get("provisioner")
+    runtime_image_id = (
+        provisioner.get("runtime_image_id") if isinstance(provisioner, dict) else ""
+    )
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", str(runtime_image_id)) is None:
+        raise DependencyBrokerError("dependency receipt runtime image identity is invalid")
+    expected_provisioner = TrustedDependencyRunEvidence(
+        schema=RUNNER_EVIDENCE_SCHEMA,
+        engine="docker",
+        platform=policy.platform,
+        installer_image=policy.image,
+        proxy_image=policy.proxy_image,
+        runtime_image_id=str(runtime_image_id),
+        proxy_script_sha256=policy.proxy_script_sha256,
+        runner_sha256=_trusted_runner_sha256(),
+        egress_policy=TRUSTED_EGRESS_POLICY,
+        allowed_connect_authorities=policy.proxy_allowed_connect_authorities,
+        installer_network=policy.proxy_installer_network,
+        proxy_egress_network=policy.proxy_egress_network,
+        tls_mode=policy.proxy_tls_mode,
+        pull_policy="never",
+        cleanup_verified=True,
+    ).as_receipt()
+    if receipt.get("provisioner") != expected_provisioner:
+        raise DependencyBrokerError("dependency receipt provisioner evidence is invalid")
     if receipt.get("fetch") != {
         "scripts_ignored": True,
         "audit": False,
@@ -648,71 +864,89 @@ def _validate_receipt(
         raise DependencyBrokerError("dependency receipt fetch policy is invalid")
 
 
+def _new_dependency_runner(policy: DependencyPolicy) -> Any:
+    """Production-only construction seam; tests may replace this private hook."""
+
+    from .dependency_proxy import DockerRegistryProxyRunner
+
+    return DockerRegistryProxyRunner(policy)
+
+
+def _assert_provisioning_inputs_unchanged(
+    policy: DependencyPolicy,
+    staging: Path,
+    baseline: dict[str, Any],
+) -> None:
+    if validate_package_lock(policy) != baseline:
+        raise DependencyBrokerError("reviewed dependency inputs changed during provisioning")
+    if (
+        _sha256_file(staging / "package.json") != baseline["package_json_sha256"]
+        or _sha256_file(staging / "package-lock.json")
+        != baseline["package_lock_sha256"]
+    ):
+        raise DependencyBrokerError("staged dependency inputs changed during provisioning")
+
+
 def prepare_dependency_bundle(
     policy_path: str | os.PathLike[str],
     bundle_dir: str | os.PathLike[str],
     *,
     engine: str,
-    runner: Any | None = None,
     timeout: float = 900,
     attestation_key: bytes | str | None = None,
 ) -> dict[str, Any]:
     policy = load_dependency_policy(policy_path)
     lock_evidence = validate_package_lock(policy)
     key = _attestation_key(attestation_key)
-    if engine not in {"docker", "podman"}:
-        raise DependencyBrokerError("trusted dependency engine must be docker or podman")
+    if engine != "docker":
+        raise DependencyBrokerError("trusted dependency engine must be docker")
     destination = Path(bundle_dir).resolve()
     if destination.exists():
         return verify_dependency_bundle(
             policy.path, destination, attestation_key=key
         )
-    if runner is None:
-        raise DependencyBrokerError(
-            "online dependency provisioning is disabled until the allowlisted "
-            "registry-proxy runner is configured"
-        )
-    if (
-        getattr(runner, "dependency_egress_policy", None) != TRUSTED_EGRESS_POLICY
-        or getattr(runner, "platform", None) != policy.platform
-        or getattr(runner, "image", None) != policy.image
-        or getattr(runner, "engine", None) != engine
-    ):
-        raise DependencyBrokerError(
-            "dependency installer lacks the trusted registry egress/platform attestation"
-        )
-    staging = destination.parent / f".{destination.name}.staging-{uuid.uuid4().hex}"
+    runner = _new_dependency_runner(policy)
+    staging: Path | None = None
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        staging.mkdir()
+        staging = Path(
+            tempfile.mkdtemp(
+                prefix=f".{destination.name}.staging-",
+                dir=destination.parent,
+            )
+        )
+        try:
+            staging.chmod(0o700)
+        except OSError:
+            if os.name != "nt":
+                raise
     except OSError as exc:
         raise DependencyBrokerError(
             "cannot create trusted dependency staging directory"
         ) from exc
     published = False
     try:
-        shutil.copy2(policy.package_json, staging / "package.json")
-        shutil.copy2(policy.package_lock, staging / "package-lock.json")
-        command = (
-            "node -p '\"SIGNALOS_RUNTIME=\"+process.platform+\"/\"+process.arch'"
-            " && npm --version && "
-            + shlex.join(policy.install_command)
-            + " && "
-            + FIXED_ARCHIVE_COMMAND
-        )
-        exit_code, output = runner.run(
-            command,
+        for source, name in (
+            (policy.package_json, "package.json"),
+            (policy.package_lock, "package-lock.json"),
+        ):
+            target = staging / name
+            shutil.copyfile(source, target)
+            try:
+                target.chmod(0o600)
+            except OSError:
+                if os.name != "nt":
+                    raise
+        result = runner.run(
+            TRUSTED_INSTALL_SHELL_COMMAND,
             staging,
             timeout,
-            {
-                "CI": "1",
-                "NPM_CONFIG_REGISTRY": APPROVED_ORIGIN + "/",
-                "NPM_CONFIG_IGNORE_SCRIPTS": "true",
-                "NPM_CONFIG_AUDIT": "false",
-                "NPM_CONFIG_FUND": "false",
-                "NPM_CONFIG_UPDATE_NOTIFIER": "false",
-            },
+            trusted_install_environment(),
         )
+        if not isinstance(result, tuple) or len(result) != 3:
+            raise DependencyBrokerError("dependency runner returned an invalid result")
+        exit_code, output, run_evidence = result
+        provisioner = _validate_runner_evidence(run_evidence, policy)
         if output.timed_out or exit_code != 0:
             detail = (output.stderr or output.stdout or "dependency install failed")[-2000:]
             raise DependencyBrokerError(f"trusted dependency install failed: {detail}")
@@ -724,6 +958,7 @@ def prepare_dependency_bundle(
         npm_version = lines[1] if len(lines) > 1 else ""
         if _NPM_VERSION_RE.fullmatch(npm_version) is None:
             raise DependencyBrokerError("trusted dependency installer did not report npm version")
+        _assert_provisioning_inputs_unchanged(policy, staging, lock_evidence)
         _require_top_level_packages(staging / "node_modules", staging / "package.json")
         archive_path = staging / ARCHIVE_NAME
         tree = _archive_tree(
@@ -732,6 +967,7 @@ def prepare_dependency_bundle(
             max_bytes=policy.max_bytes,
         )
         shutil.rmtree(staging / "node_modules")
+        _assert_provisioning_inputs_unchanged(policy, staging, lock_evidence)
         receipt: dict[str, Any] = {
             "schema": RECEIPT_SCHEMA,
             "status": "ready",
@@ -743,6 +979,7 @@ def prepare_dependency_bundle(
             "attestation_key_id": _sha256_bytes(key),
             "package_manager": {"name": "npm", "version": npm_version},
             "inputs": lock_evidence,
+            "provisioner": provisioner,
             "fetch": {
                 "scripts_ignored": True,
                 "audit": False,
@@ -766,12 +1003,14 @@ def prepare_dependency_bundle(
             policy.path, destination, attestation_key=key
         )
     except DependencyBrokerError:
-        shutil.rmtree(staging, ignore_errors=True)
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
         if published:
             shutil.rmtree(destination, ignore_errors=True)
         raise
     except Exception as exc:
-        shutil.rmtree(staging, ignore_errors=True)
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
         if published:
             shutil.rmtree(destination, ignore_errors=True)
         raise DependencyBrokerError("trusted dependency provisioning failed") from exc
