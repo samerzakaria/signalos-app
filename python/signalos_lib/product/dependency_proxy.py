@@ -64,6 +64,8 @@ from .sandbox import (
 _WINDOWS_REPARSE_POINT = 0x0400
 _CONTROL_TIMEOUT = 30.0
 _CLEANUP_TIMEOUT = 10.0
+_NETWORK_REMOVE_ATTEMPTS = 3
+_NETWORK_REMOVE_RETRY_DELAY = 0.1
 _PROXY_READY_TIMEOUT = 10.0
 _PROXY_ALIAS = "signalos-registry-proxy"
 _PROXY_PORT = 3128
@@ -73,7 +75,9 @@ _NOT_FOUND = (
     "no container with name or id",
     "container not found",
 )
-_NETWORK_NOT_FOUND = ("network not found", "no such network", "no such object")
+_CONTROLLED_NETWORK_NAME_RE = re.compile(
+    r"signalos-deps-(?:int|egress)-[0-9a-f]{32}"
+)
 _CONTAINER_SECRET_RE = re.compile(
     r"(?:^|_)(?:API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SECRET(?:_?KEY)?|TOKEN|"
     r"PASSWORD|PASSWD|CREDENTIALS?|AUTHORIZATION)(?:_|$)",
@@ -331,14 +335,14 @@ class DockerRegistryProxyRunner:
                 internal_network,
                 internal=True,
                 labels=labels,
-                expected_container_names={proxy_name},
+                expected_container_names=set(),
                 deadline=deadline,
             )
             self._inspect_network(
                 egress_network,
                 internal=False,
                 labels=labels,
-                expected_container_names={proxy_name},
+                expected_container_names=set(),
                 deadline=deadline,
             )
             self._inspect_proxy(
@@ -375,7 +379,6 @@ class DockerRegistryProxyRunner:
                 installer_name,
                 internal_network,
                 labels,
-                mount_spec,
                 expected_container_env,
                 command,
                 workspace_identity,
@@ -386,7 +389,7 @@ class DockerRegistryProxyRunner:
                 internal_network,
                 internal=True,
                 labels=labels,
-                expected_container_names={proxy_name, installer_name},
+                expected_container_names={proxy_name},
                 deadline=deadline,
             )
             self._inspect_network(
@@ -916,6 +919,7 @@ class DockerRegistryProxyRunner:
                 "--log-driver", "local",
                 "--log-opt", "max-size=1m",
                 "--log-opt", "max-file=1",
+                "--log-opt", "compress=false",
                 "--entrypoint", "/usr/local/bin/node",
                 self.proxy_image,
                 "--input-type=commonjs",
@@ -995,6 +999,7 @@ class DockerRegistryProxyRunner:
                 "--log-driver", "local",
                 "--log-opt", "max-size=1m",
                 "--log-opt", "max-file=1",
+                "--log-opt", "compress=false",
             )
         )
         for key, value in container_env.items():
@@ -1091,8 +1096,12 @@ class DockerRegistryProxyRunner:
                     "/tmp": {"rw", "nosuid", "nodev", "noexec", "size=16m", "mode=1777"}
                 },
             )
-            or host.get("Binds") not in (None, [])
-            or not self._mounts_match(data.get("Mounts"), binds={}, tmpfs_paths={"/tmp"})
+            or not self._host_binds_match(host.get("Binds"), binds={})
+            or not self._mounts_match(
+                data.get("Mounts"),
+                binds={},
+                tmpfs_paths={"/tmp"},
+            )
         ):
             raise DependencyProxyPolicyError(
                 "dependency.proxy.policy_probe_failed",
@@ -1105,7 +1114,6 @@ class DockerRegistryProxyRunner:
         name: str,
         internal_network: str,
         labels: Mapping[str, str],
-        mount_spec: str,
         expected_env: Mapping[str, str],
         command: str,
         workspace: _WorkspaceIdentity,
@@ -1149,7 +1157,10 @@ class DockerRegistryProxyRunner:
                     },
                 },
             )
-            or host.get("Binds") != [mount_spec]
+            or not self._host_binds_match(
+                host.get("Binds"),
+                binds={"/workspace": workspace.resolved},
+            )
             or not self._mounts_match(
                 data.get("Mounts"),
                 binds={"/workspace": workspace.resolved},
@@ -1225,8 +1236,8 @@ class DockerRegistryProxyRunner:
             and not host.get("Links")
             and restart.get("Name") in ("", "no")
             and log_config.get("Type") == "local"
-            and (log_config.get("Config") or {}).get("max-size") == "1m"
-            and (log_config.get("Config") or {}).get("max-file") == "1"
+            and log_config.get("Config")
+            == {"max-size": "1m", "max-file": "1", "compress": "false"}
             and DockerRegistryProxyRunner._tmpfs_matches(tmpfs, expected_tmpfs)
         )
 
@@ -1261,12 +1272,14 @@ class DockerRegistryProxyRunner:
         if not isinstance(value, list):
             return False
         seen_binds: set[str] = set()
+        seen_tmpfs: set[str] = set()
         for item in value:
             if not isinstance(item, dict):
                 return False
-            kind = item.get("Type")
             destination = item.get("Destination")
-            if kind == "bind":
+            if item.get("Type") == "bind":
+                if destination in seen_binds:
+                    return False
                 if destination not in binds or item.get("RW") is not True:
                     return False
                 if str(item.get("Mode") or "rw") not in {"rw", ""}:
@@ -1274,11 +1287,42 @@ class DockerRegistryProxyRunner:
                 if not self._mount_source_matches(item.get("Source"), binds[destination]):
                     return False
                 seen_binds.add(destination)
-            elif kind == "tmpfs":
-                if destination not in tmpfs_paths or item.get("RW") is not True:
+            elif item.get("Type") == "tmpfs":
+                if (
+                    destination not in tmpfs_paths
+                    or destination in seen_tmpfs
+                    or item.get("RW") is not True
+                ):
                     return False
+                seen_tmpfs.add(destination)
             else:
                 return False
+        return seen_binds == set(binds) and seen_tmpfs in (set(), tmpfs_paths)
+
+    def _host_binds_match(
+        self,
+        value: Any,
+        *,
+        binds: Mapping[str, Path],
+    ) -> bool:
+        if value is None:
+            value = []
+        if not isinstance(value, list) or len(value) != len(binds):
+            return False
+        seen_binds: set[str] = set()
+        for raw in value:
+            if not isinstance(raw, str):
+                return False
+            parts = raw.rsplit(":", 2)
+            if len(parts) != 3:
+                return False
+            source, destination, mode = parts
+            options = {item.strip().lower() for item in mode.split(",") if item.strip()}
+            if destination not in binds or options != {"rw"}:
+                return False
+            if not self._mount_source_matches(source, binds[destination]):
+                return False
+            seen_binds.add(destination)
         return seen_binds == set(binds)
 
     def _mount_source_matches(self, actual: Any, expected: Path) -> bool:
@@ -1335,16 +1379,55 @@ class DockerRegistryProxyRunner:
                 elif not self._is_not_found(inspected):
                     errors.append(f"container cleanup could not be verified for {name}")
         for name in (internal_network, egress_network):
-            removed = self._cleanup_call(["network", "rm", name], f"remove {name}", errors)
-            if removed is not None and removed.returncode != 0 and not self._is_network_not_found(removed):
-                errors.append(f"network removal failed for {name}: {self._detail(removed)}")
+            removed: subprocess.CompletedProcess[str] | None = None
+            active_endpoints_exhausted = False
+            for attempt in range(_NETWORK_REMOVE_ATTEMPTS):
+                removed = self._cleanup_call(
+                    ["network", "rm", name],
+                    f"remove {name}",
+                    errors,
+                )
+                if (
+                    removed is None
+                    or removed.returncode == 0
+                    or self._is_network_not_found(removed, name)
+                ):
+                    break
+                if (
+                    not self._is_network_active_endpoints(removed, name)
+                    or attempt + 1 == _NETWORK_REMOVE_ATTEMPTS
+                ):
+                    break
+                try:
+                    self._sleep(_NETWORK_REMOVE_RETRY_DELAY)
+                except Exception as exc:
+                    errors.append(
+                        f"network removal retry failed for {name}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    break
+            if (
+                removed is not None
+                and removed.returncode != 0
+                and not self._is_network_not_found(removed, name)
+            ):
+                if self._is_network_active_endpoints(removed, name):
+                    active_endpoints_exhausted = True
+                else:
+                    errors.append(
+                        f"network removal failed for {name}: {self._detail(removed)}"
+                    )
             inspected = self._cleanup_call(
                 ["network", "inspect", name], f"inspect {name}", errors
             )
             if inspected is not None:
                 if inspected.returncode == 0:
+                    if active_endpoints_exhausted:
+                        errors.append(
+                            f"network still has active endpoints after removal retries: {name}"
+                        )
                     errors.append(f"network still exists after cleanup: {name}")
-                elif not self._is_network_not_found(inspected):
+                elif not self._is_network_not_found(inspected, name):
                     errors.append(f"network cleanup could not be verified for {name}")
         return errors
 
@@ -1528,6 +1611,66 @@ class DockerRegistryProxyRunner:
         return any(marker in output for marker in _NOT_FOUND)
 
     @staticmethod
-    def _is_network_not_found(proc: subprocess.CompletedProcess[str]) -> bool:
-        output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
-        return any(marker in output for marker in _NETWORK_NOT_FOUND)
+    def _is_network_not_found(
+        proc: subprocess.CompletedProcess[str],
+        expected_name: str,
+    ) -> bool:
+        if (
+            proc.returncode == 0
+            or _CONTROLLED_NETWORK_NAME_RE.fullmatch(expected_name) is None
+        ):
+            return False
+        escaped_name = re.escape(expected_name.lower())
+        patterns = (
+            re.compile(
+                rf"(?:error response from daemon: )?network {escaped_name} not found"
+            ),
+            re.compile(
+                rf"(?:error response from daemon|error): no such network: {escaped_name}"
+            ),
+            re.compile(
+                rf"(?:error response from daemon|error): no such object: {escaped_name}"
+            ),
+        )
+        lines = {
+            line.strip().lower()
+            for stream in (proc.stdout or "", proc.stderr or "")
+            for line in stream.splitlines()
+            if line.strip()
+        }
+        meaningful = lines - {"[]"}
+        return bool(meaningful) and all(
+            any(pattern.fullmatch(line) for pattern in patterns)
+            for line in meaningful
+        )
+
+    @staticmethod
+    def _is_network_active_endpoints(
+        proc: subprocess.CompletedProcess[str],
+        expected_name: str,
+    ) -> bool:
+        if (
+            proc.returncode == 0
+            or _CONTROLLED_NETWORK_NAME_RE.fullmatch(expected_name) is None
+        ):
+            return False
+        escaped_name = re.escape(expected_name.lower())
+        patterns = (
+            re.compile(
+                rf"(?:error response from daemon: )?network {escaped_name} "
+                r"has active endpoints"
+            ),
+            re.compile(
+                r"error response from daemon: error while removing network: "
+                rf"network {escaped_name} id [0-9a-f]{{12,64}} has active endpoints"
+            ),
+        )
+        lines = {
+            line.strip().lower()
+            for stream in (proc.stdout or "", proc.stderr or "")
+            for line in stream.splitlines()
+            if line.strip()
+        }
+        return len(lines) == 1 and any(
+            pattern.fullmatch(next(iter(lines))) for pattern in patterns
+        )

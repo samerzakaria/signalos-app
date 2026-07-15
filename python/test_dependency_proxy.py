@@ -81,6 +81,10 @@ class _FakeDocker:
         container_image_id: str = RUNTIME_IMAGE_ID,
         switch_endpoint_after_context: str | None = None,
         daemon_os_type: str = "linux",
+        network_absence_error: str | None = None,
+        network_remove_active_failures: int = 0,
+        unexpected_running_network_member: str | None = None,
+        declared_network_drift: str | None = None,
     ) -> None:
         self.image = image
         self.endpoint = endpoint or (
@@ -98,6 +102,10 @@ class _FakeDocker:
         self.container_image_id = container_image_id
         self.switch_endpoint_after_context = switch_endpoint_after_context
         self.daemon_os_type = daemon_os_type
+        self.network_absence_error = network_absence_error
+        self.network_remove_active_failures = network_remove_active_failures
+        self.unexpected_running_network_member = unexpected_running_network_member
+        self.declared_network_drift = declared_network_drift
         self.calls: list[tuple[list[str], dict]] = []
         self.networks: dict[str, dict] = {}
         self.containers: dict[str, dict] = {}
@@ -168,7 +176,16 @@ class _FakeDocker:
         if args[:2] == ["network", "inspect"]:
             name = args[-1]
             if name not in self.networks:
-                return _completed(argv, 1, stderr="Error: no such network")
+                return _completed(argv, 1, stderr=self._network_absence(name))
+            visible_containers = {
+                container_name: {"Name": container_name}
+                for container_name, container in self.containers.items()
+                if container["running"] and name in container["networks"]
+            }
+            if self.unexpected_running_network_member is not None:
+                visible_containers[self.unexpected_running_network_member] = {
+                    "Name": self.unexpected_running_network_member,
+                }
             return _completed(
                 argv,
                 stdout=json.dumps(
@@ -180,11 +197,7 @@ class _FakeDocker:
                         "Attachable": False,
                         "Ingress": False,
                         "Labels": self.networks[name]["labels"],
-                        "Containers": {
-                            container_name: {"Name": container_name}
-                            for container_name, container in self.containers.items()
-                            if name in container["networks"]
-                        },
+                        "Containers": visible_containers,
                     }]
                 ),
             )
@@ -207,6 +220,7 @@ class _FakeDocker:
         if args and args[0] == "exec":
             return _completed(argv)
         if args and args[0] == "wait":
+            self.containers[args[-1]]["running"] = False
             return _completed(argv, stdout="0\n")
         if args and args[0] == "logs":
             return _completed(
@@ -222,10 +236,25 @@ class _FakeDocker:
             return _completed(argv, stdout=name + "\n")
         if args[:2] == ["network", "rm"]:
             name = args[-1]
+            if name in self.networks and self.network_remove_active_failures > 0:
+                self.network_remove_active_failures -= 1
+                return _completed(
+                    argv,
+                    1,
+                    stderr=(
+                        "Error response from daemon: "
+                        f"network {name} has active endpoints"
+                    ),
+                )
             if self.networks.pop(name, None) is None:
-                return _completed(argv, 1, stderr="Error: no such network")
+                return _completed(argv, 1, stderr=self._network_absence(name))
             return _completed(argv, stdout=name + "\n")
         raise AssertionError(f"unexpected fake Docker argv: {argv!r}")
+
+    def _network_absence(self, name: str) -> str:
+        if self.network_absence_error is not None:
+            return self.network_absence_error.format(name=name)
+        return f"Error response from daemon: network {name} not found"
 
     def _container_inspect(self, name: str) -> dict:
         state = self.containers[name]
@@ -244,6 +273,14 @@ class _FakeDocker:
             entry.split(":", 1)[0]: entry.split(":", 1)[1]
             for entry in _all_after(argv, "--tmpfs")
         }
+        network_settings = {
+            network: {"Aliases": sorted(aliases)}
+            for network, aliases in state["networks"].items()
+        }
+        if self.declared_network_drift == "missing" and network_settings:
+            network_settings.pop(sorted(network_settings)[0])
+        elif self.declared_network_drift == "extra":
+            network_settings["bridge"] = {"Aliases": ["bridge"]}
         return {
             "Image": self.container_image_id,
             "Config": {
@@ -281,10 +318,7 @@ class _FakeDocker:
                 "Tmpfs": tmpfs,
             },
             "NetworkSettings": {
-                "Networks": {
-                    network: {"Aliases": sorted(aliases)}
-                    for network, aliases in state["networks"].items()
-                }
+                "Networks": network_settings,
             },
             "Mounts": [] if proxy else [
                 {
@@ -336,6 +370,113 @@ def _runner(tmp_path: Path, fake: _FakeDocker, **kwargs) -> tuple[DockerRegistry
             **kwargs,
         ),
         _staging(tmp_path),
+    )
+
+
+@pytest.fixture
+def real_docker_host_shapes(tmp_path: Path) -> dict:
+    """Live Docker inspect excerpts, independent of generated create argv."""
+
+    common = {
+        "ReadonlyRootfs": True,
+        "Privileged": False,
+        "Init": True,
+        "CapDrop": ["ALL"],
+        "CapAdd": [],
+        "SecurityOpt": ["no-new-privileges:true"],
+        "PortBindings": {},
+        "Devices": [],
+        "ExtraHosts": [],
+        "Dns": [],
+        "Links": [],
+        "RestartPolicy": {"Name": "no"},
+        "LogConfig": {
+            "Type": "local",
+            "Config": {"max-size": "1m", "max-file": "1", "compress": "false"},
+        },
+    }
+    source = tmp_path.resolve()
+    return {
+        "source": source,
+        "proxy_host": {
+            **common,
+            "Memory": 128 * 1024 * 1024,
+            "MemorySwap": 128 * 1024 * 1024,
+            "NanoCpus": 500_000_000,
+            "PidsLimit": 64,
+            "Binds": None,
+            "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=16m,mode=1777"},
+        },
+        "proxy_mounts": [],
+        "installer_host": {
+            **common,
+            "Memory": 2 * 1024 * 1024 * 1024,
+            "MemorySwap": 2 * 1024 * 1024 * 1024,
+            "NanoCpus": 2_000_000_000,
+            "PidsLimit": 512,
+            "Binds": [f"{source}:/workspace:rw"],
+            "Tmpfs": {
+                "/tmp": "rw,nosuid,nodev,noexec,size=512m,mode=1777",
+                "/home/signalos": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
+            },
+        },
+        # Docker Desktop reports only the bind here; HostConfig owns tmpfs evidence.
+        "installer_mounts": [{
+            "Type": "bind",
+            "Source": str(source),
+            "Destination": "/workspace",
+            "Mode": "rw",
+            "RW": True,
+        }],
+    }
+
+
+def test_real_docker_host_shapes_are_accepted_without_argv_synthesis(
+    real_docker_host_shapes: dict,
+) -> None:
+    fixture = real_docker_host_shapes
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    runner = DockerRegistryProxyRunner(
+        policy,
+        docker_cli="docker",
+        runtime=lambda *_args, **_kwargs: None,
+        environ={},
+        host_os_name=os.name,
+    )
+    assert runner._hardening_matches(
+        fixture["proxy_host"],
+        memory=128 * 1024 * 1024,
+        cpus=500_000_000,
+        pids=64,
+        expected_tmpfs={
+            "/tmp": {"rw", "nosuid", "nodev", "noexec", "size=16m", "mode=1777"}
+        },
+    )
+    assert runner._mounts_match(
+        fixture["proxy_mounts"],
+        binds={},
+        tmpfs_paths={"/tmp"},
+    )
+    assert runner._hardening_matches(
+        fixture["installer_host"],
+        memory=2 * 1024 * 1024 * 1024,
+        cpus=2_000_000_000,
+        pids=512,
+        expected_tmpfs={
+            "/tmp": {"rw", "nosuid", "nodev", "noexec", "size=512m", "mode=1777"},
+            "/home/signalos": {
+                "rw", "nosuid", "nodev", "noexec", "size=64m", "mode=1777"
+            },
+        },
+    )
+    assert runner._host_binds_match(
+        fixture["installer_host"]["Binds"],
+        binds={"/workspace": fixture["source"]},
+    )
+    assert runner._mounts_match(
+        fixture["installer_mounts"],
+        binds={"/workspace": fixture["source"]},
+        tmpfs_paths={"/tmp", "/home/signalos"},
     )
 
 
@@ -394,6 +535,9 @@ def test_success_uses_exact_internal_proxy_topology_and_cleans_everything(tmp_pa
     assert "--pull" in proxy_create and _after(proxy_create, "--pull") == "never"
     assert "--pull" in installer_create and _after(installer_create, "--pull") == "never"
     assert "--read-only" in proxy_create and "--read-only" in installer_create
+    expected_log_options = ["max-size=1m", "max-file=1", "compress=false"]
+    assert _all_after(proxy_create, "--log-opt") == expected_log_options
+    assert _all_after(installer_create, "--log-opt") == expected_log_options
     assert _after(proxy_create, "--cap-drop") == "ALL"
     assert _after(installer_create, "--security-opt") == "no-new-privileges:true"
     assert _all_after(proxy_create, "--volume") == []
@@ -517,6 +661,49 @@ def test_container_top_level_image_must_match_observed_config_id(tmp_path: Path)
     with pytest.raises(DependencyProxyPolicyError, match="hardened topology"):
         runner.run(
             TRUSTED_INSTALL_SHELL_COMMAND, staging, 300, trusted_install_environment()
+        )
+
+    assert fake.containers == {}
+    assert fake.networks == {}
+
+
+def test_unexpected_running_network_member_is_rejected_and_cleaned(
+    tmp_path: Path,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(
+        policy.image,
+        unexpected_running_network_member="untrusted-running-container",
+    )
+    runner, staging = _runner(tmp_path, fake)
+
+    with pytest.raises(DependencyProxyPolicyError, match="network topology"):
+        runner.run(
+            TRUSTED_INSTALL_SHELL_COMMAND,
+            staging,
+            300,
+            trusted_install_environment(),
+        )
+
+    assert fake.containers == {}
+    assert fake.networks == {}
+
+
+@pytest.mark.parametrize("drift", ["missing", "extra"])
+def test_declared_container_network_missing_or_extra_is_rejected_and_cleaned(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(policy.image, declared_network_drift=drift)
+    runner, staging = _runner(tmp_path, fake)
+
+    with pytest.raises(DependencyProxyPolicyError, match="hardened topology"):
+        runner.run(
+            TRUSTED_INSTALL_SHELL_COMMAND,
+            staging,
+            300,
+            trusted_install_environment(),
         )
 
     assert fake.containers == {}
@@ -828,6 +1015,218 @@ def test_cleanup_readback_residue_invalidates_otherwise_successful_run(tmp_path:
         runner.run(
             TRUSTED_INSTALL_SHELL_COMMAND, staging, 300, trusted_install_environment()
         )
+
+
+@pytest.mark.parametrize(
+    "wording",
+    [
+        "Error response from daemon: network {name} not found\n",
+        "Error: No such network: {name}\n",
+        "Error: No such object: {name}\n",
+    ],
+)
+def test_cleanup_accepts_exact_docker_network_absence_wording(wording: str) -> None:
+    name = f"signalos-deps-int-{TOKEN}"
+    result = _completed(
+        ["docker", "network", "inspect", name],
+        1,
+        stderr=wording.format(name=name),
+    )
+
+    assert DockerRegistryProxyRunner._is_network_not_found(result, name) is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Error response from daemon: permission denied",
+        "network not found",
+        "Error: no such network",
+        "Error response from daemon: network {name} not found: permission denied",
+        "Error response from daemon: network {name} not found\npermission denied",
+        "Error response from daemon: network signalos-deps-int-ffffffffffffffffffffffffffffffff not found",
+    ],
+)
+def test_cleanup_rejects_unrelated_network_errors(error: str) -> None:
+    name = f"signalos-deps-int-{TOKEN}"
+    result = _completed(
+        ["docker", "network", "inspect", name],
+        1,
+        stderr=error.format(name=name),
+    )
+
+    assert DockerRegistryProxyRunner._is_network_not_found(result, name) is False
+
+
+def test_cleanup_readback_remains_fail_closed_for_unrelated_network_error(
+    tmp_path: Path,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(
+        policy.image,
+        network_absence_error="Error response from daemon: permission denied",
+    )
+    runner, staging = _runner(tmp_path, fake)
+
+    with pytest.raises(DependencyProxyCleanupError, match="could not be verified"):
+        runner.run(
+            TRUSTED_INSTALL_SHELL_COMMAND,
+            staging,
+            300,
+            trusted_install_environment(),
+        )
+
+    assert fake.containers == {}
+    assert fake.networks == {}
+
+
+def test_cleanup_retries_transient_active_endpoints_then_proves_absence(
+    tmp_path: Path,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(policy.image, network_remove_active_failures=1)
+    runner, staging = _runner(tmp_path, fake, sleep=lambda _seconds: None)
+
+    _exit_code, _output, evidence = runner.run(
+        TRUSTED_INSTALL_SHELL_COMMAND,
+        staging,
+        300,
+        trusted_install_environment(),
+    )
+
+    commands = [_docker_command(call[0]) for call in fake.calls]
+    assert sum(command[:2] == ["network", "rm"] for command in commands) == 3
+    assert evidence.cleanup_verified is True
+    assert fake.networks == {}
+
+
+def test_cleanup_persistent_active_endpoints_fails_after_bounded_retries_and_readback(
+    tmp_path: Path,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(policy.image, network_remove_active_failures=10)
+    runner, staging = _runner(tmp_path, fake, sleep=lambda _seconds: None)
+
+    with pytest.raises(DependencyProxyCleanupError, match="active endpoints"):
+        runner.run(
+            TRUSTED_INSTALL_SHELL_COMMAND,
+            staging,
+            300,
+            trusted_install_environment(),
+        )
+
+    commands = [_docker_command(call[0]) for call in fake.calls]
+    assert sum(command[:2] == ["network", "rm"] for command in commands) == 6
+    for name in (f"signalos-deps-int-{TOKEN}", f"signalos-deps-egress-{TOKEN}"):
+        relevant = [
+            command
+            for command in commands
+            if command[-1:] == [name]
+            and command[:2] in (["network", "rm"], ["network", "inspect"])
+        ]
+        assert relevant[-1] == ["network", "inspect", name]
+    assert fake.networks != {}
+
+
+def test_mount_attestation_requires_binds_and_allows_omitted_or_exact_tmpfs(
+    tmp_path: Path,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    runner, _staging_path = _runner(tmp_path, _FakeDocker(policy.image))
+    source = tmp_path.resolve()
+    bind = {
+        "Type": "bind",
+        "Source": str(source),
+        "Destination": "/workspace",
+        "Mode": "rw",
+        "RW": True,
+    }
+    tmpfs = {
+        "Type": "tmpfs",
+        "Source": "",
+        "Destination": "/tmp",
+        "Mode": "",
+        "RW": True,
+    }
+
+    home_tmpfs = {**tmpfs, "Destination": "/home/signalos"}
+    unknown_tmpfs = {**tmpfs, "Destination": "/unknown"}
+
+    assert runner._mounts_match([], binds={}, tmpfs_paths={"/tmp"}) is True
+    assert runner._mounts_match(
+        [bind],
+        binds={"/workspace": source},
+        tmpfs_paths={"/tmp", "/home/signalos"},
+    ) is True
+    assert runner._mounts_match(
+        [bind, tmpfs, home_tmpfs],
+        binds={"/workspace": source},
+        tmpfs_paths={"/tmp", "/home/signalos"},
+    ) is True
+    assert runner._mounts_match(
+        [bind, bind],
+        binds={"/workspace": source},
+        tmpfs_paths=set(),
+    ) is False
+    assert runner._mounts_match(
+        [tmpfs],
+        binds={},
+        tmpfs_paths={"/tmp", "/home/signalos"},
+    ) is False
+    assert runner._mounts_match(
+        [tmpfs, tmpfs],
+        binds={},
+        tmpfs_paths={"/tmp"},
+    ) is False
+    assert runner._mounts_match(
+        [unknown_tmpfs],
+        binds={},
+        tmpfs_paths={"/tmp"},
+    ) is False
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "C:/Users/Alice/work",
+        r"C:\Users\Alice\work",
+        "/host_mnt/c/Users/Alice/work",
+        "/run/desktop/mnt/host/c/Users/Alice/work",
+    ],
+)
+def test_windows_bind_attestation_accepts_only_normalized_equivalent_sources(
+    source: str,
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    runner = DockerRegistryProxyRunner(
+        policy,
+        docker_cli="docker",
+        runtime=lambda *_args, **_kwargs: None,
+        environ={},
+        host_os_name="nt",
+    )
+    expected = Path("C:/Users/Alice/work")
+    mounts = [{
+        "Type": "bind",
+        "Source": source,
+        "Destination": "/workspace",
+        "Mode": "rw",
+        "RW": True,
+    }]
+
+    assert runner._host_binds_match(
+        [f"{source}:/workspace:rw"],
+        binds={"/workspace": expected},
+    ) is True
+    assert runner._mounts_match(
+        mounts,
+        binds={"/workspace": expected},
+        tmpfs_paths=set(),
+    ) is True
+    assert runner._host_binds_match(
+        [f"{source}:/workspace:ro"],
+        binds={"/workspace": expected},
+    ) is False
 
 
 def test_policy_binds_exact_proxy_script_hash_and_same_image(tmp_path: Path) -> None:
