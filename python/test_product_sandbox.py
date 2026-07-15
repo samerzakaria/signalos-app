@@ -286,12 +286,14 @@ class TestContainerArgv:
                 env={
                     "CI": "1",
                     "OPENROUTER_API_KEY": "fake-overlay-key",
+                    "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY": "fake-attestation-key",
                     "SIGNALOS_ENV_FILE": "/workspace/.env",
                 },
             )
         joined = " ".join(argv)
         assert "-e CI=1" in joined
         assert "OPENROUTER_API_KEY" not in joined
+        assert "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY" not in joined
         assert "SIGNALOS_ENV_FILE" not in joined
 
     def test_subdir_sets_workdir_under_mount(self):
@@ -861,6 +863,7 @@ class TestInProcessRunner:
         parent_values = {
             "OPENROUTER_API_KEY": "fake-parent-key",
             "ANTHROPIC_AUTH_TOKEN": "fake-parent-token",
+            "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY": "fake-attestation-key",
             "SIGNALOS_ENV_FILE": "C:/private/provider.env",
         }
         previous = {key: os.environ.get(key) for key in parent_values}
@@ -870,6 +873,7 @@ class TestInProcessRunner:
                 code = (
                     "import os;"
                     "names=['OPENROUTER_API_KEY','ANTHROPIC_AUTH_TOKEN',"
+                    "'SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY',"
                     "'SIGNALOS_ENV_FILE','OPENAI_API_KEY'];"
                     "print('SECRET_PRESENT' if any(os.environ.get(n) for n in names) "
                     "else 'SECRET_ABSENT');"
