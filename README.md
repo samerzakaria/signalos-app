@@ -1,8 +1,8 @@
-# SignalOS
+# Foundry by SignalOS
 
-SignalOS is an agentic software house packaged as a desktop application. You describe what you want built; SignalOS assigns agents, enforces governance at every gate, and delivers a running, tested, governed product. Agents write the code. SignalOS runs the house.
+Foundry is an agentic software house packaged as a desktop application. You describe what you want built; Foundry assigns agents, enforces governance at every gate, and delivers a running, tested, governed product. Agents write the code. SignalOS -- the governance platform underneath -- runs the house.
 
-**Version: v3.1.0-internal**
+**Version: v3.3.0-internal.2**
 
 ## How It Works
 
@@ -31,8 +31,9 @@ SignalOS enforces its way of working at build time and runtime:
 - **Constitution** -- supreme governing document for all agent behavior
 - **Trust tiers** -- T1 advisory, T2 review-required, T3 autonomous
 - **Gates** -- G0 through G5, each requiring a human signature to proceed
-- **Governance library** -- 400+ bundled governance files (425 at time of writing); the orchestrator selects the relevant subset per agent role
+- **Governance library** -- 400+ bundled governance files (485 at time of writing); the orchestrator selects the relevant subset per agent role
 - **Runtime enforcement** -- 12 rules, strict mode, fails closed
+- **Execution isolation** -- agent builds and their dependency installs run in attested, network-disabled, digest-pinned containers; dependencies are fetched only through a CONNECT-only egress proxy pinned to the approved registry. The model-benchmark harness additionally proves each built product with a **source-blind acceptance oracle** -- a separate offline container that launches the product and its browser oracle without ever seeing the agent's source
 - **Privacy** -- GDPR Article 15 export and Article 17 erasure support
 - **Threat modeling** -- OWASP/STRIDE methodology applied during security gate
 - **Audit trail** -- append-only, tamper-evident log of all decisions
@@ -79,6 +80,8 @@ signalos-app/
 |   |   |   |-- generation.py             Agent code generation
 |   |   |   |-- validation.py             Output validation
 |   |   |   |-- security_gate.py          Security scanning
+|   |   |   |-- dependency_broker.py      Funded dependency boundary (attested offline bundles)
+|   |   |   |-- dependency_proxy.py       CONNECT-only pinned-registry egress proxy
 |   |   |   |-- proof.py                  Runtime proof collection
 |   |   |   |-- deploy.py                 Deployment packaging
 |   |   |   |-- closeout.py               Evidence-based closeout
@@ -105,7 +108,8 @@ signalos-app/
 |   |-- release.yml                       Release pipeline
 |   `-- windows-installer.yml             Installer build and validation
 |-- distribution/                         Landing page and updater manifests
-`-- scripts/                              Build, bundle, and release tooling
+`-- scripts/                              Build, bundle, release, and model-benchmark tooling
+    `-- backend_matrix/                   Model benchmark harness + source-blind offline acceptance
 ```
 
 ## Development
