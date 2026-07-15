@@ -1516,6 +1516,7 @@ def test_sidecar_destroys_parent_environment_and_immutable_secrets(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: False)
     context = _direct_funded_context(driver, tmp_path)
     child_env = context.sidecar_environment(tmp_path / "runtime-home")
 
@@ -1569,6 +1570,7 @@ def test_sidecar_constructor_failure_still_destroys_environment_and_secrets(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: False)
     context = _direct_funded_context(driver, tmp_path)
     child_env = context.sidecar_environment(tmp_path / "runtime-home")
     client = object.__new__(driver.SidecarClient)
@@ -1590,6 +1592,7 @@ def test_sidecar_constructor_reports_unverified_process_tree_cleanup(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: False)
     context = _direct_funded_context(driver, tmp_path)
     child_env = context.sidecar_environment(tmp_path / "runtime-home")
 
@@ -1652,6 +1655,316 @@ def test_sidecar_constructor_reports_unverified_process_tree_cleanup(
     assert isinstance(captured.value.__cause__, driver.InfrastructureError)
     assert child_env == {}
     context.close()
+
+
+def test_windows_sidecar_is_job_owned_before_bootstrap_release(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    gate = tmp_path / "job-gate" / "release"
+
+    class FakeJob:
+        def __init__(self) -> None:
+            events.append("job-created")
+
+        def assign(self, process: Any) -> None:
+            assert process is fake_process
+            events.append("assigned")
+
+        def terminate(self) -> None:
+            events.append("terminated")
+
+        def close(self) -> None:
+            events.append("job-closed")
+
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+        stdin = SimpleNamespace(close=lambda: None)
+        stdout: tuple[str, ...] = ()
+        stderr: tuple[str, ...] = ()
+
+        def poll(self) -> int:
+            return 0
+
+    class FakeThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+    fake_process = FakeProcess()
+
+    def fake_popen(argv: list[str], **kwargs: Any) -> FakeProcess:
+        assert str(driver.WINDOWS_JOB_BOOTSTRAP) in argv
+        assert str(driver.SIDECAR) in argv
+        events.append("popen")
+        return fake_process
+
+    def fake_release(actual_gate: Path, token: str, process_id: int) -> None:
+        assert actual_gate == gate
+        assert len(token) == 64
+        assert process_id == fake_process.pid
+        assert events[-1] == "assigned"
+        events.append("released")
+
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: True)
+    monkeypatch.setattr(driver, "_new_windows_kill_on_close_job", FakeJob)
+    monkeypatch.setattr(
+        driver, "_new_windows_sidecar_gate", lambda workspace: (gate, "a" * 64)
+    )
+    monkeypatch.setattr(driver, "_release_windows_sidecar_gate", fake_release)
+    monkeypatch.setattr(
+        driver,
+        "_remove_windows_sidecar_gate",
+        lambda actual_gate: events.append("gate-removed"),
+    )
+    monkeypatch.setattr(driver.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(driver.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        driver.SidecarClient,
+        "_wait_for",
+        lambda self, req_id, timeout, guard: (
+            [],
+            {"ok": True, "data": {"ready": True}},
+        ),
+    )
+
+    child_env = {"PATH": "trusted-test-path"}
+    client = driver.SidecarClient(tmp_path, child_env, ())
+    assert child_env == {}
+    assert events == ["job-created", "popen", "assigned", "released"]
+
+    # Job cleanup must still occur when the bootstrap root has already exited;
+    # surviving descendants remain members until the Job handle is closed.
+    client.close()
+    assert events[-3:] == ["terminated", "job-closed", "gate-removed"]
+
+
+def test_windows_sidecar_popen_failure_closes_empty_job_and_gate(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    gate = tmp_path / "job-gate" / "release"
+
+    class FakeJob:
+        def __init__(self) -> None:
+            events.append("job-created")
+
+        def close(self) -> None:
+            events.append("job-closed")
+
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: True)
+    monkeypatch.setattr(driver, "_new_windows_kill_on_close_job", FakeJob)
+    monkeypatch.setattr(
+        driver, "_new_windows_sidecar_gate", lambda workspace: (gate, "b" * 64)
+    )
+    monkeypatch.setattr(
+        driver,
+        "_remove_windows_sidecar_gate",
+        lambda actual_gate: events.append("gate-removed"),
+    )
+    monkeypatch.setattr(
+        driver.subprocess,
+        "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("popen failed")),
+    )
+
+    child_env = {"PATH": "trusted-test-path"}
+    with pytest.raises(OSError, match="popen failed"):
+        driver.SidecarClient(tmp_path, child_env, ())
+
+    assert child_env == {}
+    assert events == ["job-created", "job-closed", "gate-removed"]
+
+
+def test_windows_sidecar_assignment_failure_never_releases_gate(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    gate = tmp_path / "job-gate" / "release"
+
+    class FakeJob:
+        def assign(self, process: Any) -> None:
+            events.append("assign-refused")
+            raise driver.InfrastructureError("assignment refused")
+
+        def terminate(self) -> None:
+            events.append("job-terminated")
+
+        def close(self) -> None:
+            events.append("job-closed")
+
+    class FakeProcess:
+        pid = 123
+        returncode: int | None = None
+        stdin = SimpleNamespace(close=lambda: None)
+        stdout: tuple[str, ...] = ()
+        stderr: tuple[str, ...] = ()
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+        def wait(self, timeout: float) -> int:
+            if self.returncode is None:
+                raise TimeoutError("still running")
+            return self.returncode
+
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: True)
+    monkeypatch.setattr(driver, "_new_windows_kill_on_close_job", FakeJob)
+    monkeypatch.setattr(
+        driver, "_new_windows_sidecar_gate", lambda workspace: (gate, "c" * 64)
+    )
+    monkeypatch.setattr(
+        driver,
+        "_release_windows_sidecar_gate",
+        lambda *args: events.append("released"),
+    )
+    monkeypatch.setattr(
+        driver,
+        "_remove_windows_sidecar_gate",
+        lambda actual_gate: events.append("gate-removed"),
+    )
+    monkeypatch.setattr(driver.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    monkeypatch.setattr(
+        driver.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1),
+    )
+
+    child_env = {"PATH": "trusted-test-path"}
+    with pytest.raises(driver.InfrastructureError, match="assignment refused"):
+        driver.SidecarClient(tmp_path, child_env, ())
+
+    assert child_env == {}
+    assert "released" not in events
+    assert events == [
+        "assign-refused",
+        "job-terminated",
+        "job-closed",
+        "gate-removed",
+    ]
+
+
+def test_windows_job_bootstrap_is_hash_bound_and_release_order_is_locked() -> None:
+    source = DRIVER_PATH.read_text(encoding="utf-8")
+    start = source.index("class SidecarClient:")
+    end = source.index("def _event_evidence", start)
+    constructor = source[start:end]
+
+    assert constructor.index("self._windows_job.assign(self.proc)") < constructor.index(
+        "_release_windows_sidecar_gate("
+    )
+    assert '"-S",' in constructor and '"-B",' in constructor
+    assert '"windows_job_bootstrap_sha256"' in source
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object integration")
+def test_real_windows_job_terminates_bootstrap_and_descendant(
+    driver: ModuleType,
+    tmp_path: Path,
+) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    pid_file = tmp_path / "descendant.pid"
+    fixture = tmp_path / "job_sidecar_fixture.py"
+    fixture.write_text(
+        "\n".join(
+            (
+                "import os",
+                "import subprocess",
+                "import sys",
+                "import time",
+                "from pathlib import Path",
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])",
+                "Path(os.environ['SIGNALOS_JOB_TEST_PID_FILE']).write_text(str(child.pid), encoding='utf-8')",
+                "while True:",
+                "    time.sleep(1)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    gate, token = driver._new_windows_sidecar_gate(tmp_path / "workspace")
+    job = driver._new_windows_kill_on_close_job()
+    env = dict(os.environ)
+    env["SIGNALOS_JOB_TEST_PID_FILE"] = str(pid_file)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-S",
+            "-B",
+            "-u",
+            str(driver.WINDOWS_JOB_BOOTSTRAP),
+            "--gate",
+            str(gate),
+            "--token",
+            token,
+            "--sidecar",
+            str(fixture),
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    descendant_handle = None
+    try:
+        job.assign(process)
+        driver._release_windows_sidecar_gate(gate, token, process.pid)
+        deadline = driver.time.monotonic() + 15
+        while not pid_file.is_file() and driver.time.monotonic() < deadline:
+            driver.time.sleep(0.02)
+        assert pid_file.is_file(), "bootstrap fixture did not create its descendant"
+        descendant_pid = int(pid_file.read_text(encoding="utf-8"))
+        descendant_handle = kernel32.OpenProcess(0x00100001, False, descendant_pid)
+        assert descendant_handle, "could not open descendant process for synchronization"
+
+        job.terminate()
+        job.close()
+        process.wait(timeout=10)
+        assert kernel32.WaitForSingleObject(descendant_handle, 10_000) == 0
+    finally:
+        try:
+            job.terminate()
+        except Exception:
+            pass
+        try:
+            job.close()
+        except Exception:
+            pass
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if descendant_handle:
+            if kernel32.WaitForSingleObject(descendant_handle, 0) != 0:
+                kernel32.TerminateProcess(descendant_handle, 1)
+                kernel32.WaitForSingleObject(descendant_handle, 5_000)
+            kernel32.CloseHandle(descendant_handle)
+        try:
+            driver._remove_windows_sidecar_gate(gate)
+        except Exception:
+            pass
 
 
 def test_dependency_parser_is_fixed_and_timeout_is_bounded(driver: ModuleType) -> None:
@@ -2238,6 +2551,9 @@ def test_teardown_failure_can_never_leave_a_pass_manifest(
     manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
     assert manifest["status"] == "finalizing"
     assert manifest["status"] != "pass"
+    assert manifest["hashes"]["windows_job_bootstrap_sha256"] == driver._sha256_file(
+        driver.WINDOWS_JOB_BOOTSTRAP
+    )
 
 
 def test_scenario_and_oracle_must_be_repository_owned(

@@ -779,14 +779,17 @@ mod persist_tests {
     }
 
     fn tmp_ws() -> std::path::PathBuf {
+        static NEXT_ID: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         let mut p = std::env::temp_dir();
         p.push(format!(
-            "signalos-enf-{}-{}",
+            "signalos-enf-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -897,14 +900,17 @@ mod precheck_rule_tests {
     use std::path::PathBuf;
 
     fn tmp_ws() -> PathBuf {
+        static NEXT_ID: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         let mut p = std::env::temp_dir();
         p.push(format!(
-            "signalos-precheck-{}-{}",
+            "signalos-precheck-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(p.join(".signalos")).unwrap();
         p

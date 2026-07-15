@@ -50,6 +50,7 @@ DEFAULT_DEPENDENCY_POLICY = Path(__file__).with_name("dependencies") / "policy.j
 SCENARIO_ROOT = Path(__file__).with_name("scenarios")
 ORACLE_ROOT = Path(__file__).with_name("oracles")
 SIDECAR = ROOT / "python" / "signalos_ipc_server.py"
+WINDOWS_JOB_BOOTSTRAP = Path(__file__).with_name("windows_job_bootstrap.py")
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
 ORCHESTRATOR_PROFILES = ("benchmark", "production")
 DEFAULT_ORCHESTRATOR_PROFILE = "benchmark"
@@ -1436,11 +1437,246 @@ def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
         raise InfrastructureError("owned subprocess tree did not terminate")
 
 
+class _WindowsKillOnCloseJob:
+    """Minimal verified Windows Job Object wrapper for one owned process tree."""
+
+    _KILL_ON_JOB_CLOSE = 0x00002000
+    _EXTENDED_LIMIT_INFORMATION = 9
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise InfrastructureError("Windows Job Objects are unavailable on this platform")
+        import ctypes
+        from ctypes import wintypes
+
+        size_t = ctypes.c_size_t
+
+        class BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", size_t),
+                ("MaximumWorkingSetSize", size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimitInformation),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", size_t),
+                ("JobMemoryLimit", size_t),
+                ("PeakProcessMemoryUsed", size_t),
+                ("PeakJobMemoryUsed", size_t),
+            ]
+
+        class BasicAccountingInformation(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.IsProcessInJob.argtypes = [
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.BOOL),
+        ]
+        kernel32.IsProcessInJob.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise InfrastructureError(
+                f"could not create Windows Job Object (error {ctypes.get_last_error()})"
+            )
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._kernel32 = kernel32
+        self._handle = handle
+        self._accounting_type = BasicAccountingInformation
+        limits = ExtendedLimitInformation()
+        limits.BasicLimitInformation.LimitFlags = self._KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle,
+            self._EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        ):
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            self._handle = None
+            raise InfrastructureError(
+                f"could not set kill-on-close Job Object policy (error {error})"
+            )
+
+    def assign(self, process: subprocess.Popen[Any]) -> None:
+        raw_process_handle = getattr(process, "_handle", None)
+        if raw_process_handle is None:
+            raise InfrastructureError("Windows sidecar process exposes no assignable handle")
+        process_handle = self._wintypes.HANDLE(int(raw_process_handle))
+        if not self._kernel32.AssignProcessToJobObject(self._handle, process_handle):
+            raise InfrastructureError(
+                "could not assign sidecar bootstrap to its Windows Job Object "
+                f"(error {self._ctypes.get_last_error()})"
+            )
+        is_member = self._wintypes.BOOL(False)
+        if not self._kernel32.IsProcessInJob(
+            process_handle,
+            self._handle,
+            self._ctypes.byref(is_member),
+        ) or not bool(is_member.value):
+            raise InfrastructureError(
+                "Windows could not verify sidecar bootstrap Job Object membership"
+            )
+
+    def active_processes(self) -> int:
+        if self._handle is None:
+            return 0
+        accounting = self._accounting_type()
+        if not self._kernel32.QueryInformationJobObject(
+            self._handle,
+            1,
+            self._ctypes.byref(accounting),
+            self._ctypes.sizeof(accounting),
+            None,
+        ):
+            raise InfrastructureError(
+                "could not query the owned Windows Job Object "
+                f"(error {self._ctypes.get_last_error()})"
+            )
+        return int(accounting.ActiveProcesses)
+
+    def terminate(self) -> None:
+        if self._handle is None:
+            return
+        if self.active_processes() and not self._kernel32.TerminateJobObject(
+            self._handle, 1
+        ):
+            raise InfrastructureError(
+                "could not terminate the owned Windows Job Object "
+                f"(error {self._ctypes.get_last_error()})"
+            )
+        deadline = time.monotonic() + 10
+        while self.active_processes():
+            if time.monotonic() >= deadline:
+                raise InfrastructureError(
+                    "owned Windows Job Object retained active descendant processes"
+                )
+            time.sleep(0.02)
+
+    def close(self) -> None:
+        if self._handle is None:
+            return
+        handle = self._handle
+        if not self._kernel32.CloseHandle(handle):
+            raise InfrastructureError(
+                "could not close the owned Windows Job Object "
+                f"(error {self._ctypes.get_last_error()})"
+            )
+        self._handle = None
+
+
+def _new_windows_kill_on_close_job() -> _WindowsKillOnCloseJob:
+    return _WindowsKillOnCloseJob()
+
+
+def _windows_job_enabled() -> bool:
+    return os.name == "nt"
+
+
+def _new_windows_sidecar_gate(workspace: Path) -> tuple[Path, str]:
+    parent = Path(workspace).resolve().parent
+    gate_dir = Path(
+        tempfile.mkdtemp(prefix=".signalos-sidecar-job-", dir=str(parent))
+    ).resolve()
+    return gate_dir / "release", secrets.token_hex(32)
+
+
+def _release_windows_sidecar_gate(gate: Path, token: str, process_id: int) -> None:
+    pending = gate.with_name("release.pending")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    descriptor = os.open(pending, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            stream.write(f"{int(process_id)}:{token}".encode("ascii"))
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        with contextlib.suppress(OSError):
+            pending.unlink()
+        raise
+    os.replace(pending, gate)
+
+
+def _remove_windows_sidecar_gate(gate: Path | None) -> None:
+    if gate is None:
+        return
+    with contextlib.suppress(OSError):
+        gate.unlink()
+    with contextlib.suppress(OSError):
+        gate.with_name("release.pending").unlink()
+    with contextlib.suppress(OSError):
+        gate.parent.rmdir()
+    if gate.exists() or gate.parent.exists():
+        raise InfrastructureError("Windows sidecar release gate could not be removed")
+
+
 def _local_preflight() -> dict[str, Any]:
     node = _command_exists("node")
     npm = _command_exists("npm")
     if not SIDECAR.is_file():
         raise InfrastructureError(f"source sidecar is missing: {SIDECAR}")
+    if not WINDOWS_JOB_BOOTSTRAP.is_file():
+        raise InfrastructureError(
+            f"Windows Job Object bootstrap is missing: {WINDOWS_JOB_BOOTSTRAP}"
+        )
     node_version = _run_command([node, "--version"], cwd=ROOT, timeout=15)
     npm_version = _run_command([npm, "--version"], cwd=ROOT, timeout=15)
     browser_probe = _run_command(
@@ -1461,6 +1697,9 @@ def _local_preflight() -> dict[str, Any]:
     result = {
         "python": sys.version.split()[0],
         "sidecar": str(SIDECAR.relative_to(ROOT)).replace("\\", "/"),
+        "windows_job_bootstrap": str(WINDOWS_JOB_BOOTSTRAP.relative_to(ROOT)).replace(
+            "\\", "/"
+        ),
         "node": node_version,
         "npm": npm_version,
         "playwright_chromium": browser_probe,
@@ -1760,6 +1999,10 @@ class SidecarClient:
     def __init__(self, workspace: Path, env: dict[str, str], secrets: Iterable[str]) -> None:
         self.workspace = Path(workspace)
         self.secrets: tuple[str, ...] = ()
+        self._windows_job: _WindowsKillOnCloseJob | None = None
+        self._windows_gate: Path | None = None
+        self._windows_job_required = _windows_job_enabled()
+        self._windows_job_cleanup_verified = not self._windows_job_required
         try:
             self.secrets = tuple(secrets)
             self._stdout: queue.Queue[str | None] = queue.Queue()
@@ -1767,13 +2010,29 @@ class SidecarClient:
             self._counter = 0
             creationflags = 0
             kwargs: dict[str, Any] = {}
-            if os.name == "nt":
+            command = [sys.executable, "-u", str(SIDECAR)]
+            if self._windows_job_required:
                 creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                self._windows_job = _new_windows_kill_on_close_job()
+                self._windows_gate, gate_token = _new_windows_sidecar_gate(self.workspace)
+                command = [
+                    sys.executable,
+                    "-S",
+                    "-B",
+                    "-u",
+                    str(WINDOWS_JOB_BOOTSTRAP),
+                    "--gate",
+                    str(self._windows_gate),
+                    "--token",
+                    gate_token,
+                    "--sidecar",
+                    str(SIDECAR),
+                ]
             else:
                 kwargs["start_new_session"] = True
             try:
                 self.proc = subprocess.Popen(
-                    [sys.executable, "-u", str(SIDECAR)],
+                    command,
                     cwd=str(self.workspace),
                     env=env,
                     stdin=subprocess.PIPE,
@@ -1783,6 +2042,7 @@ class SidecarClient:
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    close_fds=True,
                     creationflags=creationflags,
                     **kwargs,
                 )
@@ -1791,6 +2051,15 @@ class SidecarClient:
                 # returns.  Destroy the parent-side credential/HMAC mapping on
                 # both success and constructor failure.
                 _clear_parent_environment(env)
+            if self._windows_job is not None:
+                if self._windows_gate is None:
+                    raise InfrastructureError(
+                        "Windows sidecar Job Object has no release gate"
+                    )
+                self._windows_job.assign(self.proc)
+                _release_windows_sidecar_gate(
+                    self._windows_gate, gate_token, self.proc.pid
+                )
             threading.Thread(target=self._pump_stdout, daemon=True).start()
             threading.Thread(target=self._pump_stderr, daemon=True).start()
             ready = self._wait_for("init", timeout=90, guard=None)
@@ -1810,6 +2079,15 @@ class SidecarClient:
                 with contextlib.suppress(Exception):
                     if self.proc.stdin:
                         self.proc.stdin.close()
+            elif self._windows_job is not None:
+                try:
+                    self._windows_job.close()
+                    self._windows_job = None
+                    _remove_windows_sidecar_gate(self._windows_gate)
+                    self._windows_gate = None
+                    self._windows_job_cleanup_verified = True
+                except Exception:
+                    cleanup_failed = True
             self._clear_raw_buffers()
             self.secrets = ()
             if cleanup_failed:
@@ -1943,9 +2221,40 @@ class SidecarClient:
         self.terminate_tree()
 
     def terminate_tree(self) -> None:
-        if self.proc.poll() is not None:
-            return
-        if os.name == "nt":
+        job_error: Exception | None = None
+        windows_job = getattr(self, "_windows_job", None)
+        job_required = bool(getattr(self, "_windows_job_required", False))
+        cleanup_verified = bool(
+            getattr(self, "_windows_job_cleanup_verified", not job_required)
+        )
+        if job_required and windows_job is None and not cleanup_verified:
+            job_error = InfrastructureError(
+                "owned Windows Job Object handle is unexpectedly unavailable"
+            )
+        if windows_job is not None:
+            job_closed = False
+            try:
+                windows_job.terminate()
+            except Exception as exc:
+                job_error = exc
+            try:
+                windows_job.close()
+                job_closed = True
+            except Exception as exc:
+                job_error = job_error or exc
+            if job_closed:
+                self._windows_job = None
+            try:
+                _remove_windows_sidecar_gate(getattr(self, "_windows_gate", None))
+                self._windows_gate = None
+            except Exception as exc:
+                job_error = job_error or exc
+            if job_error is None:
+                self._windows_job_cleanup_verified = True
+
+        if self.proc.poll() is None and _windows_job_enabled():
+            # This is only a constructor-failure fallback for a process that
+            # could not be assigned. Verified rows terminate through the Job.
             with contextlib.suppress(Exception):
                 subprocess.run(
                     ["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
@@ -1955,7 +2264,7 @@ class SidecarClient:
                     shell=False,
                     env=_credential_free_host_env(),
                 )
-        else:
+        elif self.proc.poll() is None:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             with contextlib.suppress(Exception):
@@ -1963,23 +2272,27 @@ class SidecarClient:
             if self.proc.poll() is None:
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-        with contextlib.suppress(Exception):
-            self.proc.kill()
-        with contextlib.suppress(Exception):
-            self.proc.wait(timeout=5)
+        if self.proc.poll() is None:
+            with contextlib.suppress(Exception):
+                self.proc.kill()
+            with contextlib.suppress(Exception):
+                self.proc.wait(timeout=5)
         if self.proc.poll() is None:
             raise InfrastructureError("source sidecar process tree did not terminate")
+        if job_error is not None:
+            raise InfrastructureError(
+                "owned Windows Job Object cleanup could not be verified"
+            ) from job_error
 
     def close(self) -> None:
-        # Terminate the owned tree while the parent PID is still live; closing
-        # stdin first can let a fast sidecar exit and orphan a background child
-        # before Windows taskkill has a tree root to target.
+        # Terminate the owned process group/Job before closing stdin. On
+        # Windows the Job remains authoritative even if the root PID exited.
         try:
             self.terminate_tree()
+        finally:
             with contextlib.suppress(Exception):
                 if self.proc.stdin:
                     self.proc.stdin.close()
-        finally:
             self._clear_raw_buffers()
             self.secrets = ()
 
@@ -4062,6 +4375,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "oracle_sha256": str(oracle_asset["sha256"]),
                     "driver_sha256": _sha256_file(Path(__file__).resolve()),
                     "sidecar_sha256": _sha256_file(SIDECAR),
+                    "windows_job_bootstrap_sha256": _sha256_file(
+                        WINDOWS_JOB_BOOTSTRAP
+                    ),
                     "ci_policy_sha256": _sha256_file(DEFAULT_CI_POLICY),
                     **funded_context.evidence_hashes(),
                 }
