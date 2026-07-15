@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import shutil
 import stat
 import subprocess
@@ -480,6 +481,66 @@ def test_real_docker_host_shapes_are_accepted_without_argv_synthesis(
     )
 
 
+def test_installer_environment_uses_distinct_absent_npm_configs_and_closed_attestation(
+) -> None:
+    proxy_url = "http://signalos-registry-proxy:3128"
+    expected = {
+        **trusted_install_environment(),
+        "HOME": "/home/signalos",
+        "TMPDIR": "/tmp",
+        "NPM_CONFIG_CACHE": "/tmp/npm-cache",
+        "HTTPS_PROXY": proxy_url,
+        "https_proxy": proxy_url,
+        "HTTP_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "NO_PROXY": "",
+        "no_proxy": "",
+        "NPM_CONFIG_HTTPS_PROXY": proxy_url,
+        "NPM_CONFIG_PROXY": proxy_url,
+        "NPM_CONFIG_STRICT_SSL": "true",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "1",
+        "NODE_EXTRA_CA_CERTS": "",
+        "NPM_CONFIG_CA": "",
+        "NPM_CONFIG_CAFILE": "",
+        "SSL_CERT_FILE": "",
+        "SSL_CERT_DIR": "",
+        "NPM_CONFIG_USERCONFIG": "/tmp/signalos-npm-userconfig",
+        "NPM_CONFIG_GLOBALCONFIG": "/tmp/signalos-npm-globalconfig",
+    }
+    actual = DockerRegistryProxyRunner._installer_environment(
+        trusted_install_environment()
+    )
+
+    assert actual == expected
+    user_config = actual["NPM_CONFIG_USERCONFIG"]
+    global_config = actual["NPM_CONFIG_GLOBALCONFIG"]
+    assert posixpath.isabs(user_config)
+    assert posixpath.dirname(user_config) == "/tmp"
+    assert posixpath.isabs(global_config)
+    assert posixpath.dirname(global_config) == "/tmp"
+    assert posixpath.normpath(user_config) != posixpath.normpath(global_config)
+    assert not user_config.startswith("/workspace/")
+    assert not global_config.startswith("/workspace/")
+
+    official_node_image_defaults = {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "NODE_VERSION": "20.20.2",
+        "YARN_VERSION": "1.22.22",
+    }
+    assert DockerRegistryProxyRunner._installer_environment_matches(
+        {**actual, **official_node_image_defaults}, actual
+    )
+    assert not DockerRegistryProxyRunner._installer_environment_matches(
+        {**actual, "NPM_CONFIG_LOGLEVEL": "silent"}, actual
+    )
+    assert not DockerRegistryProxyRunner._installer_environment_matches(
+        {**actual, "npm_config_userconfig": user_config}, actual
+    )
+    assert not DockerRegistryProxyRunner._installer_environment_matches(
+        {**actual, "NPM_CONFIG_USERCONFIG": global_config}, actual
+    )
+
+
 def test_success_uses_exact_internal_proxy_topology_and_cleans_everything(tmp_path: Path) -> None:
     policy = load_dependency_policy(DEPENDENCIES / "policy.json")
     fake = _FakeDocker(policy.image)
@@ -547,6 +608,11 @@ def test_success_uses_exact_internal_proxy_topology_and_cleans_everything(tmp_pa
     assert installer_env["NPM_CONFIG_STRICT_SSL"] == "true"
     assert installer_env["NODE_TLS_REJECT_UNAUTHORIZED"] == "1"
     assert installer_env["NODE_EXTRA_CA_CERTS"] == ""
+    assert installer_env["NPM_CONFIG_USERCONFIG"] == "/tmp/signalos-npm-userconfig"
+    assert installer_env["NPM_CONFIG_GLOBALCONFIG"] == "/tmp/signalos-npm-globalconfig"
+    assert posixpath.normpath(installer_env["NPM_CONFIG_USERCONFIG"]) != posixpath.normpath(
+        installer_env["NPM_CONFIG_GLOBALCONFIG"]
+    )
 
     for _argv, kwargs in fake.calls:
         assert kwargs["shell"] is False

@@ -69,6 +69,8 @@ _NETWORK_REMOVE_RETRY_DELAY = 0.1
 _PROXY_READY_TIMEOUT = 10.0
 _PROXY_ALIAS = "signalos-registry-proxy"
 _PROXY_PORT = 3128
+_NPM_USERCONFIG = "/tmp/signalos-npm-userconfig"
+_NPM_GLOBALCONFIG = "/tmp/signalos-npm-globalconfig"
 _NOT_FOUND = (
     "no such container",
     "no such object",
@@ -958,8 +960,11 @@ class DockerRegistryProxyRunner:
                 "NPM_CONFIG_CAFILE": "",
                 "SSL_CERT_FILE": "",
                 "SSL_CERT_DIR": "",
-                "NPM_CONFIG_USERCONFIG": "/dev/null",
-                "NPM_CONFIG_GLOBALCONFIG": "/dev/null",
+                # Distinct absent files in the fresh per-container /tmp tmpfs
+                # avoid npm's duplicate-config identity check.  No generated
+                # or package process runs before npm resolves these paths.
+                "NPM_CONFIG_USERCONFIG": _NPM_USERCONFIG,
+                "NPM_CONFIG_GLOBALCONFIG": _NPM_GLOBALCONFIG,
             }
         )
         return result
@@ -1166,7 +1171,7 @@ class DockerRegistryProxyRunner:
                 binds={"/workspace": workspace.resolved},
                 tmpfs_paths={"/tmp", "/home/signalos"},
             )
-            or any(actual_env.get(key) != value for key, value in expected_env.items())
+            or not self._installer_environment_matches(actual_env, expected_env)
             or has_secret
         ):
             raise DependencyProxyPolicyError(
@@ -1359,6 +1364,27 @@ class DockerRegistryProxyRunner:
                 key, entry = item.split("=", 1)
                 result[key] = entry
         return result
+
+    @staticmethod
+    def _installer_environment_matches(
+        actual: Mapping[str, str],
+        expected: Mapping[str, str],
+    ) -> bool:
+        if any(actual.get(key) != value for key, value in expected.items()):
+            return False
+        expected_npm = {
+            key.casefold(): (key, value)
+            for key, value in expected.items()
+            if key.casefold().startswith("npm_config_")
+        }
+        for key, value in actual.items():
+            folded = key.casefold()
+            if not folded.startswith("npm_config_"):
+                continue
+            canonical = expected_npm.get(folded)
+            if canonical is None or canonical != (key, value):
+                return False
+        return True
 
     def _cleanup(
         self,
