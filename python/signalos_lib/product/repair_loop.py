@@ -14,6 +14,7 @@ __all__ = [
 ]
 
 import json
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -287,6 +288,26 @@ def run_repair_loop(
         # devDependencies and re-run install, rather than dispatching a regen.
         missing_deps = _known_missing_devdeps(failures)
         if missing_deps and not _nondep_failures(failures):
+            if _funded_dependency_mode():
+                repairs.append({
+                    "cycle": cycle,
+                    "failures": failures,
+                    "action": "dependency_frozen",
+                    "repair_type": packet.get("repair_type"),
+                    "packet_path": str(packet_path),
+                    "dependencies_requested": missing_deps,
+                    "reason": (
+                        "funded dependencies are immutable; update the reviewed "
+                        "dependency policy and lockfile in a new engine revision"
+                    ),
+                })
+                return {
+                    "status": "dependency_frozen",
+                    "cycles_used": cycle,
+                    "max_cycles": cycle_budget,
+                    "repairs": repairs,
+                    "final_validation": current_validation,
+                }
             added = _add_dev_dependencies(repo_root, missing_deps)
             install_result = install(repo_root) if added else {"status": "skipped"}
             current_validation = validate(repo_root)
@@ -413,6 +434,11 @@ _KNOWN_DEV_DEPENDENCIES: dict[str, str] = {
 _MODULE_NOT_FOUND_CODES = frozenset({"TS2307"})
 
 
+def _funded_dependency_mode() -> bool:
+    """Return whether the immutable funded dependency contract is active."""
+    return os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded"
+
+
 def _missing_module_name(failure: Any) -> str | None:
     """Extract the module specifier a TS2307 'Cannot find module X' names."""
     if not isinstance(failure, dict):
@@ -459,6 +485,8 @@ def _add_dev_dependencies(repo_root: Path, names: list[str]) -> list[str]:
     No-op (returns []) when there is no package.json or nothing to add. Never
     raises -- a malformed package.json simply yields no additions.
     """
+    if _funded_dependency_mode():
+        return []
     pkg_path = repo_root / "package.json"
     if not pkg_path.is_file():
         return []
@@ -490,6 +518,11 @@ def _default_install(repo_root: Path) -> dict:
     contract. Never raises -- an install failure is reported, not thrown, so
     the repair loop keeps its truthful evidence.
     """
+    if _funded_dependency_mode():
+        return {
+            "status": "failed",
+            "reason": "funded dependencies are immutable; install mutation denied",
+        }
     try:
         from .validation import _run_commands
     except Exception:

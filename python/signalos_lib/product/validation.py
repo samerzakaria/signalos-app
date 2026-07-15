@@ -661,8 +661,18 @@ def _run_commands_in_container(repo_root: Path, cmds: list[str], runner) -> dict
     timeout_s = _validation_command_timeout_s()
     install_timeout_s = _validation_install_timeout_s()
     env = {"CI": "1", "FORCE_COLOR": "0"}
+    funded = os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded"
+    if funded:
+        from .dependency_broker import verify_funded_dependencies_from_environment
+
+        verify_funded_dependencies_from_environment(repo_root)
     for cmd in cmds:
         if not cmd or not cmd.strip():
+            continue
+        if funded and _is_install_command(cmd):
+            outputs.append(
+                "trusted dependency receipt verified; networked install skipped"
+            )
             continue
         cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
         exit_code, out = runner.run(cmd, repo_root, cmd_timeout, env)

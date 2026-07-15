@@ -31,10 +31,12 @@ Hermetic: dispatch/validate/install are injected; no LLM, no npm, no tsc.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -262,6 +264,48 @@ class TestAddDependencyRepairAction(unittest.TestCase):
             # The repair record names the add-dependency action.
             actions = [r.get("action") for r in result["repairs"]]
             self.assertIn("added_dependency", actions)
+
+    def test_funded_mode_refuses_dependency_repair_without_mutation(self):
+        """Funded runs cannot alter the reviewed manifest or invoke install."""
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            _write_scope(repo, _original_packet())
+            package_path = repo / "package.json"
+            original = json.dumps({"name": "x", "devDependencies": {}})
+            package_path.write_text(original, encoding="utf-8")
+            calls = {"dispatch": 0, "install": 0, "validate": 0}
+
+            def unexpected(kind):
+                def call(*args, **kwargs):
+                    calls[kind] += 1
+                    raise AssertionError(f"funded dependency repair called {kind}")
+                return call
+
+            initial = _validation_with_violations([
+                {"file": "src/components/Expense.test.tsx", "line": 2,
+                 "code": "TS2307",
+                 "message": "Cannot find module '@testing-library/user-event' "
+                            "or its corresponding type declarations.",
+                 "category": "build"},
+            ])
+            with patch.dict(
+                os.environ, {"SIGNALOS_SANDBOX_PROFILE": "funded"}, clear=False,
+            ):
+                result = run_repair_loop(
+                    repo_root=repo,
+                    validation_result=initial,
+                    profile="react-vite",
+                    max_cycles=3,
+                    agent_mode="auto",
+                    dispatch_fn=unexpected("dispatch"),
+                    validate_fn=unexpected("validate"),
+                    install_fn=unexpected("install"),
+                )
+
+            self.assertEqual(result["status"], "dependency_frozen")
+            self.assertEqual(calls, {"dispatch": 0, "install": 0, "validate": 0})
+            self.assertEqual(package_path.read_text(encoding="utf-8"), original)
+            self.assertEqual(result["repairs"][0]["action"], "dependency_frozen")
 
     def test_unknown_module_ts2307_still_regenerates_code(self):
         """A TS2307 for a NON-allowlisted module is a code problem, not a

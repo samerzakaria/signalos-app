@@ -1319,6 +1319,10 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
 
         verifier = _select_verifier_runner(repo_root)
         if verifier is not None:
+            if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded":
+                from .dependency_broker import verify_funded_dependencies_from_environment
+
+                verify_funded_dependencies_from_environment(repo_root)
             container_argv = list(argv)
             executable = str(container_argv[0]).replace("\\", "/").rsplit("/", 1)[-1]
             executable_aliases = {

@@ -100,6 +100,12 @@ _CONTINUE_NUDGE = (
     "Continue exactly where you stopped and, when ready, emit the tool call -- "
     "do not restart or re-summarize."
 )
+_FUNDED_DEPENDENCY_MUTATION_RE = re.compile(
+    r"\b(?:npm(?:\.cmd)?\s+(?:i|install|update|uninstall|remove|rebuild)|"
+    r"pnpm\s+(?:i|install|add|remove|update)|"
+    r"yarn\s+(?:install|add|remove|up))\b",
+    re.IGNORECASE,
+)
 
 # Secret-redaction patterns applied to command stdout/stderr (2.5/2.9).
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
@@ -2046,6 +2052,19 @@ class AgentLoop:
                     rule="trust-tier",
                 )
             path = rel
+            funded_path = _norm(path)
+            if (
+                os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower()
+                == "funded"
+                and (
+                    funded_path in {"package.json", "package-lock.json", "node_modules"}
+                    or funded_path.startswith("node_modules/")
+                )
+            ):
+                raise ToolPolicyError(
+                    f"'{path}' is owned by the funded dependency policy and is immutable.",
+                    rule="dependency-frozen",
+                )
             # Spec immutability: the plan-authored acceptance tests are the
             # SIGNED SPEC the build is graded against. At the BUILD gate the
             # model must never edit them (import paths are repaired
@@ -2173,6 +2192,16 @@ class AgentLoop:
                 raise ToolPolicyError(
                     "Commands that can change product state are only allowed inside governed delivery.",
                     rule="gate-gating",
+                )
+            if (
+                os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower()
+                == "funded"
+                and _FUNDED_DEPENDENCY_MUTATION_RE.search(command)
+            ):
+                raise ToolPolicyError(
+                    "Dependency installation or mutation is owned by the funded "
+                    "dependency broker and cannot be run by generated code.",
+                    rule="dependency-frozen",
                 )
             denied = _command_denied(command, enf.forbidden_actions)
             if denied:
@@ -2544,6 +2573,10 @@ class AgentLoop:
         original_command = command
         run_cwd, command = self._resolve_run_cwd(command)
         env = {"CI": "1", "FORCE_COLOR": "0"}
+        if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded":
+            from .dependency_broker import verify_funded_dependencies_from_environment
+
+            verify_funded_dependencies_from_environment(self.repo_root)
         runner = self._get_sandbox_runner()
         # FIX 1: command-writes are governed too. Snapshot the governed source
         # subtree BEFORE the command so we can diff it AFTER -- a `python -c` /

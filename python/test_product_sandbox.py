@@ -24,6 +24,7 @@ from signalos_lib.product.sandbox import (
     CONTAINER_WORKSPACE,
     CommandOutput,
     ContainerRunner,
+    DependencyMount,
     InProcessRunner,
     SandboxUnavailableError,
     build_container_argv,
@@ -161,7 +162,9 @@ class TestBackendSelection:
         assert r.network == "none"
         assert r.pull == "never"
         assert r.image == image
-        assert r.writable_paths == ("node_modules", "dist")
+        assert r.writable_paths == ("dist",)
+        assert r.platform == "linux/amd64"
+        assert r.require_funded_dependencies is True
 
     @pytest.mark.parametrize(
         "env,match",
@@ -403,9 +406,10 @@ class TestReadOnlyHardening:
             image=image,
             hardened=True,
             workspace_read_only=True,
-            writable_paths=("node_modules", "dist"),
+            writable_paths=("dist",),
             container_name="signalos-funded-test",
             cidfile=str(tmp_path / "container.cid"),
+            dependency_volume="signalos-deps-test123",
         )
         joined = " ".join(argv)
         assert "--init" in argv
@@ -416,12 +420,18 @@ class TestReadOnlyHardening:
         assert "--entrypoint /bin/sh" in joined
         assert "--network none" in joined
         assert "--pull never" in joined
+        assert "--platform linux/amd64" in joined
         assert "--name signalos-funded-test" in joined
         assert "--cidfile" in argv
         mounts = [argv[i + 1] for i, token in enumerate(argv) if token == "-v"]
         assert mounts[0].endswith(":/workspace:ro")
-        assert any(m.endswith(":/workspace/node_modules:rw") for m in mounts)
         assert any(m.endswith(":/workspace/dist:rw") for m in mounts)
+        assert "signalos-deps-test123:/workspace/node_modules:ro" in mounts
+        assert any(
+            value.startswith("/workspace/node_modules/.vite:")
+            for index, value in enumerate(argv)
+            if index > 0 and argv[index - 1] == "--tmpfs"
+        )
         assert all("docker.sock" not in mount for mount in mounts)
         assert "HOME=/home/signalos" in argv
         assert argv[-3:] == [image, "-lc", "npm test"]
@@ -453,6 +463,9 @@ class TestReadOnlyHardening:
             ({"workspace_read_only": True, "pids": "-1"}, "pids"),
             ({"workspace_read_only": True, "tmpfs_size": "0"}, "tmpfs"),
             ({"workspace_read_only": True, "tmpfs": {"/host": "rw"}}, "custom tmpfs"),
+            ({"workspace_read_only": True, "platform": "linux/arm64"}, "platform"),
+            ({"workspace_read_only": True, "writable_paths": ("node_modules",)},
+             "unapproved writable"),
         ],
     )
     def test_hardened_argv_rejects_public_api_downgrades(self, tmp_path, kwargs, match):
@@ -460,6 +473,18 @@ class TestReadOnlyHardening:
         with pytest.raises(ValueError, match=match):
             build_container_argv(
                 "true", tmp_path, image=image, hardened=True, **kwargs
+            )
+
+    def test_hardened_installer_bridge_escape_is_rejected(self, tmp_path):
+        image = "node:20@sha256:" + "5" * 64
+        with pytest.raises(ValueError, match="network none"):
+            build_container_argv(
+                "npm ci --ignore-scripts --no-audit --no-fund",
+                tmp_path,
+                image=image,
+                network="bridge",
+                hardened=True,
+                workspace_read_only=True,
             )
 
 
@@ -521,7 +546,142 @@ class TestPullPolicy:
 # ---------------------------------------------------------------------------
 
 
+def _funded_dependency_runner(tmp_path: Path, fake: MagicMock) -> ContainerRunner:
+    image = "node:20@sha256:" + "9" * 64
+    archive = tmp_path / ".signalos" / "dependencies" / "node_modules.tar"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"trusted archive")
+    (tmp_path / "node_modules").mkdir(exist_ok=True)
+    return ContainerRunner(
+        tmp_path,
+        engine="docker",
+        image=image,
+        hardened=True,
+        workspace_read_only=True,
+        writable_paths=("dist",),
+        dependency_mount=DependencyMount(
+            archive_path=archive,
+            archive_sha256="a" * 64,
+            tree_sha256="b" * 64,
+            file_count=1,
+            total_bytes=1,
+        ),
+        runner=fake,
+    )
+
+
 class TestContainerRunnerRun:
+    def test_funded_dependency_snapshot_is_verified_then_mounted_read_only(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="volume", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such volume"),
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        exit_code, output = runner.run("npm test", tmp_path, 30, {"CI": "1"})
+
+        assert exit_code == 0 and output.stdout == "ok"
+        calls = [call.args[0] for call in fake.call_args_list]
+        bootstrap = calls[1]
+        scored = calls[4]
+        assert "sha256sum -c" in bootstrap[-1]
+        assert bootstrap[-1].index("cp ") < bootstrap[-1].index("sha256sum -c")
+        assert "extracted dependency tree evidence mismatch" in bootstrap[-1]
+        assert "--network" in bootstrap and bootstrap[bootstrap.index("--network") + 1] == "none"
+        assert "--platform" in bootstrap and bootstrap[bootstrap.index("--platform") + 1] == "linux/amd64"
+        assert "--user" not in bootstrap
+        assert "--user" in scored
+        assert any(
+            value.endswith(":/workspace/node_modules:ro")
+            for value in scored
+        )
+
+    def test_dependency_bootstrap_nonzero_never_dispatches_scored_command(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="volume", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=42, stdout="", stderr="tree mismatch"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such volume"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        with pytest.raises(SandboxUnavailableError, match="snapshot was rejected"):
+            runner.run("npm test", tmp_path, 30, {"CI": "1"})
+
+        run_calls = [
+            call.args[0] for call in fake.call_args_list
+            if call.args[0][:2] == ["docker", "run"]
+        ]
+        assert len(run_calls) == 1
+        assert "npm test" not in run_calls[0]
+
+    def test_dependency_bootstrap_timeout_cleans_and_never_dispatches(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="volume", stderr=""),
+            subprocess.TimeoutExpired("docker", 1),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such volume"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        with pytest.raises(SandboxUnavailableError, match="preparation timed out"):
+            runner.run("npm test", tmp_path, 1, {})
+
+        assert sum(
+            call.args[0][:2] == ["docker", "run"] for call in fake.call_args_list
+        ) == 1
+
+    def test_dependency_volume_creation_failure_is_typed_and_cleaned(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="daemon denied"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such volume"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such volume"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        with pytest.raises(SandboxUnavailableError, match="cannot create"):
+            runner.run("npm test", tmp_path, 30, {})
+
+        assert not any(
+            call.args[0][:2] == ["docker", "run"] for call in fake.call_args_list
+        )
+
+    def test_dependency_volume_cleanup_failure_is_infrastructure(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="volume", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="ok", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no such container"),
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="permission denied"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="still exists", stderr=""),
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        with pytest.raises(SandboxUnavailableError, match="volume still exists"):
+            runner.run("npm test", tmp_path, 30, {})
+
     def test_run_invokes_container_cli_and_returns_output(self):
         fake = MagicMock(return_value=subprocess.CompletedProcess(
             args=[], returncode=0, stdout="hello\n", stderr=""))
@@ -557,7 +717,7 @@ class TestContainerRunnerRun:
             image=image,
             hardened=True,
             workspace_read_only=True,
-            writable_paths=("node_modules", "dist"),
+            writable_paths=("dist",),
             runner=fake,
         )
 

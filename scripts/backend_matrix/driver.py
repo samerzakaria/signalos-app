@@ -1233,7 +1233,7 @@ def _terminal_evidence(
 def _is_execution_infrastructure_failure(value: object) -> bool:
     code = str(value or "").strip().lower()
     return code == "provider-init" or code.startswith(
-        ("provider-", "sandbox-", "infrastructure-")
+        ("provider-", "sandbox-", "infrastructure-", "dependency-")
     )
 
 

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 __all__ = [
     "CommandOutput",
+    "DependencyMount",
     "SandboxRunner",
     "InProcessRunner",
     "ContainerRunner",
@@ -57,13 +58,16 @@ __all__ = [
     "validate_pinned_image",
     "CONTAINER_WORKSPACE",
     "FUNDED_PROFILE",
+    "FUNDED_PLATFORM",
 ]
 
 import logging
 import math
 import os
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import uuid
@@ -103,10 +107,54 @@ DEFAULT_READ_ONLY = True
 # keeps a runaway write inside the container from exhausting host memory.
 DEFAULT_TMPFS_SIZE = "512m"
 FUNDED_PROFILE = "funded"
+FUNDED_PLATFORM = "linux/amd64"
+ARCHIVE_BOOTSTRAP_NAME = "node_modules.tar"
+_DEPENDENCY_TREE_VERIFY_JS = r"""
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const root = '/dependencies';
+const records = [];
+function walk(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const item = path.join(dir, name);
+    const rel = path.relative(root, item).split(path.sep).join('/');
+    const info = fs.lstatSync(item);
+    records.push([rel, item, info]);
+    if (info.isDirectory() && !info.isSymbolicLink()) walk(item);
+  }
+}
+walk(root);
+records.sort((a, b) => Buffer.compare(Buffer.from(a[0]), Buffer.from(b[0])));
+const digest = crypto.createHash('sha256');
+let count = 0;
+let total = 0;
+for (const [rel, item, info] of records) {
+  count += 1;
+  const mode = (info.mode & 0o7777).toString(8);
+  if (info.isSymbolicLink()) {
+    digest.update(`L\0${rel}\0${fs.readlinkSync(item)}\n`);
+  } else if (info.isDirectory()) {
+    digest.update(`D\0${rel}\0${mode}\n`);
+  } else if (info.isFile()) {
+    total += info.size;
+    digest.update(`F\0${rel}\0${mode}\0${info.size}\0`);
+    digest.update(fs.readFileSync(item));
+    digest.update('\n');
+  } else {
+    throw new Error(`special dependency entry: ${rel}`);
+  }
+}
+const [expectedHash, expectedCount, expectedBytes] = process.argv.slice(1);
+if (digest.digest('hex') !== expectedHash ||
+    count !== Number(expectedCount) || total !== Number(expectedBytes)) {
+  throw new Error('extracted dependency tree evidence mismatch');
+}
+""".strip()
 FUNDED_WRITABLE_PATHS = (
-    "node_modules",
     "dist",
 )
+FUNDED_EPHEMERAL_CACHE_PATH = "node_modules/.vite"
 _PINNED_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 _SIZE_RE = re.compile(r"^([1-9][0-9]*)([kmgt])(?:i?b)?$", re.IGNORECASE)
 _SIZE_MULTIPLIERS = {
@@ -121,6 +169,15 @@ _CONTAINER_NOT_FOUND_MARKERS = (
     "no container with name or id",
     "container not found",
 )
+
+
+@dataclass(frozen=True)
+class DependencyMount:
+    archive_path: Path
+    archive_sha256: str
+    tree_sha256: str
+    file_count: int
+    total_bytes: int
 
 
 def _default_tmpfs(size: str) -> dict[str, str]:
@@ -393,6 +450,8 @@ def build_container_argv(
     container_user: str | None = None,
     container_name: str | None = None,
     cidfile: str | None = None,
+    platform: str | None = None,
+    dependency_volume: str | None = None,
 ) -> list[str]:
     """Construct the container CLI argv that runs *command* inside a throwaway
     container with a READ-ONLY root filesystem, ONLY *workspace* bind-mounted
@@ -420,6 +479,7 @@ def build_container_argv(
     if engine not in _ENGINE_CLI:
         raise ValueError(f"unknown container engine: {engine!r}")
     if hardened:
+        platform = platform or FUNDED_PLATFORM
         if engine == "wsl":
             raise ValueError("hardened sandbox requires native docker or podman")
         image = validate_pinned_image(image)
@@ -431,6 +491,15 @@ def build_container_argv(
             raise ValueError("hardened sandbox requires --pull=never")
         if not workspace_read_only:
             raise ValueError("hardened sandbox requires a read-only workspace source mount")
+        requested_writable = _validated_writable_relpaths(tuple(writable_paths))
+        if any(
+            path not in FUNDED_WRITABLE_PATHS for path in requested_writable
+        ):
+            raise ValueError("hardened sandbox requested an unapproved writable path")
+        if platform != FUNDED_PLATFORM:
+            raise ValueError(
+                f"hardened sandbox platform must be exactly {FUNDED_PLATFORM}"
+            )
         if tmpfs is not None:
             raise ValueError("hardened sandbox does not allow custom tmpfs mounts")
         container_user = _validate_non_root_user(
@@ -455,6 +524,8 @@ def build_container_argv(
         # image must be pre-present (consistent with --network none); `run` then
         # fails fast on a missing image instead of pulling over the host network.
         argv += ["--pull", pull]
+    if platform:
+        argv += ["--platform", platform]
     argv += [
         "--network", network,   # 'none' -> the workload has NO network.
         "--cpus", cpus,
@@ -485,6 +556,12 @@ def build_container_argv(
     for path, opts in tmpfs_mounts.items():
         # size-capped writable scratch/HOME, discarded with the container.
         argv += ["--tmpfs", f"{path}:{opts}" if opts else path]
+    if hardened:
+        argv += [
+            "--tmpfs",
+            f"{CONTAINER_WORKSPACE}/{FUNDED_EPHEMERAL_CACHE_PATH}:"
+            f"rw,nosuid,nodev,size={tmpfs_size},mode=1777",
+        ]
     argv += [
         "-v", (
             f"{mount_src}:{CONTAINER_WORKSPACE}:ro"
@@ -500,6 +577,10 @@ def build_container_argv(
             raise ValueError(f"funded sandbox writable path escapes workspace: {rel!r}")
         host = str(candidate).replace("\\", "/")
         argv += ["-v", f"{host}:{CONTAINER_WORKSPACE}/{rel}:rw"]
+    if dependency_volume:
+        if not hardened or not re.fullmatch(r"signalos-deps-[a-z0-9-]+", dependency_volume):
+            raise ValueError("dependency volume name is invalid")
+        argv += ["-v", f"{dependency_volume}:{CONTAINER_WORKSPACE}/node_modules:ro"]
     if hardened:
         argv += [
             "-e", "HOME=/home/signalos",
@@ -644,6 +725,9 @@ class ContainerRunner(SandboxRunner):
         workspace_read_only: bool = False,
         writable_paths: tuple[str, ...] = (),
         container_user: str | None = None,
+        platform: str | None = None,
+        dependency_mount: DependencyMount | None = None,
+        require_funded_dependencies: bool = False,
         runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ) -> None:
         if engine not in _ENGINE_CLI:
@@ -662,6 +746,9 @@ class ContainerRunner(SandboxRunner):
         self.workspace_read_only = bool(workspace_read_only)
         self.writable_paths = _validated_writable_relpaths(tuple(writable_paths))
         self.container_user = container_user or _default_container_user()
+        self.platform = platform or (FUNDED_PLATFORM if self.hardened else None)
+        self.dependency_mount = dependency_mount
+        self.require_funded_dependencies = bool(require_funded_dependencies)
         self._runner = runner
         self.name = f"container:{engine}"
         if self.hardened:
@@ -673,11 +760,19 @@ class ContainerRunner(SandboxRunner):
             self.image = validate_pinned_image(self.image)
             if self.network != "none" or not self.read_only or self.pull != "never":
                 raise ValueError(
-                    "hardened container requires network=none, read_only=true, pull=never"
+                    "hardened container has an invalid network/read-only/pull policy"
                 )
             if not self.workspace_read_only:
                 raise ValueError(
                     "hardened container requires a read-only workspace source mount"
+                )
+            if any(
+                path not in FUNDED_WRITABLE_PATHS for path in self.writable_paths
+            ):
+                raise ValueError("hardened container requested an unapproved writable path")
+            if self.platform != FUNDED_PLATFORM:
+                raise ValueError(
+                    f"hardened sandbox platform must be exactly {FUNDED_PLATFORM}"
                 )
             self.container_user = _validate_non_root_user(self.container_user)
             _validate_hardened_limits(
@@ -707,6 +802,7 @@ class ContainerRunner(SandboxRunner):
         *,
         container_name: str | None = None,
         cidfile: str | None = None,
+        dependency_volume: str | None = None,
     ) -> list[str]:
         return build_container_argv(
             cmd,
@@ -728,6 +824,8 @@ class ContainerRunner(SandboxRunner):
             container_user=self.container_user,
             container_name=container_name,
             cidfile=cidfile,
+            platform=self.platform,
+            dependency_volume=dependency_volume,
         )
 
     def _runtime_call(self, args: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess:
@@ -740,6 +838,179 @@ class ContainerRunner(SandboxRunner):
             timeout=timeout,
             env=_child_process_env(),
         )
+
+    def _load_dependency_mount(self) -> DependencyMount | None:
+        mount = self.dependency_mount
+        if mount is None and self.require_funded_dependencies:
+            from .dependency_broker import funded_dependency_mount_from_environment
+
+            raw = funded_dependency_mount_from_environment(self.workspace)
+            if raw is None:
+                raise SandboxUnavailableError(
+                    "funded dependency archive is not configured"
+                )
+            mount = DependencyMount(
+                archive_path=Path(raw["archive_path"]),
+                archive_sha256=str(raw["archive_sha256"]),
+                tree_sha256=str(raw["tree_sha256"]),
+                file_count=int(raw["file_count"]),
+                total_bytes=int(raw["total_bytes"]),
+            )
+        if mount is None:
+            return None
+        archive = Path(mount.archive_path)
+        expected = self.workspace / ".signalos" / "dependencies" / "node_modules.tar"
+        try:
+            info = archive.lstat()
+            resolved = archive.resolve(strict=True)
+            expected_resolved = expected.resolve(strict=True)
+        except OSError as exc:
+            raise SandboxUnavailableError("funded dependency archive is unreadable") from exc
+        attrs = int(getattr(info, "st_file_attributes", 0) or 0)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or attrs & 0x0400
+            or resolved != expected_resolved
+            or not re.fullmatch(r"[0-9a-f]{64}", mount.archive_sha256)
+            or not re.fullmatch(r"[0-9a-f]{64}", mount.tree_sha256)
+            or mount.file_count <= 0
+            or mount.total_bytes <= 0
+        ):
+            raise SandboxUnavailableError("funded dependency mount evidence is invalid")
+        return DependencyMount(
+            archive_path=resolved,
+            archive_sha256=mount.archive_sha256,
+            tree_sha256=mount.tree_sha256,
+            file_count=mount.file_count,
+            total_bytes=mount.total_bytes,
+        )
+
+    def _prepare_dependency_volume(
+        self,
+        mount: DependencyMount,
+        token: str,
+        timeout: float,
+    ) -> str:
+        volume = f"signalos-deps-{uuid.uuid4().hex}"
+        bootstrap = f"signalos-deps-bootstrap-{token}"[:63]
+        cid_dir = Path(tempfile.gettempdir()) / "signalos-sandbox-cids"
+        bootstrap_cid = cid_dir / f"bootstrap-{token}.cid"
+        archive_source = str(mount.archive_path).replace("\\", "/")
+        check_line = f"{mount.archive_sha256}  /tmp/{ARCHIVE_BOOTSTRAP_NAME}"
+        verify_tree = " ".join((
+            "node -e",
+            shlex.quote(_DEPENDENCY_TREE_VERIFY_JS),
+            mount.tree_sha256,
+            str(mount.file_count),
+            str(mount.total_bytes),
+        ))
+        command = (
+            "set -eu; "
+            f"cp /signalos/input/{ARCHIVE_BOOTSTRAP_NAME} /tmp/{ARCHIVE_BOOTSTRAP_NAME}; "
+            f"printf '%s\\n' '{check_line}' | sha256sum -c - >/dev/null; "
+            f"tar --extract --file=/tmp/{ARCHIVE_BOOTSTRAP_NAME} "
+            "--directory=/dependencies --no-same-owner --same-permissions; "
+            + verify_tree
+        )
+        # Narrow trusted-bootstrap exception: this fixed, model-inaccessible
+        # command starts as UID 0 with every capability dropped, a read-only
+        # rootfs, and no network.  Its only writable persistent mount is the
+        # fresh dependency volume, so extracted files become root-owned.  The
+        # scored/model command never runs here; it runs in the second container
+        # as the mandatory non-root UID with this volume mounted read-only.
+        argv = [
+            *_ENGINE_CLI[self.engine],
+            "run", "--rm", "--name", bootstrap,
+            "--cidfile", str(bootstrap_cid),
+            "--pull", "never", "--platform", FUNDED_PLATFORM,
+            "--network", "none", "--cpus", self.cpus,
+            "--memory", self.memory, "--memory-swap", self.memory,
+            "--pids-limit", self.pids, "--init", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true", "--read-only",
+            "--tmpfs", f"/tmp:rw,nosuid,nodev,noexec,size={self.tmpfs_size},mode=1777",
+            "-v", f"{archive_source}:/signalos/input/{ARCHIVE_BOOTSTRAP_NAME}:ro",
+            "-v", f"{volume}:/dependencies:rw",
+            "--entrypoint", "/bin/sh", self.image, "-lc", command,
+        ]
+        failure: SandboxUnavailableError | None = None
+        cleanup_errors: list[str] = []
+        volume_maybe_created = False
+        try:
+            cid_dir.mkdir(parents=True, exist_ok=True)
+            bootstrap_cid.unlink(missing_ok=True)
+            volume_maybe_created = True
+            created = self._runtime_call(
+                ["volume", "create", "--label", "signalos.scope=funded", volume]
+            )
+            if created.returncode != 0:
+                detail = (
+                    created.stderr or created.stdout or "volume creation failed"
+                ).strip()
+                raise SandboxUnavailableError(
+                    f"cannot create the funded dependency snapshot: {detail}"
+                )
+            proc = self._runner(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=min(timeout, 300),
+                env=_child_process_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            failure = SandboxUnavailableError(
+                "funded dependency snapshot preparation timed out"
+            )
+            failure.__cause__ = exc
+        except SandboxUnavailableError as exc:
+            failure = exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            failure = SandboxUnavailableError(
+                f"funded dependency snapshot preparation failed: {exc}"
+            )
+            failure.__cause__ = exc
+        else:
+            if proc.returncode != 0:
+                detail = (
+                    proc.stderr or proc.stdout or "archive verification failed"
+                ).strip()
+                failure = SandboxUnavailableError(
+                    f"funded dependency snapshot was rejected: {detail}"
+                )
+        finally:
+            try:
+                self._cleanup_hardened_container(bootstrap, bootstrap_cid)
+            except SandboxUnavailableError as exc:
+                cleanup_errors.append(str(exc))
+            if (failure is not None or cleanup_errors) and volume_maybe_created:
+                try:
+                    self._cleanup_dependency_volume(volume)
+                except SandboxUnavailableError as exc:
+                    cleanup_errors.append(str(exc))
+        if failure is not None or cleanup_errors:
+            messages = ([str(failure)] if failure is not None else []) + cleanup_errors
+            raise SandboxUnavailableError("; ".join(messages)) from failure
+        return volume
+
+    def _cleanup_dependency_volume(self, volume: str) -> None:
+        errors: list[str] = []
+        try:
+            removed = self._runtime_call(["volume", "rm", "-f", volume])
+            if removed.returncode != 0 and not self._volume_not_found(removed):
+                errors.append(
+                    (removed.stderr or removed.stdout or "volume removal failed").strip()
+                )
+            inspected = self._runtime_call(["volume", "inspect", volume])
+            if inspected.returncode == 0:
+                errors.append("dependency volume still exists after cleanup")
+            elif not self._volume_not_found(inspected):
+                errors.append("dependency volume cleanup verification was inconclusive")
+        except Exception as exc:
+            errors.append(f"dependency volume cleanup failed: {type(exc).__name__}: {exc}")
+        if errors:
+            raise SandboxUnavailableError("; ".join(errors))
 
     def _cleanup_hardened_container(self, name: str, cidfile: Path) -> None:
         cleanup_errors: list[str] = []
@@ -775,6 +1046,11 @@ class ContainerRunner(SandboxRunner):
         output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
         return any(marker in output for marker in _CONTAINER_NOT_FOUND_MARKERS)
 
+    @staticmethod
+    def _volume_not_found(proc: subprocess.CompletedProcess) -> bool:
+        output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+        return "no such volume" in output or "volume not found" in output
+
     def run(
         self,
         cmd: str,
@@ -784,22 +1060,35 @@ class ContainerRunner(SandboxRunner):
     ) -> tuple[int, CommandOutput]:
         container_name: str | None = None
         cidfile: Path | None = None
+        dependency_volume: str | None = None
+        token = f"{os.getpid()}-{uuid.uuid4().hex}"
         if self.hardened:
-            token = f"{os.getpid()}-{uuid.uuid4().hex}"
             container_name = f"signalos-funded-{token}"[:63]
             cid_dir = Path(tempfile.gettempdir()) / "signalos-sandbox-cids"
-            cid_dir.mkdir(parents=True, exist_ok=True)
-            cidfile = cid_dir / f"{token}.cid"
-            cidfile.unlink(missing_ok=True)
-        argv = self.build_argv(
-            cmd,
-            cwd,
-            env,
-            container_name=container_name,
-            cidfile=str(cidfile) if cidfile is not None else None,
-        )
+            try:
+                cid_dir.mkdir(parents=True, exist_ok=True)
+                cidfile = cid_dir / f"{token}.cid"
+                cidfile.unlink(missing_ok=True)
+            except OSError as exc:
+                raise SandboxUnavailableError(
+                    "cannot create the funded container identity file"
+                ) from exc
         result: tuple[int, CommandOutput]
+        cleanup_errors: list[str] = []
         try:
+            dependency_mount = self._load_dependency_mount() if self.hardened else None
+            if dependency_mount is not None:
+                dependency_volume = self._prepare_dependency_volume(
+                    dependency_mount, token, timeout
+                )
+            argv = self.build_argv(
+                cmd,
+                cwd,
+                env,
+                container_name=container_name,
+                cidfile=str(cidfile) if cidfile is not None else None,
+                dependency_volume=dependency_volume,
+            )
             # The overlay env goes INTO the container via -e (built into argv);
             # the OUTER docker/podman/wsl process inherits the host env (env=None)
             # only so the CLI itself resolves on PATH -- the workload never sees
@@ -838,7 +1127,17 @@ class ContainerRunner(SandboxRunner):
             )
         finally:
             if self.hardened and container_name is not None and cidfile is not None:
-                self._cleanup_hardened_container(container_name, cidfile)
+                try:
+                    self._cleanup_hardened_container(container_name, cidfile)
+                except SandboxUnavailableError as exc:
+                    cleanup_errors.append(str(exc))
+            if dependency_volume is not None:
+                try:
+                    self._cleanup_dependency_volume(dependency_volume)
+                except SandboxUnavailableError as exc:
+                    cleanup_errors.append(str(exc))
+            if cleanup_errors:
+                raise SandboxUnavailableError("; ".join(cleanup_errors))
         return result
 
 
@@ -960,6 +1259,8 @@ def select_runner(
             hardened=funded,
             workspace_read_only=funded,
             writable_paths=FUNDED_WRITABLE_PATHS if funded else (),
+            platform=FUNDED_PLATFORM if funded else None,
+            require_funded_dependencies=funded,
         )
     except ValueError as exc:
         if funded:

@@ -65,13 +65,18 @@ def test_funded_react_dependency_manifest_matches_owned_scaffold(tmp_path: Path)
     from signalos_lib.product.stacks import get_adapter
 
     get_adapter("react-vite").scaffold(tmp_path, {"product_name": "test"})
-    scaffold_package = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    scaffold_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+    scaffold_package = json.loads(scaffold_text)
+    funded_text = (DEPENDENCY_ROOT / "react-vite" / "package.json").read_text(
+        encoding="utf-8"
+    )
     funded_package = json.loads(
-        (DEPENDENCY_ROOT / "react-vite" / "package.json").read_text(encoding="utf-8")
+        funded_text
     )
     policy = json.loads((DEPENDENCY_ROOT / "policy.json").read_text(encoding="utf-8"))
 
     assert funded_package == scaffold_package
+    assert funded_text == scaffold_text
     assert policy["profile"] == "react-vite"
     assert policy["platform"] == "linux/amd64"
     assert policy["buildImage"].startswith("docker.io/library/node:20-bookworm@sha256:")
@@ -403,6 +408,16 @@ def test_provider_failures_are_not_graded_as_product_failures(driver: ModuleType
             run_id="matrix-run",
             gate="G0",
             signed_before=[],
+        )
+
+    with pytest.raises(driver.InfrastructureError, match="dependency broker"):
+        driver._require_ok(
+            "agent:verdict",
+            {
+                "ok": False,
+                "error": "dependency broker unavailable",
+                "error_code": "dependency-broker-unavailable",
+            },
         )
 
     with pytest.raises(driver.ProductFailure, match="ordinary product failure"):

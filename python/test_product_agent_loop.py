@@ -2040,6 +2040,31 @@ class TestVerificationCommandClass(unittest.TestCase):
 
 
 class TestSandboxRouting(unittest.TestCase):
+    def test_funded_dependency_manifest_and_installs_are_immutable(self):
+        with tempfile.TemporaryDirectory() as d:
+            loop = _loop(Path(d), AgentTestProvider())
+            self.assertIsNone(loop._load_enforcement())
+            with patch.dict(
+                os.environ, {"SIGNALOS_SANDBOX_PROFILE": "funded"}
+            ):
+                with self.assertRaises(ToolPolicyError) as package_denied:
+                    loop._check_governance(
+                        "write_file", {"path": "package.json", "content": "{}"}
+                    )
+                with self.assertRaises(ToolPolicyError) as modules_denied:
+                    loop._check_governance(
+                        "write_file",
+                        {"path": "node_modules/react/index.js", "content": "poison"},
+                    )
+                with self.assertRaises(ToolPolicyError) as install_denied:
+                    loop._check_governance(
+                        "run_command", {"command": "npm install left-pad"}
+                    )
+
+        self.assertEqual(package_denied.exception.rule, "dependency-frozen")
+        self.assertEqual(modules_denied.exception.rule, "dependency-frozen")
+        self.assertEqual(install_denied.exception.rule, "dependency-frozen")
+
     def test_default_backend_is_in_process(self):
         # With SIGNALOS_SANDBOX unset, the loop selects the in-process runner,
         # so nothing changes unless a caller opts in.

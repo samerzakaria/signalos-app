@@ -1643,6 +1643,26 @@ class TestAgentOutcomeGate(unittest.TestCase):
             self.assertEqual(result.failure_type, "sandbox-unavailable")
             self.assertIn("verification containment failed", result.error)
 
+    def test_g4_dependency_broker_failure_blocks_before_model_dispatch(self):
+        from signalos_lib.product.dependency_broker import DependencyBrokerError
+
+        with tempfile.TemporaryDirectory() as d:
+            orch = _bare_orch(d)
+            with mock.patch.object(orch, "_scaffold_shell_if_greenfield"), \
+                    mock.patch(
+                        "signalos_lib.product.dependency_broker."
+                        "materialize_funded_dependencies_from_environment",
+                        side_effect=DependencyBrokerError("bundle unavailable"),
+                    ), mock.patch(
+                        "signalos_lib.product.subagent_build.run_subagent_driven_build"
+                    ) as dispatch:
+                result = orch._execute_build_gate("G4", "system", [0, 1, 2, 3])
+
+            dispatch.assert_not_called()
+            self.assertEqual(result.status, "error")
+            self.assertEqual(result.failure_type, "dependency-broker-unavailable")
+            self.assertIn("bundle unavailable", result.error)
+
     def test_stalled_agent_not_approvable_even_with_artifacts_present(self):
         # STRONGEST fail-open proof: seed ALL FOUR G0 artifacts so the old
         # _default_sign would happily sign + advance a gate whose agent actually

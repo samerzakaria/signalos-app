@@ -614,9 +614,16 @@ class TestUxAcceptanceMechanism:
 
         _react_repo(tmp_path)
         (tmp_path / "node_modules").mkdir()
+        verified = []
+        monkeypatch.setenv("SIGNALOS_SANDBOX_PROFILE", "funded")
         monkeypatch.setattr(
             "signalos_lib.product.validation._select_verifier_runner",
             lambda root: _Verifier(),
+        )
+        monkeypatch.setattr(
+            "signalos_lib.product.dependency_broker."
+            "verify_funded_dependencies_from_environment",
+            lambda root: verified.append(root),
         )
         monkeypatch.setattr(
             "signalos_lib.product.acceptance.subprocess.run",
@@ -630,6 +637,7 @@ class TestUxAcceptanceMechanism:
         )
 
         assert result["ok"] is True and result["ran"] is True
+        assert verified == [tmp_path]
         assert len(calls) == 1
         command, cwd, timeout, env = calls[0]
         assert command.startswith("npx vitest run ")

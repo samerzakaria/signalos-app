@@ -166,6 +166,30 @@ class TestVerifierContainerRouting(unittest.TestCase):
             by_cmd["npm install --legacy-peer-deps"], by_cmd["npm test"]
         )
 
+    def test_funded_validation_verifies_receipt_and_never_runs_install(self):
+        rec = _RecordingRunner(exit_code=0, stdout="ok")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            with mock.patch.dict(
+                os.environ, {"SIGNALOS_SANDBOX_PROFILE": "funded"}
+            ), mock.patch.object(
+                V, "_select_verifier_runner", return_value=rec
+            ), mock.patch(
+                "signalos_lib.product.dependency_broker."
+                "verify_funded_dependencies_from_environment"
+            ) as verify:
+                result = V._run_commands(
+                    root,
+                    ["npm install --legacy-peer-deps", "npm run build", "npm test"],
+                )
+
+        self.assertEqual(result["status"], "passed")
+        verify.assert_called_once_with(root)
+        self.assertEqual(
+            [call["cmd"] for call in rec.calls], ["npm run build", "npm test"]
+        )
+        self.assertIn("install skipped", result["output"])
+
     def test_env_overlay_is_ci_only(self):
         # Only CI/FORCE_COLOR cross the boundary -- no host env leaks in.
         rec = _RecordingRunner()

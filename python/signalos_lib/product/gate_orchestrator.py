@@ -750,6 +750,34 @@ class GateOrchestrator:
         # product value. Reuse an in-flight checkpoint after a crash so partial
         # work remains bound to the interrupted attempt's original baseline.
         try:
+            from .dependency_broker import (
+                DependencyBrokerError,
+                materialize_funded_dependencies_from_environment,
+            )
+
+            dependency_receipt = materialize_funded_dependencies_from_environment(
+                self.repo_root
+            )
+            if dependency_receipt is not None:
+                self.emit({
+                    "type": "system",
+                    "text": "Verified the immutable funded dependency bundle before G4.",
+                })
+        except DependencyBrokerError as exc:
+            self._g4_verify = {
+                "ok": False,
+                "reason": f"G4 dependency boundary failed: {exc}",
+            }
+            return LoopResult(
+                run_id=self.state.run_id,
+                status="error",
+                final_text=None,
+                tool_calls_made=0,
+                messages=[],
+                error=self._g4_verify["reason"],
+                failure_type="dependency-broker-unavailable",
+            )
+        try:
             self._prepare_g4_attribution()
         except Exception as exc:
             # Verification below fails closed when no trustworthy baseline
