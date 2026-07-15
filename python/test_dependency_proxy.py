@@ -8,20 +8,22 @@ import stat
 import subprocess
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-import signalos_lib.product.dependency_proxy as dependency_proxy_module
 from signalos_lib.product.dependency_broker import (
     APPROVED_CONNECT_AUTHORITY,
     TRUSTED_INSTALL_SHELL_COMMAND,
+    TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
+    TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
+    WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
     load_dependency_policy,
     trusted_install_environment,
 )
 from signalos_lib.product.dependency_proxy import (
     DependencyProxyCleanupError,
+    DependencyProxyInfrastructureError,
     DependencyProxyPolicyError,
     DependencyProxyTimeoutError,
     DockerRegistryProxyRunner,
@@ -57,22 +59,6 @@ def _docker_command(argv: list[str]) -> list[str]:
     return args[2:] if args[:1] == ["--host"] else args
 
 
-def _trusted_windows_pipe(
-    endpoint: str,
-) -> dependency_proxy_module._WindowsPipeInspection:
-    return dependency_proxy_module._WindowsPipeInspection(
-        endpoint=endpoint,
-        server_pid=4242,
-        server_executable=(
-            r"C:\Program Files\Docker\Docker\resources\com.docker.backend.exe"
-        ),
-        owner_sid="S-1-5-18",
-        dacl_protected=True,
-        untrusted_allow_aces=False,
-        binary_signature_trusted=True,
-    )
-
-
 def _size(value: str) -> int:
     number = int(value[:-1])
     return number * {"m": 1024**2, "g": 1024**3}[value[-1].lower()]
@@ -94,6 +80,7 @@ class _FakeDocker:
         repo_digests: list[str] | None = None,
         container_image_id: str = RUNTIME_IMAGE_ID,
         switch_endpoint_after_context: str | None = None,
+        daemon_os_type: str = "linux",
     ) -> None:
         self.image = image
         self.endpoint = endpoint or (
@@ -110,6 +97,7 @@ class _FakeDocker:
         self.repo_digests = [image] if repo_digests is None else repo_digests
         self.container_image_id = container_image_id
         self.switch_endpoint_after_context = switch_endpoint_after_context
+        self.daemon_os_type = daemon_os_type
         self.calls: list[tuple[list[str], dict]] = []
         self.networks: dict[str, dict] = {}
         self.containers: dict[str, dict] = {}
@@ -150,7 +138,10 @@ class _FakeDocker:
                 self.endpoint = self.switch_endpoint_after_context
             return _completed(argv, stdout=json.dumps(reported_endpoint) + "\n")
         if args[:3] == ["info", "--format", "{{json .}}"]:
-            return _completed(argv, stdout=json.dumps({"OSType": "linux"}) + "\n")
+            return _completed(
+                argv,
+                stdout=json.dumps({"OSType": self.daemon_os_type}) + "\n",
+            )
         if args[:4] == ["image", "inspect", "--format", "{{json .}}"]:
             return _completed(
                 argv,
@@ -326,7 +317,7 @@ def _runner(tmp_path: Path, fake: _FakeDocker, **kwargs) -> tuple[DockerRegistry
             "endpoint_resolve": lambda path: path,
         }
         if os.name != "nt"
-        else {"windows_pipe_inspector": _trusted_windows_pipe}
+        else {}
     )
     return (
         DockerRegistryProxyRunner(
@@ -364,6 +355,17 @@ def test_success_uses_exact_internal_proxy_topology_and_cleans_everything(tmp_pa
     assert output.stdout.startswith("SIGNALOS_RUNTIME=linux/x64")
     assert evidence.allowed_connect_authorities == (APPROVED_CONNECT_AUTHORITY,)
     assert evidence.runtime_image_id == RUNTIME_IMAGE_ID
+    assert evidence.host_trust_profile == (
+        TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE
+        if os.name == "nt"
+        else TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE
+    )
+    assert evidence.docker_endpoint == (
+        WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT
+        if os.name == "nt"
+        else "unix:///var/run/docker.sock"
+    )
+    assert evidence.daemon_os_type == "linux"
     assert evidence.installer_network == "docker-internal"
     assert evidence.proxy_egress_network == "dedicated-bridge"
     assert evidence.tls_mode == "end-to-end-strict"
@@ -429,13 +431,20 @@ def test_current_context_switch_cannot_redirect_lifecycle_or_cleanup(
     )
     runner, staging = _runner(tmp_path, fake)
 
-    runner.run(
+    _exit_code, _output, evidence = runner.run(
         TRUSTED_INSTALL_SHELL_COMMAND,
         staging,
         300,
         trusted_install_environment(),
     )
 
+    assert evidence.docker_endpoint == approved_endpoint
+    assert evidence.host_trust_profile == (
+        TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE
+        if os.name == "nt"
+        else TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE
+    )
+    assert evidence.daemon_os_type == "linux"
     raw_argvs = [call[0] for call in fake.calls]
     assert raw_argvs[0] == [
         "docker",
@@ -623,8 +632,20 @@ def test_input_mutation_races_are_detected_and_everything_is_cleaned(
     assert fake.networks == {}
 
 
-def test_endpoint_allowlist_rejects_arbitrary_npipe_unix_and_unsafe_socket(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "npipe:////./pipe/docker_engine",
+        "npipe:////./pipe/untrusted",
+        "npipe:////./pipe/dockerdesktoplinuxengine",
+        "//./pipe/dockerDesktopLinuxEngine",
+        r"\\.\pipe\dockerDesktopLinuxEngine",
+        "tcp://127.0.0.1:2375",
+        WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT + " ",
+    ],
+)
+def test_windows_production_rejects_every_noncanonical_docker_endpoint(
+    endpoint: str,
 ) -> None:
     policy = load_dependency_policy(DEPENDENCIES / "policy.json")
     fake = _FakeDocker(policy.image)
@@ -635,8 +656,73 @@ def test_endpoint_allowlist_rejects_arbitrary_npipe_unix_and_unsafe_socket(
         environ={},
         host_os_name="nt",
     )
-    with pytest.raises(DependencyProxyPolicyError, match="official local Docker"):
-        windows._validate_local_endpoint("npipe:////./pipe/untrusted")
+
+    with pytest.raises(DependencyProxyPolicyError, match="canonical Docker Desktop Linux"):
+        windows._validate_local_endpoint(endpoint)
+
+
+def test_windows_production_preflight_accepts_only_exact_linux_pipe_without_injection(
+) -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(
+        policy.image,
+        endpoint=WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
+    )
+    runner = DockerRegistryProxyRunner(
+        policy,
+        docker_cli="docker",
+        runtime=fake,
+        environ={},
+        monotonic=lambda: 0.0,
+        host_os_name="nt",
+    )
+
+    evidence = runner._preflight(300.0)
+
+    assert evidence.host_trust_profile == TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE
+    assert evidence.docker_endpoint == WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT
+    assert evidence.daemon_os_type == "linux"
+    assert evidence.runtime_image_id == RUNTIME_IMAGE_ID
+    assert fake.calls[0][0][1:] == [
+        "context",
+        "inspect",
+        "--format",
+        "{{json .Endpoints.docker.Host}}",
+    ]
+    assert all(
+        call[0][1:3] == ["--host", WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT]
+        for call in fake.calls[1:]
+    )
+
+
+def test_preflight_derives_daemon_os_from_bound_daemon_and_rejects_windows() -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(
+        policy.image,
+        endpoint=WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
+        daemon_os_type="windows",
+    )
+    runner = DockerRegistryProxyRunner(
+        policy,
+        docker_cli="docker",
+        runtime=fake,
+        environ={},
+        monotonic=lambda: 0.0,
+        host_os_name="nt",
+    )
+
+    with pytest.raises(
+        DependencyProxyInfrastructureError,
+        match="not running Linux containers",
+    ):
+        runner._preflight(300.0)
+
+    assert [_docker_command(call[0])[0] for call in fake.calls] == ["context", "info"]
+
+
+def test_unix_endpoint_allowlist_rejects_arbitrary_and_unsafe_socket() -> None:
+    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
+    fake = _FakeDocker(policy.image)
 
     unix = DockerRegistryProxyRunner(
         policy,
@@ -666,68 +752,26 @@ def test_endpoint_allowlist_rejects_arbitrary_npipe_unix_and_unsafe_socket(
         unsafe._validate_local_endpoint("unix:///run/docker.sock")
 
 
-def test_official_windows_pipe_fails_closed_without_defensible_identity_inspection(
-) -> None:
-    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
-    runner = DockerRegistryProxyRunner(
-        policy,
-        docker_cli="docker",
-        runtime=lambda *_args, **_kwargs: None,
-        environ={},
-        host_os_name="nt",
-    )
-
-    with pytest.raises(DependencyProxyPolicyError, match="provisioning is disabled"):
-        runner._validate_local_endpoint("npipe:////./pipe/docker_engine")
-
-
 @pytest.mark.parametrize(
-    "override",
-    [
-        {"endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine"},
-        {"server_pid": 0},
-        {"server_executable": r"C:\Temp\attacker.exe"},
-        {"owner_sid": "S-1-5-21-1000"},
-        {"dacl_protected": False},
-        {"untrusted_allow_aces": True},
-        {"binary_signature_trusted": False},
-    ],
+    "endpoint",
+    ["unix:///var/run/docker.sock", "unix:///run/docker.sock"],
 )
-def test_official_windows_pipe_rejects_untrusted_server_or_acl_evidence(
-    override: dict[str, object],
-) -> None:
-    policy = load_dependency_policy(DEPENDENCIES / "policy.json")
-
-    def inspect(endpoint: str) -> dependency_proxy_module._WindowsPipeInspection:
-        return replace(_trusted_windows_pipe(endpoint), **override)
-
-    runner = DockerRegistryProxyRunner(
-        policy,
-        docker_cli="docker",
-        runtime=lambda *_args, **_kwargs: None,
-        environ={},
-        host_os_name="nt",
-        windows_pipe_inspector=inspect,
-    )
-
-    with pytest.raises(DependencyProxyPolicyError, match="server or ACL identity is untrusted"):
-        runner._validate_local_endpoint("npipe:////./pipe/docker_engine")
-
-
-def test_official_windows_pipe_accepts_complete_trusted_identity_evidence() -> None:
+def test_unix_exact_local_endpoints_emit_engine_trust_profile(endpoint: str) -> None:
     policy = load_dependency_policy(DEPENDENCIES / "policy.json")
     runner = DockerRegistryProxyRunner(
         policy,
         docker_cli="docker",
         runtime=lambda *_args, **_kwargs: None,
         environ={},
-        host_os_name="nt",
-        windows_pipe_inspector=_trusted_windows_pipe,
+        host_os_name="posix",
+        endpoint_lstat=lambda _path: _SafeSocketStat(),
+        endpoint_resolve=lambda path: path,
     )
 
-    assert runner._validate_local_endpoint(
-        "npipe:////./pipe/dockerdesktoplinuxengine"
-    ) == "npipe:////./pipe/dockerDesktopLinuxEngine"
+    evidence = runner._validate_local_endpoint(endpoint)
+
+    assert evidence.host_trust_profile == TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE
+    assert evidence.docker_endpoint == endpoint
 
 
 @pytest.mark.parametrize(

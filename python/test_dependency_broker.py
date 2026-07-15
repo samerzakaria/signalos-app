@@ -6,6 +6,7 @@ import inspect
 import os
 import shutil
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,28 @@ class _FakeInstaller:
         self.staging_mode = None
         self.input_modes = None
 
+    def evidence(self) -> broker.TrustedDependencyRunEvidence:
+        return broker.TrustedDependencyRunEvidence(
+            schema=broker.RUNNER_EVIDENCE_SCHEMA,
+            engine="docker",
+            host_trust_profile=broker.TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
+            docker_endpoint=broker.WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
+            daemon_os_type="linux",
+            platform=self.platform,
+            installer_image=self.image,
+            proxy_image=self.proxy_image,
+            runtime_image_id="sha256:" + "a" * 64,
+            proxy_script_sha256=self.proxy_script_sha256,
+            runner_sha256=broker._trusted_runner_sha256(),
+            egress_policy=self.dependency_egress_policy,
+            allowed_connect_authorities=(broker.APPROVED_CONNECT_AUTHORITY,),
+            installer_network=broker.PROXY_INSTALLER_NETWORK,
+            proxy_egress_network=broker.PROXY_EGRESS_NETWORK,
+            tls_mode=broker.PROXY_TLS_MODE,
+            pull_policy="never",
+            cleanup_verified=True,
+        )
+
     def run(self, command, cwd, timeout, env):
         self.calls.append((command, Path(cwd), timeout, dict(env)))
         self.staging_mode = stat.S_IMODE(Path(cwd).stat().st_mode)
@@ -79,30 +102,13 @@ class _FakeInstaller:
         broker._write_dependency_archive(
             Path(cwd) / "node_modules", Path(cwd) / "node_modules.tar"
         )
-        evidence = broker.TrustedDependencyRunEvidence(
-            schema=broker.RUNNER_EVIDENCE_SCHEMA,
-            engine="docker",
-            platform=self.platform,
-            installer_image=self.image,
-            proxy_image=self.proxy_image,
-            runtime_image_id="sha256:" + "a" * 64,
-            proxy_script_sha256=self.proxy_script_sha256,
-            runner_sha256=broker._trusted_runner_sha256(),
-            egress_policy=self.dependency_egress_policy,
-            allowed_connect_authorities=(broker.APPROVED_CONNECT_AUTHORITY,),
-            installer_network=broker.PROXY_INSTALLER_NETWORK,
-            proxy_egress_network=broker.PROXY_EGRESS_NETWORK,
-            tls_mode=broker.PROXY_TLS_MODE,
-            pull_policy="never",
-            cleanup_verified=True,
-        )
         return (
             0,
             CommandOutput(
                 stdout="SIGNALOS_RUNTIME=linux/x64\n10.8.2\n\nadded 1 package\n",
                 stderr="",
             ),
-            evidence,
+            self.evidence(),
         )
 
 
@@ -209,10 +215,13 @@ def test_prepare_bundle_uses_only_fixed_scriptless_command_and_env(
     runner = _fake_runner_factory[0]
 
     assert receipt["status"] == "ready"
-    assert receipt["schema"] == "signalos.dependency-receipt.v2"
+    assert receipt["schema"] == "signalos.dependency-receipt.v3"
     assert receipt["provisioner"] == {
         "schema": broker.RUNNER_EVIDENCE_SCHEMA,
         "engine": "docker",
+        "host_trust_profile": broker.TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
+        "docker_endpoint": broker.WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
+        "daemon_os_type": "linux",
         "platform": "linux/amd64",
         "installer_image": runner.image,
         "proxy_image": runner.proxy_image,
@@ -244,6 +253,42 @@ def test_prepare_bundle_uses_only_fixed_scriptless_command_and_env(
     assert verify_dependency_bundle(
         policy_path, bundle, attestation_key=ATTESTATION_KEY
     ) == receipt
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("host_trust_profile", "unreviewed-local-host-v1"),
+        ("docker_endpoint", "npipe:////./pipe/docker_engine"),
+        ("docker_endpoint", [broker.WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT]),
+        ("daemon_os_type", "windows"),
+    ],
+)
+def test_runner_rejects_untrusted_host_evidence(field: str, value: object) -> None:
+    policy = load_dependency_policy(SOURCE_DEPENDENCIES / "policy.json")
+    evidence = replace(_FakeInstaller().evidence(), **{field: value})
+
+    with pytest.raises(DependencyBrokerError, match="host evidence is invalid"):
+        broker._validate_runner_evidence(evidence, policy)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["unix:///var/run/docker.sock", "unix:///run/docker.sock"],
+)
+def test_runner_accepts_exact_unix_engine_host_evidence(endpoint: str) -> None:
+    policy = load_dependency_policy(SOURCE_DEPENDENCIES / "policy.json")
+    evidence = replace(
+        _FakeInstaller().evidence(),
+        host_trust_profile=broker.TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
+        docker_endpoint=endpoint,
+    )
+
+    receipt = broker._validate_runner_evidence(evidence, policy)
+
+    assert receipt["host_trust_profile"] == broker.TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE
+    assert receipt["docker_endpoint"] == endpoint
+    assert receipt["daemon_os_type"] == "linux"
 
 
 def test_materialize_verifies_every_byte_and_detects_tampering(tmp_path: Path) -> None:
@@ -417,6 +462,46 @@ def test_runner_topology_tampering_cannot_forge_provenance(tmp_path: Path) -> No
     with pytest.raises(DependencyBrokerError, match="provenance HMAC"):
         verify_dependency_bundle(
             policy_path, bundle, attestation_key=ATTESTATION_KEY
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("host_trust_profile", "unreviewed-local-host-v1"),
+        ("docker_endpoint", "npipe:////./pipe/docker_engine"),
+        ("docker_endpoint", [broker.WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT]),
+        ("daemon_os_type", "windows"),
+    ],
+)
+def test_signed_receipt_rejects_untrusted_host_evidence(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    policy_path = _policy_copy(tmp_path)
+    bundle = tmp_path / "bundle"
+    prepare_dependency_bundle(
+        policy_path,
+        bundle,
+        engine="docker",
+        attestation_key=ATTESTATION_KEY,
+    )
+    receipt_path = bundle / ".signalos-dependency-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["provisioner"][field] = value
+    receipt["provenance_hmac_sha256"] = broker._receipt_mac(
+        receipt,
+        ATTESTATION_KEY,
+    )
+    receipt["receipt_sha256"] = broker._receipt_hash(receipt)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(DependencyBrokerError, match="host evidence is invalid"):
+        verify_dependency_bundle(
+            policy_path,
+            bundle,
+            attestation_key=ATTESTATION_KEY,
         )
 
 

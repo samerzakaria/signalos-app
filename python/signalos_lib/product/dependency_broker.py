@@ -23,6 +23,8 @@ __all__ = [
     "verify_materialized_dependencies",
     "verify_funded_dependencies_from_environment",
     "TRUSTED_INSTALL_SHELL_COMMAND",
+    "TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE",
+    "TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE",
     "trusted_install_environment",
 ]
 
@@ -46,8 +48,8 @@ from urllib.parse import unquote, urlsplit
 from .sandbox import SandboxUnavailableError, validate_pinned_image
 
 POLICY_SCHEMA = "signalos.funded-dependency-policy.v2"
-RECEIPT_SCHEMA = "signalos.dependency-receipt.v2"
-RUNNER_EVIDENCE_SCHEMA = "signalos.dependency-runner-evidence.v1"
+RECEIPT_SCHEMA = "signalos.dependency-receipt.v3"
+RUNNER_EVIDENCE_SCHEMA = "signalos.dependency-runner-evidence.v2"
 SUPPORTED_PROFILE = "react-vite"
 SUPPORTED_PLATFORM = "linux/amd64"
 APPROVED_ORIGIN = "https://registry.npmjs.org"
@@ -83,6 +85,19 @@ _BUNDLE_RECEIPT_NAME = ".signalos-dependency-receipt.json"
 ARCHIVE_NAME = "node_modules.tar"
 ATTESTATION_KEY_ENV = "SIGNALOS_DEPENDENCY_ATTESTATION_SECRET_KEY"
 TRUSTED_EGRESS_POLICY = "npm-registry-connect-v2"
+# Reviewed trusted-local host profiles.  They trust the operating system, the
+# authenticated local user, SignalOS, the Docker CLI, and the corresponding
+# local Docker engine/Desktop installation.  Generated code, package content,
+# workspaces, and all containers remain untrusted and are constrained by the
+# digest, topology, proxy, and cleanup controls attested below.
+TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE = "trusted-local-docker-desktop-v1"
+TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE = "trusted-local-docker-engine-v1"
+WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT = (
+    "npipe:////./pipe/dockerDesktopLinuxEngine"
+)
+UNIX_DOCKER_ENGINE_ENDPOINTS = frozenset(
+    {"unix:///var/run/docker.sock", "unix:///run/docker.sock"}
+)
 _MATERIALIZED_ARCHIVE_REL = Path(".signalos") / "dependencies" / ARCHIVE_NAME
 _SEMVER_SPEC_RE = re.compile(r"^[~^]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 _EXACT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -120,6 +135,9 @@ class TrustedDependencyRunEvidence:
 
     schema: str
     engine: str
+    host_trust_profile: str
+    docker_endpoint: str
+    daemon_os_type: str
     platform: str
     installer_image: str
     proxy_image: str
@@ -138,6 +156,9 @@ class TrustedDependencyRunEvidence:
         return {
             "schema": self.schema,
             "engine": self.engine,
+            "host_trust_profile": self.host_trust_profile,
+            "docker_endpoint": self.docker_endpoint,
+            "daemon_os_type": self.daemon_os_type,
             "platform": self.platform,
             "installer_image": self.installer_image,
             "proxy_image": self.proxy_image,
@@ -743,17 +764,48 @@ def _trusted_runner_sha256() -> str:
     return _sha256_file(Path(dependency_proxy.__file__).resolve())
 
 
+def _trusted_local_host_evidence(
+    host_trust_profile: Any,
+    docker_endpoint: Any,
+    daemon_os_type: Any,
+) -> bool:
+    if not all(
+        isinstance(value, str)
+        for value in (host_trust_profile, docker_endpoint, daemon_os_type)
+    ):
+        return False
+    if daemon_os_type != "linux":
+        return False
+    if host_trust_profile == TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE:
+        return docker_endpoint == WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT
+    if host_trust_profile == TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE:
+        return docker_endpoint in UNIX_DOCKER_ENGINE_ENDPOINTS
+    return False
+
+
 def _validate_runner_evidence(
     evidence: TrustedDependencyRunEvidence,
     policy: DependencyPolicy,
 ) -> dict[str, Any]:
     if not isinstance(evidence, TrustedDependencyRunEvidence):
         raise DependencyBrokerError("dependency runner returned no trusted attestation")
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", evidence.runtime_image_id) is None:
+    if (
+        not isinstance(evidence.runtime_image_id, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", evidence.runtime_image_id) is None
+    ):
         raise DependencyBrokerError("dependency runner image identity is invalid")
+    if not _trusted_local_host_evidence(
+        evidence.host_trust_profile,
+        evidence.docker_endpoint,
+        evidence.daemon_os_type,
+    ):
+        raise DependencyBrokerError("dependency runner host evidence is invalid")
     expected = TrustedDependencyRunEvidence(
         schema=RUNNER_EVIDENCE_SCHEMA,
         engine="docker",
+        host_trust_profile=evidence.host_trust_profile,
+        docker_endpoint=evidence.docker_endpoint,
+        daemon_os_type=evidence.daemon_os_type,
         platform=policy.platform,
         installer_image=policy.image,
         proxy_image=policy.proxy_image,
@@ -835,9 +887,27 @@ def _validate_receipt(
     )
     if re.fullmatch(r"sha256:[0-9a-f]{64}", str(runtime_image_id)) is None:
         raise DependencyBrokerError("dependency receipt runtime image identity is invalid")
+    host_trust_profile = (
+        provisioner.get("host_trust_profile") if isinstance(provisioner, dict) else ""
+    )
+    docker_endpoint = (
+        provisioner.get("docker_endpoint") if isinstance(provisioner, dict) else ""
+    )
+    daemon_os_type = (
+        provisioner.get("daemon_os_type") if isinstance(provisioner, dict) else ""
+    )
+    if not _trusted_local_host_evidence(
+        host_trust_profile,
+        docker_endpoint,
+        daemon_os_type,
+    ):
+        raise DependencyBrokerError("dependency receipt host evidence is invalid")
     expected_provisioner = TrustedDependencyRunEvidence(
         schema=RUNNER_EVIDENCE_SCHEMA,
         engine="docker",
+        host_trust_profile=host_trust_profile,
+        docker_endpoint=docker_endpoint,
+        daemon_os_type=daemon_os_type,
         platform=policy.platform,
         installer_image=policy.image,
         proxy_image=policy.proxy_image,

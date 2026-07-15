@@ -42,6 +42,10 @@ from .dependency_broker import (
     SUPPORTED_PLATFORM,
     TRUSTED_EGRESS_POLICY,
     TRUSTED_INSTALL_SHELL_COMMAND,
+    TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
+    TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
+    UNIX_DOCKER_ENGINE_ENDPOINTS,
+    WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
     DependencyBrokerError,
     DependencyPolicy,
     TrustedDependencyRunEvidence,
@@ -108,14 +112,17 @@ class _WorkspaceIdentity:
 
 
 @dataclass(frozen=True)
-class _WindowsPipeInspection:
-    endpoint: str
-    server_pid: int
-    server_executable: str
-    owner_sid: str
-    dacl_protected: bool
-    untrusted_allow_aces: bool
-    binary_signature_trusted: bool
+class _TrustedHostEndpoint:
+    host_trust_profile: str
+    docker_endpoint: str
+
+
+@dataclass(frozen=True)
+class _PreflightEvidence:
+    host_trust_profile: str
+    docker_endpoint: str
+    daemon_os_type: str
+    runtime_image_id: str
 
 
 class DependencyProxyError(DependencyBrokerError):
@@ -190,7 +197,6 @@ class DockerRegistryProxyRunner:
         host_os_name: str | None = None,
         endpoint_lstat: Callable[[Path], os.stat_result] | None = None,
         endpoint_resolve: Callable[[Path], Path] | None = None,
-        windows_pipe_inspector: Callable[[str], _WindowsPipeInspection] | None = None,
     ) -> None:
         if not isinstance(policy, DependencyPolicy):
             raise DependencyProxyPolicyError(
@@ -208,9 +214,6 @@ class DockerRegistryProxyRunner:
         self._endpoint_lstat = endpoint_lstat or (lambda path: path.lstat())
         self._endpoint_resolve = endpoint_resolve or (
             lambda path: path.resolve(strict=True)
-        )
-        self._windows_pipe_inspector = (
-            windows_pipe_inspector or self._fail_closed_windows_pipe_inspection
         )
         self._bound_endpoint: str | None = None
         self._run_started = False
@@ -302,7 +305,7 @@ class DockerRegistryProxyRunner:
         install_result: tuple[int, CommandOutput] | None = None
         lifecycle_started = False
         try:
-            runtime_image_id = self._preflight(deadline)
+            preflight = self._preflight(deadline)
             lifecycle_started = True
             self._create_network(internal_network, labels, internal=True, deadline=deadline)
             self._create_network(egress_network, labels, internal=False, deadline=deadline)
@@ -343,7 +346,7 @@ class DockerRegistryProxyRunner:
                 internal_network,
                 egress_network,
                 labels,
-                runtime_image_id,
+                preflight.runtime_image_id,
                 deadline,
             )
             self._reverify_workspace(workspace_identity, require_pristine=True)
@@ -376,7 +379,7 @@ class DockerRegistryProxyRunner:
                 expected_container_env,
                 command,
                 workspace_identity,
-                runtime_image_id,
+                preflight.runtime_image_id,
                 deadline,
             )
             self._inspect_network(
@@ -472,10 +475,13 @@ class DockerRegistryProxyRunner:
         evidence = TrustedDependencyRunEvidence(
             schema=RUNNER_EVIDENCE_SCHEMA,
             engine=self.engine,
+            host_trust_profile=preflight.host_trust_profile,
+            docker_endpoint=preflight.docker_endpoint,
+            daemon_os_type=preflight.daemon_os_type,
             platform=self.platform,
             installer_image=self.image,
             proxy_image=self.proxy_image,
-            runtime_image_id=runtime_image_id,
+            runtime_image_id=preflight.runtime_image_id,
             proxy_script_sha256=self.proxy_script_sha256,
             runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             egress_policy=self.dependency_egress_policy,
@@ -713,7 +719,7 @@ class DockerRegistryProxyRunner:
                     "unreviewed staging content appeared before installation",
                 )
 
-    def _preflight(self, deadline: float) -> str:
+    def _preflight(self, deadline: float) -> _PreflightEvidence:
         context = self._context_call(
             ["context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"],
             phase="docker-context",
@@ -736,7 +742,8 @@ class DockerRegistryProxyRunner:
         # This is the sole unbound Docker call. It returns the endpoint in the
         # same process that resolves currentContext; no second context lookup
         # occurs. Every later call is explicitly prefixed with --host.
-        self._bound_endpoint = self._validate_local_endpoint(endpoint)
+        trusted_host = self._validate_local_endpoint(endpoint)
+        self._bound_endpoint = trusted_host.docker_endpoint
 
         info = self._call(
             ["info", "--format", "{{json .}}"], phase="docker-info", deadline=deadline
@@ -748,7 +755,8 @@ class DockerRegistryProxyRunner:
             retryable=True,
         )
         daemon = self._json_object(info.stdout, "docker-info")
-        if str(daemon.get("OSType") or "").lower() != "linux":
+        daemon_os_type = str(daemon.get("OSType") or "").lower()
+        if daemon_os_type != "linux":
             raise DependencyProxyInfrastructureError(
                 "dependency.docker.linux_required",
                 "docker-info",
@@ -787,43 +795,44 @@ class DockerRegistryProxyRunner:
                 "image-inspect",
                 "cached funded image does not resolve to linux/amd64 content",
             )
-        return runtime_image_id
+        return _PreflightEvidence(
+            host_trust_profile=trusted_host.host_trust_profile,
+            docker_endpoint=trusted_host.docker_endpoint,
+            daemon_os_type=daemon_os_type,
+            runtime_image_id=runtime_image_id,
+        )
 
-    def _validate_local_endpoint(self, endpoint: Any) -> str:
+    def _validate_local_endpoint(self, endpoint: Any) -> _TrustedHostEndpoint:
         if not isinstance(endpoint, str):
             raise DependencyProxyPolicyError(
                 "dependency.docker.context_untrusted",
                 "docker-context",
                 "Docker context endpoint is not a string",
             )
-        normalized = endpoint.strip().lower()
         if self._host_os_name == "nt":
-            approved = {
-                "npipe:////./pipe/docker_engine": "npipe:////./pipe/docker_engine",
-                "npipe:////./pipe/dockerdesktoplinuxengine": (
-                    "npipe:////./pipe/dockerDesktopLinuxEngine"
-                ),
-            }
-            canonical = approved.get(normalized)
-            if canonical is None:
+            if endpoint != WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT:
                 raise DependencyProxyPolicyError(
                     "dependency.docker.context_untrusted",
                     "docker-context",
-                    "Docker endpoint is not an official local Docker named pipe",
+                    "Docker endpoint is not the canonical Docker Desktop Linux named pipe",
                 )
-            self._validate_windows_pipe_identity(canonical)
-            return canonical
-        allowed = {
-            "unix:///var/run/docker.sock": Path("/var/run/docker.sock"),
-            "unix:///run/docker.sock": Path("/run/docker.sock"),
-        }
-        socket_path = allowed.get(normalized)
-        if socket_path is None:
+            return _TrustedHostEndpoint(
+                host_trust_profile=TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE,
+                docker_endpoint=WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT,
+            )
+        if self._host_os_name != "posix":
+            raise DependencyProxyPolicyError(
+                "dependency.docker.context_untrusted",
+                "docker-context",
+                "Docker host operating system has no reviewed local trust profile",
+            )
+        if endpoint not in UNIX_DOCKER_ENGINE_ENDPOINTS:
             raise DependencyProxyPolicyError(
                 "dependency.docker.context_untrusted",
                 "docker-context",
                 "Docker endpoint is not an approved canonical local socket",
             )
+        socket_path = Path(endpoint.removeprefix("unix://"))
         try:
             resolved = self._endpoint_resolve(socket_path)
             info = self._endpoint_lstat(socket_path)
@@ -851,62 +860,10 @@ class DockerRegistryProxyRunner:
                 "docker-context",
                 "Docker socket ownership or permissions are unsafe",
             )
-        return normalized
-
-    @staticmethod
-    def _fail_closed_windows_pipe_inspection(
-        _endpoint: str,
-    ) -> _WindowsPipeInspection:
-        raise DependencyProxyPolicyError(
-            "dependency.docker.context_untrusted",
-            "docker-context",
-            "Windows named-pipe server identity and ACL cannot be defensibly "
-            "verified with the available standard-library boundary; funded "
-            "dependency provisioning is disabled",
+        return _TrustedHostEndpoint(
+            host_trust_profile=TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
+            docker_endpoint=endpoint,
         )
-
-    def _validate_windows_pipe_identity(self, endpoint: str) -> None:
-        try:
-            inspected = self._windows_pipe_inspector(endpoint)
-        except DependencyProxyError:
-            raise
-        except Exception as exc:
-            raise DependencyProxyPolicyError(
-                "dependency.docker.context_untrusted",
-                "docker-context",
-                "Windows Docker named-pipe inspection failed closed",
-            ) from exc
-        if not isinstance(inspected, _WindowsPipeInspection):
-            raise DependencyProxyPolicyError(
-                "dependency.docker.context_untrusted",
-                "docker-context",
-                "Windows Docker named-pipe inspector returned invalid evidence",
-            )
-        approved_servers = {
-            "com.docker.backend.exe",
-            "com.docker.proxy.exe",
-            "dockerd.exe",
-        }
-        server_name = (
-            str(getattr(inspected, "server_executable", ""))
-            .replace("\\", "/")
-            .rsplit("/", 1)[-1]
-            .lower()
-        )
-        if (
-            inspected.endpoint.lower() != endpoint.lower()
-            or inspected.server_pid <= 0
-            or server_name not in approved_servers
-            or inspected.owner_sid not in {"S-1-5-18", "S-1-5-32-544"}
-            or inspected.dacl_protected is not True
-            or inspected.untrusted_allow_aces is not False
-            or inspected.binary_signature_trusted is not True
-        ):
-            raise DependencyProxyPolicyError(
-                "dependency.docker.context_untrusted",
-                "docker-context",
-                "Windows Docker named-pipe server or ACL identity is untrusted",
-            )
 
     def _create_network(
         self,
