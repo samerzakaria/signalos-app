@@ -25,6 +25,7 @@ import os
 import queue
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import stat as stat_module
@@ -47,6 +48,9 @@ DEFAULT_MODELS_CONFIG = Path(__file__).with_name("models.json")
 DEFAULT_SCENARIO = Path(__file__).with_name("scenarios") / "expense_tracker.json"
 DEFAULT_CI_POLICY = Path(__file__).with_name("ci_policy.json")
 DEFAULT_DEPENDENCY_POLICY = Path(__file__).with_name("dependencies") / "policy.json"
+DEFAULT_ORACLE_DEPENDENCY_POLICY = (
+    Path(__file__).with_name("dependencies") / "oracle-policy.json"
+)
 SCENARIO_ROOT = Path(__file__).with_name("scenarios")
 ORACLE_ROOT = Path(__file__).with_name("oracles")
 SIDECAR = ROOT / "python" / "signalos_ipc_server.py"
@@ -66,6 +70,24 @@ CI_REQUIRED_WORKFLOWS = {
     270226986: ("Smoke", ".github/workflows/smoke.yml"),
 }
 REDACTED = "[REDACTED]"
+ORACLE_RUNTIME_PROFILE = "oracle-playwright"
+ORACLE_CHECK_TIMEOUT_MS = 15_000
+ARTIFACT_MAX_FILES = 100_000
+ARTIFACT_MAX_BYTES = 1024 * 1024 * 1024
+ORACLE_CONTRACTS: dict[str, dict[str, Any]] = {
+    "expense_tracker": {
+        "oracle": "expense-tracker-black-box",
+        "version": "1.1.0",
+        "checks": (
+            "BOOT_FORM",
+            "ADD_FIELDS",
+            "DELETE_DURABLE",
+            "RECONCILE_DURABLE",
+            "FILTER",
+            "PERSIST_ADD",
+        ),
+    }
+}
 
 # Keep this list aligned with python/signalos_lib/harness.py.  A row receives
 # only its selected credential; clean-room product commands receive none.
@@ -422,19 +444,6 @@ def _scrub_provider_keys(env: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
-def _default_playwright_browsers_path() -> str | None:
-    explicit = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
-    if explicit:
-        return explicit
-    if os.name == "nt":
-        local = os.environ.get("LOCALAPPDATA", "").strip()
-        return str(Path(local) / "ms-playwright") if local else None
-    home = os.environ.get("HOME", "").strip()
-    if sys.platform == "darwin":
-        return str(Path(home) / "Library" / "Caches" / "ms-playwright") if home else None
-    return str(Path(home) / ".cache" / "ms-playwright") if home else None
-
-
 def _isolated_subprocess_env(
     runtime_home: Path,
     *,
@@ -471,9 +480,6 @@ def _isolated_subprocess_env(
             "PYTHONUNBUFFERED": "1",
         }
     )
-    browsers = _default_playwright_browsers_path()
-    if browsers:
-        env["PLAYWRIGHT_BROWSERS_PATH"] = browsers
     if extra:
         env.update({str(k): str(v) for k, v in extra.items()})
     return _scrub_provider_keys(env)
@@ -631,7 +637,10 @@ class FundedRunContext:
         bundle_dir = scratch_root / "bundle"
         key = bytearray()
         try:
-            policy = broker.load_dependency_policy(resolved_policy)
+            policy = broker.load_dependency_policy(
+                resolved_policy,
+                profile=expected_profile,
+            )
             if expected_profile is not None and policy.profile != expected_profile:
                 raise InfrastructureError(
                     "scenario profile does not match the reviewed dependency policy"
@@ -934,6 +943,220 @@ class FundedRunContext:
                 + str(redact(f"{type(exc).__name__}: {exc}", self.redaction_secrets()))
             ) from None
         return self._receipt_evidence(receipt)
+
+    def _materialize_for_isolated_execution(
+        self,
+        workspace: Path,
+    ) -> tuple[dict[str, Any], Any]:
+        """Bind one fresh workspace to this context's reviewed dependency bytes."""
+
+        root = Path(workspace).resolve()
+        broker = _dependency_broker_module()
+        try:
+            receipt = broker.materialize_dependency_bundle(
+                root,
+                self.policy_path,
+                self.bundle_dir,
+                attestation_key=self._key_bytes(),
+            )
+            verified = broker.verify_materialized_dependencies(
+                root,
+                self.policy_path,
+                attestation_key=self._key_bytes(),
+            )
+        except Exception as exc:
+            raise InfrastructureError(
+                "isolated dependency materialization failed: "
+                + str(
+                    redact(
+                        f"{type(exc).__name__}: {exc}",
+                        self.redaction_secrets(),
+                    )
+                )
+            ) from None
+        if receipt != verified:
+            raise InfrastructureError(
+                "isolated dependency materialization verification disagreed"
+            )
+        public = self._receipt_evidence(verified)
+        bundle = public.get("bundle")
+        if not isinstance(bundle, dict):
+            raise InfrastructureError("isolated dependency receipt has no bundle")
+        _lazy_signalos_path()
+        from signalos_lib.product.sandbox import DependencyMount
+
+        mount = DependencyMount(
+            archive_path=root
+            / ".signalos"
+            / "dependencies"
+            / "node_modules.tar",
+            archive_sha256=str(bundle.get("archive_sha256") or ""),
+            tree_sha256=str(bundle.get("tree_sha256") or ""),
+            file_count=int(bundle.get("file_count") or 0),
+            total_bytes=int(bundle.get("total_bytes") or 0),
+        )
+        return public, mount
+
+    @contextlib.contextmanager
+    def _bound_docker_runtime(
+        self,
+        timeout: float,
+    ) -> Iterable[tuple[Callable[..., subprocess.CompletedProcess[str]], dict[str, str]]]:
+        """Yield a credential-free Docker CLI pinned to the attested endpoint."""
+
+        binding = self.docker_binding()
+        docker_endpoint = binding["docker_endpoint"]
+        with tempfile.TemporaryDirectory(
+            prefix="signalos-funded-docker-control-"
+        ) as control_home:
+            docker_env = _tool_subprocess_env(Path(control_home))
+            docker_env["DOCKER_HOST"] = docker_endpoint
+
+            def bound_docker_runtime(
+                argv: Sequence[str], **kwargs: Any
+            ) -> subprocess.CompletedProcess[str]:
+                command = list(argv)
+                executable = Path(command[0]).name.lower() if command else ""
+                if executable not in {"docker", "docker.exe"}:
+                    raise InfrastructureError(
+                        "funded runner attempted a non-Docker control-plane command"
+                    )
+                if "--host" in command[1:]:
+                    raise InfrastructureError(
+                        "funded runner attempted to override the attested Docker endpoint"
+                    )
+                command = [command[0], "--host", docker_endpoint, *command[1:]]
+                kwargs["env"] = dict(docker_env)
+                kwargs["shell"] = False
+                return subprocess.run(command, **kwargs)
+
+            try:
+                daemon_probe = bound_docker_runtime(
+                    ["docker", "info", "--format", "{{.OSType}}"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=min(timeout, 30.0),
+                    check=False,
+                )
+                if (
+                    daemon_probe.returncode != 0
+                    or daemon_probe.stdout.strip() != binding["daemon_os_type"]
+                ):
+                    raise InfrastructureError(
+                        "funded Docker endpoint does not expose the attested Linux daemon"
+                    )
+                yield bound_docker_runtime, binding
+            finally:
+                _clear_parent_environment(docker_env)
+
+    def run_offline_command(
+        self,
+        workspace: Path,
+        command: str,
+        *,
+        timeout: float,
+        writable_paths: tuple[str, ...] = (),
+        env: dict[str, str] | None = None,
+        secrets_to_redact: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Run one command in a fresh, offline, dependency-attested container."""
+
+        receipt, mount = self._materialize_for_isolated_execution(workspace)
+        try:
+            _lazy_signalos_path()
+            from signalos_lib.product.sandbox import ContainerRunner
+
+            with self._bound_docker_runtime(timeout) as (runtime, binding):
+                runner = ContainerRunner(
+                    workspace,
+                    engine="docker",
+                    image=str(self.policy.image),
+                    network="none",
+                    read_only=True,
+                    pull="never",
+                    hardened=True,
+                    workspace_read_only=True,
+                    writable_paths=writable_paths,
+                    platform=str(self.policy.platform),
+                    dependency_mount=mount,
+                    require_funded_dependencies=True,
+                    runner=runtime,
+                )
+                exit_code, output = runner.run(
+                    command,
+                    workspace,
+                    timeout,
+                    env or {},
+                )
+        except InfrastructureError:
+            raise
+        except Exception as exc:
+            raise InfrastructureError(
+                "offline funded command infrastructure failed: "
+                + str(
+                    redact(
+                        f"{type(exc).__name__}: {exc}",
+                        (*self.redaction_secrets(), *tuple(secrets_to_redact)),
+                    )
+                )
+            ) from None
+        redaction_values = (*self.redaction_secrets(), *tuple(secrets_to_redact))
+        return {
+            "ok": exit_code == 0 and not output.timed_out,
+            "returncode": exit_code,
+            "timed_out": bool(output.timed_out),
+            "stdout_tail": redact((output.stdout or "")[-8000:], redaction_values),
+            "stderr_tail": redact((output.stderr or "")[-8000:], redaction_values),
+            "dependencies": receipt,
+            "container": {
+                "engine": "docker",
+                "image": str(self.policy.image),
+                "platform": str(self.policy.platform),
+                "network": "none",
+                "pull": "never",
+                "root_read_only": True,
+                "workspace_read_only": True,
+                "dependencies_read_only": True,
+                "writable_paths": list(writable_paths),
+                "capabilities": "none",
+                "no_new_privileges": True,
+                **binding,
+            },
+        }
+
+    def browser_runtime_probe(self, *, timeout: float) -> dict[str, Any]:
+        if self.policy.profile != ORACLE_RUNTIME_PROFILE:
+            raise InfrastructureError("browser probe requires the oracle runtime profile")
+        workspace = self.scratch_root / "browser-runtime-probe"
+        workspace.mkdir(exist_ok=False)
+        shutil.copy2(self.policy.package_json, workspace / "package.json")
+        shutil.copy2(self.policy.package_lock, workspace / "package-lock.json")
+        probe = workspace / "probe.mjs"
+        probe.write_text(
+            "import { chromium } from 'playwright';\n"
+            "const browser = await chromium.launch({ headless: true });\n"
+            "const page = await browser.newPage();\n"
+            "await page.setContent('<title>SignalOS oracle probe</title>');\n"
+            "if (await page.title() !== 'SignalOS oracle probe') throw new Error('title mismatch');\n"
+            "await browser.close();\n"
+            "process.stdout.write('SIGNALOS_ORACLE_RUNTIME_OK');\n",
+            encoding="utf-8",
+        )
+        result = self.run_offline_command(
+            workspace,
+            "node probe.mjs",
+            timeout=timeout,
+            env={"CI": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"},
+        )
+        if not result["ok"] or "SIGNALOS_ORACLE_RUNTIME_OK" not in str(
+            result.get("stdout_tail") or ""
+        ):
+            raise InfrastructureError(
+                "offline Playwright/Chromium runtime probe did not complete"
+            )
+        return result
 
     def offline_probe(self, workspace: Path, *, timeout: float) -> dict[str, Any]:
         receipt = self.verify_materialized_after_init(workspace)
@@ -1669,44 +1892,22 @@ def _remove_windows_sidecar_gate(gate: Path | None) -> None:
 
 
 def _local_preflight() -> dict[str, Any]:
-    node = _command_exists("node")
-    npm = _command_exists("npm")
     if not SIDECAR.is_file():
         raise InfrastructureError(f"source sidecar is missing: {SIDECAR}")
     if not WINDOWS_JOB_BOOTSTRAP.is_file():
         raise InfrastructureError(
             f"Windows Job Object bootstrap is missing: {WINDOWS_JOB_BOOTSTRAP}"
         )
-    node_version = _run_command([node, "--version"], cwd=ROOT, timeout=15)
-    npm_version = _run_command([npm, "--version"], cwd=ROOT, timeout=15)
-    browser_probe = _run_command(
-        [
-            node,
-            "-e",
-            (
-                "const {chromium}=require('playwright');"
-                "(async()=>{const b=await chromium.launch({headless:true});"
-                "const p=await b.newPage();await p.setContent('<title>ok</title>');"
-                "if(await p.title()!=='ok')throw new Error('page probe failed');"
-                "await b.close()})().catch(e=>{console.error(e.message);process.exit(2)})"
-            ),
-        ],
-        cwd=ROOT,
-        timeout=60,
-    )
-    result = {
+    return {
         "python": sys.version.split()[0],
         "sidecar": str(SIDECAR.relative_to(ROOT)).replace("\\", "/"),
         "windows_job_bootstrap": str(WINDOWS_JOB_BOOTSTRAP.relative_to(ROOT)).replace(
             "\\", "/"
         ),
-        "node": node_version,
-        "npm": npm_version,
-        "playwright_chromium": browser_probe,
+        "generated_product_execution": "attested-offline-containers-only",
+        "host_node_required": False,
+        "host_browser_required": False,
     }
-    if not all((node_version["ok"], npm_version["ok"], browser_probe["ok"])):
-        raise InfrastructureError("local Node/npm/Playwright preflight failed")
-    return result
 
 
 def _backend_preflight(
@@ -2766,13 +2967,212 @@ def _copy_clean_room(workspace: Path, destination: Path) -> None:
         )
 
 
+def _strict_artifact_snapshot(
+    root: Path,
+    *,
+    label: str,
+    error_type: type[HarnessError] = InfrastructureError,
+) -> dict[str, Any]:
+    """Hash a bounded regular-file tree without following links or special files."""
+
+    tree_root = Path(root)
+    try:
+        root_info = tree_root.lstat()
+        root_attributes = int(getattr(root_info, "st_file_attributes", 0) or 0)
+        root_resolved = tree_root.resolve(strict=True)
+    except OSError as exc:
+        raise error_type(f"{label} is missing or unreadable") from exc
+    if (
+        not stat_module.S_ISDIR(root_info.st_mode)
+        or stat_module.S_ISLNK(root_info.st_mode)
+        or root_attributes & 0x0400
+    ):
+        raise error_type(f"{label} must be a real directory")
+
+    files: dict[str, str] = {}
+    total_bytes = 0
+    pending: list[Path] = [root_resolved]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as exc:
+            raise error_type(f"{label} contains an unreadable directory") from exc
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                relative = path.relative_to(root_resolved).as_posix()
+                # Use os.stat (NOT DirEntry.stat): on Windows a DirEntry from
+                # os.scandir reports st_ino/st_dev == 0, while the `after`
+                # re-stat below uses os.stat which populates them -- so the
+                # stable-field comparison would falsely flag EVERY file as
+                # "changed while it was being sealed". os.stat on both sides
+                # keeps the seal cross-platform and byte-faithful.
+                before = os.stat(entry.path, follow_symlinks=False)
+                attributes = int(
+                    getattr(before, "st_file_attributes", 0) or 0
+                )
+            except (OSError, ValueError) as exc:
+                raise error_type(f"{label} contains an unreadable path") from exc
+            if entry.is_symlink() or attributes & 0x0400:
+                raise error_type(f"{label} contains a link/reparse point: {relative}")
+            if stat_module.S_ISDIR(before.st_mode):
+                pending.append(path)
+                continue
+            if not stat_module.S_ISREG(before.st_mode):
+                raise error_type(f"{label} contains a special file: {relative}")
+            if relative in files:
+                raise error_type(f"{label} contains a duplicate path: {relative}")
+            try:
+                digest = _sha256_file(path)
+                after = path.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise error_type(f"{label} contains an unreadable file: {relative}") from exc
+            stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+            if any(
+                getattr(before, name, None) != getattr(after, name, None)
+                for name in stable_fields
+            ):
+                raise error_type(f"{label} changed while it was being sealed: {relative}")
+            total_bytes += int(after.st_size)
+            if len(files) + 1 > ARTIFACT_MAX_FILES or total_bytes > ARTIFACT_MAX_BYTES:
+                raise error_type(f"{label} exceeds the reviewed artifact limits")
+            files[relative] = digest
+
+    files = dict(sorted(files.items()))
+    return {
+        "schema": "signalos.artifact-tree.v1",
+        "tree_sha256": _canonical_json_sha256(files),
+        "file_count": len(files),
+        "total_bytes": total_bytes,
+        "files": files,
+    }
+
+
+def _copy_strict_artifact_tree(
+    source: Path,
+    destination: Path,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """Copy a sealed artifact tree and prove the copy is byte-identical."""
+
+    source_path = Path(source)
+    destination_root = Path(destination)
+    if destination_root.exists() or destination_root.is_symlink():
+        raise InfrastructureError(f"{label} destination already exists")
+    before = _strict_artifact_snapshot(
+        source_path,
+        label=label,
+        error_type=ProductFailure,
+    )
+    source_root = source_path.resolve(strict=True)
+    destination_root.mkdir(parents=True, exist_ok=False)
+    pending: list[tuple[Path, Path]] = [(source_root, destination_root)]
+    while pending:
+        source_dir, target_dir = pending.pop()
+        try:
+            entries = sorted(os.scandir(source_dir), key=lambda item: item.name)
+        except OSError as exc:
+            raise ProductFailure(f"{label} changed during the isolated copy") from exc
+        for entry in entries:
+            source_path = Path(entry.path)
+            target_path = target_dir / entry.name
+            if _entry_is_reparse(entry):
+                raise ProductFailure(f"{label} gained a link during the isolated copy")
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    target_path.mkdir()
+                    pending.append((source_path, target_path))
+                elif entry.is_file(follow_symlinks=False):
+                    shutil.copyfile(source_path, target_path, follow_symlinks=False)
+                else:
+                    raise ProductFailure(f"{label} contains a special file")
+            except OSError as exc:
+                raise ProductFailure(f"{label} could not be copied safely") from exc
+    after = _strict_artifact_snapshot(
+        destination_root,
+        label=f"isolated {label}",
+        error_type=InfrastructureError,
+    )
+    current = _strict_artifact_snapshot(
+        source_root,
+        label=label,
+        error_type=ProductFailure,
+    )
+    if before != current or before != after:
+        raise ProductFailure(f"{label} changed or did not copy byte-for-byte")
+    return after
+
+
+def _validate_oracle_evidence(
+    payload: Any,
+    *,
+    scenario_id: str,
+    dist_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the complete trusted-oracle success contract."""
+
+    contract = ORACLE_CONTRACTS.get(str(scenario_id))
+    if contract is None:
+        raise InfrastructureError("no reviewed oracle contract exists for this scenario")
+    if not isinstance(payload, dict):
+        raise InfrastructureError("browser oracle evidence is not a JSON object")
+    expected_isolation = {
+        "sourceInspected": False,
+        "storageInspected": False,
+        "network": "loopback-origin-only",
+        "webSockets": "blocked",
+        "server": "oracle-owned-ephemeral-loopback",
+        "browserContext": "fresh-per-check",
+    }
+    inputs = payload.get("input")
+    runtime = payload.get("runtime")
+    checks = payload.get("checks")
+    index_sha256 = (dist_snapshot.get("files") or {}).get("index.html")
+    if (
+        payload.get("schemaVersion") != 1
+        or payload.get("oracle") != contract["oracle"]
+        or payload.get("oracleVersion") != contract["version"]
+        or payload.get("status") != "pass"
+        or payload.get("exitCode") != 0
+        or payload.get("isolation") != expected_isolation
+        or payload.get("infrastructureErrors") != []
+        or not isinstance(inputs, dict)
+        or inputs.get("dist") != "/workspace/product"
+        or inputs.get("indexSha256") != index_sha256
+        or inputs.get("timeoutMs") != ORACLE_CHECK_TIMEOUT_MS
+        or not isinstance(runtime, dict)
+        or runtime.get("platform") != "linux-x64"
+        or not isinstance(runtime.get("node"), str)
+        or not runtime.get("node")
+        or not isinstance(runtime.get("browser"), str)
+        or not runtime.get("browser")
+        or not isinstance(checks, list)
+    ):
+        raise InfrastructureError("browser oracle evidence failed its sealed contract")
+    expected_checks = list(contract["checks"])
+    actual_checks = [
+        check.get("name") if isinstance(check, dict) else None for check in checks
+    ]
+    if actual_checks != expected_checks or any(
+        not isinstance(check, dict) or check.get("status") != "pass"
+        for check in checks
+    ):
+        raise InfrastructureError("browser oracle evidence has incomplete passing checks")
+    return payload
+
+
 def _clean_room_acceptance(
     workspace: Path,
     clean_room: Path,
     oracle_asset: dict[str, Any],
     *,
+    scenario_id: str,
     timeout: float,
     secrets: Iterable[str],
+    funded_context: FundedRunContext,
+    oracle_context: FundedRunContext,
     evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence = evidence if evidence is not None else {}
@@ -2790,23 +3190,22 @@ def _clean_room_acceptance(
     if not isinstance(scripts, dict) or not scripts.get("build") or not scripts.get("test"):
         raise ProductFailure("generated package.json must define both build and test scripts")
 
-    npm = _command_exists("npm")
-    node = _command_exists("node")
-    clean_env = _isolated_subprocess_env(
-        clean_room.parent / "clean-runtime-home",
-        extra={"CI": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"},
-    )
-    commands["npm_ci"] = _run_command(
-        [npm, "ci", "--no-audit", "--no-fund"],
-        cwd=clean_room,
-        env=clean_env,
+    product_inputs = funded_context.public_evidence().get("inputs")
+    if not isinstance(product_inputs, dict) or (
+        _sha256_file(package_path) != product_inputs.get("package_json_sha256")
+        or _sha256_file(lock_path) != product_inputs.get("package_lock_sha256")
+    ):
+        raise ProductFailure(
+            "generated package/lock bytes drifted from the reviewed dependency profile"
+        )
+    clean_env = {"CI": "1", "FORCE_COLOR": "0", "NO_COLOR": "1"}
+    evidence["dependency_mode"] = "reviewed-attested-bundle; no install during acceptance"
+    commands["npm_test"] = funded_context.run_offline_command(
+        clean_room,
+        "npm test",
         timeout=timeout,
-        secrets=secrets,
-    )
-    if not commands["npm_ci"]["ok"]:
-        raise ProductFailure("clean-room npm ci failed")
-    commands["npm_test"] = _run_command(
-        [npm, "test"], cwd=clean_room, env=clean_env, timeout=timeout, secrets=secrets
+        env=clean_env,
+        secrets_to_redact=secrets,
     )
     if not commands["npm_test"]["ok"]:
         raise ProductFailure("clean-room generated-product tests failed")
@@ -2814,15 +3213,25 @@ def _clean_room_acceptance(
     dist = clean_room / "dist"
     if dist.exists():
         shutil.rmtree(dist)
-    build_started_ns = time.time_ns()
-    commands["npm_build"] = _run_command(
-        [npm, "run", "build"], cwd=clean_room, env=clean_env, timeout=timeout, secrets=secrets
+    commands["npm_build"] = funded_context.run_offline_command(
+        clean_room,
+        "npm run build",
+        timeout=timeout,
+        writable_paths=("dist",),
+        env=clean_env,
+        secrets_to_redact=secrets,
     )
     index = dist / "index.html"
     if not commands["npm_build"]["ok"] or not index.is_file():
         raise ProductFailure("clean-room production build failed or produced no dist/index.html")
-    if index.stat().st_mtime_ns + 2_000_000_000 < build_started_ns:
-        raise ProductFailure("dist/index.html is not fresh evidence from the clean-room build")
+    dist_snapshot = _strict_artifact_snapshot(
+        dist,
+        label="clean-room production artifact",
+        error_type=ProductFailure,
+    )
+    if "index.html" not in dist_snapshot["files"]:
+        raise ProductFailure("clean-room production artifact has no regular dist/index.html")
+    evidence["dist_tree"] = dist_snapshot
 
     oracle_source = oracle_asset.get("source")
     oracle_name = str(oracle_asset.get("name") or "")
@@ -2833,44 +3242,87 @@ def _clean_room_acceptance(
         or hashlib.sha256(oracle_source).hexdigest() != oracle_sha256
     ):
         raise InfrastructureError("trusted browser oracle asset is invalid")
-    oracle_root = clean_room.parent / "trusted-oracle"
+    if oracle_context.policy.profile != ORACLE_RUNTIME_PROFILE:
+        raise InfrastructureError("browser oracle context has the wrong dependency profile")
+    oracle_root = clean_room.parent / "trusted-oracle-runtime"
     oracle_root.mkdir(exist_ok=False)
+    shutil.copy2(oracle_context.policy.package_json, oracle_root / "package.json")
+    shutil.copy2(oracle_context.policy.package_lock, oracle_root / "package-lock.json")
     oracle = oracle_root / oracle_name
     oracle.write_bytes(oracle_source)
     with contextlib.suppress(OSError):
         oracle.chmod(0o400)
-    evidence_path = clean_room.parent / "oracle-evidence.json"
-    artifacts_path = clean_room.parent / "oracle-artifacts"
-    oracle_result = _run_command(
-        [
-            node,
-            str(oracle),
+    oracle_product = oracle_root / "product"
+    oracle_input = _copy_strict_artifact_tree(
+        dist,
+        oracle_product,
+        label="clean-room production artifact",
+    )
+    evidence["oracle_input_tree"] = oracle_input
+    command = " ".join(
+        shlex.quote(value)
+        for value in (
+            "node",
+            oracle_name,
             "--dist",
-            str(dist),
+            "product",
             "--evidence",
-            str(evidence_path),
+            "dist/oracle-evidence.json",
             "--artifacts",
-            str(artifacts_path),
-        ],
-        cwd=ROOT,
-        env=clean_env,
+            "dist/oracle-artifacts",
+            "--timeout-ms",
+            str(ORACLE_CHECK_TIMEOUT_MS),
+        )
+    )
+    oracle_result = oracle_context.run_offline_command(
+        oracle_root,
+        command,
         timeout=timeout,
-        secrets=secrets,
+        writable_paths=("dist",),
+        env=clean_env,
+        secrets_to_redact=secrets,
     )
     commands["browser_oracle"] = oracle_result
+    oracle_output = oracle_root / "dist"
+    output_snapshot = _strict_artifact_snapshot(
+        oracle_output,
+        label="browser oracle output",
+        error_type=InfrastructureError,
+    )
+    evidence["oracle_output_tree"] = output_snapshot
+    evidence_path = oracle_output / "oracle-evidence.json"
     oracle_evidence: dict[str, Any] = {}
-    if evidence_path.is_file():
-        with contextlib.suppress(OSError, json.JSONDecodeError):
-            loaded = json.loads(evidence_path.read_text(encoding="utf-8"))
+    if "oracle-evidence.json" in output_snapshot["files"]:
+        try:
+            evidence_bytes = evidence_path.read_bytes()
+            if len(evidence_bytes) > 4 * 1024 * 1024:
+                raise InfrastructureError("browser oracle evidence is unexpectedly large")
+            if hashlib.sha256(evidence_bytes).hexdigest() != output_snapshot["files"][
+                "oracle-evidence.json"
+            ]:
+                raise InfrastructureError("browser oracle evidence changed after sealing")
+            loaded = _read_json_bytes(evidence_bytes, label="browser oracle evidence")
             if isinstance(loaded, dict):
                 oracle_evidence = loaded
+        except ValueError as exc:
+            raise InfrastructureError(str(exc)) from exc
     evidence["oracle_evidence"] = oracle_evidence
-    if oracle_result.get("returncode") == 2:
+    if oracle_result.get("timed_out") or oracle_result.get("returncode") == 2:
         raise InfrastructureError("browser oracle infrastructure failed")
     if not oracle_result["ok"]:
         raise ProductFailure("browser oracle rejected the generated product")
-    if oracle_evidence.get("status") not in ("pass", "passed"):
-        raise ProductFailure("browser oracle did not write an explicit passing evidence status")
+    _validate_oracle_evidence(
+        oracle_evidence,
+        scenario_id=scenario_id,
+        dist_snapshot=dist_snapshot,
+    )
+    oracle_product_after = _strict_artifact_snapshot(
+        oracle_product,
+        label="source-blind oracle product input",
+        error_type=InfrastructureError,
+    )
+    if oracle_product_after != oracle_input:
+        raise InfrastructureError("browser oracle mutated its sealed production input")
     evidence["clean_tree"] = _snapshot_product_tree(clean_room)
     return evidence
 
@@ -3707,6 +4159,7 @@ def _run_row(
     hashes: dict[str, str],
     provider_model_metadata: dict[str, Any],
     funded_context: FundedRunContext,
+    oracle_context: FundedRunContext,
 ) -> dict[str, Any]:
     orchestrator_profile = _validate_orchestrator_profile(orchestrator_profile)
     workspace = row_dir / "workspace"
@@ -3733,7 +4186,18 @@ def _run_row(
         "gates": [],
     }
     result_path = row_dir / "result.json"
-    row_secrets = funded_context.redaction_secrets(key)
+    row_secrets = tuple(
+        dict.fromkeys(
+            (
+                *funded_context.redaction_secrets(key),
+                *oracle_context.redaction_secrets(),
+            )
+        )
+    )
+    attestation_needles = (
+        *funded_context.attestation_scan_needles(),
+        *oracle_context.attestation_scan_needles(),
+    )
     _safe_json_write(result_path, row, row_secrets)
 
     tool_env: dict[str, str] = {}
@@ -4019,7 +4483,7 @@ def _run_row(
         scan = _secret_scan(
             release_checkout,
             key,
-            exact_values=funded_context.attestation_scan_needles(),
+            exact_values=attestation_needles,
         )
         row["secret_scan"] = scan
         if not scan["ok"]:
@@ -4033,8 +4497,11 @@ def _run_row(
             release_checkout,
             row_dir / "clean-room",
             oracle_asset,
+            scenario_id=str(scenario["id"]),
             timeout=command_timeout,
             secrets=row_secrets,
+            funded_context=funded_context,
+            oracle_context=oracle_context,
             evidence=acceptance,
         )
         final_spent = cost.check(force=True)
@@ -4085,7 +4552,7 @@ def _run_row(
             final_scan = _secret_scan(
                 row_dir,
                 key,
-                exact_values=funded_context.attestation_scan_needles(),
+                exact_values=attestation_needles,
             )
             final_scan["scope"] = "entire-retained-row"
             row["secret_scan"] = final_scan
@@ -4282,6 +4749,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             scenario_source=reviewed_scenario_bytes,
         )
         reviewed_policy_bytes = dependency_policy.read_bytes()
+        oracle_dependency_policy = DEFAULT_ORACLE_DEPENDENCY_POLICY.resolve()
+        reviewed_oracle_policy_bytes = oracle_dependency_policy.read_bytes()
         if args.live:
             committed_policy = _committed_file_bytes(
                 dependency_policy,
@@ -4292,7 +4761,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "dependency policy differs from the CI-attested commit"
                 )
             reviewed_policy_bytes = committed_policy
+            committed_oracle_policy = _committed_file_bytes(
+                oracle_dependency_policy,
+                commit=str(engine.get("commit") or "").lower(),
+            )
+            if reviewed_oracle_policy_bytes != committed_oracle_policy:
+                raise InfrastructureError(
+                    "oracle dependency policy differs from the CI-attested commit"
+                )
+            reviewed_oracle_policy_bytes = committed_oracle_policy
         reviewed_policy_sha256 = hashlib.sha256(reviewed_policy_bytes).hexdigest()
+        reviewed_oracle_policy_sha256 = hashlib.sha256(
+            reviewed_oracle_policy_bytes
+        ).hexdigest()
         output_root = (
             _require_external_output_root(args.output_root)
             if args.live
@@ -4304,12 +4785,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         final_output: dict[str, Any] | None = None
         manifest_path: Path | None = None
         exit_code = 0
-        with FundedRunContext.prepare(
-            dependency_policy,
-            timeout=args.dependency_timeout,
-            expected_profile=str(scenario["profile"]),
-        ) as funded_context:
-            active_secrets = funded_context.redaction_secrets()
+        with (
+            FundedRunContext.prepare(
+                dependency_policy,
+                timeout=args.dependency_timeout,
+                expected_profile=str(scenario["profile"]),
+            ) as funded_context,
+            FundedRunContext.prepare(
+                oracle_dependency_policy,
+                timeout=args.dependency_timeout,
+                expected_profile=ORACLE_RUNTIME_PROFILE,
+            ) as oracle_context,
+        ):
+            active_secrets = tuple(
+                dict.fromkeys(
+                    (
+                        *funded_context.redaction_secrets(),
+                        *oracle_context.redaction_secrets(),
+                    )
+                )
+            )
             if (
                 funded_context.public_evidence().get("policy_sha256")
                 != reviewed_policy_sha256
@@ -4317,6 +4812,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             ):
                 raise InfrastructureError(
                     "prepared dependency receipt is not bound to the reviewed policy bytes"
+                )
+            if (
+                oracle_context.public_evidence().get("policy_sha256")
+                != reviewed_oracle_policy_sha256
+                or _sha256_file(oracle_dependency_policy)
+                != reviewed_oracle_policy_sha256
+            ):
+                raise InfrastructureError(
+                    "prepared oracle receipt is not bound to the reviewed policy bytes"
                 )
             if args.live:
                 _require_engine_unchanged(engine)
@@ -4326,14 +4830,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dependency_timeout=args.dependency_timeout,
                 funded_context=funded_context,
             )
+            oracle_runtime = oracle_context.browser_runtime_probe(
+                timeout=args.command_timeout,
+            )
             # Credential lookup and all provider construction happen only
-            # after the keyless funded backend path proves scaffold,
-            # materialization, verification, and offline execution.
+            # after both keyless funded paths prove scaffold, dependency,
+            # offline execution, and browser/Chromium readiness.
             if args.live:
                 _require_engine_unchanged(engine)
             key, key_source = _resolve_api_key(selected[0], args.env_file)
             funded_context.register_exact_secret("exact-selected-key", key)
-            active_secrets = funded_context.redaction_secrets(key)
+            active_secrets = tuple(
+                dict.fromkeys(
+                    (
+                        *funded_context.redaction_secrets(key),
+                        *oracle_context.redaction_secrets(),
+                    )
+                )
+            )
             router = OpenRouterClient(key)
             provider = _provider_preflight(
                 router,
@@ -4356,6 +4870,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "local": local,
                     "backend": backend,
                     "dependencies": funded_context.public_evidence(),
+                    "oracle_dependencies": oracle_context.public_evidence(),
+                    "oracle_runtime": oracle_runtime,
                     "provider": provider,
                     "provider_stack": provider_stack,
                     "orchestrator_profile": orchestrator_profile,
@@ -4365,6 +4881,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_root = output_root / f"{stamp}-{uuid.uuid4().hex[:8]}"
                 run_root.mkdir(parents=True, exist_ok=False)
                 funded_context.register_scan_root(run_root)
+                oracle_context.register_scan_root(run_root)
+                oracle_hashes = {
+                    f"oracle_{name}": value
+                    for name, value in oracle_context.evidence_hashes().items()
+                }
                 hashes = {
                     "models_config_sha256": hashlib.sha256(
                         reviewed_models_bytes
@@ -4380,6 +4901,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     "ci_policy_sha256": _sha256_file(DEFAULT_CI_POLICY),
                     **funded_context.evidence_hashes(),
+                    **oracle_hashes,
                 }
                 manifest = {
                     "schema": "signalos.backend-matrix.run.v1",
@@ -4397,6 +4919,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "local": local,
                         "backend": backend,
                         "dependencies": funded_context.public_evidence(),
+                        "oracle_dependencies": oracle_context.public_evidence(),
+                        "oracle_runtime": oracle_runtime,
                         "provider": provider,
                         "provider_stack": provider_stack,
                         "key_source": key_source,
@@ -4428,6 +4952,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         hashes=hashes,
                         provider_model_metadata=provider_models[spec.model],
                         funded_context=funded_context,
+                        oracle_context=oracle_context,
                     )
                     _require_engine_unchanged(engine)
                     manifest["results"].append(
@@ -4458,7 +4983,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 retained_scan = _secret_scan(
                     run_root,
                     key,
-                    exact_values=funded_context.attestation_scan_needles(),
+                    exact_values=(
+                        *funded_context.attestation_scan_needles(),
+                        *oracle_context.attestation_scan_needles(),
+                    ),
                 )
                 if not retained_scan["ok"]:
                     _purge_external_owned_root(run_root)
@@ -4470,20 +4998,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # scratch is absent, registered secrets are scanned, and the
                 # mutable key owner is zeroed.  __exit__ calls close again;
                 # close is deliberately idempotent.
-                attestation_hex = active_secrets[-1]
-                cleanup_evidence = funded_context.close()
+                product_attestation_hex = funded_context.redaction_secrets()[-1]
+                oracle_attestation_hex = oracle_context.redaction_secrets()[-1]
+                oracle_cleanup_evidence = oracle_context.close()
+                product_cleanup_evidence = funded_context.close()
                 manifest.pop("provisional_status", None)
                 manifest["status"] = "pass" if exit_code == 0 else "fail"
                 manifest["finished_at"] = _utc_now()
-                cleanup_scan = cleanup_evidence.get("secret_scan") or {}
+                product_cleanup_scan = (
+                    product_cleanup_evidence.get("secret_scan") or {}
+                )
+                oracle_cleanup_scan = (
+                    oracle_cleanup_evidence.get("secret_scan") or {}
+                )
                 manifest["dependency_cleanup"] = {
-                    "secret_scan": {
-                        "ok": cleanup_scan.get("ok") is True,
-                        "files_scanned": int(cleanup_scan.get("files_scanned") or 0),
-                        "error_count": len(cleanup_scan.get("errors") or []),
+                    "product": {
+                        "secret_scan": {
+                            "ok": product_cleanup_scan.get("ok") is True,
+                            "files_scanned": int(
+                                product_cleanup_scan.get("files_scanned") or 0
+                            ),
+                            "error_count": len(
+                                product_cleanup_scan.get("errors") or []
+                            ),
+                        },
+                        "scratch_removed": product_cleanup_evidence.get(
+                            "scratch_removed"
+                        )
+                        is True,
+                        "key_zeroed": product_cleanup_evidence.get("key_zeroed")
+                        is True,
                     },
-                    "scratch_removed": cleanup_evidence.get("scratch_removed") is True,
-                    "key_zeroed": cleanup_evidence.get("key_zeroed") is True,
+                    "oracle": {
+                        "secret_scan": {
+                            "ok": oracle_cleanup_scan.get("ok") is True,
+                            "files_scanned": int(
+                                oracle_cleanup_scan.get("files_scanned") or 0
+                            ),
+                            "error_count": len(
+                                oracle_cleanup_scan.get("errors") or []
+                            ),
+                        },
+                        "scratch_removed": oracle_cleanup_evidence.get(
+                            "scratch_removed"
+                        )
+                        is True,
+                        "key_zeroed": oracle_cleanup_evidence.get("key_zeroed")
+                        is True,
+                    },
                 }
                 _safe_json_write(manifest_path, manifest, active_secrets)
                 final_scan = _secret_scan(
@@ -4491,8 +5053,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     key,
                     exact_values=(
                         (
-                            "exact-dependency-attestation-key-hex",
-                            attestation_hex.encode("ascii"),
+                            "exact-product-dependency-attestation-key-hex",
+                            product_attestation_hex.encode("ascii"),
+                        ),
+                        (
+                            "exact-oracle-dependency-attestation-key-hex",
+                            oracle_attestation_hex.encode("ascii"),
                         ),
                     ),
                 )

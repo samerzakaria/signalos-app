@@ -51,6 +51,7 @@ POLICY_SCHEMA = "signalos.funded-dependency-policy.v2"
 RECEIPT_SCHEMA = "signalos.dependency-receipt.v3"
 RUNNER_EVIDENCE_SCHEMA = "signalos.dependency-runner-evidence.v2"
 SUPPORTED_PROFILE = "react-vite"
+SUPPORTED_PROFILES = frozenset({SUPPORTED_PROFILE, "oracle-playwright"})
 SUPPORTED_PLATFORM = "linux/amd64"
 APPROVED_ORIGIN = "https://registry.npmjs.org"
 APPROVED_CONNECT_AUTHORITY = "registry.npmjs.org:443"
@@ -274,16 +275,22 @@ class _TreeEvidence:
 def load_dependency_policy(
     policy_path: str | os.PathLike[str],
     *,
-    profile: str = SUPPORTED_PROFILE,
+    profile: str | None = None,
 ) -> DependencyPolicy:
     path = Path(policy_path).resolve()
     raw = _read_json(path)
     if raw.get("schema") != POLICY_SCHEMA:
         raise DependencyBrokerError("unsupported funded dependency policy schema")
-    if raw.get("profile") != profile or profile != SUPPORTED_PROFILE:
+    configured_profile = str(raw.get("profile") or "")
+    expected_profile = str(profile or configured_profile)
+    if (
+        configured_profile != expected_profile
+        or expected_profile not in SUPPORTED_PROFILES
+    ):
         raise DependencyBrokerError(
-            f"funded dependency policy supports only {SUPPORTED_PROFILE!r}"
+            "funded dependency policy profile is not in the reviewed allowlist"
         )
+    profile = expected_profile
     if raw.get("platform") != SUPPORTED_PLATFORM:
         raise DependencyBrokerError(
             f"funded dependency platform must be {SUPPORTED_PLATFORM}"

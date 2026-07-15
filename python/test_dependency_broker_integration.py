@@ -1,19 +1,36 @@
-"""Opt-in real-Docker integration for the funded dependency boundary."""
+"""Opt-in real-Docker integration for the funded dependency boundary.
+
+Two contexts are exercised against a real, trusted-local Linux Docker
+daemon (a native unix-socket engine in CI, or Docker Desktop's
+``npipe:////./pipe/dockerDesktopLinuxEngine`` Linux engine on Windows --
+both are approved by the broker's trust model, so this suite runs on
+either):
+
+  1. The funded ``react-vite`` dependency bundle (build -> verify -> clean).
+  2. The source-blind ``oracle-playwright`` bundle, plus a real offline
+     Chromium launch inside the pinned Playwright image (``--network none``).
+
+Both contexts share the same cleanup guarantee: no funded container,
+network, or volume may survive the run.
+"""
 
 from __future__ import annotations
 
 import base64
 import contextlib
+import importlib.util
 import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 
 from signalos_lib.product import dependency_broker as broker
 
@@ -23,11 +40,31 @@ _LABEL_FILTERS = (
     "label=signalos.owner=dependency-broker",
     "label=signalos.scope=funded-dependency",
 )
+# Sandbox dependency volumes carry a distinct scope label (sandbox.py volume
+# create). Both the funded and the source-blind oracle contexts may create
+# them, so a leftover volume is residue too and must fail the run.
+_VOLUME_FILTER = "label=signalos.scope=funded"
 _SENSITIVE_ENV_RE = re.compile(
     r"(?:^|_)(?:API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|SECRET(?:_?KEY)?|TOKEN|"
     r"PASSWORD|PASSWD|CREDENTIALS?|AUTHORIZATION)(?:_|$)",
     re.IGNORECASE,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DRIVER_PATH = _REPO_ROOT / "scripts" / "backend_matrix" / "driver.py"
+
+
+def _load_driver() -> ModuleType:
+    """Import the backend-matrix driver script without a ``scripts`` package."""
+
+    spec = importlib.util.spec_from_file_location(
+        "signalos_backend_matrix_driver", _DRIVER_PATH
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @contextlib.contextmanager
@@ -47,12 +84,19 @@ def _without_provider_credentials() -> Iterator[None]:
     os.environ.get(_GATE) == "1",
     f"set {_GATE}=1 to run the real Docker dependency integration",
 )
-class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
+class _TrustedLocalDockerIntegrationBase(unittest.TestCase):
+    """Shared plumbing: approved endpoint discovery + residue accounting.
+
+    The trust gate is the broker's own model -- a Linux daemon reached over
+    an approved trusted-local endpoint (a unix socket, or Docker Desktop's
+    Windows Linux-engine named pipe) -- not the host OS. That keeps the
+    suite honest on the developer's Windows Docker Desktop as well as the
+    Linux CI runner.
+    """
+
     maxDiff = None
 
     def setUp(self) -> None:
-        if os.name != "posix":
-            self.fail("the mandatory real-Docker integration requires a Linux host")
         self.docker = shutil.which("docker")
         if not self.docker:
             self.fail("Docker CLI is required after the integration gate is enabled")
@@ -80,25 +124,26 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
             endpoint = json.loads(raw_endpoint.strip())
         except json.JSONDecodeError as exc:
             self.fail(f"Docker context returned malformed endpoint JSON: {exc}")
-        if endpoint not in broker.UNIX_DOCKER_ENGINE_ENDPOINTS:
-            self.fail("Docker context is not an approved local Linux engine endpoint")
+        if endpoint in broker.UNIX_DOCKER_ENGINE_ENDPOINTS:
+            self.host_trust_profile = broker.TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE
+        elif endpoint == broker.WINDOWS_DOCKER_DESKTOP_LINUX_ENDPOINT:
+            self.host_trust_profile = broker.TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE
+        else:
+            self.fail(
+                "Docker context is not an approved trusted-local Linux engine endpoint"
+            )
         self.endpoint = endpoint
         daemon_os = json.loads(
             self._docker("info", "--format", "{{json .OSType}}").strip()
         )
         self.assertEqual(daemon_os, "linux")
 
-        self.repo = Path(__file__).resolve().parents[1]
-        self.policy_path = (
-            self.repo / "scripts" / "backend_matrix" / "dependencies" / "policy.json"
-        )
-        self.policy = broker.load_dependency_policy(self.policy_path)
-        self._docker("image", "inspect", self.policy.image)
+        self.repo = _REPO_ROOT
         self.before = self._resource_snapshot()
         self.assertEqual(
             self.before,
-            (frozenset(), frozenset()),
-            "the dedicated integration daemon has stale dependency-broker resources",
+            (frozenset(), frozenset(), frozenset()),
+            "the integration daemon has stale funded-dependency resources",
         )
 
     def tearDown(self) -> None:
@@ -108,7 +153,7 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
         self.assertEqual(
             after,
             self.before,
-            f"dependency-broker Docker residue detected: before={self.before}, after={after}",
+            f"funded Docker residue detected: before={self.before}, after={after}",
         )
 
     def _docker(self, *args: str, bound: bool = True) -> str:
@@ -135,17 +180,29 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
             self.fail(f"Docker control call returned {completed.returncode}: {detail}")
         return completed.stdout or ""
 
-    def _resource_snapshot(self) -> tuple[frozenset[str], frozenset[str]]:
+    def _resource_snapshot(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
         filters = [part for item in _LABEL_FILTERS for part in ("--filter", item)]
         containers = self._ids(self._docker("ps", "-aq", *filters))
         networks = self._ids(self._docker("network", "ls", "-q", *filters))
-        return containers, networks
+        volumes = self._names(
+            self._docker("volume", "ls", "-q", "--filter", _VOLUME_FILTER)
+        )
+        return containers, networks, volumes
 
     def _ids(self, output: str) -> frozenset[str]:
-        values = frozenset(line.strip().lower() for line in output.splitlines() if line.strip())
+        values = frozenset(
+            line.strip().lower() for line in output.splitlines() if line.strip()
+        )
         if any(re.fullmatch(r"[0-9a-f]{12,64}", value) is None for value in values):
             self.fail("Docker returned a malformed resource identifier")
         return values
+
+    def _names(self, output: str) -> frozenset[str]:
+        # Volume names are broker-generated tokens, not hex ids; any surviving
+        # name under the funded scope label is residue.
+        return frozenset(line.strip() for line in output.splitlines() if line.strip())
 
     def _assert_key_absent(self, root: Path, key: bytes) -> None:
         needles = (key, key.hex().encode("ascii"))
@@ -161,6 +218,18 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
                     if any(needle in sample for needle in needles):
                         self.fail(f"attestation key leaked into integration artifact: {path.name}")
                     carry = sample[-63:]
+
+
+class DependencyBrokerDockerIntegrationTests(_TrustedLocalDockerIntegrationBase):
+    """The funded react-vite dependency boundary against a real daemon."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.policy_path = (
+            self.repo / "scripts" / "backend_matrix" / "dependencies" / "policy.json"
+        )
+        self.policy = broker.load_dependency_policy(self.policy_path)
+        self._docker("image", "inspect", self.policy.image)
 
     def test_public_broker_prepares_verifies_and_cleans_real_bundle(self) -> None:
         key_owner = bytearray(secrets.token_bytes(32))
@@ -196,7 +265,7 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
                     self.assertEqual(provisioner["engine"], "docker")
                     self.assertEqual(
                         provisioner["host_trust_profile"],
-                        broker.TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE,
+                        self.host_trust_profile,
                     )
                     self.assertEqual(provisioner["docker_endpoint"], self.endpoint)
                     self.assertEqual(provisioner["daemon_os_type"], "linux")
@@ -296,6 +365,64 @@ class DependencyBrokerDockerIntegrationTests(unittest.TestCase):
             key_bytes = b""
             for index in range(len(key_owner)):
                 key_owner[index] = 0
+
+
+class OracleRuntimeDockerIntegrationTests(_TrustedLocalDockerIntegrationBase):
+    """The source-blind oracle boundary: real Playwright bundle + offline
+    Chromium launch, driven through the production ``FundedRunContext``."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.driver = _load_driver()
+        self.oracle_policy_path = self.driver.DEFAULT_ORACLE_DEPENDENCY_POLICY.resolve()
+        self.oracle_policy = broker.load_dependency_policy(self.oracle_policy_path)
+        self.assertEqual(
+            self.oracle_policy.profile, self.driver.ORACLE_RUNTIME_PROFILE
+        )
+        # Pull policy is 'never'; the pinned Playwright image must be cached.
+        self._docker("image", "inspect", self.oracle_policy.image)
+
+    def test_oracle_bundle_builds_verifies_and_launches_chromium_offline(self) -> None:
+        with _without_provider_credentials():
+            context = self.driver.FundedRunContext.prepare(
+                self.oracle_policy_path,
+                timeout=900,
+                expected_profile=self.driver.ORACLE_RUNTIME_PROFILE,
+            )
+            try:
+                # prepare() already built AND independently re-verified the
+                # bundle (it raises otherwise). Confirm the receipt binds to
+                # the reviewed oracle policy bytes and the trusted local daemon.
+                evidence = context.public_evidence()
+                self.assertEqual(
+                    evidence["policy_sha256"],
+                    self.driver._sha256_file(self.oracle_policy_path),
+                )
+                self.assertEqual(
+                    evidence["profile"], self.driver.ORACLE_RUNTIME_PROFILE
+                )
+                self.assertEqual(evidence["image"], self.oracle_policy.image)
+                provisioner = evidence["provisioner"]
+                self.assertEqual(
+                    provisioner["host_trust_profile"], self.host_trust_profile
+                )
+                self.assertEqual(provisioner["daemon_os_type"], "linux")
+                self.assertEqual(provisioner["pull_policy"], "never")
+                self.assertEqual(provisioner["cleanup_verified"], True)
+
+                # The keyless browser-readiness gate: launch Chromium fully
+                # offline (`--network none`) inside the pinned image and
+                # require the in-container success sentinel.
+                probe = context.browser_runtime_probe(timeout=600)
+                self.assertTrue(probe["ok"])
+                self.assertIn(
+                    "SIGNALOS_ORACLE_RUNTIME_OK",
+                    str(probe.get("stdout_tail") or ""),
+                )
+            finally:
+                cleanup = context.close()
+        self.assertEqual(cleanup.get("scratch_removed"), True)
+        # tearDown asserts no funded container / network / volume residue.
 
 
 if __name__ == "__main__":

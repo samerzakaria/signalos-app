@@ -373,6 +373,38 @@ class TestReadOnlyHardening:
         specs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
         assert specs and all("size=128m" in s for s in specs)
 
+    def test_hardened_container_pins_bounded_shared_memory(self, tmp_path):
+        # Docker's /dev/shm defaults to a tiny 64m (Chromium starves) and it must
+        # never be left unbounded; the hardened runtime pins it to a validated
+        # size so the source-blind Playwright oracle has enough shared memory
+        # without opening a host-shared /dev/shm.
+        image = validate_pinned_image("node:20@sha256:" + "c" * 64)
+        argv = build_container_argv(
+            "npm test", tmp_path, engine="docker", image=image, hardened=True,
+            workspace_read_only=True,
+        )
+        assert "--shm-size" in argv
+        assert argv[argv.index("--shm-size") + 1] == "1g"  # DEFAULT_SHM_SIZE
+
+    def test_hardened_shared_memory_is_configurable_within_bounds(self, tmp_path):
+        image = validate_pinned_image("node:20@sha256:" + "c" * 64)
+        argv = build_container_argv(
+            "npm test", tmp_path, engine="docker", image=image, hardened=True,
+            workspace_read_only=True, shm_size="512m",
+        )
+        assert argv[argv.index("--shm-size") + 1] == "512m"
+
+    def test_hardened_shared_memory_rejects_out_of_range_sizes(self, tmp_path):
+        # < 64m starves the browser; > 4g is an unreasonable host commitment; a
+        # malformed size must fail closed, never silently fall back.
+        image = validate_pinned_image("node:20@sha256:" + "c" * 64)
+        for bad in ("32m", "8g", "0", "not-a-size"):
+            with pytest.raises(ValueError, match="shared-memory"):
+                build_container_argv(
+                    "npm test", tmp_path, engine="docker", image=image,
+                    hardened=True, workspace_read_only=True, shm_size=bad,
+                )
+
     def test_tmpfs_mapping_is_overridable_for_extension(self):
         # The writable surface is easy to extend when a build needs another path.
         argv = build_container_argv(

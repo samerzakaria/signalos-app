@@ -106,6 +106,7 @@ DEFAULT_READ_ONLY = True
 # Size cap for every writable tmpfs. A single knob (SIGNALOS_SANDBOX_TMPFS_SIZE)
 # keeps a runaway write inside the container from exhausting host memory.
 DEFAULT_TMPFS_SIZE = "512m"
+DEFAULT_SHM_SIZE = "1g"
 FUNDED_PROFILE = "funded"
 FUNDED_PLATFORM = "linux/amd64"
 ARCHIVE_BOOTSTRAP_NAME = "node_modules.tar"
@@ -240,6 +241,7 @@ def _validate_hardened_limits(
     memory: str,
     pids: str,
     tmpfs_size: str,
+    shm_size: str,
 ) -> None:
     try:
         cpu_value = float(str(cpus).strip())
@@ -259,6 +261,11 @@ def _validate_hardened_limits(
     tmpfs_bytes = _size_bytes(tmpfs_size, "tmpfs size")
     if not 64 * 1024 ** 2 <= tmpfs_bytes <= 4 * 1024 ** 3:
         raise ValueError("hardened sandbox tmpfs size must be between 64m and 4g")
+    shm_bytes = _size_bytes(shm_size, "shared-memory size")
+    if not 64 * 1024 ** 2 <= shm_bytes <= 4 * 1024 ** 3:
+        raise ValueError(
+            "hardened sandbox shared-memory size must be between 64m and 4g"
+        )
 
 
 def _validated_writable_relpaths(paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -443,6 +450,7 @@ def build_container_argv(
     read_only: bool = DEFAULT_READ_ONLY,
     tmpfs: Mapping[str, str] | None = None,
     tmpfs_size: str = DEFAULT_TMPFS_SIZE,
+    shm_size: str = DEFAULT_SHM_SIZE,
     pull: str | None = DEFAULT_PULL,
     hardened: bool = False,
     workspace_read_only: bool = False,
@@ -505,7 +513,7 @@ def build_container_argv(
         container_user = _validate_non_root_user(
             container_user or _default_container_user()
         )
-        _validate_hardened_limits(cpus, memory, pids, tmpfs_size)
+        _validate_hardened_limits(cpus, memory, pids, tmpfs_size, shm_size)
     mount_src = _mount_source(workspace, engine)
     workdir = CONTAINER_WORKSPACE
     if workdir_rel:
@@ -538,6 +546,7 @@ def build_container_argv(
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges:true",
             "--memory-swap", memory,
+            "--shm-size", shm_size,
             "--user", container_user,
             "--entrypoint", "/bin/sh",
         ]
@@ -720,6 +729,7 @@ class ContainerRunner(SandboxRunner):
         network: str = DEFAULT_NETWORK,
         read_only: bool = DEFAULT_READ_ONLY,
         tmpfs_size: str = DEFAULT_TMPFS_SIZE,
+        shm_size: str = DEFAULT_SHM_SIZE,
         pull: str | None = DEFAULT_PULL,
         hardened: bool = False,
         workspace_read_only: bool = False,
@@ -741,6 +751,7 @@ class ContainerRunner(SandboxRunner):
         self.network = network
         self.read_only = read_only
         self.tmpfs_size = tmpfs_size
+        self.shm_size = shm_size
         self.pull = pull
         self.hardened = bool(hardened)
         self.workspace_read_only = bool(workspace_read_only)
@@ -776,7 +787,11 @@ class ContainerRunner(SandboxRunner):
                 )
             self.container_user = _validate_non_root_user(self.container_user)
             _validate_hardened_limits(
-                self.cpus, self.memory, self.pids, self.tmpfs_size
+                self.cpus,
+                self.memory,
+                self.pids,
+                self.tmpfs_size,
+                self.shm_size,
             )
             for rel in self.writable_paths:
                 candidate = self.workspace / Path(rel)
@@ -816,6 +831,7 @@ class ContainerRunner(SandboxRunner):
             network=self.network,
             read_only=self.read_only,
             tmpfs_size=self.tmpfs_size,
+            shm_size=self.shm_size,
             pull=self.pull,
             workdir_rel=_rel_subdir(self.workspace, cwd),
             hardened=self.hardened,

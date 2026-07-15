@@ -10,6 +10,8 @@ redaction, honest aggregate status, and fail-fast CLI behavior.
 """
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
@@ -1370,8 +1372,11 @@ def test_funded_context_uses_public_broker_api_and_zeroes_its_key(
     )
 
     class FakeBroker:
-        def load_dependency_policy(self, path: Path) -> Any:
+        def load_dependency_policy(
+            self, path: Path, *, profile: str | None = None
+        ) -> Any:
             calls.append(("load", Path(path)))
+            assert profile is None
             return policy
 
         def prepare_dependency_bundle(
@@ -2016,6 +2021,12 @@ def test_live_activation_orders_keyless_gates_before_key_lookup(
     events: list[str] = []
 
     class FakeFundedContext:
+        def __init__(self, policy_sha: str) -> None:
+            # Each prepared context is bound to the sha of the policy it was
+            # prepared with, so the driver's per-context receipt-binding checks
+            # (funded vs source-blind oracle) both hold.
+            self._policy_sha = policy_sha
+
         def __enter__(self) -> "FakeFundedContext":
             events.append("enter")
             return self
@@ -2027,11 +2038,13 @@ def test_live_activation_orders_keyless_gates_before_key_lookup(
             return (provider_key,) if provider_key else ()
 
         def public_evidence(self) -> dict[str, Any]:
-            return {
-                "policy_sha256": driver._sha256_file(
-                    driver.DEFAULT_DEPENDENCY_POLICY
-                )
-            }
+            return {"policy_sha256": self._policy_sha}
+
+        def browser_runtime_probe(self, *, timeout: float) -> dict[str, Any]:
+            # The source-blind oracle's keyless browser/Chromium readiness gate
+            # runs before any credential lookup, like scaffold + dependency.
+            events.append("browser")
+            return {"ok": True, "stdout_tail": "SIGNALOS_ORACLE_RUNTIME_OK"}
 
     def fake_prepare(
         cls: Any,
@@ -2040,11 +2053,19 @@ def test_live_activation_orders_keyless_gates_before_key_lookup(
         timeout: float,
         expected_profile: str | None = None,
     ) -> Any:
-        assert Path(policy_path) == driver.DEFAULT_DEPENDENCY_POLICY.resolve()
+        # prepare() runs twice per live activation: once for the funded
+        # react-vite context and once for the source-blind oracle context.
+        if expected_profile == driver.ORACLE_RUNTIME_PROFILE:
+            assert (
+                Path(policy_path)
+                == driver.DEFAULT_ORACLE_DEPENDENCY_POLICY.resolve()
+            )
+        else:
+            assert Path(policy_path) == driver.DEFAULT_DEPENDENCY_POLICY.resolve()
+            assert expected_profile == "react-vite"
         assert timeout == 900.0
-        assert expected_profile == "react-vite"
         events.append("bundle")
-        return FakeFundedContext()
+        return FakeFundedContext(driver._sha256_file(policy_path))
 
     def fake_backend(*args: Any, **kwargs: Any) -> dict[str, Any]:
         assert isinstance(kwargs["funded_context"], FakeFundedContext)
@@ -2102,10 +2123,17 @@ def test_live_activation_orders_keyless_gates_before_key_lookup(
         "ci",
         "output",
         "local",
+        # funded react-vite context: prepared, then entered ...
+        "bundle",
+        "enter",
+        # ... then the source-blind oracle context, also keyless.
         "bundle",
         "enter",
         "backend",
+        "browser",
+        # Credential lookup happens strictly after every keyless gate.
         "key",
+        "close",
         "close",
     ]
 
@@ -2225,7 +2253,9 @@ def test_failed_prepare_removes_scratch_and_rejects_profile_before_runner(
     policy_path.write_text("{}\n", encoding="utf-8")
 
     class FakeBroker:
-        def load_dependency_policy(self, path: Path) -> Any:
+        def load_dependency_policy(
+            self, path: Path, *, profile: str | None = None
+        ) -> Any:
             return SimpleNamespace(profile="wrong-profile")
 
         def prepare_dependency_bundle(self, *args: Any, **kwargs: Any) -> Any:
@@ -2256,7 +2286,9 @@ def test_failed_broker_prepare_removes_secret_bearing_scratch(
     policy_path.write_text("{}\n", encoding="utf-8")
 
     class FakeBroker:
-        def load_dependency_policy(self, path: Path) -> Any:
+        def load_dependency_policy(
+            self, path: Path, *, profile: str | None = None
+        ) -> Any:
             return SimpleNamespace(profile="react-vite")
 
         def prepare_dependency_bundle(
@@ -2454,9 +2486,13 @@ def test_teardown_failure_can_never_leave_a_pass_manifest(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    policy_sha = driver._sha256_file(driver.DEFAULT_DEPENDENCY_POLICY)
-
     class FakeFundedContext:
+        # Dual-context aware: each prepared context binds to the policy bytes it
+        # was prepared with, so the funded AND the source-blind oracle receipt
+        # each attest to their own reviewed policy (the driver checks both).
+        def __init__(self, bound_policy_sha: str) -> None:
+            self._policy_sha = bound_policy_sha
+
         def __enter__(self) -> "FakeFundedContext":
             return self
 
@@ -2467,7 +2503,7 @@ def test_teardown_failure_can_never_leave_a_pass_manifest(
             return ((provider_key,) if provider_key else ()) + ("ab" * 32,)
 
         def public_evidence(self) -> dict[str, Any]:
-            return {"policy_sha256": policy_sha}
+            return {"policy_sha256": self._policy_sha}
 
         def register_exact_secret(self, *args: Any) -> None:
             return None
@@ -2476,15 +2512,17 @@ def test_teardown_failure_can_never_leave_a_pass_manifest(
             self.run_root = Path(root)
 
         def evidence_hashes(self) -> dict[str, str]:
-            return {"dependency_policy_sha256": policy_sha}
+            return {"dependency_policy_sha256": self._policy_sha}
 
         def attestation_scan_needles(self) -> tuple[tuple[str, bytes], ...]:
             return (("exact-dependency-attestation-key-hex", ("ab" * 32).encode()),)
 
+        def browser_runtime_probe(self, *, timeout: float) -> dict[str, Any]:
+            # Source-blind oracle container reports Chromium ready (offline).
+            return {"ok": True, "stdout_tail": "SIGNALOS_ORACLE_RUNTIME_OK"}
+
         def close(self) -> dict[str, Any]:
             raise driver.InfrastructureError("deterministic teardown failure")
-
-    context = FakeFundedContext()
     monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
     monkeypatch.setattr(driver, "_verify_ci_attestation", lambda engine: {"ok": True})
     monkeypatch.setattr(driver, "_require_engine_unchanged", lambda engine: engine)
@@ -2507,7 +2545,11 @@ def test_teardown_failure_can_never_leave_a_pass_manifest(
     monkeypatch.setattr(
         driver.FundedRunContext,
         "prepare",
-        classmethod(lambda cls, *args, **kwargs: context),
+        classmethod(
+            lambda cls, policy, *args, **kwargs: FakeFundedContext(
+                driver._sha256_file(policy)
+            )
+        ),
     )
     monkeypatch.setattr(driver, "_backend_preflight", lambda *args, **kwargs: {"ready": True})
     monkeypatch.setattr(driver, "_resolve_api_key", lambda *args: ("provider-secret", "test"))
@@ -2572,3 +2614,538 @@ def test_scenario_and_oracle_must_be_repository_owned(
             engine=_green_engine(),
             live=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# Source-blind browser-oracle acceptance: the second (oracle-playwright)
+# dependency context, its policy/lockfile, source isolation, and dual-context
+# teardown.  All offline: docker/subprocess and the sandbox ContainerRunner are
+# mocked exactly like the funded-context tests above.
+# ---------------------------------------------------------------------------
+
+
+def _oracle_isolation() -> dict[str, Any]:
+    return {
+        "sourceInspected": False,
+        "storageInspected": False,
+        "network": "loopback-origin-only",
+        "webSockets": "blocked",
+        "server": "oracle-owned-ephemeral-loopback",
+        "browserContext": "fresh-per-check",
+    }
+
+
+def _well_formed_oracle_evidence(
+    driver: ModuleType, index_sha256: str, *, checks: list[str] | None = None
+) -> dict[str, Any]:
+    names = checks or list(driver.ORACLE_CONTRACTS["expense_tracker"]["checks"])
+    return {
+        "schemaVersion": 1,
+        "oracle": "expense-tracker-black-box",
+        "oracleVersion": "1.1.0",
+        "status": "pass",
+        "exitCode": 0,
+        "isolation": _oracle_isolation(),
+        "infrastructureErrors": [],
+        "input": {
+            "dist": "/workspace/product",
+            "indexSha256": index_sha256,
+            "timeoutMs": driver.ORACLE_CHECK_TIMEOUT_MS,
+        },
+        "runtime": {
+            "platform": "linux-x64",
+            "node": "v20.11.1",
+            "browser": "chromium-131.0.0",
+        },
+        "checks": [{"name": name, "status": "pass"} for name in names],
+    }
+
+
+def test_oracle_dependency_policy_and_lockfile_validate_and_reject_tamper(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    """Area 1: the reviewed oracle policy + lockfile load/validate; a tampered
+    lockfile is rejected.  Would fail if the committed oracle-policy.json /
+    oracle-playwright/package-lock.json were malformed or the profile-allowlist
+    and resolved-URL/lockfile-version validation were removed."""
+    from signalos_lib.product import dependency_broker as broker
+
+    policy = broker.load_dependency_policy(
+        driver.DEFAULT_ORACLE_DEPENDENCY_POLICY,
+        profile=driver.ORACLE_RUNTIME_PROFILE,
+    )
+    assert policy.profile == "oracle-playwright"
+    assert policy.platform == "linux/amd64"
+
+    evidence = broker.validate_package_lock(policy)
+    assert evidence["lockfile_version"] == 3
+    assert evidence["package_count"] >= 1
+    assert (
+        evidence["package_json_sha256"] == driver._sha256_file(policy.package_json)
+    )
+
+    # The oracle policy must not masquerade as the funded react-vite profile.
+    with pytest.raises(broker.DependencyBrokerError):
+        broker.load_dependency_policy(
+            driver.DEFAULT_ORACLE_DEPENDENCY_POLICY, profile="react-vite"
+        )
+
+    # A lockfile whose resolved URL was re-pointed off the approved registry is
+    # rejected before any bundle work.
+    data = json.loads(policy.package_lock.read_text(encoding="utf-8"))
+    dependency_entry = next(
+        key for key in data["packages"] if key.startswith("node_modules/")
+    )
+    data["packages"][dependency_entry]["resolved"] = "https://evil.example.com/x.tgz"
+    tampered_lock = tmp_path / "tampered-lock.json"
+    tampered_lock.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(broker.DependencyBrokerError, match="not approved"):
+        broker.validate_package_lock(
+            dataclasses.replace(policy, package_lock=tampered_lock)
+        )
+
+    # A downgraded lockfileVersion is likewise rejected.
+    downgraded = json.loads(policy.package_lock.read_text(encoding="utf-8"))
+    downgraded["lockfileVersion"] = 2
+    downgraded_lock = tmp_path / "downgraded-lock.json"
+    downgraded_lock.write_text(json.dumps(downgraded), encoding="utf-8")
+    with pytest.raises(broker.DependencyBrokerError, match="lockfileVersion"):
+        broker.validate_package_lock(
+            dataclasses.replace(policy, package_lock=downgraded_lock)
+        )
+
+
+def test_paid_run_rejects_drifted_oracle_dependency_policy_before_prepare(
+    driver: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Area 1: a funded run whose on-disk oracle policy differs from the
+    CI-attested commit is rejected BEFORE any dependency preparation/container.
+    Would fail if the driver stopped attesting the oracle policy bytes."""
+    prepared: list[bool] = []
+
+    def refuse_prepare(cls: Any, *args: Any, **kwargs: Any) -> Any:
+        prepared.append(True)
+        raise AssertionError("dependency preparation must not start on oracle drift")
+
+    real_oracle_policy = driver.DEFAULT_ORACLE_DEPENDENCY_POLICY.resolve()
+
+    def committed(path: Path, **kwargs: Any) -> bytes:
+        if Path(path) == real_oracle_policy:
+            return b'{"schema":"tampered-not-the-committed-oracle-policy"}\n'
+        return Path(path).read_bytes()
+
+    monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
+    monkeypatch.setattr(driver, "_verify_ci_attestation", lambda engine: {"ok": True})
+    monkeypatch.setattr(driver, "_committed_file_bytes", committed)
+    monkeypatch.setattr(
+        driver.FundedRunContext, "prepare", classmethod(refuse_prepare)
+    )
+
+    exit_code = driver.main(
+        [
+            "--live",
+            "--models",
+            "fable5",
+            "--max-cost-per-model",
+            "1",
+            "--acknowledge-key-exposure",
+            "--output-root",
+            str(tmp_path / "outside-engine"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert prepared == []
+
+
+def test_run_offline_command_containers_and_never_shells_host_npm_or_node(
+    driver: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Area 2: run_offline_command executes the scored command through the
+    sandbox ContainerRunner (docker); npm/node/a browser never shell out on the
+    host.  Would fail if the offline path ran the command directly on the host
+    or dropped the funded read-only container binding."""
+    from signalos_lib.product import sandbox
+
+    context = _direct_funded_context(driver, tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    host_calls: list[list[str]] = []
+    constructed: dict[str, Any] = {}
+
+    class FakeBroker:
+        def materialize_dependency_bundle(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return _fake_dependency_receipt()
+
+        def verify_materialized_dependencies(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return _fake_dependency_receipt()
+
+    def fake_run(argv: list[str], **kwargs: Any) -> Any:
+        host_calls.append(list(argv))
+        stdout = "linux\n" if "info" in argv else ""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    class FakeContainerRunner:
+        def __init__(self, ws: Path, **kwargs: Any) -> None:
+            constructed.update(kwargs)
+            constructed["workspace"] = ws
+            self._runner = kwargs["runner"]
+
+        def run(self, command: str, ws: Path, timeout: float, env: dict[str, str]):
+            constructed["command"] = command
+            constructed["run_env"] = dict(env)
+            # A real runner reaches the daemon through the bound docker runtime.
+            self._runner(
+                ["docker", "version"], capture_output=True, text=True, check=False
+            )
+            return 0, sandbox.CommandOutput(stdout="clean-room ok", stderr="")
+
+    monkeypatch.setattr(driver, "_dependency_broker_module", lambda: FakeBroker())
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(sandbox, "ContainerRunner", FakeContainerRunner)
+
+    result = context.run_offline_command(
+        workspace, "npm test", timeout=30, env={"CI": "1"}
+    )
+
+    assert result["ok"] is True
+    assert result["container"]["engine"] == "docker"
+    assert result["container"]["network"] == "none"
+    assert result["container"]["pull"] == "never"
+    # The scored command runs INSIDE the container, not as a host process.
+    assert constructed["command"] == "npm test"
+    assert constructed["engine"] == "docker"
+    assert constructed["require_funded_dependencies"] is True
+    assert isinstance(constructed["dependency_mount"], sandbox.DependencyMount)
+    assert constructed["network"] == "none" and constructed["pull"] == "never"
+    assert constructed["read_only"] is True
+    assert constructed["workspace_read_only"] is True
+    # Every host subprocess is a docker control-plane call.
+    assert host_calls, "the daemon probe must issue at least one docker call"
+    host_execs = {Path(argv[0]).name.lower() for argv in host_calls}
+    assert host_execs <= {"docker", "docker.exe"}
+    assert not (host_execs & {"npm", "node", "npx", "playwright", "chromium", "chrome"})
+    assert all("npm test" not in argv for argv in host_calls)
+    context.close()
+
+
+def test_clean_room_rejects_package_lock_drift_before_container_command(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    """Area 3: if the released package.json/package-lock.json drift from the
+    pinned dependency bundle, acceptance fails before ANY container command is
+    issued.  Would fail if the pre-container drift guard were removed."""
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "p",
+                "private": True,
+                "scripts": {"build": "vite build", "test": "vitest"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3}), encoding="utf-8"
+    )
+    (workspace / "src" / "App.jsx").write_text(
+        "export default () => null;\n", encoding="utf-8"
+    )
+
+    class NoDockerFunded:
+        offline_invoked = False
+
+        def public_evidence(self) -> dict[str, Any]:
+            # Deliberately non-matching input hashes -> the released bytes drift.
+            return {
+                "inputs": {
+                    "package_json_sha256": "0" * 64,
+                    "package_lock_sha256": "1" * 64,
+                }
+            }
+
+        def run_offline_command(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            NoDockerFunded.offline_invoked = True
+            raise AssertionError(
+                "a container command must never be issued once package/lock drift"
+            )
+
+    with pytest.raises(
+        driver.ProductFailure,
+        match="drifted from the reviewed dependency profile",
+    ):
+        driver._clean_room_acceptance(
+            workspace,
+            tmp_path / "row" / "clean-room",
+            {"name": "oracle.mjs", "source": b"export {};", "sha256": "a" * 64},
+            scenario_id="expense_tracker",
+            timeout=30,
+            secrets=(),
+            funded_context=NoDockerFunded(),
+            oracle_context=object(),
+        )
+
+    assert NoDockerFunded.offline_invoked is False
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda p: p.update(schemaVersion=2), "sealed contract"),
+        (lambda p: p.update(oracle="not-the-reviewed-oracle"), "sealed contract"),
+        (lambda p: p.update(oracleVersion="9.9.9"), "sealed contract"),
+        (lambda p: p.update(status="fail"), "sealed contract"),
+        (lambda p: p.update(exitCode=1), "sealed contract"),
+        (lambda p: p["isolation"].update(sourceInspected=True), "sealed contract"),
+        (lambda p: p.update(isolation={}), "sealed contract"),
+        (lambda p: p.update(infrastructureErrors=["boom"]), "sealed contract"),
+        # Evidence not bound to the exact built-product input.
+        (lambda p: p["input"].update(indexSha256="f" * 64), "sealed contract"),
+        (lambda p: p["input"].update(dist="/somewhere/else"), "sealed contract"),
+        (lambda p: p["input"].update(timeoutMs=1), "sealed contract"),
+        (lambda p: p.pop("input"), "sealed contract"),
+        (lambda p: p.update(runtime={"platform": "win32"}), "sealed contract"),
+        (lambda p: p.pop("checks"), "sealed contract"),
+        (lambda p: p.update(checks=p["checks"][:-1]), "incomplete passing checks"),
+        (lambda p: p["checks"][0].update(status="fail"), "incomplete passing checks"),
+        (
+            lambda p: p.update(checks=list(reversed(p["checks"]))),
+            "incomplete passing checks",
+        ),
+    ],
+)
+def test_validate_oracle_evidence_rejects_malformed_and_unbound_evidence(
+    driver: ModuleType, mutate: Any, match: str
+) -> None:
+    """Area 4: _validate_oracle_evidence accepts only a well-formed, product-
+    bound success contract and rejects every tampered/wrong-shape/unbound form."""
+    index_sha = "a" * 64
+    dist_snapshot = {"files": {"index.html": index_sha}}
+
+    accepted = _well_formed_oracle_evidence(driver, index_sha)
+    assert (
+        driver._validate_oracle_evidence(
+            accepted, scenario_id="expense_tracker", dist_snapshot=dist_snapshot
+        )
+        is accepted
+    )
+
+    payload = _well_formed_oracle_evidence(driver, index_sha)
+    mutate(payload)
+    with pytest.raises(driver.InfrastructureError, match=match):
+        driver._validate_oracle_evidence(
+            payload, scenario_id="expense_tracker", dist_snapshot=dist_snapshot
+        )
+
+
+def test_validate_oracle_evidence_rejects_nonjson_and_unknown_scenario(
+    driver: ModuleType,
+) -> None:
+    """Area 4 (edges): non-object evidence and scenarios without a reviewed
+    oracle contract are both rejected."""
+    dist_snapshot = {"files": {"index.html": "a" * 64}}
+    with pytest.raises(driver.InfrastructureError, match="not a JSON object"):
+        driver._validate_oracle_evidence(
+            "not-json", scenario_id="expense_tracker", dist_snapshot=dist_snapshot
+        )
+    with pytest.raises(driver.InfrastructureError, match="no reviewed oracle contract"):
+        driver._validate_oracle_evidence(
+            _well_formed_oracle_evidence(driver, "a" * 64),
+            scenario_id="unregistered_scenario",
+            dist_snapshot=dist_snapshot,
+        )
+
+
+def test_oracle_input_is_built_product_and_excludes_the_source_tree(
+    driver: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Area 5: the source-blind oracle receives only the built product INPUT
+    (dist/), never the product source tree.  Would fail if _clean_room_acceptance
+    handed the workspace source (src/, .signalos, node_modules) to the oracle
+    instead of the sealed dist copy.
+
+    The real ``_strict_artifact_snapshot`` seal is cross-platform (it uses
+    os.stat on both the initial and the re-stat pass), so this drives the actual
+    production seal over the isolated product tree -- no stand-in."""
+
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / ".signalos").mkdir()
+    (workspace / "node_modules" / "left-pad").mkdir(parents=True)
+    package_json = {
+        "name": "expense-tracker",
+        "private": True,
+        "scripts": {"build": "vite build", "test": "vitest run"},
+    }
+    (workspace / "package.json").write_text(
+        json.dumps(package_json), encoding="utf-8"
+    )
+    (workspace / "package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3}), encoding="utf-8"
+    )
+    (workspace / "src" / "App.jsx").write_text(
+        "// SOURCE_ONLY sentinel — must never reach the oracle\n", encoding="utf-8"
+    )
+    (workspace / ".signalos" / "INIT_COMPLETE.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (workspace / "node_modules" / "left-pad" / "index.js").write_text(
+        "module.exports = 0;\n", encoding="utf-8"
+    )
+
+    package_sha = driver._sha256_file(workspace / "package.json")
+    lock_sha = driver._sha256_file(workspace / "package-lock.json")
+
+    oracle_pkg = tmp_path / "oracle-package.json"
+    oracle_pkg.write_text(
+        json.dumps({"name": "signalos-oracle-runtime", "private": True}),
+        encoding="utf-8",
+    )
+    oracle_lock = tmp_path / "oracle-package-lock.json"
+    oracle_lock.write_text(json.dumps({"lockfileVersion": 3}), encoding="utf-8")
+
+    built_index = "<!doctype html><title>built product</title>\n"
+
+    class BuildingFunded:
+        def __init__(self) -> None:
+            self.commands: list[str] = []
+
+        def public_evidence(self) -> dict[str, Any]:
+            return {
+                "inputs": {
+                    "package_json_sha256": package_sha,
+                    "package_lock_sha256": lock_sha,
+                }
+            }
+
+        def run_offline_command(
+            self,
+            ws: Path,
+            command: str,
+            *,
+            timeout: float,
+            writable_paths: tuple[str, ...] = (),
+            env: dict[str, str] | None = None,
+            secrets_to_redact: Any = (),
+        ) -> dict[str, Any]:
+            self.commands.append(command)
+            if command == "npm run build":
+                dist = Path(ws) / "dist"
+                (dist / "assets").mkdir(parents=True, exist_ok=True)
+                (dist / "index.html").write_text(built_index, encoding="utf-8")
+                (dist / "assets" / "app.js").write_text(
+                    "console.log('built');\n", encoding="utf-8"
+                )
+            return {"ok": True, "returncode": 0, "timed_out": False}
+
+    class CapturingOracle:
+        def __init__(self) -> None:
+            self.policy = SimpleNamespace(
+                profile=driver.ORACLE_RUNTIME_PROFILE,
+                package_json=oracle_pkg,
+                package_lock=oracle_lock,
+            )
+            self.workspace: Path | None = None
+
+        def run_offline_command(
+            self,
+            ws: Path,
+            command: str,
+            *,
+            timeout: float,
+            writable_paths: tuple[str, ...] = (),
+            env: dict[str, str] | None = None,
+            secrets_to_redact: Any = (),
+        ) -> dict[str, Any]:
+            self.workspace = Path(ws)
+            product_index_sha = driver._sha256_file(
+                Path(ws) / "product" / "index.html"
+            )
+            dist = Path(ws) / "dist"
+            dist.mkdir(parents=True, exist_ok=True)
+            (dist / "oracle-evidence.json").write_text(
+                json.dumps(_well_formed_oracle_evidence(driver, product_index_sha)),
+                encoding="utf-8",
+            )
+            return {"ok": True, "returncode": 0, "timed_out": False}
+
+    oracle_source = b"export default function oracle() {}\n"
+    oracle_asset = {
+        "name": "oracle.mjs",
+        "source": oracle_source,
+        "sha256": hashlib.sha256(oracle_source).hexdigest(),
+    }
+
+    funded = BuildingFunded()
+    oracle = CapturingOracle()
+    evidence = driver._clean_room_acceptance(
+        workspace,
+        tmp_path / "row" / "clean-room",
+        oracle_asset,
+        scenario_id="expense_tracker",
+        timeout=30,
+        secrets=(),
+        funded_context=funded,
+        oracle_context=oracle,
+    )
+
+    assert funded.commands == ["npm test", "npm run build"]
+    assert oracle.workspace is not None
+    oracle_files = {
+        path.relative_to(oracle.workspace).as_posix()
+        for path in oracle.workspace.rglob("*")
+        if path.is_file()
+    }
+    # The oracle sees only the sealed built product input plus its own runtime.
+    assert "product/index.html" in oracle_files
+    assert "product/assets/app.js" in oracle_files
+    assert "oracle.mjs" in oracle_files
+    assert {"package.json", "package-lock.json"} <= oracle_files
+    # ...and NONE of the product source tree.
+    assert not any(name.startswith("src") for name in oracle_files)
+    assert not any(
+        ".signalos" in name or "node_modules" in name for name in oracle_files
+    )
+    for path in oracle.workspace.rglob("*"):
+        if path.is_file():
+            assert b"SOURCE_ONLY" not in path.read_bytes()
+    # The materialized oracle input is exactly the built dist, not the source.
+    assert set(evidence["oracle_input_tree"]["files"]) == {
+        "index.html",
+        "assets/app.js",
+    }
+
+
+def test_both_dependency_contexts_teardown_on_success_and_failure(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    """Area 6: on both success and a mid-run failure the nested funded + oracle
+    contexts BOTH tear down — scratch removed, keys zeroed, nothing retained.
+    Would fail if either context were not driven as a context manager or a leak
+    were left behind on the exception path."""
+    # Success path: both contexts close cleanly.
+    funded = _direct_funded_context(driver, tmp_path / "ok-funded")
+    oracle = _direct_funded_context(driver, tmp_path / "ok-oracle")
+    assert funded.scratch_root.is_dir() and oracle.scratch_root.is_dir()
+    with funded, oracle:
+        pass
+    assert funded._closed and oracle._closed
+    assert not funded.scratch_root.exists()
+    assert not oracle.scratch_root.exists()
+
+    # Mid-run failure: an exception inside the block still tears both down.
+    funded2 = _direct_funded_context(driver, tmp_path / "fail-funded")
+    oracle2 = _direct_funded_context(driver, tmp_path / "fail-oracle")
+    funded2_key = funded2._attestation_key
+    oracle2_key = oracle2._attestation_key
+    assert funded2.scratch_root.is_dir() and oracle2.scratch_root.is_dir()
+    with pytest.raises(RuntimeError, match="mid-run failure"):
+        with funded2, oracle2:
+            raise RuntimeError("mid-run failure")
+    assert funded2._closed and oracle2._closed
+    assert not funded2.scratch_root.exists()
+    assert not oracle2.scratch_root.exists()
+    assert all(byte == 0 for byte in funded2_key)
+    assert all(byte == 0 for byte in oracle2_key)

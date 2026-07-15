@@ -1,0 +1,32 @@
+{
+  "schema": "signalos.funded-dependency-policy.v2",
+  "profile": "oracle-playwright",
+  "platform": "linux/amd64",
+  "packageManager": "npm",
+  "buildImage": "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48",
+  "allowedRegistryOrigins": [
+    "https://registry.npmjs.org"
+  ],
+  "installCommand": [
+    "npm",
+    "ci",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund"
+  ],
+  "registryProxy": {
+    "egressPolicy": "npm-registry-connect-v2",
+    "image": "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48",
+    "script": "proxy/connect-proxy.cjs",
+    "scriptSha256": "a1492b238bd4d3f329a9e2965802fe981d26432aa060050c62f17c0e93bca622",
+    "listenPort": 3128,
+    "allowedConnectAuthorities": [
+      "registry.npmjs.org:443"
+    ],
+    "tlsMode": "end-to-end-strict",
+    "installerNetwork": "docker-internal",
+    "proxyEgressNetwork": "dedicated-bridge"
+  },
+  "maxFiles": 100000,
+  "maxBytes": 1073741824
+}

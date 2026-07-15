@@ -109,6 +109,27 @@ jobs:
           fi
           docker pull --platform linux/amd64 "$image"
           docker image inspect "$image" >/dev/null
+      - name: Pre-cache pinned oracle (Playwright) dependency image
+        shell: bash
+        run: |
+          image="$(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          policy = json.loads(
+              Path("scripts/backend_matrix/dependencies/oracle-policy.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          print(policy["buildImage"])
+          PY
+          )"
+          if [[ ! "$image" =~ ^mcr\.microsoft\.com/playwright:[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "Oracle dependency image is not digest pinned" >&2
+            exit 1
+          fi
+          docker pull --platform linux/amd64 "$image"
+          docker image inspect "$image" >/dev/null
       - name: Run sandbox integration tests
         working-directory: python
         run: python -m unittest test_sandbox_integration -v
@@ -131,10 +152,16 @@ jobs:
           networks="$(docker --host "$endpoint" network ls -q \
             --filter label=signalos.owner=dependency-broker \
             --filter label=signalos.scope=funded-dependency)"
-          if [[ -n "$containers" || -n "$networks" ]]; then
+          # Volumes are labelled signalos.scope=funded (sandbox.py volume create);
+          # both the funded and the source-blind oracle contexts create them, so a
+          # leftover volume is residue too and must fail the run.
+          volumes="$(docker --host "$endpoint" volume ls -q \
+            --filter label=signalos.scope=funded)"
+          if [[ -n "$containers" || -n "$networks" || -n "$volumes" ]]; then
             echo "Funded dependency Docker residue detected" >&2
             echo "containers=$containers" >&2
             echo "networks=$networks" >&2
+            echo "volumes=$volumes" >&2
             exit 1
           fi
 
