@@ -297,15 +297,14 @@ def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType
     clean = {
         "commit": "a" * 40,
         "tree": "b" * 40,
+        "branch": "main",
         "dirty": False,
         "dirty_paths": [],
         "upstream": "origin/main",
         "upstream_commit": "a" * 40,
         "pushed": True,
     }
-    driver._require_reproducible_engine(
-        clean, live=True, verified_ci_sha=clean["commit"]
-    )
+    driver._require_reproducible_engine(clean, live=True)
     driver._require_reproducible_engine(
         {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]},
         live=False,
@@ -314,30 +313,491 @@ def test_paid_matrix_requires_one_clean_committed_engine_tree(driver: ModuleType
     with pytest.raises(driver.InfrastructureError, match="uncommitted engine"):
         driver._require_reproducible_engine(
             {**clean, "dirty": True, "dirty_paths": ["python/backend.py"]}, live=True,
-            verified_ci_sha=clean["commit"],
         )
     with pytest.raises(driver.InfrastructureError, match="Git commit and tree"):
         driver._require_reproducible_engine(
             {**clean, "commit": "unknown"}, live=True,
-            verified_ci_sha=clean["commit"],
         )
-    with pytest.raises(driver.InfrastructureError, match="pushed"):
+    with pytest.raises(driver.InfrastructureError, match="main upstream"):
         driver._require_reproducible_engine(
             {**clean, "pushed": False}, live=True,
-            verified_ci_sha=clean["commit"],
         )
-    with pytest.raises(driver.InfrastructureError, match="ci-verified-sha"):
-        driver._require_reproducible_engine(clean, live=True)
-    with pytest.raises(driver.InfrastructureError, match="does not match"):
+    with pytest.raises(driver.InfrastructureError, match="main branch"):
         driver._require_reproducible_engine(
-            clean, live=True, verified_ci_sha="c" * 40
+            {**clean, "branch": "feature"}, live=True,
+        )
+    with pytest.raises(driver.InfrastructureError, match="main upstream"):
+        driver._require_reproducible_engine(
+            {**clean, "upstream_commit": "c" * 40}, live=True,
+        )
+    with pytest.raises(driver.InfrastructureError, match="main upstream"):
+        driver._require_reproducible_engine(
+            {**clean, "upstream": "fork/main"}, live=True,
         )
 
-    metadata = driver._engine_metadata()
-    assert metadata["commit"] != "unknown"
-    assert metadata["tree"] != "unknown"
-    assert metadata["upstream"] != "unknown"
+    git_values = {
+        ("status", "--porcelain"): "",
+        ("rev-parse", "HEAD"): clean["commit"],
+        ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): (
+            clean["upstream"]
+        ),
+        ("rev-parse", "@{upstream}"): clean["upstream_commit"],
+        ("rev-parse", "HEAD^{tree}"): clean["tree"],
+        ("branch", "--show-current"): clean["branch"],
+    }
+    metadata = driver._engine_metadata(git_reader=git_values.__getitem__)
+    assert metadata["commit"] == clean["commit"]
+    assert metadata["tree"] == clean["tree"]
+    assert metadata["branch"] == "main"
+    assert metadata["upstream"] == "origin/main"
+    assert metadata["upstream_commit"] == metadata["commit"]
     assert metadata["pushed"] is True
+
+
+def _green_engine() -> dict[str, Any]:
+    return {
+        "commit": "a" * 40,
+        "tree": "b" * 40,
+        "branch": "main",
+        "dirty": False,
+        "dirty_paths": [],
+        "upstream": "origin/main",
+        "upstream_commit": "a" * 40,
+        "pushed": True,
+    }
+
+
+def _green_github_responses(
+    driver: ModuleType, engine: dict[str, Any]
+) -> dict[str, Any]:
+    repository = driver.CI_REPOSITORY_FULL_NAME
+    responses: dict[str, Any] = {
+        f"/repos/{repository}": {
+            "node_id": driver.CI_REPOSITORY_NODE_ID,
+            "full_name": repository,
+            "default_branch": "main",
+        },
+        f"/repos/{repository}/git/ref/heads/main": {
+            "ref": "refs/heads/main",
+            "object": {"type": "commit", "sha": engine["commit"]},
+        },
+    }
+    policy = driver._load_ci_policy()
+    for workflow_index, workflow in enumerate(policy["workflows"], start=1):
+        workflow_id = workflow["id"]
+        workflow_endpoint = f"/repos/{repository}/actions/workflows/{workflow_id}"
+        run_id = 900_000_000 + workflow_index
+        responses[workflow_endpoint] = {
+            "id": workflow_id,
+            "name": workflow["name"],
+            "path": workflow["path"],
+            "state": "active",
+        }
+        responses[workflow_endpoint + "/runs"] = {
+            "total_count": 1,
+            "workflow_runs": [
+                {
+                    "id": run_id,
+                    "run_attempt": 1,
+                    "workflow_id": workflow_id,
+                    "name": workflow["name"],
+                    "event": "push",
+                    "head_branch": "main",
+                    "head_sha": engine["commit"],
+                    "status": "completed",
+                    "conclusion": "success",
+                    "created_at": "2026-07-15T00:00:00Z",
+                    "updated_at": "2026-07-15T00:10:00Z",
+                    "html_url": f"https://github.com/{repository}/actions/runs/{run_id}",
+                }
+            ],
+        }
+        run = responses[workflow_endpoint + "/runs"]["workflow_runs"][0]
+        responses[f"/repos/{repository}/actions/runs/{run_id}"] = json.loads(
+            json.dumps(run)
+        )
+        responses[
+            f"/repos/{repository}/actions/runs/{run_id}/attempts/1/jobs"
+        ] = {
+            "total_count": len(workflow["required_jobs"]),
+            "jobs": [
+                {
+                    "id": run_id * 100 + job_index,
+                    "name": job_name,
+                    "run_id": run_id,
+                    "head_sha": engine["commit"],
+                    "workflow_name": workflow["name"],
+                    "head_branch": "main",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "started_at": "2026-07-15T00:00:00Z",
+                    "completed_at": "2026-07-15T00:09:00Z",
+                    "html_url": (
+                        f"https://github.com/{repository}/actions/runs/{run_id}"
+                        f"/job/{run_id * 100 + job_index}"
+                    ),
+                }
+                for job_index, job_name in enumerate(
+                    workflow["required_jobs"], start=1
+                )
+            ],
+        }
+    return responses
+
+
+def _offline_github_fetch(
+    responses: dict[str, Any], calls: list[tuple[str, dict[str, str] | None]] | None = None
+):
+    def fetch(endpoint: str, query: dict[str, str] | None = None) -> Any:
+        if calls is not None:
+            calls.append((endpoint, query))
+        assert endpoint in responses, f"unexpected GitHub endpoint: {endpoint}"
+        return json.loads(json.dumps(responses[endpoint]))
+
+    return fetch
+
+
+def test_github_collection_accepts_one_fixed_multi_page_snapshot(
+    driver: ModuleType,
+) -> None:
+    pages = {
+        1: {
+            "total_count": 101,
+            "items": [{"id": item_id} for item_id in range(1, 101)],
+        },
+        2: {"total_count": 101, "items": [{"id": 101}]},
+    }
+
+    def fetch(_endpoint: str, query: dict[str, str] | None) -> Any:
+        assert query is not None
+        return pages[int(query["page"])]
+
+    rows = driver._github_collection(fetch, "/fixed", "items")
+    assert [row["id"] for row in rows] == list(range(1, 102))
+
+
+def test_github_collection_rejects_truncated_pages(driver: ModuleType) -> None:
+    def fetch(_endpoint: str, _query: dict[str, str] | None) -> Any:
+        return {"total_count": 2, "items": [{"id": 1}]}
+
+    with pytest.raises(driver.InfrastructureError, match="truncated"):
+        driver._github_collection(fetch, "/truncated", "items")
+
+
+def test_github_collection_rejects_duplicate_ids(driver: ModuleType) -> None:
+    pages = {
+        1: {
+            "total_count": 101,
+            "items": [{"id": item_id} for item_id in range(1, 101)],
+        },
+        2: {"total_count": 101, "items": [{"id": 100}]},
+    }
+
+    def fetch(_endpoint: str, query: dict[str, str] | None) -> Any:
+        assert query is not None
+        return pages[int(query["page"])]
+
+    with pytest.raises(driver.InfrastructureError, match="duplicate/invalid"):
+        driver._github_collection(fetch, "/duplicate", "items")
+
+
+def test_github_collection_rejects_totals_that_change_between_pages(
+    driver: ModuleType,
+) -> None:
+    pages = {
+        1: {
+            "total_count": 101,
+            "items": [{"id": item_id} for item_id in range(1, 101)],
+        },
+        2: {"total_count": 100, "items": [{"id": 101}]},
+    }
+
+    def fetch(_endpoint: str, query: dict[str, str] | None) -> Any:
+        assert query is not None
+        return pages[int(query["page"])]
+
+    with pytest.raises(driver.InfrastructureError, match="total changed"):
+        driver._github_collection(fetch, "/changed-total", "items")
+
+
+@pytest.mark.parametrize("total", [True, -1, "101", 1_001])
+def test_github_collection_rejects_invalid_or_over_cap_totals(
+    driver: ModuleType, total: Any
+) -> None:
+    def fetch(_endpoint: str, _query: dict[str, str] | None) -> Any:
+        return {"total_count": total, "items": []}
+
+    with pytest.raises(driver.InfrastructureError, match="invalid items total"):
+        driver._github_collection(fetch, "/invalid-total", "items")
+
+
+def test_authoritative_ci_attestation_binds_exact_green_main_runs(
+    driver: ModuleType,
+) -> None:
+    engine = _green_engine()
+    responses = _green_github_responses(driver, engine)
+    calls: list[tuple[str, dict[str, str] | None]] = []
+
+    attestation = driver._verify_ci_attestation(
+        engine, fetch_json=_offline_github_fetch(responses, calls)
+    )
+
+    evidence = attestation["evidence"]
+    assert attestation["schema"] == "signalos.backend-matrix.ci-attestation.v1"
+    assert attestation["evidence_sha256"] == driver._canonical_json_sha256(evidence)
+    assert evidence["subject"]["commit"] == engine["commit"]
+    assert evidence["subject"]["tree"] == engine["tree"]
+    assert evidence["repository"] == {
+        "node_id": "R_kgDOSSqeCA",
+        "full_name": "samerzakaria/signalos-app",
+        "default_branch": "main",
+        "remote_ref": "refs/heads/main",
+        "remote_sha": engine["commit"],
+    }
+    assert {item["id"] for item in evidence["workflows"]} == {
+        277295597,
+        270226986,
+    }
+    assert all(
+        job["status"] == "completed" and job["conclusion"] == "success"
+        for workflow in evidence["workflows"]
+        for job in workflow["jobs"]
+    )
+    assert calls[0] == ("/repos/samerzakaria/signalos-app", None)
+    for workflow in evidence["workflows"]:
+        run_id = workflow["run"]["id"]
+        attempt = workflow["run"]["attempt"]
+        jobs_endpoint = (
+            f"/repos/samerzakaria/signalos-app/actions/runs/{run_id}"
+            f"/attempts/{attempt}/jobs"
+        )
+        run_endpoint = (
+            f"/repos/samerzakaria/signalos-app/actions/runs/{run_id}"
+        )
+        assert next(
+            index for index, call in enumerate(calls) if call[0] == jobs_endpoint
+        ) < next(index for index, call in enumerate(calls) if call[0] == run_endpoint)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("repository", "repository identity"),
+        ("remote_ref", "refs/heads/main"),
+        ("workflow", "workflow identity"),
+        ("run_event", "no exact main/push run"),
+        ("run_sha", "no exact main/push run"),
+        ("run_status", "not completed and successful"),
+        ("run_failure", "not completed and successful"),
+        ("job_missing", "job set drifted"),
+        ("job_extra", "job set drifted"),
+        ("job_unbound", "unbound job"),
+        ("job_failed", "job did not pass"),
+        ("run_reread", "changed during attestation"),
+    ],
+)
+def test_ci_attestation_fails_closed_on_github_evidence_drift(
+    driver: ModuleType, mutation: str, match: str
+) -> None:
+    engine = _green_engine()
+    responses = _green_github_responses(driver, engine)
+    repository = driver.CI_REPOSITORY_FULL_NAME
+    policy = driver._load_ci_policy()
+    first = policy["workflows"][0]
+    workflow_endpoint = f"/repos/{repository}/actions/workflows/{first['id']}"
+    runs_endpoint = workflow_endpoint + "/runs"
+    run = responses[runs_endpoint]["workflow_runs"][0]
+    jobs_endpoint = (
+        f"/repos/{repository}/actions/runs/{run['id']}"
+        f"/attempts/{run['run_attempt']}/jobs"
+    )
+
+    if mutation == "repository":
+        responses[f"/repos/{repository}"]["node_id"] = "R_wrong"
+    elif mutation == "remote_ref":
+        responses[f"/repos/{repository}/git/ref/heads/main"]["object"]["sha"] = "c" * 40
+    elif mutation == "workflow":
+        responses[workflow_endpoint]["name"] = "renamed"
+    elif mutation == "run_event":
+        run["event"] = "workflow_dispatch"
+    elif mutation == "run_sha":
+        run["head_sha"] = "c" * 40
+    elif mutation == "run_status":
+        run["status"] = "in_progress"
+        run["conclusion"] = None
+    elif mutation == "run_failure":
+        run["conclusion"] = "failure"
+    elif mutation == "job_missing":
+        responses[jobs_endpoint]["jobs"].pop()
+        responses[jobs_endpoint]["total_count"] -= 1
+    elif mutation == "job_extra":
+        responses[jobs_endpoint]["jobs"].append(
+            {
+                "id": 999999,
+                "name": "unexpected job",
+                "run_id": run["id"],
+                "head_sha": engine["commit"],
+                "workflow_name": first["name"],
+                "head_branch": "main",
+                "status": "completed",
+                "conclusion": "success",
+            }
+        )
+        responses[jobs_endpoint]["total_count"] += 1
+    elif mutation == "job_unbound":
+        responses[jobs_endpoint]["jobs"][0]["run_id"] = run["id"] + 1
+    elif mutation == "job_failed":
+        responses[jobs_endpoint]["jobs"][0]["conclusion"] = "failure"
+    elif mutation == "run_reread":
+        responses[f"/repos/{repository}/actions/runs/{run['id']}"][
+            "run_attempt"
+        ] = run["run_attempt"] + 1
+
+    with pytest.raises(driver.InfrastructureError, match=match):
+        driver._verify_ci_attestation(
+            engine, fetch_json=_offline_github_fetch(responses)
+        )
+
+
+def test_ci_attestation_never_accepts_an_older_success_over_a_newer_attempt(
+    driver: ModuleType,
+) -> None:
+    engine = _green_engine()
+    responses = _green_github_responses(driver, engine)
+    repository = driver.CI_REPOSITORY_FULL_NAME
+    first = driver._load_ci_policy()["workflows"][0]
+    endpoint = (
+        f"/repos/{repository}/actions/workflows/{first['id']}/runs"
+    )
+    old_success = responses[endpoint]["workflow_runs"][0]
+    newer_failure = json.loads(json.dumps(old_success))
+    newer_failure.update(
+        {
+            "id": old_success["id"] + 100,
+            "run_attempt": 2,
+            "created_at": "2026-07-15T01:00:00Z",
+            "updated_at": "2026-07-15T01:10:00Z",
+            "conclusion": "failure",
+        }
+    )
+    responses[endpoint] = {
+        "total_count": 2,
+        "workflow_runs": [old_success, newer_failure],
+    }
+
+    with pytest.raises(driver.InfrastructureError, match="not completed and successful"):
+        driver._verify_ci_attestation(
+            engine, fetch_json=_offline_github_fetch(responses)
+        )
+
+
+def test_live_main_verifies_ci_before_provider_key_lookup(
+    driver: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    key_lookup_called = False
+
+    def refuse_ci(_engine: dict[str, Any]) -> dict[str, Any]:
+        raise driver.InfrastructureError("authoritative CI is not green")
+
+    def forbidden_key_lookup(*_args: Any, **_kwargs: Any) -> tuple[str, str]:
+        nonlocal key_lookup_called
+        key_lookup_called = True
+        raise AssertionError("provider key lookup happened before CI verification")
+
+    monkeypatch.setattr(driver, "_engine_metadata", _green_engine)
+    monkeypatch.setattr(driver, "_verify_ci_attestation", refuse_ci)
+    monkeypatch.setattr(driver, "_resolve_api_key", forbidden_key_lookup)
+
+    exit_code = driver.main(
+        [
+            "--live",
+            "--models",
+            "fable5",
+            "--max-cost-per-model",
+            "1",
+            "--acknowledge-key-exposure",
+            "--output-root",
+            str(tmp_path / "outside-engine"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert key_lookup_called is False
+
+
+def test_github_transport_errors_never_echo_authorization_secret(
+    driver: ModuleType,
+) -> None:
+    secret = "github-token-must-never-leak"
+
+    def fail_transport(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(f"arbitrary protocol failure: Bearer {secret}")
+
+    with pytest.raises(driver.InfrastructureError) as captured:
+        driver._github_rest_json(
+            "/repos/samerzakaria/signalos-app",
+            token=secret,
+            urlopen=fail_transport,
+        )
+    assert secret not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "final_url",
+    [
+        "https://api.github.com/redirected",
+        "https://attacker.invalid/repos/samerzakaria/signalos-app",
+    ],
+)
+def test_github_transport_rejects_redirected_or_noncanonical_responses(
+    driver: ModuleType, final_url: str
+) -> None:
+    class RedirectedResponse:
+        def __enter__(self) -> "RedirectedResponse":
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def geturl(self) -> str:
+            return final_url
+
+        def read(self, _size: int) -> bytes:
+            raise AssertionError("a redirected response body must not be read")
+
+    def redirected(*_args: Any, **_kwargs: Any) -> RedirectedResponse:
+        return RedirectedResponse()
+
+    with pytest.raises(driver.InfrastructureError, match="redirect.*origin") as captured:
+        driver._github_rest_json(
+            "/repos/samerzakaria/signalos-app",
+            token="github-token-must-never-leak",
+            urlopen=redirected,
+        )
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+
+
+@pytest.mark.parametrize("token", ["token\nsmuggled", "token\x7fsmuggled"])
+def test_github_transport_rejects_control_characters_before_open(
+    driver: ModuleType, token: str
+) -> None:
+    opened = False
+
+    def forbidden_open(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal opened
+        opened = True
+        raise AssertionError("invalid token reached the transport")
+
+    with pytest.raises(driver.InfrastructureError, match="invalid bearer token"):
+        driver._github_rest_json(
+            "/repos/samerzakaria/signalos-app",
+            token=token,
+            urlopen=forbidden_open,
+        )
+    assert opened is False
 
 
 def test_live_matrix_output_must_be_outside_engine_tree(

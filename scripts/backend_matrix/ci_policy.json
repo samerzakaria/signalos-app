@@ -1,0 +1,38 @@
+{
+  "schema": "signalos.backend-matrix.ci-policy.v1",
+  "repository": {
+    "node_id": "R_kgDOSSqeCA",
+    "full_name": "samerzakaria/signalos-app",
+    "branch": "main"
+  },
+  "workflows": [
+    {
+      "id": 277295597,
+      "name": "test-automation",
+      "path": ".github/workflows/test-automation.yml",
+      "required_jobs": [
+        "L0 pre-commit gates",
+        "L1 sandbox integration Docker",
+        "L1 user-journey E2E (cockpit gate)",
+        "L1 build and verify (windows-2025)",
+        "L1 build and verify (macos-latest)",
+        "L1 build and verify (ubuntu-latest)",
+        "L2 installer smoke (windows-2025)",
+        "L2 installer smoke (macos-latest)",
+        "L2 installer smoke (ubuntu-latest)",
+        "L3 pre-prod gates"
+      ]
+    },
+    {
+      "id": 270226986,
+      "name": "Smoke",
+      "path": ".github/workflows/smoke.yml",
+      "required_jobs": [
+        "Rust unit tests",
+        "Smoke build (windows)",
+        "Smoke build (linux)",
+        "Smoke build (macos-arm)"
+      ]
+    }
+  ]
+}

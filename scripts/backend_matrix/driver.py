@@ -33,6 +33,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter, deque
@@ -43,11 +44,22 @@ from typing import Any, Callable, Iterable, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODELS_CONFIG = Path(__file__).with_name("models.json")
 DEFAULT_SCENARIO = Path(__file__).with_name("scenarios") / "expense_tracker.json"
+DEFAULT_CI_POLICY = Path(__file__).with_name("ci_policy.json")
 SIDECAR = ROOT / "python" / "signalos_ipc_server.py"
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
 ORCHESTRATOR_PROFILES = ("benchmark", "production")
 DEFAULT_ORCHESTRATOR_PROFILE = "benchmark"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
+GITHUB_COLLECTION_MAX_TOTAL = 1_000
+CI_REPOSITORY_NODE_ID = "R_kgDOSSqeCA"
+CI_REPOSITORY_FULL_NAME = "samerzakaria/signalos-app"
+CI_REQUIRED_BRANCH = "main"
+CI_REQUIRED_WORKFLOWS = {
+    277295597: ("test-automation", ".github/workflows/test-automation.yml"),
+    270226986: ("Smoke", ".github/workflows/smoke.yml"),
+}
 REDACTED = "[REDACTED]"
 
 # Keep this list aligned with python/signalos_lib/harness.py.  A row receives
@@ -315,6 +327,19 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical_json_bytes(value)).hexdigest()
 
 
 def _utc_now() -> str:
@@ -1615,8 +1640,542 @@ def _clean_room_acceptance(
     return evidence
 
 
-def _engine_metadata() -> dict[str, Any]:
+def _load_ci_policy(path: Path = DEFAULT_CI_POLICY) -> dict[str, Any]:
+    raw = _read_json(path)
+    if not isinstance(raw, dict) or raw.get("schema") != "signalos.backend-matrix.ci-policy.v1":
+        raise InfrastructureError("backend-matrix CI policy has an invalid schema")
+    repository = raw.get("repository")
+    if not isinstance(repository, dict) or repository != {
+        "node_id": CI_REPOSITORY_NODE_ID,
+        "full_name": CI_REPOSITORY_FULL_NAME,
+        "branch": CI_REQUIRED_BRANCH,
+    }:
+        raise InfrastructureError("backend-matrix CI policy names the wrong repository or branch")
+    configured = raw.get("workflows")
+    if not isinstance(configured, list) or not configured:
+        raise InfrastructureError("backend-matrix CI policy has no required workflows")
+
+    workflows: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for index, item in enumerate(configured):
+        if not isinstance(item, dict):
+            raise InfrastructureError(f"backend-matrix CI policy workflow {index} is invalid")
+        workflow_id = item.get("id")
+        if isinstance(workflow_id, bool) or not isinstance(workflow_id, int):
+            raise InfrastructureError(f"backend-matrix CI policy workflow {index} has no numeric id")
+        expected = CI_REQUIRED_WORKFLOWS.get(workflow_id)
+        if expected is None or workflow_id in seen_ids:
+            raise InfrastructureError("backend-matrix CI policy has an unknown or duplicate workflow")
+        name = str(item.get("name") or "")
+        workflow_path = str(item.get("path") or "")
+        if (name, workflow_path) != expected:
+            raise InfrastructureError(
+                f"backend-matrix CI policy metadata drifted for workflow {workflow_id}"
+            )
+        jobs = item.get("required_jobs")
+        if (
+            not isinstance(jobs, list)
+            or not jobs
+            or any(not isinstance(job, str) or not job.strip() for job in jobs)
+            or len(set(jobs)) != len(jobs)
+        ):
+            raise InfrastructureError(
+                f"backend-matrix CI policy jobs are invalid for workflow {workflow_id}"
+            )
+        seen_ids.add(workflow_id)
+        workflows.append(
+            {
+                "id": workflow_id,
+                "name": name,
+                "path": workflow_path,
+                "required_jobs": list(jobs),
+            }
+        )
+    if seen_ids != set(CI_REQUIRED_WORKFLOWS):
+        raise InfrastructureError("backend-matrix CI policy omits a required workflow")
+    return {
+        "schema": raw["schema"],
+        "repository": dict(repository),
+        "workflows": workflows,
+    }
+
+
+class _RejectGitHubRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _github_rest_json(
+    endpoint: str,
+    query: dict[str, str] | None = None,
+    *,
+    token: str | None = None,
+    timeout: float = 30.0,
+    urlopen: Callable[..., Any] | None = None,
+) -> Any:
+    """Read one GitHub REST document without ever surfacing response bodies.
+
+    GitHub error bodies can contain organization/account context, and the
+    authorization value must never enter an exception, result bundle, or child
+    process.  Only fixed, repository-scoped endpoints are accepted here.
+    """
+
+    if (
+        not isinstance(endpoint, str)
+        or not endpoint.startswith("/")
+        or "://" in endpoint
+        or "\\" in endpoint
+    ):
+        token = None
+        raise InfrastructureError(
+            "refusing an invalid GitHub REST endpoint"
+        ) from None
+    request_token = token
+    if request_token is None:
+        request_token = (
+            os.environ.get("SIGNALOS_GITHUB_TOKEN", "")
+            or os.environ.get("GH_TOKEN", "")
+            or os.environ.get("GITHUB_TOKEN", "")
+        )
+    if not isinstance(request_token, str) or any(
+        character.isspace()
+        or ord(character) < 32
+        or 127 <= ord(character) <= 159
+        for character in request_token
+    ):
+        request_token = None
+        token = None
+        raise InfrastructureError(
+            "GitHub CI verification rejected an invalid bearer token"
+        ) from None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        "User-Agent": "SignalOS-backend-matrix-ci-verifier/1",
+    }
+    request: urllib.request.Request | None = None
+    request_url = ""
+    request_error = False
+    try:
+        suffix = ""
+        if query:
+            suffix = "?" + urllib.parse.urlencode(query)
+        request_url = f"{GITHUB_API_BASE}{endpoint}{suffix}"
+        request = urllib.request.Request(request_url, headers=headers, method="GET")
+        if request_token:
+            # urllib copies ordinary headers to redirected requests.  Keeping
+            # credentials unredirected is a second barrier behind the handler
+            # that rejects every redirect.
+            request.add_unredirected_header(
+                "Authorization", f"Bearer {request_token}"
+            )
+    except Exception:
+        request_error = True
+    if request_error or request is None:
+        if request is not None:
+            request.remove_header("Authorization")
+        request = None
+        request_token = None
+        token = None
+        urlopen = None
+        raise InfrastructureError(
+            "GitHub CI verification could not construct its fixed request"
+        ) from None
+
+    failure: str | None = None
+    body: bytes | bytearray | None = None
+    opener: Callable[..., Any] | None = urlopen
+    response: Any = None
+    try:
+        if opener is None:
+            opener = urllib.request.build_opener(_RejectGitHubRedirects()).open
+        with opener(request, timeout=timeout) as response:
+            final_url = response.geturl()
+            final_origin = urllib.parse.urlsplit(final_url)
+            if (
+                final_url != request_url
+                or final_origin.scheme != "https"
+                or final_origin.netloc != "api.github.com"
+            ):
+                failure = (
+                    "GitHub CI verification rejected a redirect or non-canonical origin"
+                )
+            else:
+                candidate_body = response.read(16 * 1024 * 1024 + 1)
+                if not isinstance(candidate_body, (bytes, bytearray)):
+                    failure = "GitHub CI verification transport or protocol failure"
+                else:
+                    body = candidate_body
+    except Exception:
+        failure = "GitHub CI verification transport or protocol failure"
+
+    # Do not retain a bearer-bearing request or token in the exception frame.
+    request.remove_header("Authorization")
+    request_token = None
+    token = None
+    urlopen = None
+    request = None
+    response = None
+    opener = None
+    if failure is not None or body is None:
+        raise InfrastructureError(
+            failure or "GitHub CI verification transport or protocol failure"
+        ) from None
+    if len(body) > 16 * 1024 * 1024:
+        body = None
+        raise InfrastructureError(
+            "GitHub CI verification response exceeded its size limit"
+        ) from None
+    invalid_json = False
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+        invalid_json = True
+        parsed = None
+    body = None
+    if invalid_json:
+        raise InfrastructureError(
+            "GitHub CI verification returned invalid JSON"
+        ) from None
+    return parsed
+
+
+def _github_collection(
+    fetch_json: Callable[[str, dict[str, str] | None], Any],
+    endpoint: str,
+    key: str,
+    query: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    expected_total: int | None = None
+    base_query = dict(query or {})
+    max_pages = (GITHUB_COLLECTION_MAX_TOTAL + 99) // 100
+    for page in range(1, max_pages + 1):
+        page_query = {**base_query, "per_page": "100", "page": str(page)}
+        payload = fetch_json(endpoint, page_query)
+        if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+            raise InfrastructureError(f"GitHub CI verification returned no {key} collection")
+        page_rows = payload[key]
+        total = payload.get("total_count")
+        if (
+            isinstance(total, bool)
+            or not isinstance(total, int)
+            or total < 0
+            or total > GITHUB_COLLECTION_MAX_TOTAL
+        ):
+            raise InfrastructureError(
+                f"GitHub CI verification returned an invalid {key} total"
+            )
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            raise InfrastructureError(
+                f"GitHub CI verification {key} total changed during pagination"
+            )
+        if len(page_rows) > 100 or any(not isinstance(item, dict) for item in page_rows):
+            raise InfrastructureError(f"GitHub CI verification returned invalid {key} rows")
+        for item in page_rows:
+            item_id = item.get("id")
+            if (
+                isinstance(item_id, bool)
+                or not isinstance(item_id, int)
+                or item_id <= 0
+                or item_id in seen_ids
+            ):
+                raise InfrastructureError(
+                    f"GitHub CI verification returned duplicate/invalid {key} ids"
+                )
+            seen_ids.add(item_id)
+            rows.append(item)
+        if len(rows) > expected_total:
+            raise InfrastructureError(
+                f"GitHub CI verification returned more {key} rows than declared"
+            )
+        if len(rows) == expected_total:
+            return rows
+        if len(page_rows) < 100:
+            raise InfrastructureError(
+                f"GitHub CI verification returned a truncated {key} collection"
+            )
+    raise InfrastructureError(
+        f"GitHub CI verification {key} collection did not reach its declared total"
+    )
+
+
+def _verify_ci_attestation(
+    engine: dict[str, Any],
+    *,
+    policy_path: Path = DEFAULT_CI_POLICY,
+    fetch_json: Callable[[str, dict[str, str] | None], Any] | None = None,
+) -> dict[str, Any]:
+    """Verify authoritative GitHub evidence for the exact local main HEAD."""
+
+    policy_path = Path(policy_path).resolve()
+    policy = _load_ci_policy(policy_path)
+    commit = str(engine.get("commit") or "").strip().lower()
+    tree = str(engine.get("tree") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(
+        r"[0-9a-f]{40}", tree
+    ):
+        raise InfrastructureError("CI verification requires exact Git commit and tree identities")
+    if engine.get("branch") != CI_REQUIRED_BRANCH:
+        raise InfrastructureError("CI verification is restricted to the local main branch")
+
+    if fetch_json is None:
+        fetch_json = lambda endpoint, query=None: _github_rest_json(endpoint, query)
+    repository_endpoint = f"/repos/{CI_REPOSITORY_FULL_NAME}"
+    repository = fetch_json(repository_endpoint, None)
+    if (
+        not isinstance(repository, dict)
+        or repository.get("node_id") != CI_REPOSITORY_NODE_ID
+        or repository.get("full_name") != CI_REPOSITORY_FULL_NAME
+        or repository.get("default_branch") != CI_REQUIRED_BRANCH
+    ):
+        raise InfrastructureError("GitHub repository identity does not match the funded CI policy")
+
+    ref_endpoint = (
+        f"/repos/{CI_REPOSITORY_FULL_NAME}/git/ref/heads/{CI_REQUIRED_BRANCH}"
+    )
+    remote_ref = fetch_json(ref_endpoint, None)
+    ref_object = remote_ref.get("object") if isinstance(remote_ref, dict) else None
+    if (
+        not isinstance(remote_ref, dict)
+        or remote_ref.get("ref") != f"refs/heads/{CI_REQUIRED_BRANCH}"
+        or not isinstance(ref_object, dict)
+        or ref_object.get("type") != "commit"
+        or str(ref_object.get("sha") or "").lower() != commit
+    ):
+        raise InfrastructureError("GitHub refs/heads/main does not equal the local engine HEAD")
+
+    workflow_evidence: list[dict[str, Any]] = []
+    for required in policy["workflows"]:
+        workflow_id = int(required["id"])
+        workflow_endpoint = (
+            f"/repos/{CI_REPOSITORY_FULL_NAME}/actions/workflows/{workflow_id}"
+        )
+        workflow = fetch_json(workflow_endpoint, None)
+        if (
+            not isinstance(workflow, dict)
+            or workflow.get("id") != workflow_id
+            or workflow.get("name") != required["name"]
+            or workflow.get("path") != required["path"]
+            or workflow.get("state") != "active"
+        ):
+            raise InfrastructureError(
+                f"GitHub workflow identity drifted for {required['name']}"
+            )
+
+        runs_endpoint = workflow_endpoint + "/runs"
+        runs = _github_collection(
+            fetch_json,
+            runs_endpoint,
+            "workflow_runs",
+            {
+                "branch": CI_REQUIRED_BRANCH,
+                "event": "push",
+                "head_sha": commit,
+                "exclude_pull_requests": "true",
+            },
+        )
+        candidates = [
+            run
+            for run in runs
+            if run.get("workflow_id") == workflow_id
+            and run.get("event") == "push"
+            and run.get("head_branch") == CI_REQUIRED_BRANCH
+            and str(run.get("head_sha") or "").lower() == commit
+        ]
+        if not candidates:
+            raise InfrastructureError(
+                f"GitHub has no exact main/push run for required workflow {required['name']}"
+            )
+
+        def run_order(run: dict[str, Any]) -> tuple[str, int, int]:
+            run_id = run.get("id")
+            attempt = run.get("run_attempt")
+            return (
+                str(run.get("created_at") or ""),
+                run_id if isinstance(run_id, int) and not isinstance(run_id, bool) else -1,
+                attempt if isinstance(attempt, int) and not isinstance(attempt, bool) else -1,
+            )
+
+        run = max(candidates, key=run_order)
+        run_id = run.get("id")
+        run_attempt = run.get("run_attempt")
+        if (
+            isinstance(run_id, bool)
+            or not isinstance(run_id, int)
+            or run_id <= 0
+            or isinstance(run_attempt, bool)
+            or not isinstance(run_attempt, int)
+            or run_attempt <= 0
+            or run.get("name") != required["name"]
+            or run.get("status") != "completed"
+            or run.get("conclusion") != "success"
+        ):
+            raise InfrastructureError(
+                f"required GitHub workflow {required['name']} is not completed and successful"
+            )
+
+        jobs = _github_collection(
+            fetch_json,
+            (
+                f"/repos/{CI_REPOSITORY_FULL_NAME}/actions/runs/{run_id}"
+                f"/attempts/{run_attempt}/jobs"
+            ),
+            "jobs",
+        )
+        jobs_by_name: dict[str, dict[str, Any]] = {}
+        for job in jobs:
+            name = job.get("name")
+            if (
+                job.get("run_id") != run_id
+                or str(job.get("head_sha") or "").lower() != commit
+                or job.get("workflow_name") != required["name"]
+                or job.get("head_branch") != CI_REQUIRED_BRANCH
+            ):
+                raise InfrastructureError(
+                    f"required GitHub workflow {required['name']} returned an unbound job"
+                )
+            if not isinstance(name, str) or not name or name in jobs_by_name:
+                raise InfrastructureError(
+                    f"required GitHub workflow {required['name']} returned duplicate/invalid jobs"
+                )
+            jobs_by_name[name] = job
+        expected_jobs = list(required["required_jobs"])
+        if set(jobs_by_name) != set(expected_jobs):
+            missing = sorted(set(expected_jobs) - set(jobs_by_name))
+            extra = sorted(set(jobs_by_name) - set(expected_jobs))
+            detail = []
+            if missing:
+                detail.append("missing=" + ", ".join(missing))
+            if extra:
+                detail.append("unexpected=" + ", ".join(extra))
+            raise InfrastructureError(
+                f"required GitHub workflow {required['name']} job set drifted: "
+                + "; ".join(detail)
+            )
+        job_evidence: list[dict[str, Any]] = []
+        for name in expected_jobs:
+            job = jobs_by_name[name]
+            job_id = job.get("id")
+            if (
+                isinstance(job_id, bool)
+                or not isinstance(job_id, int)
+                or job_id <= 0
+                or job.get("status") != "completed"
+                or job.get("conclusion") != "success"
+            ):
+                raise InfrastructureError(
+                    f"required GitHub job did not pass: {required['name']} / {name}"
+                )
+            job_evidence.append(
+                {
+                    "id": job_id,
+                    "name": name,
+                    "run_id": run_id,
+                    "run_attempt": run_attempt,
+                    "head_sha": commit,
+                    "workflow_name": required["name"],
+                    "head_branch": CI_REQUIRED_BRANCH,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "started_at": job.get("started_at"),
+                    "completed_at": job.get("completed_at"),
+                    "html_url": job.get("html_url"),
+                }
+            )
+        confirmed_run = fetch_json(
+            f"/repos/{CI_REPOSITORY_FULL_NAME}/actions/runs/{run_id}", None
+        )
+        if (
+            not isinstance(confirmed_run, dict)
+            or isinstance(confirmed_run.get("id"), bool)
+            or confirmed_run.get("id") != run_id
+            or isinstance(confirmed_run.get("run_attempt"), bool)
+            or confirmed_run.get("run_attempt") != run_attempt
+            or isinstance(confirmed_run.get("workflow_id"), bool)
+            or confirmed_run.get("workflow_id") != workflow_id
+            or confirmed_run.get("name") != required["name"]
+            or confirmed_run.get("event") != "push"
+            or confirmed_run.get("head_branch") != CI_REQUIRED_BRANCH
+            or str(confirmed_run.get("head_sha") or "").lower() != commit
+            or confirmed_run.get("status") != "completed"
+            or confirmed_run.get("conclusion") != "success"
+        ):
+            raise InfrastructureError(
+                f"required GitHub workflow {required['name']} changed during attestation"
+            )
+        workflow_evidence.append(
+            {
+                "id": workflow_id,
+                "name": required["name"],
+                "path": required["path"],
+                "state": "active",
+                "run": {
+                    "id": run_id,
+                    "attempt": run_attempt,
+                    "event": "push",
+                    "head_branch": CI_REQUIRED_BRANCH,
+                    "head_sha": commit,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "created_at": confirmed_run.get("created_at"),
+                    "updated_at": confirmed_run.get("updated_at"),
+                    "html_url": confirmed_run.get("html_url"),
+                },
+                "jobs": job_evidence,
+            }
+        )
+
+    evidence = {
+        "schema": "signalos.backend-matrix.ci-evidence.v1",
+        "verified_at": _utc_now(),
+        "subject": {
+            "commit": commit,
+            "tree": tree,
+            "branch": CI_REQUIRED_BRANCH,
+            "upstream": engine.get("upstream"),
+            "upstream_commit": engine.get("upstream_commit"),
+        },
+        "repository": {
+            "node_id": CI_REPOSITORY_NODE_ID,
+            "full_name": CI_REPOSITORY_FULL_NAME,
+            "default_branch": CI_REQUIRED_BRANCH,
+            "remote_ref": f"refs/heads/{CI_REQUIRED_BRANCH}",
+            "remote_sha": commit,
+        },
+        "policy": {
+            "path": str(policy_path.relative_to(ROOT)).replace("\\", "/"),
+            "sha256": _sha256_file(policy_path),
+        },
+        "github_api_version": GITHUB_API_VERSION,
+        "workflows": workflow_evidence,
+    }
+    return {
+        "schema": "signalos.backend-matrix.ci-attestation.v1",
+        "canonicalization": "utf8-json-sort-keys-compact-v1",
+        "evidence": evidence,
+        "evidence_sha256": _canonical_json_sha256(evidence),
+    }
+
+
+def _engine_metadata(
+    *, git_reader: Callable[[tuple[str, ...]], str] | None = None
+) -> dict[str, Any]:
     def git(*args: str) -> str:
+        if git_reader is not None:
+            value = git_reader(tuple(args))
+            return str(value).strip() or "unknown"
         completed = subprocess.run(
             ["git", *args], cwd=str(ROOT), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=20, check=False,
@@ -1627,14 +2186,12 @@ def _engine_metadata() -> dict[str, Any]:
     commit = git("rev-parse", "HEAD")
     upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
     upstream_commit = git("rev-parse", "@{upstream}")
-    pushed = False
-    if commit != "unknown" and upstream != "unknown":
-        ancestry = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", commit, "@{upstream}"],
-            cwd=str(ROOT), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=20, check=False,
-        )
-        pushed = ancestry.returncode == 0
+    pushed = (
+        commit != "unknown"
+        and upstream != "unknown"
+        and upstream_commit != "unknown"
+        and commit == upstream_commit
+    )
     return {
         "commit": commit,
         "tree": git("rev-parse", "HEAD^{tree}"),
@@ -1649,16 +2206,14 @@ def _engine_metadata() -> dict[str, Any]:
     }
 
 
-def _require_reproducible_engine(
-    engine: dict[str, Any], *, live: bool, verified_ci_sha: str | None = None
-) -> None:
+def _require_reproducible_engine(engine: dict[str, Any], *, live: bool) -> None:
     """Paid evidence must map to one reconstructable committed code tree."""
     if not live:
         return
-    if engine.get("commit") in (None, "", "unknown") or engine.get("tree") in (
-        None,
-        "",
-        "unknown",
+    commit = str(engine.get("commit") or "").strip().lower()
+    tree = str(engine.get("tree") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(
+        r"[0-9a-f]{40}", tree
     ):
         raise InfrastructureError(
             "live matrix requires a Git commit and tree identity for the engine"
@@ -1670,20 +2225,17 @@ def _require_reproducible_engine(
             "live matrix refuses an uncommitted engine; commit or stash every "
             f"backend/harness change before spending provider credit{suffix}"
         )
-    if not engine.get("pushed") or engine.get("upstream") in (None, "", "unknown"):
+    if engine.get("branch") != CI_REQUIRED_BRANCH:
+        raise InfrastructureError("live matrix is restricted to the main branch")
+    upstream = str(engine.get("upstream") or "")
+    upstream_commit = str(engine.get("upstream_commit") or "").strip().lower()
+    if (
+        not engine.get("pushed")
+        or upstream != "origin/main"
+        or upstream_commit != commit
+    ):
         raise InfrastructureError(
-            "live matrix requires HEAD to be pushed to its configured upstream"
-        )
-    commit = str(engine.get("commit") or "").lower()
-    attested = str(verified_ci_sha or "").strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{40}", attested):
-        raise InfrastructureError(
-            "live matrix requires --ci-verified-sha (or SIGNALOS_CI_VERIFIED_SHA) "
-            "for the exact green commit"
-        )
-    if attested != commit:
-        raise InfrastructureError(
-            "CI-verified SHA does not match the current engine HEAD"
+            "live matrix requires main HEAD to equal its configured main upstream"
         )
 
 
@@ -1699,15 +2251,11 @@ def _require_external_output_root(path: Path) -> Path:
     return output
 
 
-def _require_engine_unchanged(
-    expected: dict[str, Any], *, verified_ci_sha: str
-) -> dict[str, Any]:
+def _require_engine_unchanged(expected: dict[str, Any]) -> dict[str, Any]:
     """Re-check the paid engine boundary before and after every model row."""
 
     current = _engine_metadata()
-    _require_reproducible_engine(
-        current, live=True, verified_ci_sha=verified_ci_sha
-    )
+    _require_reproducible_engine(current, live=True)
     if current.get("commit") != expected.get("commit") or current.get("tree") != expected.get("tree"):
         raise InfrastructureError(
             "engine commit/tree changed during the funded matrix; aborting"
@@ -2188,11 +2736,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--env-file", type=Path, default=None, help="Explicit dotenv path; never copied into results.")
     parser.add_argument("--output-root", type=Path, default=Path(tempfile.gettempdir()) / "signalos-backend-matrix")
-    parser.add_argument(
-        "--ci-verified-sha",
-        default=os.environ.get("SIGNALOS_CI_VERIFIED_SHA", ""),
-        help="Exact 40-character HEAD SHA whose CI run was verified green.",
-    )
     parser.add_argument("--max-cost-per-model", type=float, default=None, metavar="USD")
     parser.add_argument("--acknowledge-key-exposure", action="store_true")
     parser.add_argument("--init-timeout", type=float, default=240.0, metavar="SECONDS")
@@ -2231,10 +2774,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         scenario = _load_scenario(scenario_path)
         orchestrator_profile = _validate_orchestrator_profile(args.orchestrator_profile)
         engine = _engine_metadata()
-        _require_reproducible_engine(
-            engine,
-            live=bool(args.live),
-            verified_ci_sha=args.ci_verified_sha,
+        _require_reproducible_engine(engine, live=bool(args.live))
+        # This authoritative GitHub check deliberately precedes provider-key
+        # lookup, local subprocess startup, and every provider request.  A
+        # caller-supplied SHA is not evidence that CI passed.
+        ci_attestation = (
+            _verify_ci_attestation(engine) if args.live else None
         )
         output_root = (
             _require_external_output_root(args.output_root)
@@ -2286,6 +2831,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "oracle_sha256": _sha256_file(oracle_path),
             "driver_sha256": _sha256_file(Path(__file__).resolve()),
             "sidecar_sha256": _sha256_file(SIDECAR),
+            "ci_policy_sha256": _sha256_file(DEFAULT_CI_POLICY),
         }
         manifest: dict[str, Any] = {
             "schema": "signalos.backend-matrix.run.v1",
@@ -2297,7 +2843,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "orchestrator_profile": orchestrator_profile,
             "models": [dataclasses.asdict(spec) for spec in selected],
             "engine": engine,
-            "ci_attestation": {"verified_sha": args.ci_verified_sha.lower()},
+            "ci_attestation": ci_attestation,
             "hashes": hashes,
             "preflight": {
                 "local": local,
@@ -2314,9 +2860,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(row["id"]): row for row in provider["models"]
         }
         for spec in selected:
-            _require_engine_unchanged(
-                engine, verified_ci_sha=args.ci_verified_sha
-            )
+            _require_engine_unchanged(engine)
             print(f"[{spec.alias}] starting fresh backend journey", flush=True)
             row = _run_row(
                 spec,
@@ -2335,9 +2879,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hashes=hashes,
                 provider_model_metadata=provider_models[spec.model],
             )
-            _require_engine_unchanged(
-                engine, verified_ci_sha=args.ci_verified_sha
-            )
+            _require_engine_unchanged(engine)
             manifest["results"].append(
                 {
                     "alias": spec.alias,
