@@ -358,6 +358,41 @@ def test_workspace_manifest_drift_blocks_before_materialization(tmp_path: Path) 
     assert not (workspace / "node_modules").exists()
 
 
+def test_funded_dependencies_pending_only_on_pristine_workspace(
+    tmp_path: Path,
+) -> None:
+    # Pre-G4 gates run sandboxed commands before materialization: a pristine
+    # workspace is "pending" (hardened container runs with no deps volume).
+    assert broker.funded_dependencies_pending(tmp_path) is True
+    # An EMPTY node_modules mountpoint is still pristine.
+    (tmp_path / "node_modules").mkdir()
+    assert broker.funded_dependencies_pending(tmp_path) is True
+    # A populated node_modules is not pending -- fall through to strict
+    # verification (which fails closed without a receipt).
+    (tmp_path / "node_modules" / "left-pad").mkdir()
+    assert broker.funded_dependencies_pending(tmp_path) is False
+
+
+def test_funded_dependencies_pending_rejects_partial_artifacts(
+    tmp_path: Path,
+) -> None:
+    # Any materialization artifact means NOT pending, so tampered or
+    # half-materialized workspaces always reach strict verification.
+    with_receipt = tmp_path / "with-receipt"
+    (with_receipt / ".signalos").mkdir(parents=True)
+    (with_receipt / ".signalos" / broker.RECEIPT_NAME).write_text(
+        "{}", encoding="utf-8"
+    )
+    assert broker.funded_dependencies_pending(with_receipt) is False
+
+    with_archive = tmp_path / "with-archive"
+    (with_archive / ".signalos" / "dependencies").mkdir(parents=True)
+    (with_archive / ".signalos" / "dependencies" / broker.ARCHIVE_NAME).write_bytes(
+        b""
+    )
+    assert broker.funded_dependencies_pending(with_archive) is False
+
+
 def test_react_vite_scaffold_package_json_matches_funded_fixture(
     tmp_path: Path,
 ) -> None:

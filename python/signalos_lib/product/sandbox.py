@@ -858,8 +858,22 @@ class ContainerRunner(SandboxRunner):
     def _load_dependency_mount(self) -> DependencyMount | None:
         mount = self.dependency_mount
         if mount is None and self.require_funded_dependencies:
-            from .dependency_broker import funded_dependency_mount_from_environment
+            from .dependency_broker import (
+                funded_dependencies_pending,
+                funded_dependency_mount_from_environment,
+            )
 
+            # The sandbox enforces BOUNDARIES (network=none, read-only,
+            # non-root, pinned image), not project state. Before G4
+            # materializes the attested bundle, the governance gates
+            # legitimately run commands with no node_modules -- so a pristine,
+            # never-materialized workspace runs the same hardened container
+            # without the dependency volume (an `npm test` there fails
+            # naturally as a tool error the model can read). Any PARTIAL
+            # materialization state is not pending and falls through to
+            # strict verification, which fails closed on tamper.
+            if funded_dependencies_pending(self.workspace):
+                return None
             raw = funded_dependency_mount_from_environment(self.workspace)
             if raw is None:
                 raise SandboxUnavailableError(

@@ -166,6 +166,46 @@ class TestBackendSelection:
         assert r.platform == "linux/amd64"
         assert r.require_funded_dependencies is True
 
+    def test_funded_pristine_workspace_runs_without_dependency_mount(self, tmp_path):
+        # The sandbox enforces boundaries, not project state: before G4
+        # materializes the attested bundle, funded commands run in the same
+        # hardened container with NO dependency volume instead of failing
+        # the whole delivery (industry behavior: a failed command is
+        # information for the model, not a run-killer).
+        image = "node:20-bookworm@sha256:" + "a" * 64
+        r = select_runner(
+            tmp_path,
+            environ={
+                "SIGNALOS_SANDBOX": "docker",
+                "SIGNALOS_SANDBOX_PROFILE": "funded",
+                "SIGNALOS_SANDBOX_IMAGE": image,
+            },
+            which=lambda n: "/usr/bin/docker" if n == "docker" else None,
+        )
+        assert r._load_dependency_mount() is None
+
+    def test_funded_partial_materialization_still_fails_closed(self, tmp_path):
+        # A receipt with no verifiable bundle is tamper evidence, never
+        # "pending" -- strict verification must still refuse the sandbox.
+        from signalos_lib.product.dependency_broker import DependencyBrokerError
+
+        image = "node:20-bookworm@sha256:" + "a" * 64
+        (tmp_path / ".signalos").mkdir()
+        (tmp_path / ".signalos" / "dependency-receipt.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        r = select_runner(
+            tmp_path,
+            environ={
+                "SIGNALOS_SANDBOX": "docker",
+                "SIGNALOS_SANDBOX_PROFILE": "funded",
+                "SIGNALOS_SANDBOX_IMAGE": image,
+            },
+            which=lambda n: "/usr/bin/docker" if n == "docker" else None,
+        )
+        with pytest.raises((SandboxUnavailableError, DependencyBrokerError)):
+            r._load_dependency_mount()
+
     @pytest.mark.parametrize(
         "env,match",
         [

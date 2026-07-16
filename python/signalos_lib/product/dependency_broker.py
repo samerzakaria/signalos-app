@@ -17,6 +17,7 @@ __all__ = [
     "materialize_dependency_bundle",
     "materialize_funded_dependencies_from_environment",
     "funded_dependency_mount_from_environment",
+    "funded_dependencies_pending",
     "prepare_dependency_bundle",
     "validate_package_lock",
     "verify_dependency_bundle",
@@ -1325,6 +1326,35 @@ def materialize_funded_dependencies_from_environment(
     policy = _required_environment_path("SIGNALOS_DEPENDENCY_POLICY")
     bundle = _required_environment_path("SIGNALOS_DEPENDENCY_BUNDLE")
     return materialize_dependency_bundle(workspace, policy, bundle)
+
+
+def funded_dependencies_pending(workspace: str | os.PathLike[str]) -> bool:
+    """True when the funded workspace is pristine: not yet materialized.
+
+    The governance gates before G4 legitimately run sandboxed commands while
+    the attested dependency bundle has not been materialized yet (G4 owns
+    materialization). "Pending" is deliberately strict -- it means NO
+    materialization artifact exists at all: no receipt, no archive, and no
+    populated node_modules. Any partial or suspicious state (a receipt or
+    archive present, a node_modules symlink, a populated node_modules) is NOT
+    pending, so callers fall through to strict verification, which fails
+    closed on tamper.
+    """
+    root = Path(workspace).resolve()
+    receipt = root / ".signalos" / RECEIPT_NAME
+    archive = root / _MATERIALIZED_ARCHIVE_REL
+    modules = root / "node_modules"
+    if os.path.lexists(receipt) or os.path.lexists(archive):
+        return False
+    if os.path.lexists(modules):
+        if modules.is_symlink() or not modules.is_dir():
+            return False
+        try:
+            with os.scandir(modules) as entries:
+                return next(entries, None) is None
+        except OSError:
+            return False
+    return True
 
 
 def verify_funded_dependencies_from_environment(
