@@ -23,6 +23,7 @@ __all__ = [
     "verify_dependency_bundle",
     "verify_materialized_dependencies",
     "verify_funded_dependencies_from_environment",
+    "verify_funded_dependencies_when_materialized",
     "TRUSTED_INSTALL_SHELL_COMMAND",
     "TRUSTED_LOCAL_DOCKER_DESKTOP_PROFILE",
     "TRUSTED_LOCAL_DOCKER_ENGINE_PROFILE",
@@ -1364,6 +1365,24 @@ def verify_funded_dependencies_from_environment(
         return None
     policy = _required_environment_path("SIGNALOS_DEPENDENCY_POLICY")
     return verify_materialized_dependencies(workspace, policy)
+
+
+def verify_funded_dependencies_when_materialized(
+    workspace: str | os.PathLike[str],
+) -> dict[str, Any] | None:
+    """Strictly verify the funded receipt once materialization has begun.
+
+    The pre-G4 governance gates legitimately run tools while the workspace is
+    pristine (G4 owns materialization), so a pristine workspace verifies
+    nothing and returns None. Any partial materialization state is NOT
+    pending and falls through to strict verification, which fails closed on
+    tamper. Build-time callers (G4 validation/acceptance) must keep calling
+    ``verify_funded_dependencies_from_environment`` directly -- at that point
+    a missing receipt is a hard error, never "pending".
+    """
+    if funded_dependencies_pending(workspace):
+        return None
+    return verify_funded_dependencies_from_environment(workspace)
 
 
 def funded_dependency_mount_from_environment(

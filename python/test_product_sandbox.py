@@ -434,6 +434,30 @@ class TestReadOnlyHardening:
         )
         assert argv[argv.index("--shm-size") + 1] == "512m"
 
+    def test_vite_cache_tmpfs_requires_the_dependency_volume(self, tmp_path):
+        # Regression (funded canary run 2, real Docker): the vite-cache tmpfs
+        # mounts INSIDE /workspace/node_modules, which only the dependency
+        # volume provides. Pre-G4 (no volume, read-only workspace) Docker
+        # tried to mkdir node_modules on the read-only rootfs and the
+        # container died with exit 125 before the command ran.
+        image = validate_pinned_image("node:20@sha256:" + "c" * 64)
+        without_volume = build_container_argv(
+            "ls", tmp_path, engine="docker", image=image, hardened=True,
+            workspace_read_only=True,
+        )
+        specs = [without_volume[i + 1]
+                 for i, a in enumerate(without_volume) if a == "--tmpfs"]
+        assert not any("node_modules/.vite" in s for s in specs)
+
+        with_volume = build_container_argv(
+            "npm test", tmp_path, engine="docker", image=image, hardened=True,
+            workspace_read_only=True,
+            dependency_volume="signalos-deps-abc123",
+        )
+        specs = [with_volume[i + 1]
+                 for i, a in enumerate(with_volume) if a == "--tmpfs"]
+        assert any("node_modules/.vite" in s for s in specs)
+
     def test_hardened_shared_memory_rejects_out_of_range_sizes(self, tmp_path):
         # < 64m starves the browser; > 4g is an unreasonable host commitment; a
         # malformed size must fail closed, never silently fall back.

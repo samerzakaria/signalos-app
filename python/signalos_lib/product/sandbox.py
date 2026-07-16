@@ -565,7 +565,13 @@ def build_container_argv(
     for path, opts in tmpfs_mounts.items():
         # size-capped writable scratch/HOME, discarded with the container.
         argv += ["--tmpfs", f"{path}:{opts}" if opts else path]
-    if hardened:
+    if hardened and dependency_volume:
+        # The vite-cache tmpfs mounts INSIDE /workspace/node_modules, which
+        # only exists when the dependency volume provides it. Pre-G4 funded
+        # commands run without the volume (deps are not materialized yet) --
+        # mounting this tmpfs then makes Docker mkdir node_modules on the
+        # read-only rootfs and the container dies with exit 125 before the
+        # command runs. No volume -> no build -> no cache needed.
         argv += [
             "--tmpfs",
             f"{CONTAINER_WORKSPACE}/{FUNDED_EPHEMERAL_CACHE_PATH}:"

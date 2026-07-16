@@ -393,6 +393,35 @@ def test_funded_dependencies_pending_rejects_partial_artifacts(
     assert broker.funded_dependencies_pending(with_archive) is False
 
 
+def test_when_materialized_verify_skips_pristine_but_fails_closed_on_partial(
+    tmp_path: Path,
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    # Regression (funded canary run 2): agent_loop's per-command
+    # belt-and-braces receipt check called the strict verifier directly, so a
+    # pre-G4 run_command on a pristine workspace died with "materialized
+    # dependency receipt is missing or unreadable" even after the sandbox
+    # mount itself was gated on funded_dependencies_pending.
+    monkeypatch.setenv("SIGNALOS_SANDBOX_PROFILE", "funded")
+    monkeypatch.setenv(
+        "SIGNALOS_DEPENDENCY_POLICY",
+        str(SOURCE_DEPENDENCIES / "policy.json"),
+    )
+    workspace = tmp_path / "workspace"
+    (workspace / ".signalos").mkdir(parents=True)
+
+    # Pristine (pre-G4): nothing to verify, must NOT raise.
+    assert broker.verify_funded_dependencies_when_materialized(workspace) is None
+
+    # Partial materialization (a receipt with no verifiable bundle) is tamper
+    # evidence -- strict verification still fails closed.
+    (workspace / ".signalos" / broker.RECEIPT_NAME).write_text(
+        "{}", encoding="utf-8"
+    )
+    with pytest.raises(DependencyBrokerError):
+        broker.verify_funded_dependencies_when_materialized(workspace)
+
+
 def test_react_vite_scaffold_package_json_matches_funded_fixture(
     tmp_path: Path,
 ) -> None:

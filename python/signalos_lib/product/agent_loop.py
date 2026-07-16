@@ -2574,9 +2574,17 @@ class AgentLoop:
         run_cwd, command = self._resolve_run_cwd(command)
         env = {"CI": "1", "FORCE_COLOR": "0"}
         if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded":
-            from .dependency_broker import verify_funded_dependencies_from_environment
+            # Pre-G4 the workspace is legitimately pristine (G4 owns dependency
+            # materialization), so this belt-and-braces receipt check must not
+            # fail a governance-gate command; once ANY materialization artifact
+            # exists it verifies strictly and fails closed on tamper. Build-time
+            # verification (G4 validation/acceptance) stays unconditionally
+            # strict in validation.py / acceptance.py / subagent_build.py.
+            from .dependency_broker import (
+                verify_funded_dependencies_when_materialized,
+            )
 
-            verify_funded_dependencies_from_environment(self.repo_root)
+            verify_funded_dependencies_when_materialized(self.repo_root)
         runner = self._get_sandbox_runner()
         # FIX 1: command-writes are governed too. Snapshot the governed source
         # subtree BEFORE the command so we can diff it AFTER -- a `python -c` /
