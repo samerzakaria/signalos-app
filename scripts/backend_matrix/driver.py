@@ -1416,6 +1416,7 @@ class CostGuard:
         self.last_usage = self.started_usage
         self.last_checked = 0.0
         self.failures = 0
+        self.backward_observations = 0
 
     @property
     def spent(self) -> float:
@@ -1435,10 +1436,17 @@ class CostGuard:
                 raise CostGuardError("provider usage monitoring failed twice; aborting fail-closed") from exc
             return self.spent
         if observed_usage + 1e-9 < self.last_usage:
-            raise CostGuardError(
-                "provider usage counter moved backward; cost attribution is unreliable"
-            )
-        self.last_usage = observed_usage
+            # OpenRouter's key-usage endpoint is eventually consistent: a read
+            # served by a lagging replica can transiently DIP below an earlier
+            # reading (observed live: a healthy run was killed mid-G0 by one
+            # dip). A dip can never help a run evade the cap, because spent is
+            # measured against the MAXIMUM counter ever observed (monotonic
+            # watermark) -- ignoring the lower reading only ever OVER-estimates
+            # spend, which trips the cap EARLIER. Fail-closed is preserved;
+            # record the anomaly as evidence instead of killing the run.
+            self.backward_observations += 1
+        else:
+            self.last_usage = observed_usage
         if self.spent > self.cap:
             raise CostGuardError(
                 f"provider-reported row usage ${self.spent:.4f} exceeded the ${self.cap:.4f} cap"
@@ -4510,6 +4518,7 @@ def _run_row(
             "end": cost.last_usage,
             "spent": final_spent,
             "cap": cost_cap,
+            "backward_observations": cost.backward_observations,
         }
         row["status"] = "pass"
     except ProductFailure as exc:
@@ -4568,6 +4577,7 @@ def _run_row(
                     "end": cost.last_usage,
                     "spent": cost.spent,
                     "cap": cost_cap,
+                    "backward_observations": cost.backward_observations,
                 },
             )
         row["finished_at"] = _utc_now()

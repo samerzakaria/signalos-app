@@ -817,16 +817,28 @@ def test_live_matrix_output_must_be_outside_engine_tree(
         driver._require_external_output_root(ROOT / "matrix-results")
 
 
-def test_cost_guard_refuses_a_decreasing_provider_counter(driver: ModuleType) -> None:
+def test_cost_guard_watermarks_a_decreasing_provider_counter(driver: ModuleType) -> None:
+    # OpenRouter's usage endpoint is eventually consistent -- a lagging
+    # replica can serve a reading BELOW an earlier one (observed live: one
+    # transient dip killed a healthy funded run mid-G0). Spent is measured
+    # against the maximum counter ever observed, so a dip can only
+    # over-estimate spend (trips the cap earlier -- fail-closed); it is
+    # recorded as evidence, never a run-killer.
     class FakeRouter:
         def __init__(self) -> None:
-            self.values = iter((10.0, 9.5))
+            self.values = iter((10.0, 9.5, 10.2, 30.0))
 
         def usage(self) -> float:
             return next(self.values)
 
     guard = driver.CostGuard(FakeRouter(), cap=1.0, interval=0.0)
-    with pytest.raises(driver.CostGuardError, match="moved backward"):
+    # Replica dip: not fatal; spent holds at the watermark (start == 10.0).
+    assert guard.check(force=True) == 0.0
+    assert guard.backward_observations == 1
+    # Recovery above the watermark resumes normal accounting.
+    assert abs(guard.check(force=True) - 0.2) < 1e-9
+    # Real overspend still trips the cap fail-closed.
+    with pytest.raises(driver.CostGuardError, match="exceeded"):
         guard.check(force=True)
 
 
