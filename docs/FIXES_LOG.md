@@ -8,6 +8,24 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Offline product acceptance + release hardening (2026-07-16)
+
+Completed the partially-wired dual-context offline acceptance (funded
+`react-vite` build/test + a separate source-blind `oracle-playwright`
+Chromium context, each in an attested, network-`none`, digest-pinned
+container behind a CONNECT-only registry proxy) and hardened the funded
+canary path. Findings below were caught by real-Docker + the funded
+preflight — the all-Linux offline/CI suites structurally could not see the
+Windows-only ones.
+
+| ID | Issue (root cause) | Fix | Verified |
+|---|---|---|---|
+| OA-1 | `_strict_artifact_snapshot` false-flagged every file as mutated mid-seal on Windows — `os.scandir` `DirEntry.stat()` reports `st_ino`/`st_dev`==0 there, but the re-stat used `os.stat` | Use `os.stat(follow_symlinks=False)` for the before-stat too (cross-platform, byte-faithful seal) | ✅ test + Windows repro |
+| OA-2 | Oracle CONNECT proxy exited on startup → `dependency.proxy.start_failed [proxy-readiness]: container is not running` — entrypoint hardcoded `/usr/local/bin/node`, absent in the Playwright image (node at `/usr/bin/node`) | Reviewed-policy `registryProxy.nodePath` allowlist `{/usr/local/bin/node, /usr/bin/node}`, threaded through the proxy entrypoint, anti-tamper inspect probe, and readiness exec | ✅ real-Docker oracle (offline Chromium, 55s) + policy/allowlist tests |
+| OA-3 | Funded-Git disabled-hooks check false-failed on macOS + Windows CI — the test passed an **unresolved** temp path (`/var`→`/private/var`, Windows 8.3 short names) tripping the `lexical != canonical` "not independently owned" guard | Resolve the temp root in the test, matching the production driver (which resolves `runtime_home`) | ✅ CI green mac+win + symlinked-parent repro |
+| OA-4 | Funded materialize failed on Windows — `workspace package.json does not match the reviewed scaffold`. `Path.write_text` translated `\n`→`\r\n`, and the broker sha-checks the scaffold `package.json` byte-for-byte against the LF fixture (scaffold sha == fixture-with-CRLF, 762 vs 732 bytes) | All 18 stack-adapter `_write` helpers write LF (`newline="\n"`) — no-op on Linux, deterministic on Windows | ✅ byte-parity regression test + CI |
+| OA-5 | Release cut from a **red** commit — tag `v3.3.0-internal.2` sat on a commit whose test-automation failed the release-surface version check | Propagated the version to all 4 release surfaces (landing + 3 docs); re-pointed the tag to the fully-green commit | ✅ release-scripts suite + CI green |
+
 ## End-to-end governed delivery closure (2026-07-14)
 
 This pass closed the desktop and direct-backend seams together. A delivery is
