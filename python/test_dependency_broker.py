@@ -358,6 +358,27 @@ def test_workspace_manifest_drift_blocks_before_materialization(tmp_path: Path) 
     assert not (workspace / "node_modules").exists()
 
 
+def test_react_vite_scaffold_package_json_matches_funded_fixture(
+    tmp_path: Path,
+) -> None:
+    # materialize_dependency_bundle sha-checks the workspace package.json
+    # byte-for-byte against the reviewed dependency fixture, so the delivery
+    # scaffold must emit that fixture EXACTLY -- with LF endings on every
+    # platform. Regression: Path.write_text translated \n -> \r\n on Windows,
+    # so the scaffold produced a CRLF package.json that failed the funded
+    # "workspace package.json does not match the reviewed scaffold" check
+    # (Linux/CI is LF, so it only bit Windows funded hosts).
+    from signalos_lib.product import stacks
+
+    fixture = (SOURCE_DEPENDENCIES / "react-vite" / "package.json").read_bytes()
+    adapter = stacks.get_adapter("react-vite")
+    adapter.scaffold(tmp_path, {"product_name": "Fixture Parity"})
+    produced = (tmp_path / "package.json").read_bytes()
+
+    assert produced == fixture
+    assert b"\r\n" not in produced
+
+
 def test_prepare_api_has_no_caller_supplied_runner_boundary() -> None:
     parameters = inspect.signature(prepare_dependency_bundle).parameters
 

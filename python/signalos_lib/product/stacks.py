@@ -390,7 +390,13 @@ class ReactViteAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         # Delivery infrastructure — SignalOS owns this
@@ -502,7 +508,13 @@ class GenericAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         pyproject = {
@@ -972,7 +984,13 @@ class NodeApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_NODE_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -1053,7 +1071,13 @@ class GoApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("go.mod", _GO_MOD)
@@ -1132,7 +1156,13 @@ class DotNetMinimalApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("SignalOSProduct.Api/SignalOSProduct.Api.csproj", _dotnet_api_csproj())
@@ -1222,7 +1252,13 @@ class FastApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("pyproject.toml", _to_toml(_FASTAPI_PYPROJECT_TEMPLATE))
@@ -1462,7 +1498,13 @@ class AngularAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_ANGULAR_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -1642,7 +1684,13 @@ class NextJsAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_NEXT_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -1821,7 +1869,13 @@ class VueViteAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_VUE_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -1968,7 +2022,13 @@ class FlutterAppAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("pubspec.yaml", _FLUTTER_PUBSPEC_YAML)
@@ -2128,7 +2188,13 @@ class ExpoReactNativeAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_EXPO_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -2270,7 +2336,13 @@ class RustApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("Cargo.toml", _RUST_CARGO_TOML)
@@ -2405,7 +2477,13 @@ class JavaApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("src/main/java/com/signalos/product/ProductServer.java", _JAVA_PRODUCT_SERVER)
@@ -2563,7 +2641,13 @@ class DjangoApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("pyproject.toml", _to_toml(_DJANGO_PYPROJECT_TEMPLATE))
@@ -2713,7 +2797,13 @@ class FlaskApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("pyproject.toml", _to_toml(_FLASK_PYPROJECT_TEMPLATE))
@@ -2898,7 +2988,13 @@ class NestJsApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("package.json", json.dumps(_NEST_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
@@ -3075,7 +3171,13 @@ class SpringBootApiAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write("pom.xml", _SPRING_POM_XML)
@@ -3156,7 +3258,13 @@ class AgentSelectedAdapter:
         def _write(rel: str, content: str) -> None:
             target = repo_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # newline="\n": write LF on every platform. The reviewed funded
+            # dependency fixtures are LF, and the broker's materialize step
+            # sha-checks the scaffold package.json byte-for-byte against them;
+            # without this, Path.write_text translates \n -> \r\n on Windows and
+            # the funded run fails "workspace package.json does not match the
+            # reviewed scaffold" (Linux/CI is LF, so it only bit Windows hosts).
+            target.write_text(content, encoding="utf-8", newline="\n")
             created.append(rel)
 
         _write(
