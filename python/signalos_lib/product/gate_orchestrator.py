@@ -1682,7 +1682,7 @@ class GateOrchestrator:
         if missing:
             return {"ok": False,
                     "reason": "required artifact(s) missing on disk: " + ", ".join(missing)}
-        if none_fresh:
+        if none_fresh and not self._gate_agent_produced_fresh_work(gate):
             return {"ok": False,
                     "reason": "no required artifact was written this run (stale outputs) -- "
                               "the agent did not (re)produce the gate's artifacts"}
@@ -1692,6 +1692,46 @@ class GateOrchestrator:
                 return {"ok": False,
                         "reason": "G2 plan contract incomplete: " + "; ".join(problems)}
         return {"ok": True, "reason": ""}
+
+    # Gates whose SIGNING manifest is entirely carried forward from an earlier
+    # gate (drafted there, signed here), so the gate's own dispatched agent
+    # never (re)writes a manifest artifact. Its fresh-work signal is instead
+    # the directory its card tells it to author. Only G1 qualifies: the G0
+    # onboarding agent drafts BELIEF + ROLE_ACTIVATION_CARD, which the PO signs
+    # at G1, while the G1 brainstorm agent authors wave-{N}-brainstorm.md under
+    # core/strategy/brainstorm/. Every other gate's agent writes at least one
+    # of its own manifest artifacts, so the strict freshness check holds there.
+    _GATE_AGENT_WORK_DIR: dict[str, str] = {
+        "G1": "core/strategy/brainstorm",
+    }
+
+    def _gate_agent_produced_fresh_work(self, gate: str) -> bool:
+        """True when a carried-forward gate's dispatched agent freshly authored
+        its own work product this run (so a stale manifest is the signed
+        surface, not proof the agent coasted). Non-carried-forward gates return
+        False -- they must satisfy the strict manifest-freshness check. Never
+        raises."""
+        rel = self._GATE_AGENT_WORK_DIR.get(gate)
+        if not rel:
+            return False
+        started = float(getattr(self, "_gate_run_started_at", 0.0) or 0.0)
+        if started <= 0.0:
+            return False
+        try:
+            from .. import artifacts
+            work_dir = artifacts.resolve_workspace_path(
+                self.repo_root, rel, project_id=self.project_id)
+            if not work_dir.is_dir():
+                return False
+            for child in work_dir.rglob("*"):
+                try:
+                    if child.is_file() and child.stat().st_mtime >= started - 2.0:
+                        return True
+                except OSError:
+                    continue
+        except Exception:
+            return False
+        return False
 
     def _required_artifact_state(self, gate: str) -> "tuple[list, bool]":
         """(missing_rel_paths, none_written_this_run) for *gate*'s manifest

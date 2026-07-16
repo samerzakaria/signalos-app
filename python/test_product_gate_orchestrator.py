@@ -124,6 +124,40 @@ _GOOD_BRIEF_JSON = (
 )
 
 
+def test_g1_reviewable_when_brainstorm_authored_but_belief_carried_from_g0():
+    # Regression (funded canary run 4): G1's SIGNING manifest (BELIEF +
+    # ROLE_ACTIVATION_CARD) is drafted by the G0 onboarding agent and signed
+    # at G1, so the G1 brainstorm agent never (re)writes a manifest artifact --
+    # it authors core/strategy/brainstorm/wave-N-brainstorm.md. The strict
+    # freshness check falsely blocked G1 as "stale outputs" even though the
+    # agent did real work. Only G1 is carried-forward; every other gate keeps
+    # strict manifest-freshness.
+    import time as _time
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        orch._gate_run_started_at = _time.time()
+        # Carried-forward manifest present but stale (drafted "at G0"):
+        from signalos_lib import artifacts
+        for rel in ("core/strategy/BELIEF.md",
+                    "core/execution/ROLE_ACTIVATION_CARD.md"):
+            p = artifacts.resolve_workspace_path(Path(d), rel)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("drafted at G0\n", encoding="utf-8")
+            old = orch._gate_run_started_at - 3600
+            os.utime(p, (old, old))
+        # No brainstorm work product yet -> still blocked (anti-stale-green).
+        assert orch._gate_agent_produced_fresh_work("G1") is False
+        # The brainstorm agent authors its own product this run -> reviewable.
+        bs = artifacts.resolve_workspace_path(
+            Path(d), "core/strategy/brainstorm/wave-1-brainstorm.md")
+        bs.parent.mkdir(parents=True, exist_ok=True)
+        bs.write_text("## Hypotheses\n", encoding="utf-8")
+        assert orch._gate_agent_produced_fresh_work("G1") is True
+        # A non-carried-forward gate never gets this relaxation.
+        assert orch._gate_agent_produced_fresh_work("G2") is False
+
+
 def test_gate_message_frames_the_founder_prompt_per_gate():
     # Regression (funded canary): the raw "build X" founder prompt reached a
     # narrowly-scoped governance seat verbatim; a literal model at G0 read it

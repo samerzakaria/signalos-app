@@ -954,6 +954,18 @@ class DockerRegistryProxyRunner:
                 "NPM_CONFIG_HTTPS_PROXY": proxy_url,
                 "NPM_CONFIG_PROXY": proxy_url,
                 "NPM_CONFIG_STRICT_SSL": "true",
+                # Ride out transient registry / proxy-upstream 5xx blips
+                # (registry.npmjs.org is documented to serve occasional 502s;
+                # our own CONNECT proxy also answers 502 when an upstream TCP
+                # connect fails). Retries go through the SAME pinned proxy to
+                # the SAME allowlisted authority, and every fetched byte is
+                # still verified against the lockfile's sha512 integrity, so a
+                # retry can neither widen egress nor smuggle content. Bounded so
+                # a real outage still fails the gate rather than hanging.
+                "NPM_CONFIG_FETCH_RETRIES": "5",
+                "NPM_CONFIG_FETCH_RETRY_FACTOR": "2",
+                "NPM_CONFIG_FETCH_RETRY_MINTIMEOUT": "10000",
+                "NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT": "120000",
                 "NODE_TLS_REJECT_UNAUTHORIZED": "1",
                 "NODE_EXTRA_CA_CERTS": "",
                 "NPM_CONFIG_CA": "",
