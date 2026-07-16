@@ -63,6 +63,44 @@ GATE_QUESTIONS = {
     "G5": "Ready to ship?",
 }
 
+# Per-gate task framing prepended to the founder prompt (agent-facing).
+# The founder prompt is usually an imperative "build X" -- without framing,
+# a literal-minded model at a governance gate reads "build X now" against a
+# card that forbids building and either refuses or goes off-script (observed
+# live: a G0 seat declared the build request out of scope). One line tells
+# the agent what THIS gate produces for X. G4 gets its richer build
+# directive from _g4_build_directive instead.
+GATE_TASK_FRAMING = {
+    "G0": (
+        "You are at Gate G0 (Onboarding) of a governed delivery. The founder "
+        "prompt below is the product brief -- do not implement it now. Author "
+        "this gate's onboarding/governance artifacts FOR that product; "
+        "implementation happens at later gates."
+    ),
+    "G1": (
+        "You are at Gate G1 (Brainstorm) of a governed delivery. The founder "
+        "prompt below is the product brief -- do not implement it now. Ground "
+        "and sharpen the Belief/hypotheses for that product per your gate "
+        "outputs."
+    ),
+    "G2": (
+        "You are at Gate G2 (Plan) of a governed delivery. The founder prompt "
+        "below is the product brief -- do not implement it now. Produce this "
+        "gate's plan artifacts (expectation map, task plan, acceptance "
+        "criteria, test skeletons) for that product."
+    ),
+    "G3": (
+        "You are at Gate G3 (Design) of a governed delivery. The founder "
+        "prompt below is the product brief -- do not implement it now. "
+        "Produce this gate's design artifacts for that product."
+    ),
+    "G5": (
+        "You are at Gate G5 (Release readiness) of a governed delivery. The "
+        "build is complete; summarize its evidence into this gate's "
+        "release-readiness artifacts. Do not rebuild the product."
+    ),
+}
+
 # Role authorised to sign each gate. Must be valid for EVERY artifact in the
 # gate (sign_gate rejects a role not authorised for any present artifact).
 # G3 mixes PO+PE artifacts -> co-signed per-artifact in _default_sign.
@@ -574,6 +612,10 @@ class GateOrchestrator:
         base = self.state.prompt or "Proceed with the delivery."
         if gate == "G4":
             base = self._g4_build_directive(base)
+        else:
+            framing = GATE_TASK_FRAMING.get(gate)
+            if framing:
+                base = framing + "\n\n" + base
         if gate != self.state.current_gate:
             return base
         cyc = self.state.rework.get(gate, 0)

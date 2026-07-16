@@ -16,7 +16,7 @@ Phase 3 (Build) — triggered by each Build PR's readiness flag; runs before the
 
 ## Prerequisites (signed artifacts required before activation)
 
-- Build PR exists with Build agent's HAND entry logged
+- A Build change-set exists (a PR, or the local release branch/commit in a governed local delivery) with the Build agent's HAND entry logged
 - Failing-test skeleton now green (TDD precondition met)
 - `core/execution/TRUST_TIER.md` signed
 

@@ -25,6 +25,7 @@ from signalos_lib.product.gate_orchestrator import (
     GateOrchestrator,
     GATE_ORDER,
     GATE_SPECIALISTS,
+    GATE_TASK_FRAMING,
     resume_delivery,
 )
 from signalos_lib.sign import (
@@ -121,6 +122,24 @@ _GOOD_BRIEF_JSON = (
     '"the_one_risk": "scope too broad", '
     '"question_worth_asking": "is this the key outcome?"}'
 )
+
+
+def test_gate_message_frames_the_founder_prompt_per_gate():
+    # Regression (funded canary): the raw "build X" founder prompt reached a
+    # narrowly-scoped governance seat verbatim; a literal model at G0 read it
+    # as "build X now", declared it out of scope, and refused the delivery.
+    # Every governance gate now prefixes one line saying what THIS gate
+    # produces for X; G4 keeps its dedicated build directive.
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        for gate, framing in GATE_TASK_FRAMING.items():
+            msg = orch._gate_message(gate)
+            assert msg.startswith(framing), gate
+            assert "build task management" in msg, gate
+        g4 = orch._gate_message("G4")
+        assert GATE_TASK_FRAMING["G0"] not in g4
+        assert "build task management" in g4
 
 
 def _orch(root, events, signed, *, max_rework=None, release_ready=True):

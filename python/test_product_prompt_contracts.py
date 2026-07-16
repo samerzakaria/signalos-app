@@ -58,3 +58,42 @@ def test_heading_suffixes_are_allowed(tmp_path: Path) -> None:
     result = validate_prompt_contract(path)
 
     assert result["valid"] is True
+
+
+def _card(name: str) -> str:
+    return (AGENTS_DIR / name).read_text(encoding="utf-8")
+
+
+def test_onboarding_card_treats_greenfield_as_first_class() -> None:
+    # Regression (funded canary): the G0 card required a stakeholder
+    # transcript that cannot exist in a greenfield run while also saying
+    # "Prerequisites: None", and kept greenfield in a parenthetical -- a
+    # literal model refused the whole delivery as "out of scope".
+    text = _card("onboarding.md")
+    assert "or a greenfield product brief" in text
+    assert "in scope, not a refusal reason" in text
+    # The transcript is a conditional input, never a precondition.
+    assert "At least one stakeholder transcript filed" not in text
+    assert "never a precondition" in text
+
+
+def test_observability_card_does_not_require_release_signal_log() -> None:
+    # Same unsatisfiable-prerequisite class at G5: the signal-log is opened
+    # by a Release agent that a pre-deploy governed delivery never runs.
+    text = _card("observability.md")
+    assert (
+        "- `Governance/signal-logs/wave-{N}-signal-log.md` opened by Release agent"
+        not in text
+    )
+    assert "Do not refuse for a missing signal-log" in text
+
+
+def test_seat_cards_accept_local_release_changesets() -> None:
+    # "Build PR exists" is unsatisfiable when the governed delivery releases
+    # to a local origin (no GitHub PR); the prerequisite names both forms.
+    for name in ("test.md", "review.md", "security.md"):
+        text = _card(name)
+        assert "governed local delivery" in text, name
+    assert "- Build PR exists" not in _card("security.md")
+    assert "- Build PR exists with Build agent's HAND entry logged" not in _card("test.md")
+    assert "- Build PR with Test agent's HAND entry logged" not in _card("review.md")

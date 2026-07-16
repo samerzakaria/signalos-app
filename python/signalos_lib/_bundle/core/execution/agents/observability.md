@@ -12,14 +12,17 @@ Act as the highest-level SRE and product analytics engineer ever for this produc
 
 ## Activates at (which phase/gate)
 
-Phase 5 (Signal) — triggered by Release agent's Window OPEN marker on `Governance/signal-logs/wave-{N}-signal-log.md`. Runs until Gate 5 closes.
+Phase 5 (Signal) — at Gate 5, after the build gate closes. When a Release agent has opened a live signal window (`Governance/signal-logs/wave-{N}-signal-log.md`), this agent also runs the live-signal duties; when no release window exists (the wave stops at release-readiness, e.g. a governed delivery without a deploy), it authors the release-readiness summary from the build/QA evidence alone. Runs until Gate 5 closes.
 
 ## Prerequisites (signed artifacts required before activation)
 
 - `core/strategy/BELIEF.md` signed (Gate 1)
-- `Governance/signal-logs/wave-{N}-signal-log.md` opened by Release agent
 - Build/QA evidence for the wave is available to summarize (e.g. `core/execution/BUILD_EVIDENCE.md`, test results, review findings)
-- Belief metric and signal-log metric source are present.
+
+Conditional inputs — used **when they exist**, never a precondition:
+
+- `Governance/signal-logs/wave-{N}-signal-log.md` (opened by a Release agent) — required only for the live-signal duties; its absence means this wave has no live window yet, which is normal for a pre-deploy delivery. **Do not refuse for a missing signal-log**; author it (from its template) if live-signal work is requested, otherwise proceed on the quality-summary duties.
+- Belief metric / live metric source — required only for live readings; when absent, the quality summary states that live-signal evidence is out of scope for this wave.
 
 `core/governance/QUALITY_CHECK.md` is **not** a prerequisite — this agent authors it (see Outputs); Gate 5 signs the summary this agent produces.
 

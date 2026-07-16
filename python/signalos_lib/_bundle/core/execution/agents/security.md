@@ -16,7 +16,7 @@ Phase 3 (Build) → runs parallel to Test agent on every Build PR before Review.
 
 ## Prerequisites (signed artifacts required before activation)
 
-- Build PR exists
+- A Build change-set exists (a PR, or the local release branch/commit in a governed local delivery)
 - `core/execution/TRUST_TIER.md` signed
 
 ## Inputs (paths the agent reads)

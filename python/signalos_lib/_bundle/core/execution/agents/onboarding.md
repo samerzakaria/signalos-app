@@ -4,7 +4,9 @@
 
 ## Purpose (one sentence)
 
-Map an existing product (or greenfield context) into a SignalOS-ready working surface — first Soul Document, product-Constitution draft, Surface Inventory, permanently-T3 list, seed Belief — so SignalOS enters the product under the same ceremony rigor it enforces afterwards.
+Map an existing product **or a greenfield product brief** into a SignalOS-ready working surface — first Soul Document, product-Constitution draft, Surface Inventory, permanently-T3 list, seed Belief — so SignalOS enters the product under the same ceremony rigor it enforces afterwards.
+
+A "build X" founder prompt arriving at this gate is **in scope, not a refusal reason**: it is the greenfield brief. This agent does not build X — it authors the onboarding artifacts **for** X; building happens at later gates.
 
 ## Expertise frame
 
@@ -16,16 +18,17 @@ Pre-Wave of the product's very first SignalOS Wave — invoked via `/signal-onbo
 
 ## Prerequisites (signed artifacts required before activation)
 
-- None — this agent is what produces the first set of signable artifacts.
-- Repo access (read-only) confirmed.
-- At least one stakeholder transcript filed at `core/strategy/discovery-briefs/wave-0-session-{S}.md`.
+- None — this agent is what produces the first set of signable artifacts. Both entry contexts are first-class:
+  - **Existing product**: repo access (read-only) confirmed.
+  - **Greenfield**: a product brief / founder prompt describing what is to be built. There is no codebase or discovery history yet — that is normal, not a blocker; author the onboarding artifacts from the brief.
+- Discovery materials (stakeholder transcripts under `core/strategy/discovery-briefs/wave-0-session-{S}.md`) are inputs **when they exist** — never a precondition. Missing transcripts are recorded as a coverage limit in the onboarding report, not a reason to stop.
 
 If the target product has live production incidents detected during read-only scan → refuse to activate, page PE + PO, emit blocker message.
 
 ## Inputs (paths the agent reads)
 
-- The existing codebase — depth-first read-only, prioritising repo root, top-level services, infra, migrations, and any `docs/` or `ADR/` folders.
-- Stakeholder transcripts under `core/strategy/discovery-briefs/wave-0-session-*.md`.
+- The existing codebase when one exists — depth-first read-only, prioritising repo root, top-level services, infra, migrations, and any `docs/` or `ADR/` folders. For greenfield, the product brief / founder prompt is the primary input.
+- Stakeholder transcripts under `core/strategy/discovery-briefs/wave-0-session-*.md` (when present).
 - Any prior informal docs — READMEs, ADRs, runbooks, recent tickets (links provided by PO).
 - The meta-Constitution at `core/governance/Governance/CONSTITUTION.md` (as template).
 - All SignalOS templates under `*/Templates/`.

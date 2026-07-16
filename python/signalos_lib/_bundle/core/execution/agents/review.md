@@ -16,7 +16,7 @@ Phase 3 (Build) → after Test agent, before human PE merge. Runs on every PR, e
 
 ## Prerequisites (signed artifacts required before activation)
 
-- Build PR with Test agent's HAND entry logged
+- A Build change-set (a PR, or the local release branch/commit in a governed local delivery) with the Test agent's HAND entry logged
 - `core/strategy/BELIEF.md` signed (Gate 1)
 - `core/strategy/EXPECTATION_MAP.md` signed (Gate 2)
 - `core/execution/TRUST_TIER.md` signed (Gate 4)
