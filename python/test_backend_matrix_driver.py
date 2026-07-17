@@ -1997,6 +1997,29 @@ def test_dependency_parser_is_fixed_and_timeout_is_bounded(driver: ModuleType) -
             parser.parse_args(["--dependency-timeout", invalid])
 
 
+def test_g4_build_gate_gets_a_larger_verdict_budget(driver: ModuleType) -> None:
+    # Regression (funded canary run 11, OA-17): run 11 signed G0-G3 then the G4
+    # verdict -- which runs the funded build (Docker dep materialization + npm ci
+    # + Vite build) AND a four-seat verification fleet -- hit the 30-min
+    # per-gate gate_timeout ~29 min into steadily-progressing work. G4 is ~10x a
+    # single-agent gate, so it gets its own (larger) budget while G0-G3 keep the
+    # fast-fail default.
+    parser = driver._build_parser()
+    args = parser.parse_args([])
+    assert args.g4_build_timeout == 5400.0
+    assert args.g4_build_timeout > args.gate_timeout
+    assert parser.parse_args(["--g4-build-timeout", "7200"]).g4_build_timeout == 7200.0
+
+    # The G4 verdict path must actually select the larger budget; every other
+    # gate keeps gate_timeout. Assert this at the source so the wiring can't
+    # silently regress to a single uniform timeout.
+    import inspect
+
+    src = inspect.getsource(driver._run_row)
+    assert 'g4_build_timeout if gate == "G4" else gate_timeout' in src
+    assert "verdict_timeout" in src
+
+
 def test_live_rejects_an_arbitrary_dependency_policy_before_work(
     driver: ModuleType,
     monkeypatch: pytest.MonkeyPatch,

@@ -4176,6 +4176,7 @@ def _run_row(
     cost_cap: float,
     init_timeout: float,
     gate_timeout: float,
+    g4_build_timeout: float,
     command_timeout: float,
     orchestrator_profile: str,
     engine: dict[str, Any],
@@ -4407,6 +4408,10 @@ def _run_row(
                     )
                 gate_evidence["authority_approval"] = approval_data
 
+            # G4's verdict runs the funded build + a four-seat verification fleet,
+            # so it gets the larger build budget; every other gate uses the
+            # per-gate default (fast-fail on a hang).
+            verdict_timeout = g4_build_timeout if gate == "G4" else gate_timeout
             verdict = invoke(
                 "agent:verdict",
                 {
@@ -4415,7 +4420,7 @@ def _run_row(
                     "verdict": "approve",
                     "feedback": "",
                 },
-                gate_timeout,
+                verdict_timeout,
             )
             verdict_data = _require_ok("agent:verdict", verdict)
             strict = _strict_gate(workspace, gate)
@@ -4659,6 +4664,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acknowledge-key-exposure", action="store_true")
     parser.add_argument("--init-timeout", type=float, default=240.0, metavar="SECONDS")
     parser.add_argument("--gate-timeout", type=float, default=1800.0, metavar="SECONDS")
+    # G4 is not a normal gate: its verdict runs the funded build (Docker
+    # dependency materialization + npm ci through the proxy + Vite build) AND a
+    # verification fleet of four seat sub-agents (build/test/review/security),
+    # each a full LLM turn. That is ~10x a single-agent gate, so it gets its own
+    # budget rather than the per-gate default (run 11 signed G0-G3 then hit the
+    # 30-min gate_timeout ~29 min into a steadily-progressing G4).
+    parser.add_argument("--g4-build-timeout", type=float, default=5400.0, metavar="SECONDS")
     parser.add_argument("--command-timeout", type=float, default=900.0, metavar="SECONDS")
     parser.add_argument(
         "--dependency-timeout",
@@ -4978,6 +4990,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         cost_cap=float(args.max_cost_per_model),
                         init_timeout=args.init_timeout,
                         gate_timeout=args.gate_timeout,
+                        g4_build_timeout=args.g4_build_timeout,
                         command_timeout=args.command_timeout,
                         orchestrator_profile=orchestrator_profile,
                         engine=engine,
