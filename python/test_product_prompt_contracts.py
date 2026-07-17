@@ -105,6 +105,11 @@ def test_belief_carries_requirement_traceability_home() -> None:
     onboarding = _card("onboarding.md")
     assert "Requirements committed" in onboarding
     assert "traceable from Gate 1" in onboarding
+    # Gate 0 is the requirements register (the deterministic anchor for the
+    # driver's cumulative requirement-trace check): onboarding must register
+    # every REQ-* id from the brief up front.
+    assert "Gate 0 requirements register" in onboarding
+    assert "register **every** one here" in onboarding
 
 
 def test_observability_card_does_not_require_release_signal_log() -> None:

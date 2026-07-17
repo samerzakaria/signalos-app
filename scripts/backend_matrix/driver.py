@@ -2602,19 +2602,34 @@ def _gate_requirement_trace(
     workspace: Path,
     gate: str,
     requirement_ids: Sequence[str],
+    *,
+    scan_gates: Sequence[str] | None = None,
 ) -> dict[str, Any]:
+    """Requirement-ID traceability for *gate*.
+
+    Traceability is **cumulative**: requirements registered in an earlier traced
+    gate's artifacts persist on disk and stay traceable at every later gate, so
+    the corpus spans *scan_gates* (every traced gate up to and including *gate*)
+    rather than the current gate's artifacts alone. This matches how real
+    requirement traceability works -- register once, carry forward -- instead of
+    demanding every narrative artifact at every gate re-list every identifier
+    (which no agent card directed, and which made the check pass or fail on
+    sampling luck: the same model registered all ids one run and dropped two the
+    next).
+    """
     _lazy_signalos_path()
     from signalos_lib.artifacts import resolve_gate_artifacts
 
-    paths = resolve_gate_artifacts(workspace, gate, project_id="default")
+    gates = list(scan_gates) if scan_gates else [gate]
     combined: list[str] = []
     present: list[str] = []
-    for artifact in paths:
-        if not artifact.path.is_file():
-            continue
-        present.append(artifact.rel_path)
-        with contextlib.suppress(OSError):
-            combined.append(artifact.path.read_text(encoding="utf-8", errors="replace"))
+    for scan_gate in gates:
+        for artifact in resolve_gate_artifacts(workspace, scan_gate, project_id="default"):
+            if not artifact.path.is_file():
+                continue
+            present.append(artifact.rel_path)
+            with contextlib.suppress(OSError):
+                combined.append(artifact.path.read_text(encoding="utf-8", errors="replace"))
     corpus = "\n".join(combined)
     missing = [req for req in requirement_ids if req not in corpus]
     return {"gate": gate, "artifacts": present, "missing_requirement_ids": missing, "ok": not missing}
@@ -4355,8 +4370,15 @@ def _run_row(
             if dependency_receipt is not None:
                 gate_evidence["funded_dependencies"] = dependency_receipt
             if gate in trace_gates:
+                # Cumulative corpus: a requirement registered at an earlier
+                # traced gate stays traceable here (artifacts persist on disk),
+                # so scan every traced gate up to and including this one.
+                cumulative = [g for g in GATES[: index + 1] if g in trace_gates]
                 trace = _gate_requirement_trace(
-                    workspace, gate, scenario["requirement_ids"]
+                    workspace,
+                    gate,
+                    scenario["requirement_ids"],
+                    scan_gates=cumulative,
                 )
                 gate_evidence["requirement_trace"] = trace
                 if not trace["ok"]:

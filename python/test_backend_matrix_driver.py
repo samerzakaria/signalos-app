@@ -3161,3 +3161,48 @@ def test_both_dependency_contexts_teardown_on_success_and_failure(
     assert not oracle2.scratch_root.exists()
     assert all(byte == 0 for byte in funded2_key)
     assert all(byte == 0 for byte in oracle2_key)
+
+
+def test_gate_requirement_trace_is_cumulative_across_traced_gates(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    """Regression (funded canary, OA-15): requirement traceability is
+    cumulative. The check must not demand every requirement id re-appear in each
+    gate's own narrow artifacts (belief/roles) -- no artifact is a requirements
+    register and no card directed re-listing, so the same model registered all
+    ids one run (G0 passed) and dropped two the next (G0 failed) purely on
+    sampling luck. Real traceability registers requirements once and carries
+    them forward; artifacts persist on disk, so the scanned corpus is cumulative
+    over every traced gate up to and including this one."""
+    from signalos_lib.artifacts import resolve_gate_artifacts
+
+    req_ids = ["REQ-A", "REQ-B", "REQ-C"]
+    ws = tmp_path / "ws"
+
+    def write(gate: str, text: str) -> None:
+        art = resolve_gate_artifacts(ws, gate, project_id="default")[0]
+        art.path.parent.mkdir(parents=True, exist_ok=True)
+        art.path.write_text(text, encoding="utf-8")
+
+    # G0 registers every requirement id; the G1 belief carries none of them.
+    write("G0", "Requirements register\n" + "\n".join(req_ids))
+    write("G1", "Belief: smallest falsifiable sentence. No ids here.")
+
+    # A strict single-gate scan of G1 alone would miss all three ids...
+    strict = driver._gate_requirement_trace(ws, "G1", req_ids)
+    assert strict["ok"] is False
+    assert set(strict["missing_requirement_ids"]) == set(req_ids)
+
+    # ...but the cumulative scan inherits the G0 register and passes.
+    cumulative = driver._gate_requirement_trace(
+        ws, "G1", req_ids, scan_gates=["G0", "G1"]
+    )
+    assert cumulative["ok"] is True
+    assert cumulative["missing_requirement_ids"] == []
+
+    # G0 remains the deterministic anchor: if its register drops an id, the
+    # cumulative scan still fails there (traceability is not silently waived).
+    write("G0", "Requirements register\nREQ-A\nREQ-B")
+    anchor = driver._gate_requirement_trace(ws, "G0", req_ids, scan_gates=["G0"])
+    assert anchor["ok"] is False
+    assert anchor["missing_requirement_ids"] == ["REQ-C"]
