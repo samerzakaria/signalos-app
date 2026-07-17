@@ -91,6 +91,13 @@
         "description": { "type": "string", "default": "" },
         "files": { "type": "array", "items": { "type": "string" }, "default": [] },
         "skills": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "test": {
+          "type": "string",
+          "description": "Repo-relative path to this task's RED acceptance-test skeleton (a behavioural/integration test authored test-first). Required for every buildable task; the Plan seat also creates the skeleton file at this exact path. `acceptance_test`/`acceptance_path` are accepted aliases.",
+          "default": ""
+        },
+        "acceptance_test": { "type": "string", "description": "Alias of `test`.", "default": "" },
+        "acceptance_path": { "type": "string", "description": "Alias of `test`.", "default": "" },
         "previous_failure": { "type": "string", "default": "" },
         "feature": {
           "type": "string",

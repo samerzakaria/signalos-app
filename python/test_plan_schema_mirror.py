@@ -50,3 +50,25 @@ class PlanSchemaMirrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlanSchemaGateContractTests(unittest.TestCase):
+    """The G2 gate derives each task's acceptance test from a `test` /
+    `acceptance_test` / `acceptance_path` key (subagent_build._canonical_task_test).
+    Regression (funded canary run 6): the schema had additionalProperties:false
+    and did NOT define those keys, so a schema-following model could not add the
+    field the gate requires -- G2 was unpassable. The schema must define the
+    fields the gate reads."""
+
+    def _task_props(self) -> dict:
+        schema = json.loads(_SCHEMA.read_text(encoding="utf-8"))
+        return schema["definitions"]["Task"]["properties"]
+
+    def test_schema_defines_the_acceptance_test_keys_the_gate_reads(self):
+        props = self._task_props()
+        for key in ("test", "acceptance_test", "acceptance_path"):
+            self.assertIn(
+                key, props,
+                f"PLAN_SCHEMA.json Task must define {key!r}: the G2 gate "
+                f"requires it but additionalProperties:false forbids undefined keys",
+            )

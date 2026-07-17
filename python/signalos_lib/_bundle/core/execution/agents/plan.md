@@ -39,6 +39,18 @@ If the Belief signature is missing → refuse. The Expectation Map is **not** a 
 
 ## Failing-test skeleton contract (acceptance by construction)
 
+**Wiring (mechanical — the gate checks this deterministically):** every buildable task in `PLAN.tasks.yaml` MUST carry a `test:` field whose value is the repo-relative path to that task's failing-test skeleton, and you MUST create the skeleton file at exactly that path. A task with no `test:` path, or a `test:` path with no file on disk, fails Gate 2. The path lives under `core/execution/tests/skeletons/wave-{N}/`. Example task:
+
+```yaml
+  - id: 01J...FB
+    title: "Add an expense and see it in the list"
+    status: pending
+    tier: T2
+    owner: "Build Agent"
+    files: ["src/features/expenses/AddExpense.tsx"]
+    test: "core/execution/tests/skeletons/wave-01/add-expense.test.tsx"
+```
+
 Each buildable task's failing-test skeleton IS the task's signed acceptance spec, and the Build seat drives the product until it passes. It MUST be a behavioural / integration test — never an isolated unit test or a file/symbol-existence assertion:
 
 - **Exercise the real app entry.** For a UI task, `render(<App/>)` (the actual application root — not the component in isolation) and assert a user-observable outcome, e.g. "the user adds an expense and sees it in the list." A module written but never mounted into the running app then fails this test through the normal build loop, so **wiring is enforced by the test itself**, not by a separate reviewer or a static gate. For an API task, call the real route/handler and assert the response.

@@ -97,7 +97,11 @@ GATE_TASK_FRAMING = {
         "You are at Gate G2 (Plan) of a governed delivery. The founder prompt "
         "below is the product brief -- do not implement it now. Produce this "
         "gate's plan artifacts (expectation map, task plan, acceptance "
-        "criteria, test skeletons) for that product." + _WRITE_DIRECTIVE
+        "criteria, test skeletons) for that product. Every buildable task in "
+        "PLAN.tasks.yaml MUST carry a `test:` field naming its RED "
+        "acceptance-test skeleton, and you MUST create that skeleton file at "
+        "that path -- a task with no test, or a test path with no file on "
+        "disk, fails this gate." + _WRITE_DIRECTIVE
     ),
     "G3": (
         "You are at Gate G3 (Design) of a governed delivery. The founder "
