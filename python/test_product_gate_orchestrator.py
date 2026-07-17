@@ -232,6 +232,42 @@ def test_gate_completion_reprompt_never_retries_terminal_outcomes():
         assert orch.state.status == "blocked"
 
 
+def test_gate_freshness_baseline_is_stable_across_corrective_retries():
+    # Regression (funded canary run 10, OA-16): the corrective-retry loop (OA-13)
+    # reset the freshness baseline (_gate_run_started_at) on EVERY attempt. So an
+    # artifact correctly written in attempt 1 (G2's Expectation Map, at 15:16)
+    # was flagged "no required artifact was written this run (stale outputs)"
+    # once attempt 2 added the piece the reprompt asked for (the plan, at 15:28)
+    # -- blocking a gate the agent actually completed across attempts. The
+    # baseline must span the WHOLE gate dispatch: set once before the loop, never
+    # reset per attempt.
+    import time as _time
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        baselines = []
+        calls = {"n": 0}
+
+        def fake_exec(gate, system_prompt, signed_ints):
+            calls["n"] += 1
+            baselines.append(orch._gate_run_started_at)
+            _time.sleep(0.05)  # clock would advance if the baseline reset
+            return _completed_result()
+
+        orch._gate_executor = lambda gate: fake_exec
+        # Attempt 1 incomplete (forces one corrective retry); attempt 2 reviewable.
+        orch._gate_review_ready = lambda gate, result: {
+            "ok": calls["n"] >= 2, "reason": "PLAN.md missing"}
+        orch._run_gate("G2")
+
+        assert calls["n"] == 2  # exactly one corrective retry occurred
+        assert len(baselines) == 2
+        # Captured once before the loop -> both attempts see the identical value.
+        # Before the fix these differed and attempt 1's artifact read as stale.
+        assert baselines[0] == baselines[1]
+        assert orch.state.status == "awaiting-verdict"
+
+
 def test_gate_message_frames_the_founder_prompt_per_gate():
     # Regression (funded canary): the raw "build X" founder prompt reached a
     # narrowly-scoped governance seat verbatim; a literal model at G0 read it

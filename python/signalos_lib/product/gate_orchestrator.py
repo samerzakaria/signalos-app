@@ -716,10 +716,16 @@ class GateOrchestrator:
         # refusal / error / cancel / stall -- those are terminal.
         correction: Optional[str] = None
         attempt = 0
+        # Mark run start BEFORE the agent runs so we can tell an artifact written
+        # THIS run from a stale pre-existing one. This baseline spans the WHOLE
+        # gate dispatch, including every bounded corrective-retry attempt below:
+        # it must NOT reset per attempt. A correct artifact written in attempt 1
+        # (e.g. G2's Expectation Map) is still THIS gate's work when attempt 2
+        # adds the missing piece the reprompt asked for (e.g. the plan) -- reset
+        # here and the freshness check would wrongly flag attempt 1's artifact as
+        # "stale" and block a gate the agent actually completed across attempts.
+        self._gate_run_started_at = time.time()
         while True:
-            # Fix 1: mark run start BEFORE the agent runs so we can tell an
-            # artifact written THIS run from a stale pre-existing one.
-            self._gate_run_started_at = time.time()
             self._gate_correction = correction
             self._gate_in_flight = True
             try:
