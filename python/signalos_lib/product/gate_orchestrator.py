@@ -67,37 +67,49 @@ GATE_QUESTIONS = {
 # The founder prompt is usually an imperative "build X" -- without framing,
 # a literal-minded model at a governance gate reads "build X now" against a
 # card that forbids building and either refuses or goes off-script (observed
-# live: a G0 seat declared the build request out of scope). One line tells
-# the agent what THIS gate produces for X. G4 gets its richer build
-# directive from _g4_build_directive instead.
+# live: a G0 seat declared the build request out of scope). Each framing tells
+# the agent what THIS gate produces for X and -- matching the directive style
+# spec-driven tools use (e.g. Spec Kit's implement prompt) -- to WRITE the
+# gate's declared output file(s), not merely describe them (observed live: a
+# G1 seat read templates and narrated a summary without writing its
+# brainstorm artifact). G4 gets its richer build directive from
+# _g4_build_directive instead.
+_WRITE_DIRECTIVE = (
+    " Do the work now by WRITING your gate's declared output file(s) with your "
+    "file tools (per the agent card's Outputs) -- emit the artifacts as files, "
+    "do not just describe or summarize them in prose."
+)
 GATE_TASK_FRAMING = {
     "G0": (
         "You are at Gate G0 (Onboarding) of a governed delivery. The founder "
         "prompt below is the product brief -- do not implement it now. Author "
         "this gate's onboarding/governance artifacts FOR that product; "
-        "implementation happens at later gates."
+        "implementation happens at later gates." + _WRITE_DIRECTIVE
     ),
     "G1": (
         "You are at Gate G1 (Brainstorm) of a governed delivery. The founder "
-        "prompt below is the product brief -- do not implement it now. Ground "
-        "and sharpen the Belief/hypotheses for that product per your gate "
-        "outputs."
+        "prompt below is the product brief -- do not implement it now, and do "
+        "not merely re-read or re-verify the Belief drafted earlier. Produce "
+        "this gate's brainstorm artifact for that product: hypotheses, risks, "
+        "edge cases, and a killer experiment." + _WRITE_DIRECTIVE
     ),
     "G2": (
         "You are at Gate G2 (Plan) of a governed delivery. The founder prompt "
         "below is the product brief -- do not implement it now. Produce this "
         "gate's plan artifacts (expectation map, task plan, acceptance "
-        "criteria, test skeletons) for that product."
+        "criteria, test skeletons) for that product." + _WRITE_DIRECTIVE
     ),
     "G3": (
         "You are at Gate G3 (Design) of a governed delivery. The founder "
         "prompt below is the product brief -- do not implement it now. "
         "Produce this gate's design artifacts for that product."
+        + _WRITE_DIRECTIVE
     ),
     "G5": (
         "You are at Gate G5 (Release readiness) of a governed delivery. The "
         "build is complete; summarize its evidence into this gate's "
         "release-readiness artifacts. Do not rebuild the product."
+        + _WRITE_DIRECTIVE
     ),
 }
 
