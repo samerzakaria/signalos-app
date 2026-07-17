@@ -1582,6 +1582,67 @@ def test_sidecar_destroys_parent_environment_and_immutable_secrets(
     context.close()
 
 
+def test_sidecar_exit_is_reported_with_code_not_masked_as_timeout(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Regression (funded canary run 12, OA-19): the sidecar EXITED silently ~31
+    # min into the heavy G4 build fleet (stdout hit EOF -> terminal None), but
+    # the driver reported an opaque "timed out or ended without a response".
+    # Capturing the process exit code distinguishes a crash / OOM-kill
+    # (poll() != None) from a genuine hang (poll() is None) so the next
+    # occurrence is diagnosable instead of ambiguous.
+    monkeypatch.setattr(driver, "_windows_job_enabled", lambda: False)
+    context = _direct_funded_context(driver, tmp_path)
+    child_env = context.sidecar_environment(tmp_path / "runtime-home")
+
+    class FakeThread:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+    class FakeProcess:
+        pid = 123
+        returncode = 137
+        stdin = SimpleNamespace(write=lambda s: None, flush=lambda: None, close=lambda: None)
+        stdout: tuple[str, ...] = ()
+        stderr: tuple[str, ...] = ()
+
+        def __init__(self) -> None:
+            self._polls = 0
+
+        def poll(self) -> int | None:
+            # Alive when the command is sent (_send checks poll()), then EXITED
+            # by the time the terminal-None branch inspects it -- exactly the
+            # real "died mid-command" ordering.
+            self._polls += 1
+            return None if self._polls <= 1 else 137
+
+    monkeypatch.setattr(driver.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(driver.threading, "Thread", FakeThread)
+    monkeypatch.setattr(
+        driver.SidecarClient,
+        "_wait_for",
+        lambda self, req_id, timeout, guard=None: (
+            ([], {"ok": True, "data": {"ready": True}})
+            if req_id == "init"
+            else ([], None)  # command never gets a terminal: the process died
+        ),
+    )
+    monkeypatch.setattr(driver.SidecarClient, "cancel_and_stop", lambda self, run_id=None: None)
+
+    client = driver.SidecarClient(tmp_path, child_env, context.redaction_secrets())
+    client._stderr.append("Killed")  # the only forensic trace an OOM kill leaves
+
+    with pytest.raises(driver.InfrastructureError, match=r"EXITED \(code 137\)"):
+        client.call("agent:verdict", {"run_id": "r"}, timeout=1.0)
+
+    context.close()
+
+
 def test_sidecar_constructor_failure_still_destroys_environment_and_secrets(
     driver: ModuleType,
     monkeypatch: pytest.MonkeyPatch,

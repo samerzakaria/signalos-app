@@ -164,5 +164,56 @@ class CommandContainmentTest(unittest.TestCase):
         )
 
 
+class FundedContainerWorkspaceTest(unittest.TestCase):
+    """Regression (funded canary run 12, OA-18): the funded build runs commands
+    INSIDE a Docker container whose workspace is bind-mounted at /workspace, so
+    `pwd` returns /workspace and a model forms /workspace/<rel> paths. The
+    host-side escape guard, checking against the real host root, denied every
+    one of them as "outside the workspace" -- implementer seats burned their
+    whole tool budget on `cd /workspace` denials and never built the app. In the
+    funded profile /workspace<rel> now maps to the host root's <rel>; escapes
+    still fail closed, and non-funded (host) runs are unchanged."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self._prev = os.environ.get("SIGNALOS_SANDBOX_PROFILE")
+        os.environ["SIGNALOS_SANDBOX_PROFILE"] = "funded"
+
+    def tearDown(self) -> None:
+        if self._prev is None:
+            os.environ.pop("SIGNALOS_SANDBOX_PROFILE", None)
+        else:
+            os.environ["SIGNALOS_SANDBOX_PROFILE"] = self._prev
+        self._tmp.cleanup()
+
+    def _check(self, command: str) -> str | None:
+        return _command_escapes_workspace(command, self.repo)
+
+    def test_container_workspace_paths_are_in_workspace(self) -> None:
+        # The exact commands the trapped seats tried are now allowed.
+        self.assertIsNone(self._check("cd /workspace && npx vitest run"))
+        self.assertIsNone(self._check("cat /workspace/src/App.tsx"))
+        self.assertIsNone(self._check("ls -la /workspace/src"))
+        self.assertIsNone(self._check("npx vitest run /workspace/src/App.test.tsx"))
+
+    def test_container_workspace_dotdot_escape_still_denied(self) -> None:
+        # A `..` that normalizes back OUT of /workspace must not be laundered
+        # into the workspace -- it still hits the strict host-path escape check.
+        self.assertEqual(
+            self._check("cat /workspace/../etc/passwd"), "/workspace/../etc/passwd"
+        )
+
+    def test_lookalike_prefix_is_not_treated_as_workspace(self) -> None:
+        # `/workspaceX` is not under /workspace -- must not be mapped in.
+        self.assertEqual(self._check("cat /workspace-gold/x"), "/workspace-gold/x")
+
+    def test_non_funded_host_run_is_unchanged(self) -> None:
+        # Without the funded profile, host runs keep the strict host-only check:
+        # /workspace is a genuine escape (it is not the host repo root).
+        os.environ.pop("SIGNALOS_SANDBOX_PROFILE", None)
+        self.assertEqual(self._check("cat /workspace/src/App.tsx"), "/workspace/src/App.tsx")
+
+
 if __name__ == "__main__":
     unittest.main()

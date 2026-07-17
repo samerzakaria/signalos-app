@@ -2215,7 +2215,10 @@ class SidecarClient:
         try:
             self.secrets = tuple(secrets)
             self._stdout: queue.Queue[str | None] = queue.Queue()
-            self._stderr: deque[str] = deque(maxlen=250)
+            # Deep enough to retain a full Python crash traceback (or a burst of
+            # provider/build warnings) if the sidecar dies during a heavy G4
+            # fleet -- the tail is the only forensic record of a silent exit.
+            self._stderr: deque[str] = deque(maxlen=2000)
             self._counter = 0
             creationflags = 0
             kwargs: dict[str, Any] = {}
@@ -2407,8 +2410,24 @@ class SidecarClient:
             self.cancel_and_stop(args.get("run_id") if isinstance(args, dict) else None)
             raise
         if terminal is None:
+            # Distinguish a genuine timeout (process still alive, hung) from a
+            # silent process EXIT (stdout hit EOF because the sidecar died --
+            # e.g. OOM-killed under a heavy build fleet, which leaves no Python
+            # traceback). Capturing the exit code + stderr here is what makes
+            # that failure diagnosable instead of an opaque "no response".
+            exit_code = self.proc.poll()
+            stderr_snapshot = self.stderr_tail()
             self.cancel_and_stop(args.get("run_id") if isinstance(args, dict) else None)
-            raise InfrastructureError(f"sidecar command {command} timed out or ended without a response")
+            tail = " | ".join(stderr_snapshot[-12:]) if stderr_snapshot else "<empty>"
+            if exit_code is not None:
+                raise InfrastructureError(
+                    f"sidecar process EXITED (code {exit_code}) during {command} "
+                    f"before returning a terminal response; stderr tail: {tail}"
+                )
+            raise InfrastructureError(
+                f"sidecar command {command} timed out (process still alive) with no "
+                f"terminal response; stderr tail: {tail}"
+            )
         return events, terminal
 
     def cancel_and_stop(self, run_id: str | None) -> None:

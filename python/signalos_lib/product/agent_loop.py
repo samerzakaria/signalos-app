@@ -42,6 +42,7 @@ import importlib.util
 import json
 import logging
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -427,6 +428,39 @@ def _degitbash(token: str) -> str:
     return f"{m.group(1)}:/" + token[m.end():]
 
 
+# The funded build runs commands INSIDE a Docker container whose only host bind
+# mount is the workspace, mounted at this fixed path (matches sandbox.py's
+# CONTAINER_WORKSPACE). `pwd` returns it, so a model naturally forms
+# `/workspace/<rel>` paths -- which the host-side escape guard, checking against
+# the real host root, would otherwise deny as "outside the workspace".
+_CONTAINER_WORKSPACE = "/workspace"
+
+
+def _map_container_workspace(token: str, root: Path) -> str:
+    """Map a funded-container workspace path back to the host workspace *root*
+    it IS. In the funded Docker sandbox run_command executes with
+    cwd=/workspace (the container bind mount of *root*), so `pwd` returns
+    /workspace and models reference /workspace/<rel>; this rewrites that prefix
+    to *root* so the ONE containment funnel treats /workspace/src/App.tsx
+    identically to the host root's src/App.tsx.
+
+    Gated on the funded profile -- host runs are unchanged. Only /workspace
+    itself and paths genuinely BELOW it map: a `..` that normalizes back out of
+    /workspace does NOT match, so it still hits the strict host-path escape
+    check (fail closed). Container isolation -- only /workspace is bind-mounted,
+    the host gold suite is absent inside the container -- is the real boundary,
+    so this removes a false-positive denial without widening host reach."""
+    if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() != "funded":
+        return token
+    norm = posixpath.normpath(token.replace("\\", "/"))
+    if norm == _CONTAINER_WORKSPACE:
+        return str(root)
+    prefix = _CONTAINER_WORKSPACE + "/"
+    if norm.startswith(prefix):
+        return str(Path(root) / norm[len(prefix):])
+    return token
+
+
 def _canonical_abs(root: Path, candidate: str) -> Path | None:
     """Resolve *candidate* to ONE canonical absolute real-path (FIX 1).
 
@@ -447,6 +481,10 @@ def _canonical_abs(root: Path, candidate: str) -> Path | None:
     tok = candidate.strip().strip('"').strip("'")
     if not tok:
         return None
+    # In the funded Docker sandbox, a /workspace/<rel> path IS the host root's
+    # <rel> (same bind mount); map it before any host-path reasoning so the
+    # container's `pwd` view and the host view agree.
+    tok = _map_container_workspace(tok, root)
     if tok.startswith("~"):
         tok = os.path.expanduser(tok)
     else:
