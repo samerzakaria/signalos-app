@@ -1372,3 +1372,11 @@ def test_proxy_source_has_one_fixed_connect_authority_and_no_runtime_configurati
     assert 'closeWith(client, 403, "Forbidden")' in source
     assert "process.env" not in source
     assert "process.argv" not in source
+    # 502 disambiguation: the proxy names ITSELF on an upstream connect
+    # failure so it is never confused with registry.npmjs.org returning
+    # 502 for a GET (which rides the established TLS tunnel), and it
+    # audits the failure into the run evidence.
+    assert 'closeWith(client, 502, "SignalOS Proxy Upstream Connect Failed")' in source
+    assert 'audit("upstream_error"' in source
+    assert '"Bad Gateway"' not in source
+

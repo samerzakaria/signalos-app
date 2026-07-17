@@ -75,10 +75,30 @@ server.on("connect", (request, client, head) => {
     if (activeTunnels > 0) activeTunnels -= 1;
     sockets.delete(upstream);
   };
+  // Bound the upstream TCP connect itself (not just the post-connect idle):
+  // a registry edge that accepts then stalls the handshake must fail fast and
+  // deterministically so npm's own fetch-retries can re-attempt, rather than
+  // hanging until the idle timeout.
+  const CONNECT_TIMEOUT_MS = 15_000;
+  const connectTimer = setTimeout(() => {
+    if (!established) {
+      audit("upstream_connect_timeout", {authority: AUTHORITY});
+      upstream.destroy();
+    }
+  }, CONNECT_TIMEOUT_MS);
+  connectTimer.unref();
   upstream.setTimeout(IDLE_TIMEOUT_MS, () => upstream.destroy());
   upstream.once("close", finish);
-  upstream.once("error", () => {
-    if (!established) closeWith(client, 502, "Bad Gateway");
+  upstream.once("error", (error) => {
+    // A pre-tunnel failure is the ONLY 502 THIS proxy can emit; use a reason
+    // that names the proxy so it can never be confused with registry.npmjs.org
+    // returning 502 for a GET (which rides the established TLS tunnel and the
+    // proxy never sees). Audited so the failure is captured in run evidence.
+    audit("upstream_error", {
+      established,
+      code: String((error && error.code) || "UNKNOWN"),
+    });
+    if (!established) closeWith(client, 502, "SignalOS Proxy Upstream Connect Failed");
     client.destroy();
   });
   client.once("error", () => upstream.destroy());
@@ -86,6 +106,7 @@ server.on("connect", (request, client, head) => {
 
   upstream.once("connect", () => {
     established = true;
+    clearTimeout(connectTimer);
     client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     if (head.length) upstream.write(head);
     client.pipe(upstream);

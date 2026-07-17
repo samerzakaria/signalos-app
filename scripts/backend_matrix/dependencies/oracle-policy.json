@@ -19,7 +19,7 @@
     "image": "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48",
     "nodePath": "/usr/bin/node",
     "script": "proxy/connect-proxy.cjs",
-    "scriptSha256": "a1492b238bd4d3f329a9e2965802fe981d26432aa060050c62f17c0e93bca622",
+    "scriptSha256": "4d6299872cd7048b3827f33aefe47378370d04d8afb41ecd10b791bbc128e2a6",
     "listenPort": 3128,
     "allowedConnectAuthorities": [
       "registry.npmjs.org:443"
