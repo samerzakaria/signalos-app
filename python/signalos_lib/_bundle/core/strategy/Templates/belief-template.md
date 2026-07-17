@@ -67,6 +67,10 @@ Bet Score = (Risk × Impact) / Test Cost
 
 **Heuristic:** one Belief ≤ 5 days of build time for one SignalOS squad.
 
+**Requirements committed (traceability):** When the founder brief enumerates requirement identifiers (e.g. `REQ-*`), list **every** identifier this Wave commits to deliver — one per line, ID + a short restatement — so requirement coverage stays traceable from Gate 1 onward. Do not drop, rename, or merge identifiers: the falsifiable Belief sentence above stays small; this block carries the full committed scope.
+
+> - {REQ-ID} — {one-line restatement of what the build must satisfy}
+
 ---
 
 ## Signal threshold

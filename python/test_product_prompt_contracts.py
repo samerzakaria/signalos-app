@@ -21,6 +21,15 @@ AGENTS_DIR = (
     / "agents"
 )
 
+STRATEGY_TEMPLATES_DIR = (
+    Path(__file__).resolve().parent
+    / "signalos_lib"
+    / "_bundle"
+    / "core"
+    / "strategy"
+    / "Templates"
+)
+
 
 def test_bundled_agent_prompts_have_required_contract_sections() -> None:
     result = validate_agent_prompt_directory(AGENTS_DIR)
@@ -75,6 +84,27 @@ def test_onboarding_card_treats_greenfield_as_first_class() -> None:
     # The transcript is a conditional input, never a precondition.
     assert "At least one stakeholder transcript filed" not in text
     assert "never a precondition" in text
+
+
+def test_belief_carries_requirement_traceability_home() -> None:
+    # Regression (funded canary, OA-14): the driver's requirement-trace check
+    # scans G1's artifacts (BELIEF.md + ROLE_ACTIVATION_CARD.md) for every
+    # REQ-* id the brief enumerates, but neither the belief template nor the
+    # onboarding card ever told the model to enumerate them -- and the card's
+    # "deliberately small" instruction actively discouraged it. G1 has no
+    # natural requirement home the way G0/G2/G3 do (SURFACE_INVENTORY /
+    # EXPECTATION_MAP / ACCEPTANCE_CRITERIA), so a literal model wove in only
+    # the cross-cutting REQs and dropped the feature-CRUD ids. Give the belief
+    # a template-sanctioned traceability block and direct onboarding to fill it.
+    belief_template = (STRATEGY_TEMPLATES_DIR / "belief-template.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Requirements committed (traceability)" in belief_template
+    assert "`REQ-*`" in belief_template
+
+    onboarding = _card("onboarding.md")
+    assert "Requirements committed" in onboarding
+    assert "traceable from Gate 1" in onboarding
 
 
 def test_observability_card_does_not_require_release_signal_log() -> None:
