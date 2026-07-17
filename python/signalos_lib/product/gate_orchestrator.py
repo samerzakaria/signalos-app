@@ -573,6 +573,10 @@ class GateOrchestrator:
         # Fix 1: wall-clock at which the current gate run started, used to tell
         # a freshly-written (current-run) required artifact from a stale one.
         self._gate_run_started_at: float = 0.0
+        # Bounded gate-completion corrective reprompt: the exact missing-artifact
+        # gaps fed back to the agent when it completed but left the gate
+        # incomplete (appended to the gate task message on the retry turn).
+        self._gate_correction: Optional[str] = None
         # Fix 4 (production profile): the last runtime proof outcome, consulted
         # by the G5 release verifier so a production delivery is not reported
         # ready-to-ship without passing runtime proof.
@@ -632,6 +636,11 @@ class GateOrchestrator:
             framing = GATE_TASK_FRAMING.get(gate)
             if framing:
                 base = framing + "\n\n" + base
+        correction = getattr(self, "_gate_correction", None)
+        if correction:
+            # Corrective retry turn: lead with the exact gaps so the agent
+            # completes the gate instead of re-deriving it from scratch.
+            base = correction + "\n\n" + base
         if gate != self.state.current_gate:
             return base
         cyc = self.state.rework.get(gate, 0)
@@ -677,6 +686,11 @@ class GateOrchestrator:
         except OSError:
             pass
 
+    # Bounded corrective reprompts per gate before a completed-but-incomplete
+    # gate is blocked (industry norm is 2-6; we use 2). Terminal outcomes
+    # (refusal/error/cancel/stall) and G4 are never retried.
+    MAX_GATE_COMPLETION_RETRIES = 2
+
     def _run_gate(self, gate: str) -> Any:
         self.state.current_gate = gate
         try:
@@ -693,34 +707,68 @@ class GateOrchestrator:
             if str(g).lstrip("G").isdigit()
         ]
         executor = self._gate_executor(gate)
-        # Fix 1: mark run start BEFORE the agent runs so we can tell an artifact
-        # written THIS run from a stale pre-existing one.
-        self._gate_run_started_at = time.time()
-        self._gate_in_flight = True
-        try:
-            result = executor(gate, system_prompt, signed_ints)
-        finally:
-            self._gate_in_flight = False
-        self._last_result = result
-        if str(getattr(result, "status", "") or "") == "cancelled":
-            reason = str(getattr(result, "error", "") or "delivery cancelled")
-            self.state.status = "cancelled"
-            self.state.last_outcome = {
-                "gate": gate,
-                "ok": False,
-                "reason": reason,
-                "loop_status": "cancelled",
-            }
-            self._persist()
-            self.emit({"type": "cancelled", "run_id": self.state.run_id,
-                       "gate": gate, "reason": reason})
-            self._release_delivery_lock()
-            return result
-        if gate == "G4" and isinstance(self._g4_verify, dict):
-            # A restart while G4 is awaiting review must retain the independent
-            # build verification instead of making the gate unverifiable or,
-            # worse, reconstructing evidence from a different run.
-            self.state.release_evidence["g4_verify"] = dict(self._g4_verify)
+        # Bounded corrective reprompt (the pattern every mature agent harness
+        # uses -- Aider reflection, SWE-agent requery, MetaGPT review/revise,
+        # CrewAI, Cline): when the agent CLEANLY completes its turn but leaves
+        # this gate's artifacts incomplete, feed the EXACT gaps back and let it
+        # finish, rather than blocking a 90%-done gate. Excludes G4 (its own
+        # build wall verifies, and a rebuild is expensive) and never retries a
+        # refusal / error / cancel / stall -- those are terminal.
+        correction: Optional[str] = None
+        attempt = 0
+        while True:
+            # Fix 1: mark run start BEFORE the agent runs so we can tell an
+            # artifact written THIS run from a stale pre-existing one.
+            self._gate_run_started_at = time.time()
+            self._gate_correction = correction
+            self._gate_in_flight = True
+            try:
+                result = executor(gate, system_prompt, signed_ints)
+            finally:
+                self._gate_in_flight = False
+                self._gate_correction = None
+            self._last_result = result
+            if str(getattr(result, "status", "") or "") == "cancelled":
+                reason = str(getattr(result, "error", "") or "delivery cancelled")
+                self.state.status = "cancelled"
+                self.state.last_outcome = {
+                    "gate": gate,
+                    "ok": False,
+                    "reason": reason,
+                    "loop_status": "cancelled",
+                }
+                self._persist()
+                self.emit({"type": "cancelled", "run_id": self.state.run_id,
+                           "gate": gate, "reason": reason})
+                self._release_delivery_lock()
+                return result
+            if gate == "G4" and isinstance(self._g4_verify, dict):
+                # A restart while G4 is awaiting review must retain the
+                # independent build verification instead of making the gate
+                # unverifiable or reconstructing evidence from a different run.
+                self.state.release_evidence["g4_verify"] = dict(self._g4_verify)
+            # Fix 1: CONSUME the agent's structured outcome. The gate only opens
+            # for a verdict when the agent actually COMPLETED the work AND
+            # produced this gate's required artifacts this run (and, for G2, an
+            # executable/testable plan). A refusal/error/stall/no-file outcome
+            # parks the gate as "blocked" -- it is NOT presented for approval.
+            outcome = self._gate_review_ready(gate, result)
+            completed = str(getattr(result, "status", "") or "") == "completed"
+            if (outcome.get("ok")
+                    or gate == "G4"
+                    or not completed
+                    or attempt >= self.MAX_GATE_COMPLETION_RETRIES):
+                break
+            attempt += 1
+            gaps = outcome.get("reason", "")
+            correction = (
+                f"Your {gate} output is INCOMPLETE and cannot be reviewed yet. "
+                f"Fix EXACTLY these gaps by WRITING the missing files now with "
+                f"your file tools -- keep going until every listed artifact "
+                f"exists on disk; do not stop, summarize, or narrate:\n{gaps}"
+            )
+            self.emit({"type": "gate_completion_retry", "gate": gate,
+                       "attempt": attempt, "reason": gaps})
         if gate == "G3":
             self._emit_preview(gate)
         self.emit({
@@ -732,14 +780,6 @@ class GateOrchestrator:
         })
         self._emit_brief(gate)
         self._emit_completeness(gate)
-        # Fix 1: CONSUME the agent's structured outcome. The gate only opens for
-        # a verdict ("awaiting-verdict") when the agent actually COMPLETED the
-        # work AND produced this gate's required artifacts this run (and, for
-        # G2, an executable/testable plan). A refusal/error/stall/budget-
-        # exhaustion/no-file outcome parks the gate as "blocked" instead -- it
-        # is NOT presented for approval. Previously the LoopResult was discarded
-        # and every gate opened for review unconditionally.
-        outcome = self._gate_review_ready(gate, result)
         self.state.last_outcome = {
             "gate": gate,
             "ok": bool(outcome.get("ok")),

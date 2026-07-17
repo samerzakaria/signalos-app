@@ -158,6 +158,80 @@ def test_g1_reviewable_when_brainstorm_authored_but_belief_carried_from_g0():
         assert orch._gate_agent_produced_fresh_work("G2") is False
 
 
+def _completed_result(**kw):
+    from types import SimpleNamespace
+    base = dict(status="completed", failure_type="", error="", wrote_no_files=False)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_gate_completion_reprompt_retries_incomplete_then_blocks_bounded():
+    # Regression (funded canary run 7): the model completed its G2 turn 90%
+    # done (used test: fields) but left artifacts missing; the gate blocked
+    # instead of feeding the exact gaps back. Now a completed-but-incomplete
+    # gate gets bounded corrective reprompts before blocking.
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        seen = []
+
+        def fake_exec(gate, system_prompt, signed_ints):
+            seen.append(getattr(orch, "_gate_correction", None))
+            return _completed_result()
+
+        orch._gate_executor = lambda gate: fake_exec
+        orch._gate_review_ready = lambda gate, result: {
+            "ok": False, "reason": "ACCEPTANCE_CRITERIA.md missing"}
+        orch._run_gate("G2")
+
+        assert len(seen) == orch.MAX_GATE_COMPLETION_RETRIES + 1
+        assert seen[0] is None
+        assert all("ACCEPTANCE_CRITERIA.md missing" in (c or "") for c in seen[1:])
+        retries = [e for e in events if e.get("type") == "gate_completion_retry"]
+        assert len(retries) == orch.MAX_GATE_COMPLETION_RETRIES
+        assert orch.state.status == "blocked"
+
+
+def test_gate_completion_reprompt_stops_once_the_gate_completes():
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        calls = {"n": 0}
+
+        def fake_exec(gate, system_prompt, signed_ints):
+            calls["n"] += 1
+            return _completed_result()
+
+        orch._gate_executor = lambda gate: fake_exec
+        orch._gate_review_ready = lambda gate, result: {
+            "ok": calls["n"] >= 2, "reason": "PLAN.md missing"}
+        orch._run_gate("G2")
+
+        assert calls["n"] == 2  # one corrective retry, then reviewable
+        assert orch.state.status == "awaiting-verdict"
+
+
+def test_gate_completion_reprompt_never_retries_terminal_outcomes():
+    # A refusal/error/stall (status != completed) is terminal -- no reprompt.
+    with tempfile.TemporaryDirectory() as d:
+        events, signed = [], []
+        orch = _orch(d, events, signed)
+        calls = {"n": 0}
+
+        def fake_exec(gate, system_prompt, signed_ints):
+            calls["n"] += 1
+            return _completed_result(status="error", failure_type="infrastructure",
+                                     error="boom")
+
+        orch._gate_executor = lambda gate: fake_exec
+        orch._gate_review_ready = lambda gate, result: {
+            "ok": False, "reason": "agent did not complete the gate"}
+        orch._run_gate("G2")
+
+        assert calls["n"] == 1
+        assert orch.state.status == "blocked"
+
+
 def test_gate_message_frames_the_founder_prompt_per_gate():
     # Regression (funded canary): the raw "build X" founder prompt reached a
     # narrowly-scoped governance seat verbatim; a literal model at G0 read it
