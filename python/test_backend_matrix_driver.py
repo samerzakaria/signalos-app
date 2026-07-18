@@ -1559,7 +1559,7 @@ def test_sidecar_destroys_parent_environment_and_immutable_secrets(
     monkeypatch.setattr(
         driver.SidecarClient,
         "_wait_for",
-        lambda self, req_id, timeout, guard: (
+        lambda self, req_id, timeout, guard, heartbeat=False: (
             [],
             {"ok": True, "data": {"ready": True}},
         ),
@@ -1626,7 +1626,7 @@ def test_sidecar_exit_is_reported_with_code_not_masked_as_timeout(
     monkeypatch.setattr(
         driver.SidecarClient,
         "_wait_for",
-        lambda self, req_id, timeout, guard=None: (
+        lambda self, req_id, timeout, guard=None, heartbeat=False: (
             ([], {"ok": True, "data": {"ready": True}})
             if req_id == "init"
             else ([], None)  # command never gets a terminal: the process died
@@ -1805,7 +1805,7 @@ def test_windows_sidecar_is_job_owned_before_bootstrap_release(
     monkeypatch.setattr(
         driver.SidecarClient,
         "_wait_for",
-        lambda self, req_id, timeout, guard: (
+        lambda self, req_id, timeout, guard, heartbeat=False: (
             [],
             {"ok": True, "data": {"ready": True}},
         ),
@@ -2081,9 +2081,32 @@ def test_g4_build_gate_gets_a_larger_verdict_budget(driver: ModuleType) -> None:
     # gate whose next gate is G4), not the verdict where gate == "G4" (which
     # advances into G5). The earlier `gate == "G4"` check was off by one and
     # handed the build the 30-min gate_timeout instead of the 90-min budget.
-    assert 'g4_build_timeout if advancing_into == "G4" else gate_timeout' in src
+    assert 'g4_build_timeout if runs_g4_build else gate_timeout' in src
     assert 'GATES[index + 1]' in src
     assert "verdict_timeout" in src
+    # Time is NOT the limiter for the build: g4_build_timeout is applied as a
+    # HEARTBEAT (inactivity threshold), reset by every event the build emits,
+    # so a working build runs unbounded and only a FROZEN process is cut off.
+    assert "heartbeat=runs_g4_build" in src
+
+
+def test_wait_for_heartbeat_resets_the_clock_on_activity(driver: ModuleType) -> None:
+    # A working G4 build must never die on wall-clock duration -- only on a
+    # genuine freeze (total silence). With heartbeat=True, *timeout* is the max
+    # silence BETWEEN events; each event resets it. Here events keep arriving, so
+    # the terminal is reached even though total elapsed >> the timeout.
+    import json as _json
+    import queue as _queue
+
+    client = driver.SidecarClient.__new__(driver.SidecarClient)
+    client._stdout = _queue.Queue()
+    for i in range(5):
+        client._stdout.put(_json.dumps({"id": "other", "kind": "event", "n": i}))
+    client._stdout.put(_json.dumps({"id": "req", "ok": True, "data": {}}))
+
+    events, terminal = client._wait_for("req", timeout=30, guard=None, heartbeat=True)
+    assert terminal == {"id": "req", "ok": True, "data": {}}
+    assert len(events) == 5  # every non-terminal event kept the wait alive
 
 
 def test_live_rejects_an_arbitrary_dependency_policy_before_work(

@@ -2339,3 +2339,52 @@ class TestBuildSeatStallDetector(unittest.TestCase):
                            arguments={"path": "src/x.ts", "content": "1"})
             self.assertFalse(loop._record_build_progress(wtc, "OK", loop._mutation_seq - 1))
             self.assertEqual(loop._repeat_cmd_streak, 0)
+
+    def test_run_command_observation_ignores_timing_noise(self):
+        # FIX 2: a re-run of the SAME test whose output differs only in volatile
+        # timing/counts must hash to the SAME observation (a repeat), while a
+        # genuinely different result is a new observation.
+        with tempfile.TemporaryDirectory() as d:
+            loop = AgentLoop(
+                adapter=_adapter(AgentTestProvider()),
+                repo_root=Path(d),
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="obs-norm", build_seat=True)
+            tc = ToolCall(id="c", name="run_command",
+                          arguments={"command": "npm test"})
+            sig1 = loop._observation_signature(tc, "exit_code: 1\nTests: 3 failed in 1.23s")
+            sig2 = loop._observation_signature(tc, "exit_code: 1\nTests: 3 failed in 9.87s")
+            self.assertEqual(sig1, sig2)   # only timing changed -> same observation
+            sig3 = loop._observation_signature(tc, "exit_code: 0\nTests: all passed")
+            self.assertNotEqual(sig1, sig3)  # different real result -> new observation
+
+    def test_repeated_test_run_with_timing_noise_trips_the_stall(self):
+        # FIX 2 end-to-end on the progress bookkeeping: a seat that writes ONCE
+        # then re-runs the SAME test repeatedly (each run's output differs ONLY in
+        # timing) is NOT making progress -- the repeats now trip the stall,
+        # whereas before every timing-varied re-run looked like new information.
+        with tempfile.TemporaryDirectory() as d:
+            loop = AgentLoop(
+                adapter=_adapter(AgentTestProvider()),
+                repo_root=Path(d),
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="rerun-stall", build_seat=True,
+                stall_window=99,         # isolate the repeat path
+                repeat_cmd_limit=3)
+            loop._no_progress_streak = 0
+            loop._repeat_cmd_streak = 0
+            loop._last_cmd_sig = None
+            # one real write -> progress
+            loop._mutation_seq += 1
+            wtc = ToolCall(id="w", name="write_file",
+                           arguments={"path": "src/x.ts", "content": "1"})
+            self.assertFalse(
+                loop._record_build_progress(wtc, "OK", loop._mutation_seq - 1))
+            # then the SAME test re-run 4x, each with a DIFFERENT duration
+            tc = ToolCall(id="c", name="run_command",
+                          arguments={"command": "npm test"})
+            mseq = loop._mutation_seq
+            self.assertFalse(loop._record_build_progress(tc, "3 failed in 1.0s", mseq))
+            self.assertFalse(loop._record_build_progress(tc, "3 failed in 2.4s", mseq))
+            self.assertFalse(loop._record_build_progress(tc, "3 failed in 3.9s", mseq))
+            self.assertTrue(loop._record_build_progress(tc, "3 failed in 8.1s", mseq))

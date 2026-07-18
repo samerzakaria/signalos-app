@@ -452,6 +452,16 @@ class ReactViteAdapter:
         npx = "npx.cmd" if os.name == "nt" else "npx"
         return [npx, "vitest", "run", test_path]
 
+    def structured_test_file_command(self, repo_root: Path,
+                                     test_path: str) -> tuple[list[str], str]:
+        """argv + reporter-kind to run ONE test file in MACHINE-READABLE mode
+        (vitest JSON reporter), for the per-CASE convergence signal in the
+        subagent-driven build. The gate parses passing/failing case-ids from the
+        JSON; a compile failure emits zero passing cases (the worst state), so
+        the passing-set grows once the build starts compiling."""
+        npx = "npx.cmd" if os.name == "nt" else "npx"
+        return ([npx, "vitest", "run", test_path, "--reporter=json"], "vitest-json")
+
     def prompt_gotchas(self, repo_root: Path) -> str:
         """Stack-specific conventions injected into build-agent prompts, so the
         prompt layer stays stack-agnostic (mirrors design.UILibraryAdapter's

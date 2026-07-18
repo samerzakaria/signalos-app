@@ -255,12 +255,13 @@ class TestOrchestration(unittest.TestCase):
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=check)
         roles = rec.roles()
-        # T1 attempted (1 impl + fixers); the SAME error with no source change is
-        # a hard STALL, so the progress gate stops it after STALL_ROUNDS (=2)
-        # no-progress cycles -- not at a fixed pass count. T2 independent ->
-        # pre-check green, skipped free; T3 depends on failed T1 -> blocked.
+        # T1 attempted (1 impl + fixers); the SAME failure with no reduction in
+        # the failing count never CONVERGES, so the gate stops it after
+        # STALL_ROUNDS (=3) non-converging cycles -- not at a fixed pass count.
+        # T2 independent -> pre-check green, skipped free; T3 depends on failed
+        # T1 -> blocked.
         self.assertEqual(roles.count("implementer"), 1)
-        self.assertEqual(roles.count("fixer"), 2)  # STALL_ROUNDS, progress-gated
+        self.assertEqual(roles.count("fixer"), 3)  # STALL_ROUNDS, convergence-gated
         self.assertNotIn("evidence", roles)          # red build: doomed phases cut
         self.assertEqual(res.status, "budget_exhausted")
         self.assertIn("T1", res.error)
@@ -894,59 +895,166 @@ def _trace(repo_root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _fails(n: int) -> str:
+    """n failing-check lines (a runner-style 'FAIL' block)."""
+    return "\n".join(f"FAIL suite > case {i}" for i in range(n))
+
+
+def _cases(*names) -> frozenset:
+    return frozenset(names)
+
+
+def _struct(gate, green, passing, total, landed=True):
+    """Structured observe: passing case-id SET + total, over the acceptance test."""
+    gate.observe(green, frozenset(passing), total, 0, seat_landed_work=landed)
+
+
+def _line(gate, green, errs, landed=True):
+    """Fallback observe: no structured reporter -> line-count only."""
+    gate.observe(green, None, None, sb._failure_line_count(errs),
+                 seat_landed_work=landed)
+
+
 class TestProgressSignature(unittest.TestCase):
-    def test_same_failure_normalizes_to_same_signature(self):
-        # Volatile noise (paths, line:col numbers, durations) must NOT count as
-        # a changed failure -- 'the same error again' has to read as no progress.
-        a = sb._normalize_error_signature(
-            "C:/ws/src/Foo.test.ts(4,25): error TS2307 Cannot find './Foo' (12 ms)")
-        b = sb._normalize_error_signature(
-            "C:/ws/src/Foo.test.ts(9,3): error TS2307 Cannot find './Foo' (44 ms)")
-        self.assertEqual(a, b)
-
-    def test_different_failure_changes_signature(self):
-        a = sb._normalize_error_signature("Cannot find module './Widget'")
-        b = sb._normalize_error_signature("Cannot find module './Store'")
-        self.assertNotEqual(a, b)
-
-    def test_gate_stalls_only_after_consecutive_no_progress(self):
-        d = Path(tempfile.mkdtemp())
-        gate = sb._TaskProgressGate(d, "src", stall_rounds=2)
-        gate.observe(False, "same error")   # baseline
+    # --- structured passing-set high-water-mark (the PRIMARY signal) ---------
+    def test_compile_to_run_boundary_is_progress_the_exact_bug(self):
+        # THE MUST-FIX: a non-compiling draft = ZERO passing cases; when the
+        # first fixer makes it compile and cases start passing, the passing SET
+        # grows -> PROGRESS. (The old line-count gate scored the 0->40 assertion-
+        # line jump as regression and FALSE-stalled a converging build.)
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases(), 40)                 # baseline: does not compile
         self.assertFalse(gate.stalled())
-        gate.observe(False, "same error")   # no progress #1
+        _struct(gate, False, _cases("a", "b", "c"), 40)    # compiles, 3 pass -> GROWTH
         self.assertFalse(gate.stalled())
-        gate.observe(False, "same error")   # no progress #2 -> stalled
+        _struct(gate, False, _cases("a", "b", "c", "d", "e"), 40)  # more pass
+        self.assertFalse(gate.stalled())
+
+    def test_passing_set_growth_keeps_it_alive_past_stall_rounds(self):
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases(), 20)                 # baseline: 0 passing
+        for k in range(1, 12):                              # 11 growth cycles > 3
+            _struct(gate, False, frozenset(f"c{i}" for i in range(k)), 20)
+            self.assertFalse(gate.stalled())
+
+    def test_regression_dropping_a_prior_pass_is_not_progress(self):
+        # A cycle that passes a NEW case but drops a previously-passing one is a
+        # regression -> NOT progress even though the raw count could look better.
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a", "b"), 5)          # baseline HWM {a,b}
+        _struct(gate, False, _cases("a", "c"), 5)          # b regressed -> no progress
+        _struct(gate, False, _cases("a", "c"), 5)          # no growth
+        _struct(gate, False, _cases("a", "c"), 5)          # no growth -> STALL
+        self.assertTrue(gate.stalled())
+        self.assertIn("still failing", gate.still_failing_summary)
+
+    def test_structured_oscillation_cannot_fake_progress(self):
+        # Grow to {a,b}, drop to {a}, back to {a,b}: never a NEW case beyond the
+        # high-water union -> no progress after the first growth -> stalls.
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a"), 3)               # baseline
+        _struct(gate, False, _cases("a", "b"), 3)          # grew -> progress
+        self.assertFalse(gate.stalled())
+        for passing in (_cases("a"), _cases("a", "b"), _cases("a")):
+            _struct(gate, False, passing, 3)               # no NEW case beyond {a,b}
         self.assertTrue(gate.stalled())
 
-    def test_gate_never_stalls_while_failure_signature_moves(self):
-        d = Path(tempfile.mkdtemp())
-        gate = sb._TaskProgressGate(d, "src", stall_rounds=2)
-        gate.observe(False, "error alpha")
-        for word in ("beta", "gamma", "delta", "epsilon", "zeta"):
-            gate.observe(False, f"error {word}")
-            self.assertFalse(gate.stalled())   # a moving failure = progress
+    def test_green_is_immediate_success(self):
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a"), 4)
+        _struct(gate, True, _cases("a", "b", "c", "d"), 4)
+        self.assertFalse(gate.stalled())
+
+    def test_still_failing_summary_reports_k_of_m(self):
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a", "b"), 5)          # 2 of 5 pass
+        self.assertEqual(gate.checks_still_failing, 3)
+        self.assertEqual(gate.still_failing_summary,
+                         "3 of 5 acceptance checks still failing")
+
+    # --- FIX #4: infra no-op cycles are not charged to the stall -------------
+    def test_provider_error_cycle_is_not_charged_to_the_stall(self):
+        gate = sb._TaskProgressGate(stall_rounds=2)
+        _struct(gate, False, _cases("a"), 5)               # baseline
+        # three no-work cycles (seat landed nothing) -> never charged
+        for _ in range(3):
+            _struct(gate, False, _cases("a"), 5, landed=False)
+            self.assertFalse(gate.stalled())
+        # now genuine no-progress cycles ARE charged
+        _struct(gate, False, _cases("a"), 5, landed=True)
+        _struct(gate, False, _cases("a"), 5, landed=True)
+        self.assertTrue(gate.stalled())
+
+    # --- fallback (no structured reporter): line-count running minimum -------
+    def test_fallback_line_count_running_minimum(self):
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _line(gate, False, _fails(5))                      # baseline
+        for n in (4, 3, 2):
+            _line(gate, False, _fails(n))                  # new minimum -> progress
+            self.assertFalse(gate.stalled())
+        for _ in range(3):
+            _line(gate, False, _fails(4))                  # never below 2 -> stall
+        self.assertTrue(gate.stalled())
+
+    def test_fallback_stall_count_tracks_stall_rounds(self):
+        for rounds in (2, 3, 5):
+            gate = sb._TaskProgressGate(stall_rounds=rounds)
+            _line(gate, False, _fails(2))                  # baseline
+            n = 0
+            while not gate.stalled():
+                _line(gate, False, _fails(2))              # constant -> no convergence
+                n += 1
+            self.assertEqual(n, rounds)
+
+
+class TestStructuredParsing(unittest.TestCase):
+    def test_parse_vitest_json_extracts_passing_and_failing(self):
+        blob = json.dumps({"testResults": [{"assertionResults": [
+            {"fullName": "Store > adds", "status": "passed"},
+            {"fullName": "Store > deletes", "status": "failed"},
+            {"ancestorTitles": ["Form"], "title": "validates", "status": "passed"},
+        ]}]})
+        parsed = sb._parse_structured_cases("vitest-json", "preamble\n" + blob, "")
+        self.assertIsNotNone(parsed)
+        passing, failing, total = parsed
+        self.assertEqual(passing, frozenset({"Store > adds", "Form > validates"}))
+        self.assertEqual(failing, frozenset({"Store > deletes"}))
+        self.assertEqual(total, 3)
+
+    def test_compile_failure_parses_as_zero_passing(self):
+        # A report that collected nothing (compile/collect error) = 0 passing.
+        blob = json.dumps({"testResults": []})
+        parsed = sb._parse_structured_cases("vitest-json", blob, "")
+        self.assertEqual(parsed, (frozenset(), frozenset(), 0))
+
+    def test_unknown_kind_or_garbage_returns_none_for_fallback(self):
+        self.assertIsNone(sb._parse_structured_cases("pytest-tap", "x", "y"))
+        self.assertIsNone(sb._parse_structured_cases("vitest-json", "not json", ""))
+
+    def test_run_structured_test_none_when_stack_has_no_reporter(self):
+        st = sb._StackContext(profile="generic", source_dir="src")
+        st.structured_test_command = None
+        self.assertIsNone(
+            sb._run_structured_test(Path(tempfile.mkdtemp()), "t.test.ts", st))
 
 
 class TestProgressGatedFixLoop(unittest.TestCase):
-    def test_progressing_red_task_keeps_cycling_past_the_old_fixed_cap(self):
-        """A task that stays red but PROGRESSES (a different failure each cycle)
-        keeps earning fixer cycles -- far past the old fixed 3 and past
-        STALL_ROUNDS -- because forward motion, not a call count, governs."""
+    def test_converging_red_task_keeps_cycling_past_the_old_fixed_cap(self):
+        """A task that stays red but CONVERGES (its failing-check count drops
+        every cycle) keeps earning fixer cycles -- far past the old fixed 3 and
+        past STALL_ROUNDS -- because getting closer to green, not a call count,
+        governs."""
         d = _repo_with_plan()
-        words = ["alpha", "beta", "gamma", "delta", "epsilon",
-                 "zeta", "eta", "theta"]
         state = {"n": 0}
 
         def check(_r, only_test=None):
             if only_test and only_test.endswith("T1.test.ts"):
                 i = state["n"]
                 state["n"] += 1
-                # red for: pre-check(i0) + baseline(i1) + 5 fixer checks(i2..i6);
-                # the 6th fixer's check (i7) is GREEN -> exactly 6 fixer passes.
-                if i < 7:
-                    return (False, f"T1 failing at module {words[i]}")
-                return (True, "")
+                # failing count drops one per check: pre-check(7)+baseline(6)+
+                # fixers 5,4,3,2,1 then 0 -> GREEN after exactly 6 fixer passes.
+                fails = 7 - i
+                return (False, _fails(fails)) if fails > 0 else (True, "")
             return (True, "")                    # T2 pre-green, integration green
         rec = Recorder()
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
@@ -956,26 +1064,55 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         self.assertGreater(fixers, 3)            # NOT capped at the old fixed 3
         self.assertEqual(fixers, 6)              # ran until the objective test went green
 
-    def test_stalled_red_task_stops_after_stall_rounds_not_a_call_count(self):
-        """The SAME failure with no source change is a hard STALL: the loop stops
-        after STALL_ROUNDS no-progress cycles -- and the count TRACKS
-        STALL_ROUNDS, proving it is the control (not a magic number)."""
-        for rounds in (2, 4):
+    def test_churn_without_fail_reduction_stalls_not_progresses(self):
+        """The live-run failure mode: a build that CHANGES its error text every
+        cycle but never REDUCES the failing count is churn, not progress -- it
+        must STALL after STALL_ROUNDS (previously it 'progressed' forever and
+        burned the whole wall-clock)."""
+        d = _repo_with_plan()
+        variants = ["FAIL a\nFAIL b\nFAIL c", "FAIL d\nFAIL e\nFAIL f",
+                    "FAIL g\nFAIL h\nFAIL i", "FAIL j\nFAIL k\nFAIL l",
+                    "FAIL m\nFAIL n\nFAIL o", "FAIL p\nFAIL q\nFAIL r",
+                    "FAIL s\nFAIL t\nFAIL u", "FAIL v\nFAIL w\nFAIL x"]
+        state = {"n": 0}
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                errs = variants[min(state["n"], len(variants) - 1)]
+                state["n"] += 1
+                return (False, errs)             # always 3 failing, text churns
+            return (True, "")                    # T2 pre-green
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "budget_exhausted")
+        # STALL_ROUNDS defaults to 3 -> stops after 3 non-converging fixer passes,
+        # NOT after churning forever.
+        self.assertEqual(rec.roles().count("fixer"), 3)
+        # honest, terminal, non-convergence result (never a wall-clock hang).
+        self.assertIn("did not converge", res.final_text)
+        self.assertIn("still failing", res.final_text)
+        self.assertIn("on disk", res.final_text)   # work not discarded
+
+    def test_stall_stops_after_stall_rounds_not_a_call_count(self):
+        """The stall stop TRACKS STALL_ROUNDS (default 3, and env-tunable),
+        proving STALL_ROUNDS is the control -- not a magic number or a call
+        count. A constant failing count never converges."""
+        for rounds, env in ((3, None), (2, "2"), (5, "5")):
             with self.subTest(stall_rounds=rounds):
                 d = _repo_with_plan()
 
                 def check(_r, only_test=None):
                     if only_test and only_test.endswith("T1.test.ts"):
-                        return (False, "T1 stays red, unchanged")
-                    return (True, "")            # T2 pre-green
+                        return (False, _fails(4))   # constant -> never converges
+                    return (True, "")               # T2 pre-green
                 rec = Recorder()
-                with mock.patch.dict(
-                    os.environ,
-                    {"SIGNALOS_BUILD_TASK_STALL_ROUNDS": str(rounds)}):
+                patch_env = ({"SIGNALOS_BUILD_TASK_STALL_ROUNDS": env}
+                             if env is not None else {})
+                with mock.patch.dict(os.environ, patch_env):
                     res = run_subagent_driven_build(
                         d, adapter="A", prompt="x", run_agent=rec, build_check=check)
                 self.assertEqual(res.status, "budget_exhausted")
-                # exactly STALL_ROUNDS fixer passes, then the honest stall.
                 self.assertEqual(rec.roles().count("fixer"), rounds)
                 self.assertIn("on disk", res.final_text)   # work not discarded
 
@@ -1002,6 +1139,95 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         tr = _trace(d)
         t1 = next(r for r in tr["rows"] if r["task"] == "T1")
         self.assertEqual(t1["status"], "green")
+
+    def test_structured_passing_growth_keeps_cycling_then_greens(self):
+        """With STRUCTURED per-case results injected, a build whose PASSING SET
+        grows every cycle keeps earning fixer cycles past STALL_ROUNDS and
+        reaches green -- even across the compile->run jump (0 passing -> many),
+        which the old line-count gate false-stalled."""
+        d = _repo_with_plan()
+        # passing counts per T1 gate observation (total 20); 0 = does not compile.
+        steps = [(0, False), (0, False), (6, False), (12, False),
+                 (17, False), (20, True)]
+        st = {"i": -1}
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                st["i"] = min(st["i"] + 1, len(steps) - 1)
+                p, green = steps[st["i"]]
+                return (green, "" if green else _fails(20 - p))
+            return (True, "")                    # T2 pre-green
+
+        def case_results(_r, test_path):
+            if test_path.endswith("T1.test.ts"):
+                p, _g = steps[max(0, st["i"])]
+                return ({f"c{j}" for j in range(p)}, 20)
+            return (set(), 0)
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                        build_check=check, case_results=case_results)
+        self.assertEqual(res.status, "completed")
+        # 6 steps: pre-check(0) + baseline(0) + 4 fixer growth cycles to green.
+        self.assertEqual(rec.roles().count("fixer"), 4)   # > STALL_ROUNDS=3
+
+    def test_structured_no_growth_stalls_with_k_of_m_report(self):
+        """Structured passing-set stuck (no growth) -> stalls after STALL_ROUNDS
+        and reports the honest K of M acceptance checks still failing."""
+        d = _repo_with_plan()
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                return (False, _fails(7))        # 3 of 10 pass, never grows
+            return (True, "")
+
+        def case_results(_r, test_path):
+            if test_path.endswith("T1.test.ts"):
+                return ({"c0", "c1", "c2"}, 10)  # constant passing set
+            return (set(), 0)
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                        build_check=check, case_results=case_results)
+        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(rec.roles().count("fixer"), 3)  # STALL_ROUNDS
+        self.assertIn("7 of 10 acceptance checks still failing", res.final_text)
+
+    def test_provider_error_cycle_does_not_advance_the_stall(self):
+        """FIX #4: a cycle whose SEAT hit a provider turn error / landed no work
+        is retried, NOT charged to the convergence stall. With one infra no-op
+        fixer interleaved, the stall still needs STALL_ROUNDS *charged* cycles ->
+        one extra fixer overall, proving the infra cycle was not counted."""
+        d = _repo_with_plan()
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                return (False, _fails(4))        # constant red, never converges
+            return (True, "")
+
+        class OutcomeRecorder(Recorder):
+            """Fake run_agent that reports the FIRST fixer as an infra no-op
+            (a provider turn error), the rest as normal landed work."""
+            def __init__(self):
+                super().__init__()
+                self._fixers = 0
+
+            def __call__(self, role, adapter, system_prompt, user_message):
+                out = super().__call__(role, adapter, system_prompt, user_message)
+                if role == "fixer":
+                    self._fixers += 1
+                    if self._fixers == 1:
+                        self.last_outcome = {"status": "completed",
+                                             "wrote_no_files": True,
+                                             "provider_turn_errors": 1}
+                        return out
+                self.last_outcome = {"status": "completed", "wrote_no_files": False,
+                                     "provider_turn_errors": 0}
+                return out
+        rec = OutcomeRecorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "budget_exhausted")
+        # STALL_ROUNDS(3) CHARGED cycles + 1 uncharged infra cycle = 4 fixers.
+        self.assertEqual(rec.roles().count("fixer"), 4)
 
 
 class TestRepairAccounting(unittest.TestCase):

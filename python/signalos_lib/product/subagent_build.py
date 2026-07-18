@@ -48,7 +48,6 @@ __all__ = [
     "ProviderExecutionError",
 ]
 
-import hashlib
 import json
 import os
 import re
@@ -161,6 +160,11 @@ class _StackContext:
     # (repo_root, test_path) -> argv for ONE test file, or None if the adapter
     # has no single-test runner (per-task gate then falls back to full checks).
     test_file_command: Optional[Callable[[Path, str], list]] = None
+    # (repo_root, test_path) -> (argv, reporter_kind) that runs ONE test file in
+    # the runner's MACHINE-READABLE mode (e.g. vitest/jest --reporter=json), for
+    # the per-CASE convergence signal. None when the stack has no structured
+    # reporter -> the gate falls back to the line-count convergence signal.
+    structured_test_command: Optional[Callable[[Path, str], tuple]] = None
 
     @property
     def build_and_test_hint(self) -> str:
@@ -222,6 +226,9 @@ def _resolve_stack(repo_root: Path) -> _StackContext:
     tfc = getattr(adapter, "test_file_command", None)
     if callable(tfc):
         ctx.test_file_command = tfc
+    stc = getattr(adapter, "structured_test_file_command", None)
+    if callable(stc):
+        ctx.structured_test_command = stc
     return ctx
 
 
@@ -1531,8 +1538,63 @@ def _default_run_agent(
             emit({"type": "system",
                   "text": f"The {role} step made no file changes -- no product "
                           "was written this pass."})
+        # FIX #4: expose the seat's OBJECTIVE outcome so the per-task convergence
+        # gate can tell a genuine no-progress cycle (the model landed work but
+        # did not converge -> charge the stall) from an infra no-op (a provider
+        # turn error, a stalled_no_tool narration, or a zero-mutation pass ->
+        # retry, don't charge). Read via getattr(run, "last_outcome", None); an
+        # injected fake that does not set it defaults to "attempted".
+        run.last_outcome = {
+            "status": res.status,
+            "wrote_no_files": bool(res.wrote_no_files),
+            "provider_turn_errors": int(getattr(res, "provider_turn_errors", 0) or 0),
+        }
         return res.final_text or ""
     return run
+
+
+def _resolve_test_rel(repo_root: Path, test_path: str,
+                      project_id: str) -> "tuple[Optional[str], Optional[str]]":
+    """Resolve a plan test's canonical rel_path to a repo-root-relative POSIX
+    path safe to hand a container command. Returns (rel, None) or (None, reason).
+    Fails closed (never exposes a host-only path to the container)."""
+    phys = _workspace_path(repo_root, test_path, project_id)
+    if phys is None or not phys.is_file():
+        return None, f"plan test not found: {test_path}"
+    canonical_root = Path(repo_root).expanduser().resolve(strict=False)
+    try:
+        return phys.relative_to(canonical_root).as_posix(), None
+    except ValueError:
+        return None, f"plan test is outside workspace: {test_path}"
+
+
+def _exec_test_argv(repo_root: Path, argv: list,
+                    timeout: int = 240) -> "tuple[int, str, str, bool]":
+    """Execute a test argv through the funded verifier (containment) or a plain
+    subprocess, returning (returncode, stdout, stderr, timed_out). Shared by the
+    plain per-task green gate and the structured (machine-readable) convergence
+    run so both go through the SAME containment path."""
+    from .validation import _select_verifier_runner
+
+    verifier = _select_verifier_runner(repo_root)
+    if verifier is not None:
+        if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded":
+            from .dependency_broker import verify_funded_dependencies_from_environment
+
+            verify_funded_dependencies_from_environment(repo_root)
+        container_argv = list(argv)
+        executable = str(container_argv[0]).replace("\\", "/").rsplit("/", 1)[-1]
+        executable_aliases = {"npm.cmd": "npm", "npx.cmd": "npx", "node.exe": "node"}
+        container_argv[0] = executable_aliases.get(executable.lower(), executable)
+        exit_code, output = verifier.run(
+            shlex.join(container_argv), repo_root, timeout,
+            {"CI": "1", "FORCE_COLOR": "0"},
+        )
+        return exit_code, output.stdout or "", output.stderr or "", output.timed_out
+    p = subprocess.run(argv, cwd=str(repo_root), capture_output=True,
+                       text=True, encoding="utf-8", errors="replace",
+                       timeout=timeout, shell=False)
+    return p.returncode, p.stdout or "", p.stderr or "", False
 
 
 def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
@@ -1551,54 +1613,12 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
         return False, ("no per-test runner for this stack; cannot confirm this "
                        "test is green -- proceeding to implement (the full-suite "
                        "validation is the real gate)")
-    # Resolve the canonical rel_path to its physical location (project
-    # namespacing) and hand the command a repo-root-relative path.
-    phys = _workspace_path(repo_root, test_path, project_id)
-    if phys is None or not phys.is_file():
-        return False, f"plan test not found: {test_path}"
-    # ``resolve_workspace_path`` canonicalizes the workspace root.  Compare the
-    # returned path with the same canonical root: on Windows the caller may use
-    # a lexical alias (``..``, short-name expansion, or different path casing),
-    # which must not make us fall back to an absolute host path inside a Linux
-    # verifier command.  If the containment invariant cannot be established,
-    # fail closed instead of exposing a host-only path to the container.
-    canonical_root = Path(repo_root).expanduser().resolve(strict=False)
-    try:
-        rel = phys.relative_to(canonical_root).as_posix()
-    except ValueError:
-        return False, f"plan test is outside workspace: {test_path}"
+    rel, reason = _resolve_test_rel(repo_root, test_path, project_id)
+    if rel is None:
+        return False, reason or f"plan test not runnable: {test_path}"
     try:
         argv = stack.test_file_command(repo_root, rel)
-        from .validation import _select_verifier_runner
-
-        verifier = _select_verifier_runner(repo_root)
-        if verifier is not None:
-            if os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded":
-                from .dependency_broker import verify_funded_dependencies_from_environment
-
-                verify_funded_dependencies_from_environment(repo_root)
-            container_argv = list(argv)
-            executable = str(container_argv[0]).replace("\\", "/").rsplit("/", 1)[-1]
-            executable_aliases = {
-                "npm.cmd": "npm",
-                "npx.cmd": "npx",
-                "node.exe": "node",
-            }
-            container_argv[0] = executable_aliases.get(executable.lower(), executable)
-            exit_code, output = verifier.run(
-                shlex.join(container_argv), repo_root, 240,
-                {"CI": "1", "FORCE_COLOR": "0"},
-            )
-            if output.timed_out:
-                return False, f"could not run test {test_path}: timed out"
-            stdout, stderr = output.stdout, output.stderr
-            returncode = exit_code
-        else:
-            p = subprocess.run(argv, cwd=str(repo_root), capture_output=True,
-                               text=True, encoding="utf-8", errors="replace",
-                               timeout=240, shell=False)
-            stdout, stderr = p.stdout, p.stderr
-            returncode = p.returncode
+        returncode, stdout, stderr, timed_out = _exec_test_argv(repo_root, argv)
     except SandboxUnavailableError as exc:
         raise ExecutionInfrastructureError(
             "sandbox-unavailable",
@@ -1606,7 +1626,9 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
         ) from exc
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"could not run test {test_path}: {exc}"
-    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", (stdout or "") + "\n" + (stderr or ""))
+    if timed_out:
+        return False, f"could not run test {test_path}: timed out"
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stdout + "\n" + stderr)
     if returncode == 0:
         return True, ""
     fails = [l for l in out.splitlines()
@@ -1659,127 +1681,277 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
 
 
 # ---------------------------------------------------------------------------
-# Per-task PROGRESS gate -- the PRIMARY control on the fix loop (FIX 3).
+# Per-task CONVERGENCE gate -- the PRIMARY control on the fix loop (FIX 3).
 #
-# STOP LIMITING THE BUILD BY COUNTING FIXER PASSES. A red task earns fixer
-# cycles WHILE it makes progress toward passing its objective test, and stops
-# only on a REAL stall -- never at a fixed cycle count. Every signal is
-# objective (the objective test result + the on-disk source), never the model's
-# self-claim:
-#   * became green            -> success (progress, and we're done)
-#   * failure signature moved  -> progress (a different failure = forward motion)
-#   * failing set shrank       -> progress (fewer diagnostics)
-#   * product source changed   -> progress (the fixer actually edited the code)
-# PROGRESS is the OR of those. A cycle with NONE of them is a no-progress round;
-# STALL_ROUNDS consecutive no-progress rounds ends the loop. A task that keeps
-# progressing runs as many cycles as it needs (money/time are the outer walls).
+# STOP LIMITING THE BUILD BY COUNTING FIXER PASSES -- but PROGRESS must mean
+# CONVERGENCE toward green, not merely "something changed". A live funded run
+# exposed the gap twice over: (a) churn that rewrote code every cycle without
+# reducing failures looked like progress forever; and (b) a free-text failure-
+# LINE count is non-monotone at the compile->run boundary -- a draft that does
+# NOT COMPILE emits few marker lines, so a running minimum latches low (~4); the
+# first fixer fixes compilation, the suite finally RUNS and emits 40+ assertion
+# lines, and a line-count gate scores that (40 > 4) as NO progress and STALLS a
+# genuinely-converging build with a FALSE red. Both burn the wall-clock.
+#
+# The convergence signal is now a high-water-mark SET of PASSING acceptance
+# test-CASES, read from the runner's MACHINE-READABLE output over the IMMUTABLE
+# plan-authored acceptance test (never the model's own colocated tests):
+#   * a build that does not compile / fails to collect = ZERO passing cases
+#     (worst state); when it compiles and cases start passing, the passing SET
+#     GROWS = progress (compile-awareness, for free)
+#   * PROGRESS = the passing high-water-mark SET strictly GREW (new passes) AND
+#     no previously-passing case regressed (dropping a prior pass is NOT
+#     progress, even if raw counts look better) -- i.e. a proper superset of the
+#     running high-water union
+#   * GREEN (all acceptance cases pass) = success
+#   * STALL = STALL_ROUNDS consecutive cycles with no growth of the passing set
+#     -> terminal honest RED ("did not converge -- K of M acceptance checks
+#     still failing") with the on-disk work intact (FIX 4)
+# When the stack exposes no structured reporter the gate falls back to a
+# line-count running-minimum (still monotone-ish, best-effort). The signal is
+# objective (runner structured output + filesystem), never a self-claim.
+#
+# HIGH-VALUE FIX (#4): a cycle whose SEAT did not actually land work -- a
+# provider turn error (turn_error_count delta), a stalled_no_tool narration, or
+# a zero-mutation pass -- is NOT charged to the stall counter (transient
+# provider flakiness must not be mis-attributed as the MODEL failing to
+# converge). Such a cycle is retried, bounded by the money cap + the per-seat
+# freeze detector, never a new time/call cap.
 # ---------------------------------------------------------------------------
 
-_ERR_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_ERR_NUM_RE = re.compile(r"\d+")
-
-
-def _normalize_error_signature(errs: str) -> str:
-    """A stable hash of a failing test/build result, robust to the volatile
-    noise that shifts between cycles of the SAME task -- line:col numbers,
-    durations, and numeric ids (collapsed to a placeholder) -- so 'the same
-    failure again' is recognized as no progress. The workspace path is constant
-    across a task's fix cycles, so paths are deliberately NOT collapsed: a
-    failure that moves to a DIFFERENT file/module is meaningful forward motion
-    and must read as progress (erring toward MORE cycles, never a false stall)."""
-    s = _ERR_ANSI_RE.sub("", errs or "")
-    s = _ERR_NUM_RE.sub("N", s)
-    s = re.sub(r"\s+", " ", s).strip().lower()
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+# Lines that denote a failing check across the common runners (jest/vitest/
+# pytest/tsc/eslint) -- the FALLBACK convergence signal only (used when no
+# structured reporter exists). Counting only marker lines is a tighter proxy for
+# "checks still failing" than counting every non-empty line.
+_FAILURE_MARKER_RE = re.compile(
+    r"\bFAIL(?:ED|URE)?\b|\bnot ok\b|\bAssertion\w*\b|\bError\b|\berror TS\d"
+    r"|Cannot find|\bExpected\b|●|✕|✗|✖|×",
+    re.IGNORECASE,
+)
 
 
 def _failure_line_count(errs: str) -> int:
-    """Cheap objective proxy for the failing-test SET size: the count of
-    non-empty diagnostic lines. A drop is treated as 'the failing set shrank'
-    (progress). Imprecision here only ever GRANTS an extra cycle, never forces a
-    false stall (the error-signature and source signals are OR'd in)."""
-    return len([ln for ln in (errs or "").splitlines() if ln.strip()])
+    """Fallback convergence proxy for CHECKS STILL FAILING (used only when the
+    stack has no structured reporter): the count of runner diagnostic lines that
+    denote a failure, or the non-empty line count when no marker is present."""
+    lines = [ln for ln in (errs or "").splitlines() if ln.strip()]
+    marked = [ln for ln in lines if _FAILURE_MARKER_RE.search(ln)]
+    return len(marked) if marked else len(lines)
 
 
-def _source_fingerprint(repo_root: Path, source_dir: str) -> str:
-    """A content hash of the product SOURCE tree -- the objective 'did the
-    workspace source change since the last cycle' signal (the fixer's real edits
-    land here). '' when there is no source dir yet (e.g. the injected-check unit
-    path), so it simply does not contribute and the error signals decide."""
-    src = Path(repo_root) / source_dir
-    if not src.is_dir():
-        return ""
-    h = hashlib.sha256()
-    try:
-        paths = sorted(src.rglob("*"))
-    except OSError:
-        return ""
-    for p in paths:
+@dataclass
+class _CaseResult:
+    """Structured per-CASE result over ONE immutable acceptance test file."""
+    green: bool
+    passing: frozenset          # stable ids of the PASSING acceptance cases
+    total: int                  # passing + failing acceptance cases collected
+    errors: str                 # failing text (for the fixer / honest report)
+
+
+def _extract_json_object(text: str) -> "Optional[dict]":
+    """Best-effort extraction of the FIRST balanced JSON object from mixed runner
+    output (vitest/jest print a JSON report to stdout, sometimes after preamble).
+    Returns the parsed dict, or None when nothing parses."""
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+    end = text.rfind("}")
+    while end > start:
+        chunk = text[start:end + 1]
         try:
-            if not p.is_file() or p.suffix not in _CODE_SUFFIXES:
+            obj = json.loads(chunk)
+            return obj if isinstance(obj, dict) else None
+        except (ValueError, TypeError):
+            end = text.rfind("}", start, end)
+    return None
+
+
+def _parse_structured_cases(kind: str, stdout: str, stderr: str
+                            ) -> "Optional[tuple[frozenset, frozenset, int]]":
+    """Parse a runner's machine-readable output into (passing_ids, failing_ids,
+    total). None when the output cannot be parsed (caller falls back). Vitest and
+    Jest share the JSON shape: testResults[].assertionResults[] each carry a
+    status and a stable name. A compile/collect failure yields ZERO passing
+    cases (the worst state) -- exactly what makes the passing-set grow once the
+    build starts compiling."""
+    k = (kind or "").lower()
+    if k in ("vitest-json", "jest-json", "json"):
+        data = _extract_json_object(stdout) or _extract_json_object(stderr)
+        if data is None:
+            return None
+        passing: set = set()
+        failing: set = set()
+        results = data.get("testResults")
+        if not isinstance(results, list):
+            # A parseable report with no testResults = collected nothing.
+            return frozenset(), frozenset(), 0
+        for suite in results:
+            if not isinstance(suite, dict):
                 continue
-            data = p.read_bytes()
-        except OSError:
-            continue
-        h.update(str(p.relative_to(repo_root)).replace("\\", "/").encode("utf-8"))
-        h.update(b"\x00")
-        h.update(hashlib.sha256(data).digest())
-    return h.hexdigest()
+            for a in (suite.get("assertionResults") or []):
+                if not isinstance(a, dict):
+                    continue
+                name = (a.get("fullName")
+                        or " > ".join([*(a.get("ancestorTitles") or []),
+                                       str(a.get("title") or "")]).strip(" >"))
+                status = str(a.get("status") or "").lower()
+                if not name:
+                    continue
+                if status == "passed":
+                    passing.add(name)
+                elif status in ("failed", "todo"):
+                    failing.add(name)
+        return frozenset(passing), frozenset(failing), len(passing) + len(failing)
+    return None
+
+
+def _run_structured_test(repo_root: Path, test_path: str, stack: _StackContext,
+                         project_id: str = "default") -> "Optional[_CaseResult]":
+    """Run ONE IMMUTABLE acceptance test in the stack's structured (machine-
+    readable) mode and parse per-CASE pass/fail. Returns a _CaseResult, or None
+    when the stack has no structured reporter / the output cannot be parsed
+    (caller falls back to the line-count convergence signal).
+
+    ANTI-GAMING: this runs ONLY ``test_path`` -- the plan-authored, path-
+    immutable acceptance test (the signed spec the build cannot edit) -- so the
+    passing-set is measured over the acceptance cases, never the model's own
+    colocated src/*.test.ts that it could neuter to inflate the count."""
+    fn = stack.structured_test_command
+    if fn is None:
+        return None
+    rel, _reason = _resolve_test_rel(repo_root, test_path, project_id)
+    if rel is None:
+        return None
+    try:
+        spec = fn(repo_root, rel)
+    except Exception:
+        return None
+    if not spec:
+        return None
+    argv = spec[0]
+    kind = spec[1] if len(spec) > 1 else ""
+    try:
+        returncode, stdout, stderr, timed_out = _exec_test_argv(repo_root, argv)
+    except SandboxUnavailableError as exc:
+        raise ExecutionInfrastructureError(
+            "sandbox-unavailable",
+            f"structured per-test containment failed: {exc}",
+        ) from exc
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if timed_out:
+        return None
+    parsed = _parse_structured_cases(kind, stdout, stderr)
+    if parsed is None:
+        return None
+    passing, failing, total = parsed
+    green = returncode == 0 and not failing
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stdout + "\n" + stderr)
+    errs = "" if green else ("\n".join(
+        l for l in out.splitlines()
+        if re.search(r"FAIL|Error[:\s]|error TS|AssertionError|expected|"
+                     r"Cannot find|Does the file exist|Traceback", l))[:1500]
+        or out[-1500:])
+    return _CaseResult(green=green, passing=passing, total=total, errors=errs)
 
 
 class _TaskProgressGate:
-    """Decides whether a still-red task is making PROGRESS or has STALLED, from
-    the objective per-task test result plus the on-disk source. This is the
-    PRIMARY control on the per-task fix loop -- NOT a fixed cycle count.
+    """Decides whether a still-red task is CONVERGING toward green or has
+    STALLED. The PRIMARY control on the per-task fix loop -- NOT a fixed cycle
+    count.
 
-    Usage: ``observe(green, errs)`` once for the post-implementer baseline, then
-    once after each fixer cycle's objective check. ``stalled()`` is True after
-    STALL_ROUNDS consecutive no-progress cycles; ``error_repeated`` tells the
-    next fixer prompt to change strategy when the same failure recurs."""
+    Convergence is the high-water-mark SET of PASSING acceptance cases: PROGRESS
+    means the passing set strictly GREW with no regression (a proper superset of
+    the running high-water union). GREEN = success. STALL = STALL_ROUNDS
+    consecutive cycles with no growth. When no structured per-case result is
+    available the gate falls back to a line-count running-minimum.
 
-    def __init__(self, repo_root: Path, source_dir: str,
-                 stall_rounds: int) -> None:
-        self._repo_root = repo_root
-        self._source_dir = source_dir
+    FIX #4: ``observe(..., seat_landed_work=False)`` for a cycle whose seat hit a
+    provider turn error / did no work does NOT charge the stall counter.
+
+    Usage: ``observe(green, passing, total, fail_count)`` once for the post-
+    implementer baseline, then once per fixer cycle. ``stalled()`` is True after
+    STALL_ROUNDS charged no-progress cycles; ``last_cycle_stalled`` cues a
+    strategy change; ``checks_still_failing`` / ``still_failing_summary`` give the
+    honest K-of-M report."""
+
+    def __init__(self, stall_rounds: int) -> None:
         self._stall_rounds = max(1, int(stall_rounds))
-        self._prev_err_sig: str | None = None
-        self._prev_fail_count: int = 0
-        self._prev_src_fp: str | None = None
+        self._passing_hwm: frozenset = frozenset()   # union of all passing case-ids
+        self._seen_structured = False
+        self._best_fail_count: int | None = None     # fallback running MINIMUM
+        self._last_total: int | None = None
         self._no_progress = 0
-        self._error_repeated = False
+        self._last_cycle_stalled = False
 
-    def observe(self, green: bool, errs: str) -> None:
-        """Record one cycle's objective result and update progress/stall state
-        relative to the previous cycle."""
-        err_sig = _normalize_error_signature(errs)
-        fail_count = _failure_line_count(errs)
-        src_fp = _source_fingerprint(self._repo_root, self._source_dir)
-        if self._prev_err_sig is None or green:
-            # Baseline (post-implementer state) or reached green: nothing to
-            # compare against / already done -> not a no-progress round.
-            progressed = True
-            self._error_repeated = False
-        else:
-            self._error_repeated = err_sig == self._prev_err_sig
-            progressed = (
-                not self._error_repeated
-                or fail_count < self._prev_fail_count
-                or src_fp != self._prev_src_fp
-            )
-        self._no_progress = 0 if progressed else self._no_progress + 1
-        self._prev_err_sig = err_sig
-        self._prev_fail_count = fail_count
-        self._prev_src_fp = src_fp
+    def observe(self, green: bool, passing: "Optional[frozenset]",
+                total: "Optional[int]", fail_count: int,
+                seat_landed_work: bool = True) -> None:
+        """Record one cycle's objective result and update the convergence/stall
+        state. ``passing``/``total`` come from the structured reporter (None ->
+        the line-count fallback is used via ``fail_count``)."""
+        progressed = self._progress(green, passing, total, fail_count)
+        if progressed:
+            self._no_progress = 0
+        elif seat_landed_work:
+            # FIX #4: only a cycle where the seat actually landed work AND set no
+            # new high-water-mark is charged to the stall. An infra no-op cycle
+            # (no work / provider turn error) is retried, not charged.
+            self._no_progress += 1
+        self._last_cycle_stalled = (not green) and (not progressed)
+
+    def _progress(self, green: bool, passing: "Optional[frozenset]",
+                  total: "Optional[int]", fail_count: int) -> bool:
+        if green:
+            if passing is not None:
+                self._passing_hwm = self._passing_hwm | passing
+            return True
+        if passing is not None:
+            # STRUCTURED: passing high-water-mark SET.
+            if total is not None:
+                self._last_total = total
+            if not self._seen_structured:
+                self._seen_structured = True
+                self._passing_hwm = frozenset(passing)
+                return True                      # baseline seeds the HWM
+            grew = not (passing <= self._passing_hwm)      # a new pass beyond HWM
+            regressed = not (self._passing_hwm <= passing)  # a prior pass now missing
+            self._passing_hwm = self._passing_hwm | passing
+            return grew and not regressed
+        # FALLBACK: line-count running MINIMUM.
+        if self._best_fail_count is None:
+            self._best_fail_count = fail_count
+            return True
+        progressed = fail_count < self._best_fail_count
+        self._best_fail_count = min(self._best_fail_count, fail_count)
+        return progressed
 
     def stalled(self) -> bool:
         return self._no_progress >= self._stall_rounds
 
     @property
-    def error_repeated(self) -> bool:
-        """True when the last cycle reproduced the SAME failure signature -- the
-        cue to make the next fixer prompt change strategy (re-sending the same
-        prompt to the same model just reproduces the same failed fix)."""
-        return self._error_repeated
+    def last_cycle_stalled(self) -> bool:
+        """True when the last red cycle set NO new high-water-mark -- the cue to
+        make the next fixer prompt change strategy."""
+        return self._last_cycle_stalled
+
+    @property
+    def checks_still_failing(self) -> int:
+        """K -- acceptance checks still failing (M - |passing high-water|), or the
+        fallback failing count when unstructured."""
+        if self._seen_structured and self._last_total is not None:
+            return max(0, self._last_total - len(self._passing_hwm))
+        return self._best_fail_count or 0
+
+    @property
+    def still_failing_summary(self) -> str:
+        """Honest 'K of M acceptance checks still failing' (or the fallback)."""
+        if self._seen_structured and self._last_total is not None:
+            k = max(0, self._last_total - len(self._passing_hwm))
+            return f"{k} of {self._last_total} acceptance checks still failing"
+        return f"{self._best_fail_count or 0} check(s) still failing"
 
 
 # ---------------------------------------------------------------------------
@@ -2109,6 +2281,7 @@ def run_subagent_driven_build(
     repair_cycles: int | None = None,
     run_agent: Optional[RunAgent] = None,
     build_check: Optional[BuildCheck] = None,
+    case_results: "Optional[Callable[[Path, str], Optional[tuple]]]" = None,
     parent_run_id: str = "",
     cancel_check: Optional[Callable[[], bool]] = None,
 ) -> LoopResult:
@@ -2152,6 +2325,40 @@ def run_subagent_driven_build(
         def check(r: Path, only_test: Optional[str] = None) -> "tuple[bool, str]":
             return _default_build_check(r, only_test, project_id=project_id,
                                         stack=stack)
+
+    def gate_check(test_path: str) -> "tuple[bool, str, Optional[frozenset], Optional[int]]":
+        """One per-task convergence observation: (green, errs, passing, total).
+        ``passing``/``total`` come from the runner's STRUCTURED per-case output
+        over the IMMUTABLE acceptance test when available (real path via the
+        stack adapter, or an injected ``case_results`` for tests); None means no
+        structured reporter -> the gate uses the line-count fallback on ``errs``.
+        ``check`` stays the authoritative green source everywhere else."""
+        if case_results is not None:
+            green, errs = check(repo_root, test_path)
+            cr = case_results(repo_root, test_path)
+            if not cr:
+                return green, errs, None, None
+            passing, total = cr
+            return green, errs, frozenset(passing), int(total)
+        if build_check is None:
+            sr = _run_structured_test(repo_root, test_path, stack, project_id)
+            if sr is not None:
+                return sr.green, sr.errors, sr.passing, sr.total
+        green, errs = check(repo_root, test_path)
+        return green, errs, None, None
+
+    def seat_landed_work() -> bool:
+        """FIX #4: did the LAST seat dispatch actually land productive work?
+        False for a provider turn error, a stalled_no_tool narration, or a
+        zero-mutation pass -- those cycles are NOT charged to the convergence
+        stall. Unknown (an injected fake that sets no outcome) defaults True, so
+        existing tests keep charging stall normally."""
+        o = getattr(run, "last_outcome", None)
+        if not isinstance(o, dict):
+            return True
+        return (o.get("status") != "stalled_no_tool"
+                and not o.get("wrote_no_files")
+                and int(o.get("provider_turn_errors") or 0) == 0)
 
     tasks = decompose_tasks(repo_root, prompt, project_id)
     context = _task_context(repo_root, prompt, project_id)
@@ -2296,32 +2503,41 @@ def run_subagent_driven_build(
         matrix.bump_attempts(task.id)
         # OBJECTIVE per-task green gate (only when the plan gave this task a test).
         if task.test:
-            ok, errs = check(repo_root, task.test)
-            # PROGRESS-GATED fix loop (FIX 3): the PRIMARY control here is
-            # PROGRESS, not a fixed fixer-pass count. The red task keeps earning
-            # fixer cycles WHILE it makes progress toward green (its failure
-            # signature moves, its failing set shrinks, or its source changes);
-            # it stops only after STALL_ROUNDS consecutive no-progress cycles.
-            # Every cycle re-runs the OBJECTIVE test against the on-disk work, so
-            # a partial-but-progressing build gets more cycles and a stalled one
-            # is reported honestly red (its files stay on disk -- FIX 4). A green
-            # result wins immediately.
-            gate = _TaskProgressGate(repo_root, stack.source_dir,
-                                     per_task_stall_rounds)
-            gate.observe(ok, errs)  # baseline: the post-implementer on-disk state
+            ok, errs, passing, total = gate_check(task.test)
+            # CONVERGENCE-GATED fix loop (FIX 3): the PRIMARY control here is
+            # CONVERGENCE toward green -- the high-water-mark SET of PASSING
+            # acceptance cases must keep GROWING -- NOT a fixed fixer-pass count.
+            # A red task keeps earning fixer cycles WHILE its passing-set grows
+            # (this is compile-aware: a non-compiling draft has zero passing, so
+            # the first cycle that gets cases passing IS progress); it stops only
+            # after STALL_ROUNDS consecutive cycles with no growth. Every cycle
+            # re-runs the OBJECTIVE test against the on-disk work, so a
+            # partial-but-converging build gets more cycles and a stalled one is
+            # reported honestly red (its files stay on disk -- FIX 4). GREEN wins
+            # immediately. A cycle whose seat hit a provider error / did no work
+            # is retried, NOT charged to the stall (FIX #4).
+            gate = _TaskProgressGate(per_task_stall_rounds)
+            # Baseline: the post-implementer on-disk state seeds the passing HWM
+            # (the implementer seat's outcome gates whether a non-productive
+            # baseline could be charged -- it never is; baseline always seeds).
+            gate.observe(ok, passing, total, _failure_line_count(errs),
+                         seat_landed_work=seat_landed_work())
             while not ok and not gate.stalled():
                 emit({"type": "system", "text": f"Getting “{task.name}” to pass its test."})
-                # Same failure recurring -> tell the next pass to change strategy
-                # (re-sending the same prompt reproduces the same failed fix).
-                feedback = (_stall_directive(1) + "\n\n" + errs) if gate.error_repeated else errs
+                # Last cycle set no new high-water-mark -> tell the next pass to
+                # change strategy (re-running the same approach reproduces the
+                # same non-converging result).
+                feedback = (_stall_directive(1) + "\n\n" + errs) if gate.last_cycle_stalled else errs
                 run("fixer", adapter, impl_sys,
                     _implementer_message(task, context, repo_root, stack,
                                          project_id, fix_feedback=feedback))
                 calls += 1
                 per_task_repairs += 1  # a per-task FIX pass (not the draft)
                 matrix.bump_attempts(task.id)
-                ok, errs = check(repo_root, task.test)
-                gate.observe(ok, errs)
+                landed = seat_landed_work()   # read BEFORE the next dispatch
+                ok, errs, passing, total = gate_check(task.test)
+                gate.observe(ok, passing, total, _failure_line_count(errs),
+                             seat_landed_work=landed)
             if ok:
                 # PER-TASK DEFINITION-OF-DONE hard gate: a passing test is
                 # necessary but not sufficient -- the task is not "done" until
@@ -2360,8 +2576,12 @@ def run_subagent_driven_build(
                 # arbiter; the builder never edits its own exam, and scheduling
                 # is unchanged (status stays 'failed' so dependent-skip and
                 # fail-fast are intact).
-                matrix.set(task.id, status="failed")
-                summary.append(f"{task.id} test_green=False")
+                still_failing = gate.checks_still_failing
+                summary_note = gate.still_failing_summary
+                matrix.set(task.id, status="failed",
+                           checks_still_failing=still_failing)
+                summary.append(
+                    f"{task.id} test_green=False did_not_converge ({summary_note})")
                 dispute = _diagnose_deadlock(
                     repo_root, task, errs, reviewer, adapter, run, stack,
                     project_id)
@@ -2377,8 +2597,11 @@ def run_subagent_driven_build(
                         f"{task.id} test_disputed[{dispute['source']}]: {dispute['reason']}")
                 else:
                     emit({"type": "system",
-                          "text": f"“{task.name}” failed its gate after the fix budget — "
-                                  "continuing with tasks that don't depend on it."})
+                          "text": f"“{task.name}” did not converge — {summary_note}, "
+                                  "and the last rounds stopped growing the passing "
+                                  "set. Stopping this task honestly (its work stays "
+                                  "on disk); continuing with tasks that don't depend "
+                                  "on it."})
         else:
             matrix.set(task.id, status="drafted-no-test")
             summary.append(f"{task.id}: drafted (no plan test)")
@@ -2401,13 +2624,13 @@ def run_subagent_driven_build(
         return LoopResult(
             run_id="g4-subagent-build",
             status="budget_exhausted",
-            final_text=("Subagent-driven build finished RED: "
+            final_text=("Subagent-driven build finished RED (did not converge): "
                         f"failed={','.join(failed_tasks) or 'none'} "
                         f"blocked={','.join(blocked_tasks) or 'none'} -- every "
                         "independent task was attempted and driven until green or "
-                        "stalled; partial work is on disk (see the traceability "
-                        "matrix); integration/review/evidence skipped (a red build "
-                        "cannot sign).\n"
+                        "until it stopped reducing failures; partial work is on "
+                        "disk (see the traceability matrix); integration/review/"
+                        "evidence skipped (a red build cannot sign).\n"
                         + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],

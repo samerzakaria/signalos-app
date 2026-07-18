@@ -1082,6 +1082,22 @@ def _collapse_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+_OBS_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_OBS_NUM_RE = re.compile(r"\d+")
+
+
+def _normalize_observation(text: str) -> str:
+    """Collapse the volatile bits of command OUTPUT (ANSI codes, and every digit
+    run -- which covers test durations, timestamps, counts, ports and line:col)
+    so that RE-RUNNING the same command with an unchanged real result (modulo
+    timing noise) hashes the same and is recognized as a REPEAT, not new
+    information. A genuinely different result (different text) still differs.
+    Build-seat stall detection only -- never touches G0-G3/default loops."""
+    s = _OBS_ANSI_RE.sub("", text or "")
+    s = _OBS_NUM_RE.sub("N", s)
+    return _collapse_ws(s)
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1888,21 +1904,31 @@ class AgentLoop:
         re-read / re-run that yields nothing new is recognized as no information
         gain. Returns None for tool calls that are not observations (their
         progress is measured through ``_mutation_seq`` instead). Objective: keyed
-        on the tool + its addressed argument + the exact result text the model
-        got back -- never the model's self-claim."""
+        on the tool + its addressed argument + the result text -- never the
+        model's self-claim.
+
+        For run_command the RESULT is NORMALIZED (ANSI + digit/duration collapse)
+        before hashing: re-running the SAME test and getting the same result
+        modulo timing noise must read as a REPEAT (it did NOT before -- each test
+        re-run's changing duration looked like new information, so a seat that
+        re-ran the same test 10 times never tripped the stall)."""
         args = tc.arguments if isinstance(tc.arguments, dict) else {}
         name = tc.name
         if name == "read_file":
             key = str(args.get("path", ""))
+            observed = result_text
         elif name == "list_directory":
             key = str(args.get("path", ""))
+            observed = result_text
         elif name == "search_files":
             key = str(args.get("pattern", ""))
+            observed = result_text
         elif name == "run_command":
             key = _collapse_ws(str(args.get("command", "")))
+            observed = _normalize_observation(result_text)
         else:
             return None  # write_file / edit_file: mutations, tracked separately
-        return _sha256(f"{name}\x00{key}\x00{result_text}")
+        return _sha256(f"{name}\x00{key}\x00{observed}")
 
     def _record_build_progress(
         self, tc: ToolCall, result_text: str, mutation_before: int

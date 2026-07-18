@@ -2358,7 +2358,16 @@ class SidecarClient:
         *,
         timeout: float,
         guard: Callable[[], Any] | None,
+        heartbeat: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        # heartbeat=True makes *timeout* an INACTIVITY threshold (max silence
+        # between events), not a total-duration cap: every event the sidecar
+        # emits resets the clock. A build that is alive and producing output
+        # runs for as long as it keeps working -- 5 minutes or hours -- and is
+        # only cut off if it goes genuinely SILENT (a frozen/deadlocked process,
+        # which the money cap can't catch because a freeze spends no tokens).
+        # Duration is never the limiter; the build stops itself on convergence
+        # or a value-based stall long before this ever matters.
         deadline = time.monotonic() + timeout
         events: list[dict[str, Any]] = []
         while time.monotonic() < deadline:
@@ -2368,6 +2377,9 @@ class SidecarClient:
                 line = self._stdout.get(timeout=min(1.0, max(0.05, deadline - time.monotonic())))
             except queue.Empty:
                 continue
+            if heartbeat:
+                # any activity from the sidecar resets the inactivity clock
+                deadline = time.monotonic() + timeout
             if line is None:
                 return events, None
             try:
@@ -2393,6 +2405,7 @@ class SidecarClient:
         timeout: float,
         project_id: str = "default",
         guard: Callable[[], Any] | None = None,
+        heartbeat: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         req_id = self._next_id(command)
         request: dict[str, Any] = {
@@ -2405,7 +2418,9 @@ class SidecarClient:
             request["args"] = args
         self._send(request)
         try:
-            events, terminal = self._wait_for(req_id, timeout=timeout, guard=guard)
+            events, terminal = self._wait_for(
+                req_id, timeout=timeout, guard=guard, heartbeat=heartbeat
+            )
         except Exception:
             self.cancel_and_stop(args.get("run_id") if isinstance(args, dict) else None)
             raise
@@ -4259,13 +4274,21 @@ def _run_row(
         )
         sidecar = SidecarClient(workspace, sidecar_env, row_secrets)
 
-        def invoke(command: str, args: Any, timeout: float, *, guarded: bool = True) -> dict[str, Any]:
+        def invoke(
+            command: str,
+            args: Any,
+            timeout: float,
+            *,
+            guarded: bool = True,
+            heartbeat: bool = False,
+        ) -> dict[str, Any]:
             started = time.monotonic()
             events, terminal = sidecar.call(
                 command,
                 args,
                 timeout=timeout,
                 guard=(lambda: cost.check()) if guarded and cost is not None else None,
+                heartbeat=heartbeat,
             )
             if guarded and cost is not None:
                 cost.check(force=True)
@@ -4436,7 +4459,15 @@ def _run_row(
             # `gate == "G4"` check was off by one, so the build got the 30-min
             # gate_timeout and was cut off mid-build at exactly 1800s.)
             advancing_into = GATES[index + 1] if index + 1 < len(GATES) else None
-            verdict_timeout = g4_build_timeout if advancing_into == "G4" else gate_timeout
+            runs_g4_build = advancing_into == "G4"
+            # For the G4 build, time is NOT the limiter: the build runs for as
+            # long as it stays alive and productive (it stops ITSELF on
+            # convergence or a value-based stall). g4_build_timeout is therefore
+            # applied as a HEARTBEAT / inactivity threshold -- every event the
+            # build emits resets it -- so we only ever cut off a genuinely FROZEN
+            # process (which the money cap can't catch, since a freeze spends no
+            # tokens). Every other verdict keeps the fast-fail total timeout.
+            verdict_timeout = g4_build_timeout if runs_g4_build else gate_timeout
             verdict = invoke(
                 "agent:verdict",
                 {
@@ -4446,6 +4477,7 @@ def _run_row(
                     "feedback": "",
                 },
                 verdict_timeout,
+                heartbeat=runs_g4_build,
             )
             verdict_data = _require_ok("agent:verdict", verdict)
             strict = _strict_gate(workspace, gate)

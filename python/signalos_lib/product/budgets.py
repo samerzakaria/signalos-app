@@ -26,13 +26,18 @@ DEFAULT_GATE_REOPEN_BUDGET = 3
 # budget" and do NOT lower it into normal-operation range.
 DEFAULT_BUILD_IMPLEMENTER_RUNAWAY_GUARD = 1000
 DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 20
-# STALL_ROUNDS for the per-task PROGRESS gate (subagent_build.py): the PRIMARY
-# control on the red-test fix loop. A red task keeps earning fixer cycles WHILE
-# it makes progress; it stops only after this many CONSECUTIVE cycles with no
-# progress (no new failure signature, no smaller failing set, no source change).
-# This is NOT a fixed cycle count -- a progressing task runs as many cycles as
-# it needs (bounded ultimately by money/time), a stalled one stops fast.
-DEFAULT_BUILD_TASK_STALL_ROUNDS = 2
+# STALL_ROUNDS for the per-task CONVERGENCE gate (subagent_build.py): the
+# PRIMARY control on the red-test fix loop. A red task keeps earning fixer
+# cycles WHILE it CONVERGES (its failing-check count keeps reaching a new
+# minimum); it stops only after this many CONSECUTIVE cycles that set no new
+# minimum -- churn that changes files/errors without reducing failures counts
+# toward the stall. This is NOT a fixed cycle count: a converging task runs as
+# many cycles as it needs (bounded ultimately by money/time), a non-converging
+# one stops fast and finishes honestly red. 3 allows one exploratory setup cycle
+# before the failure count must start dropping -- but no more (a churn build
+# that never reduces failures must stop cleanly in ~10-20 min, not burn the
+# whole wall-clock to a driver timeout).
+DEFAULT_BUILD_TASK_STALL_ROUNDS = 3
 # Small bound for the SECONDARY convergence loops only -- the deterministic
 # Definition-of-Done quality fixer and the reviewer re-review loop. These are
 # NOT the primary fix control (that is the progress gate above); they iterate a
