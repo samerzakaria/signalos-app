@@ -4427,10 +4427,16 @@ def _run_row(
                     )
                 gate_evidence["authority_approval"] = approval_data
 
-            # G4's verdict runs the funded build + a four-seat verification fleet,
-            # so it gets the larger build budget; every other gate uses the
-            # per-gate default (fast-fail on a hang).
-            verdict_timeout = g4_build_timeout if gate == "G4" else gate_timeout
+            # The funded G4 build + verification fleet runs inside the verdict
+            # that ADVANCES INTO G4 -- i.e. the verdict for the gate whose next
+            # gate is G4 (gate == "G3"), NOT the verdict where gate == "G4"
+            # (which advances into G5 / release). Give the large build budget to
+            # the verdict that actually runs the build; every other verdict uses
+            # the per-gate default (fast-fail on a hang). (OA-25: the earlier
+            # `gate == "G4"` check was off by one, so the build got the 30-min
+            # gate_timeout and was cut off mid-build at exactly 1800s.)
+            advancing_into = GATES[index + 1] if index + 1 < len(GATES) else None
+            verdict_timeout = g4_build_timeout if advancing_into == "G4" else gate_timeout
             verdict = invoke(
                 "agent:verdict",
                 {

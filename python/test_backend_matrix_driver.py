@@ -2077,7 +2077,12 @@ def test_g4_build_gate_gets_a_larger_verdict_budget(driver: ModuleType) -> None:
     import inspect
 
     src = inspect.getsource(driver._run_row)
-    assert 'g4_build_timeout if gate == "G4" else gate_timeout' in src
+    # OA-25: the G4 build runs inside the verdict that ADVANCES INTO G4 (the
+    # gate whose next gate is G4), not the verdict where gate == "G4" (which
+    # advances into G5). The earlier `gate == "G4"` check was off by one and
+    # handed the build the 30-min gate_timeout instead of the 90-min budget.
+    assert 'g4_build_timeout if advancing_into == "G4" else gate_timeout' in src
+    assert 'GATES[index + 1]' in src
     assert "verdict_timeout" in src
 
 
