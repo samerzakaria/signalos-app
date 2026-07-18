@@ -91,6 +91,22 @@ MAX_READ_BYTES = 2_000_000  # guard against reading huge binaries into context
 # rather than treating the cut-off as a finished turn.
 MAX_NO_TOOL_REPROMPTS = 2
 MAX_TRUNCATION_CONTINUES = 2
+
+# BUILD-SEAT stall detector (build_seat=True only; G0-G3/default loops are
+# UNCHANGED). A build/fixer seat is NOT bounded by a small tool-call cap -- the
+# primary control is PROGRESS. So a seat runs until end_turn, but must not be
+# able to loop forever making no progress. When the seat makes this many
+# CONSECUTIVE tool calls that neither change workspace state (a landed
+# write/edit, or a command that modified the tree) NOR yield new information (a
+# not-seen-before read/command output), the turn ends cleanly with status
+# "stalled_no_progress" -- a completed-but-unproductive turn, NOT a hard
+# failure (the objective test gate against the on-disk work is what decides the
+# task). The tighter REPEAT signal catches an identical command hammered in a
+# loop. Both are objective (filesystem + observed output), never the model's
+# self-claim. Generous defaults so a healthy explore/edit/verify rhythm never
+# trips; only a real spin does.
+BUILD_SEAT_STALL_WINDOW = 8
+BUILD_SEAT_REPEAT_CMD_LIMIT = 4
 _NO_TOOL_NUDGE = (
     "You did not call any tool and no files have been written yet. Do NOT "
     "describe what you will do -- perform the work NOW by calling write_file / "
@@ -1060,6 +1076,12 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _collapse_ws(text: str) -> str:
+    """Normalize whitespace so a command re-issued with cosmetic spacing changes
+    still reads as 'the same command' to the build-seat stall detector."""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1076,6 +1098,9 @@ class LoopResult:
     run_id: str
     # "completed" | "budget_exhausted" | "text_only" | "cancelled" | "error"
     # | "stalled_no_tool" (gave up after reprompts with no tool work)
+    # | "stalled_no_progress" (build seat: tool calls stopped changing state /
+    #   yielding new info -- a completed-but-unproductive turn, NOT a hard fail;
+    #   the objective on-disk gate decides the task)
     # | "max_tokens" (truncated and could not finish within the continue budget)
     status: str
     final_text: str | None
@@ -1143,6 +1168,9 @@ class AgentLoop:
         active_gate: str | None = None,
         signed_gates: list[int] | None = None,
         project_id: str = "default",
+        build_seat: bool = False,
+        stall_window: int | None = None,
+        repeat_cmd_limit: int | None = None,
     ) -> None:
         self.adapter = adapter
         self.repo_root = Path(repo_root)
@@ -1152,6 +1180,19 @@ class AgentLoop:
         )
         self.run_id = validate_run_id(run_id if run_id is not None else generated_run_id)
         self.tool_call_limit = resolve_agent_loop_tool_budget(tool_call_limit)
+        # BUILD-SEAT mode (FIX 3/4): a build/fixer seat's turn is controlled by
+        # PROGRESS, not a small tool-call cap. When on, the stall detector below
+        # ends a turn that stops changing state, and `tool_call_limit` is only a
+        # very high anti-runaway backstop the caller passes (never the normal
+        # stop). Default OFF -> G0-G3 and every other AgentLoop caller are
+        # byte-for-byte unchanged (small cap stays their primary bound).
+        self.build_seat = bool(build_seat)
+        self.stall_window = (
+            int(stall_window) if stall_window is not None
+            else BUILD_SEAT_STALL_WINDOW)
+        self.repeat_cmd_limit = (
+            int(repeat_cmd_limit) if repeat_cmd_limit is not None
+            else BUILD_SEAT_REPEAT_CMD_LIMIT)
         self._cancel_check = cancel_check or (lambda: False)
         self._emit = emit or (lambda _e: None)
         self._enforcement: EnforcementState | None = None
@@ -1166,6 +1207,16 @@ class AgentLoop:
         # Whether ANY write (write_file/edit_file) actually LANDED this run.
         # Feeds LoopResult.wrote_no_files so a narration-only run is honest.
         self._wrote_file_this_run = False
+        # PROGRESS accounting for the build-seat stall detector (only read when
+        # build_seat=True). `_mutation_seq` bumps on every landed STATE CHANGE (a
+        # write/edit whose bytes changed, or a command that modified the governed
+        # tree); comparing it before/after a tool call tells the loop whether
+        # that call changed anything. `_observed_sigs` remembers the signatures
+        # of read/command OUTPUTS so a re-read/re-run that yields nothing new is
+        # recognized as no information gain. Both are objective (filesystem +
+        # observed output), never the model's self-report.
+        self._mutation_seq = 0
+        self._observed_sigs: set[str] = set()
         self._seq = 0
         # Token accounting summed across every provider turn (None until the
         # provider reports usage). Stamped onto the LoopResult by _finalize.
@@ -1503,12 +1554,56 @@ class AgentLoop:
         *,
         tool_calls_made: int,
     ) -> LoopResult:
+        """Run the governed tool loop, guaranteeing the per-seat sandbox
+        container is torn down when the seat ends (FIX 2).
+
+        run_command execs into ONE warm container booted lazily on the first
+        command (see ``_ensure_sandbox_session``); the whole seat shares it, so
+        the dependency volume is materialized + verified ONCE, not per command.
+        This try/finally is the seat-scoped lifecycle boundary: the container is
+        ALWAYS removed here, even on exception, and a teardown that cannot be
+        VERIFIED fails the seat closed rather than leaking a container.
+        """
+        result: LoopResult | None = None
+        try:
+            result = self._run_governed_tool_loop(
+                messages, tool_calls_made=tool_calls_made
+            )
+            return result
+        finally:
+            teardown_error = self._close_sandbox_session()
+            if (
+                teardown_error
+                and result is not None
+                and result.status != "error"
+            ):
+                # Fail-closed: we cannot verify the seat's container is gone, so
+                # do not report clean success with a possibly-leaked container.
+                result.status = "error"
+                result.error = (
+                    "sandbox container teardown could not be verified: "
+                    f"{teardown_error}"
+                )
+                result.failure_type = "sandbox-unavailable"
+
+    def _run_governed_tool_loop(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tool_calls_made: int,
+    ) -> LoopResult:
         tools = [t.as_openai_tool() for t in AGENT_TOOLS]
         final_text: str | None = None
         # Narration/truncation recovery counters (see MAX_* constants).
         reprompts_used = 0
         continues_used = 0
         escalate_next = False  # request tool_choice="required" next turn
+        # BUILD-SEAT stall detector state (read only when self.build_seat). These
+        # persist ACROSS turns within this one seat run so a spin spread over
+        # several turns is still caught. No-op for every non-build-seat loop.
+        self._no_progress_streak = 0
+        self._repeat_cmd_streak = 0
+        self._last_cmd_sig: str | None = None
 
         self._persist_state(messages, tool_calls_made, status="running")
 
@@ -1698,6 +1793,7 @@ class AgentLoop:
                     )
 
                 tool_calls_made += 1
+                mutation_before = self._mutation_seq
                 try:
                     result_text = self._dispatch_tool(tc)
                 except SandboxUnavailableError as exc:
@@ -1725,6 +1821,17 @@ class AgentLoop:
                         "content": result_text,
                     }
                 )
+                # BUILD-SEAT stall detector: a productive seat (a landed
+                # write/edit, a command that changed the tree, or a read/command
+                # that surfaced new information) keeps going with no small cap.
+                # A seat that stops changing state AND stops learning anything for
+                # a whole window ends the turn cleanly here -- a completed-but-
+                # unproductive turn, not a hard failure (the objective on-disk
+                # test gate then decides the task). No-op unless build_seat.
+                if self.build_seat and self._record_build_progress(
+                        tc, result_text, mutation_before):
+                    return self._stalled_no_progress_result(
+                        messages, tool_calls_made, final_text)
 
             self._persist_state(messages, tool_calls_made, status="running")
 
@@ -1772,6 +1879,95 @@ class AgentLoop:
                 "agent loop tool-call budget "
                 f"({self.tool_call_limit}) exhausted"
             ),
+        )
+
+    # --- build-seat stall detection (FIX 3/4) -------------------------------
+
+    def _observation_signature(self, tc: ToolCall, result_text: str) -> str | None:
+        """Stable signature of what a NON-mutating tool call OBSERVED, so a
+        re-read / re-run that yields nothing new is recognized as no information
+        gain. Returns None for tool calls that are not observations (their
+        progress is measured through ``_mutation_seq`` instead). Objective: keyed
+        on the tool + its addressed argument + the exact result text the model
+        got back -- never the model's self-claim."""
+        args = tc.arguments if isinstance(tc.arguments, dict) else {}
+        name = tc.name
+        if name == "read_file":
+            key = str(args.get("path", ""))
+        elif name == "list_directory":
+            key = str(args.get("path", ""))
+        elif name == "search_files":
+            key = str(args.get("pattern", ""))
+        elif name == "run_command":
+            key = _collapse_ws(str(args.get("command", "")))
+        else:
+            return None  # write_file / edit_file: mutations, tracked separately
+        return _sha256(f"{name}\x00{key}\x00{result_text}")
+
+    def _record_build_progress(
+        self, tc: ToolCall, result_text: str, mutation_before: int
+    ) -> bool:
+        """Update the build-seat progress streaks for one just-dispatched tool
+        call and return True when the seat has STALLED (should end the turn).
+
+        PROGRESS = the call changed workspace state (a landed write/edit or a
+        command that modified the governed tree -> ``_mutation_seq`` advanced) OR
+        it surfaced information not seen before this run. A window of consecutive
+        unproductive calls, or an identical command hammered with no change,
+        trips the stall. Deterministic and objective (filesystem + observed
+        output)."""
+        mutated = self._mutation_seq > mutation_before
+        sig = self._observation_signature(tc, result_text)
+        new_info = sig is not None and sig not in self._observed_sigs
+        if sig is not None:
+            self._observed_sigs.add(sig)
+        productive = mutated or new_info
+
+        if productive:
+            self._no_progress_streak = 0
+            self._repeat_cmd_streak = 0
+        else:
+            self._no_progress_streak += 1
+            if tc.name == "run_command":
+                cmd_sig = _collapse_ws(
+                    str((tc.arguments if isinstance(tc.arguments, dict)
+                         else {}).get("command", "")))
+                if cmd_sig and cmd_sig == self._last_cmd_sig:
+                    self._repeat_cmd_streak += 1
+                else:
+                    self._repeat_cmd_streak = 0
+        if tc.name == "run_command":
+            self._last_cmd_sig = _collapse_ws(
+                str((tc.arguments if isinstance(tc.arguments, dict)
+                     else {}).get("command", "")))
+        return (self._no_progress_streak >= self.stall_window
+                or self._repeat_cmd_streak >= self.repeat_cmd_limit)
+
+    def _stalled_no_progress_result(
+        self,
+        messages: list[dict[str, Any]],
+        tool_calls_made: int,
+        final_text: str | None,
+    ) -> LoopResult:
+        """End a build seat that stopped making progress. NOT a hard failure:
+        the built files are on disk and the objective test gate against that
+        on-disk state (run by the caller) is what decides the task -- work is
+        never discarded because a seat stopped mid-spin."""
+        self._persist_state(messages, tool_calls_made, status="stalled_no_progress")
+        self._emit({
+            "type": "stalled_no_progress",
+            "run_id": self.run_id,
+            "tool_calls_made": tool_calls_made,
+        })
+        return LoopResult(
+            run_id=self.run_id,
+            status="stalled_no_progress",
+            final_text=final_text,
+            tool_calls_made=tool_calls_made,
+            messages=messages,
+            error="build seat stopped changing state / surfacing new information "
+                  "across the stall window; ending the turn (the objective "
+                  "on-disk test gate decides the task)",
         )
 
     # --- text-only mode (INV-7 / 2.11) --------------------------------------
@@ -2507,6 +2703,10 @@ class AgentLoop:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         self._wrote_file_this_run = True
+        # Only a write that actually CHANGED the bytes counts as progress for the
+        # build-seat stall detector; re-writing identical content is a no-op.
+        if content != before:
+            self._mutation_seq += 1
         if _is_test_path(rel_path):
             self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.
@@ -2536,6 +2736,9 @@ class AgentLoop:
         warnings = self._scan_write_content(rel_path, updated)
         target.write_text(updated, encoding="utf-8")
         self._wrote_file_this_run = True
+        # A no-op edit (old == new) changes nothing -> not progress.
+        if updated != original:
+            self._mutation_seq += 1
         if _is_test_path(rel_path):
             self._test_written_this_run = True
         # 3.6: emit a diff event so the UI can render a FileDiffBubble.
@@ -2594,6 +2797,40 @@ class AgentLoop:
             self._sandbox_runner = runner
         return runner
 
+    def _ensure_sandbox_session(self, runner: SandboxRunner) -> None:
+        """Boot the ONE warm per-seat container on the first run_command (FIX 2).
+
+        Only a ContainerRunner has a persistent session; the in-process runner is
+        a no-op (default behaviour byte-identical). Booting LAZILY means a seat
+        that never runs a command never pays a container boot -- and a text-only
+        or write-only seat never fails closed on containment it did not use. If
+        the boot fails the SandboxUnavailableError propagates and the seat fails
+        closed; there is never an unhardened fallback.
+        """
+        from .sandbox import ContainerRunner
+
+        if isinstance(runner, ContainerRunner) and not runner.session_active:
+            runner.open_session(COMMAND_TIMEOUT_S)
+
+    def _close_sandbox_session(self) -> str | None:
+        """Tear down the per-seat container if one was booted (FIX 2). Returns an
+        error string when teardown could NOT be verified (a possible leak), else
+        None. Never raises -- the caller decides how to surface a teardown
+        failure (the tool loop turns it into a fail-closed error result)."""
+        runner = getattr(self, "_sandbox_runner", None)
+        from .sandbox import ContainerRunner
+
+        if not isinstance(runner, ContainerRunner) or not runner.session_active:
+            return None
+        try:
+            runner.close_session()
+        except SandboxUnavailableError as exc:
+            self._emit(
+                {"type": "sandbox_error", "run_id": self.run_id, "error": str(exc)}
+            )
+            return str(exc)
+        return None
+
     def _tool_run_command(self, command: str) -> str:
         # Cancellation: a long command honors the loop-level timeout. We do not
         # poll cancel_check mid-process; the COMMAND_TIMEOUT_S bound applies.
@@ -2624,6 +2861,10 @@ class AgentLoop:
 
             verify_funded_dependencies_when_materialized(self.repo_root)
         runner = self._get_sandbox_runner()
+        # FIX 2: boot the ONE warm per-seat container on first use (no-op for the
+        # in-process runner). A boot failure fails the seat closed (never an
+        # unhardened fallback); the container is torn down in _run_tool_loop.
+        self._ensure_sandbox_session(runner)
         # FIX 1: command-writes are governed too. Snapshot the governed source
         # subtree BEFORE the command so we can diff it AFTER -- a `python -c` /
         # `node -e` / test script that writes files never passed write_file
@@ -2638,7 +2879,12 @@ class AgentLoop:
         # forbidden / immutable / secret path (raises ToolPolicyError on a
         # block-level violation, after reverting the offending change). Runs even
         # on timeout: a killed command may still have written a secret first.
-        self._enforce_command_writes(original_command, before)
+        changed_count = self._enforce_command_writes(original_command, before)
+        # A command that modified the governed tree is real progress for the
+        # build-seat stall detector (a bare `npm test` re-run that changes
+        # nothing is not).
+        if changed_count:
+            self._mutation_seq += 1
         if output.timed_out:
             return (
                 f"ERROR: command timed out after {COMMAND_TIMEOUT_S}s and was "
@@ -2745,9 +2991,13 @@ class AgentLoop:
 
     def _enforce_command_writes(
         self, command: str, before: dict[str, tuple[str, bytes | None]]
-    ) -> None:
+    ) -> int:
         """Diff the governed tree against *before*, AUDIT every change, and
-        revert + DENY any write to a forbidden / immutable / secret path.
+        revert + DENY any write to a forbidden / immutable / secret path. Returns
+        the number of governed files the command changed (0 when it touched none)
+        so the build-seat stall detector can tell a command that DID work from a
+        no-op re-run (a raise on a block violation aborts before returning, and
+        those changes are reverted -- so a denied command counts as no change).
 
         (a) block-mode violations are REVERTED (new file deleted, modified/deleted
             protected file restored from the pre-command bytes) then surfaced as a
@@ -2768,7 +3018,7 @@ class AgentLoop:
             if rel not in after:
                 changed.append((rel, "deleted", None, None))
         if not changed:
-            return
+            return 0
 
         violations: list[tuple[str, str]] = []  # (rel, reason)
         first_rule: str | None = None
@@ -2812,7 +3062,7 @@ class AgentLoop:
             self._audit_command_change(
                 command, f"<{len(changed) - audited} more changes>", "summary", None)
         if not violations:
-            return
+            return len(changed)
         detail = "; ".join(f"{rel} ({reason})" for rel, reason in violations[:5])
         more = "" if len(violations) <= 5 else f" (+{len(violations) - 5} more)"
         raise ToolPolicyError(

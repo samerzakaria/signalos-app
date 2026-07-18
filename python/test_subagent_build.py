@@ -9,12 +9,14 @@ INDEPENDENT reviewer adapter when one is configured.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from signalos_lib.product import subagent_build as sb
 from signalos_lib.product.subagent_build import (
     Task,
     decompose_tasks,
@@ -168,6 +170,26 @@ def _repo_with_plan() -> Path:
     return d
 
 
+def _repo_with_scaffold_and_feature() -> Path:
+    """A plan-driven repo whose FIRST task is a toolchain/scaffold step with NO
+    acceptance test (the failure mode from run 13) and whose SECOND task is a
+    real product feature carrying its own test."""
+    d = Path(tempfile.mkdtemp())
+    plan = d / "core" / "execution" / "PLAN.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(
+        "# Plan\n\n"
+        "### T1 — Scaffold the toolchain\n"
+        "**Files:** `package.json`\n"
+        "Set up the build tool and test runner\n\n"
+        "### T2 — Add an expense and see it in the list\n"
+        "**Files:** `src/Expense.tsx`\n"
+        "**Test:** `core/execution/tests/T2.test.ts`\n"
+        "Acceptance: adding an expense shows it in the list\n",
+        encoding="utf-8")
+    return d
+
+
 class TestOrchestration(unittest.TestCase):
     def test_happy_path_phases(self):
         # green immediately: 1 fallback task -> draft, (no repair), spec+code
@@ -233,10 +255,12 @@ class TestOrchestration(unittest.TestCase):
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=check)
         roles = rec.roles()
-        # T1 attempted (1 impl + 3 fixers); T2 independent -> pre-check green,
-        # skipped free; T3 depends on failed T1 -> blocked, never dispatched.
+        # T1 attempted (1 impl + fixers); the SAME error with no source change is
+        # a hard STALL, so the progress gate stops it after STALL_ROUNDS (=2)
+        # no-progress cycles -- not at a fixed pass count. T2 independent ->
+        # pre-check green, skipped free; T3 depends on failed T1 -> blocked.
         self.assertEqual(roles.count("implementer"), 1)
-        self.assertEqual(roles.count("fixer"), 3)
+        self.assertEqual(roles.count("fixer"), 2)  # STALL_ROUNDS, progress-gated
         self.assertNotIn("evidence", roles)          # red build: doomed phases cut
         self.assertEqual(res.status, "budget_exhausted")
         self.assertIn("T1", res.error)
@@ -250,6 +274,44 @@ class TestOrchestration(unittest.TestCase):
         run_subagent_driven_build(_repo_with_plan(), adapter="A", prompt="x",
                                   run_agent=rec, build_check=_green)
         self.assertEqual(rec.roles().count("implementer"), 0)  # both tasks pre-green
+
+    def test_no_test_task_in_plan_driven_build_is_skipped_not_dispatched(self):
+        """FAIRNESS FIX (run 13): in a plan-driven build a task that carries NO
+        acceptance test of its own is not product-feature work -- it is a
+        scaffold/setup step whose toolchain is already provisioned before the
+        gate. It is marked pre-existing-green and NEVER dispatched to a build
+        seat; only the real feature task (which HAS a test) is built. Detected
+        STRUCTURALLY (absence of a RED test), never by matching the task name."""
+        d = _repo_with_scaffold_and_feature()
+        # T2's test is red on the pre-check (forcing exactly one dispatch), then
+        # green after the implementer runs.
+        state = {"pre": True}
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T2.test.ts") and state["pre"]:
+                state["pre"] = False
+                return (False, "T2 red")
+            return (True, "")
+
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "completed")
+        # exactly ONE build seat, and it is the FEATURE task -- the no-test
+        # scaffold task was never dispatched.
+        self.assertEqual(rec.roles().count("implementer"), 1)
+        dispatched = [m for (role, _), m in zip(rec.calls, rec.messages)
+                      if role in ("implementer", "fixer")]
+        # the dispatch's TASK HEADER (`# Task <id>: ...`) uniquely marks WHICH
+        # task a seat was given -- T1 (the no-test scaffold task) is never it.
+        self.assertTrue(all("# Task T1:" not in m for m in dispatched),
+                        "the no-test scaffold task must never reach a build seat")
+        self.assertTrue(any("# Task T2:" in m for m in dispatched))
+        # T1 recorded pre-existing-green (skipped, not built) in the trace.
+        tr = _trace(d)
+        t1 = next(r for r in tr["rows"] if r["task"] == "T1")
+        self.assertEqual(t1["status"], "pre-existing-green")
+        self.assertIn("not dispatched", res.final_text)
 
     def test_reviews_run_on_independent_adapter(self):
         rec = Recorder()
@@ -399,6 +461,117 @@ class TestOrchestration(unittest.TestCase):
         spec = sb._reviewer_system_prompt("spec")
         self.assertIn("VERDICT: PASS", spec)
         self.assertIn("Do Not Trust the Report", spec)  # bundled spec-reviewer content
+
+
+# ---------------------------------------------------------------------------
+# FIX 5 — the seat gets its environment up front (fixed facts + repo map +
+# efficient-process directives), all resolved BY THE HARNESS from the adapter.
+# ---------------------------------------------------------------------------
+
+
+def _react_stack():
+    """A resolved-values stack context mirroring what _resolve_stack builds from
+    the React+Vite adapter (test command + install command come from the
+    adapter's validation_plan, never hand-authored here)."""
+    from signalos_lib.product import subagent_build as sb
+    st = sb._StackContext(
+        profile="react-vite", source_dir="src",
+        build_cmds=["npm run build"], test_cmds=["npm test"],
+        install_cmds=["npm install --legacy-peer-deps"],
+    )
+    st.dep_dir = sb._resolve_dep_dir(st.install_cmds)
+    return st
+
+
+class TestSeatEnvironmentUpFront(unittest.TestCase):
+    def test_system_prompt_has_env_facts_block_with_workspace_and_test_cmd(self):
+        # (a) the env-facts block is prepended, states the /workspace cwd
+        # (resolved from the sandbox, NOT the host path), the pre-installed deps,
+        # and the resolved test command.
+        from signalos_lib.product import subagent_build as sb
+        from signalos_lib.product.sandbox import CONTAINER_WORKSPACE
+        impl = sb._implementer_system_prompt("", _react_stack())
+        self.assertIn("Environment (fixed facts", impl)
+        self.assertIn(CONTAINER_WORKSPACE, impl)           # /workspace
+        self.assertIn("do NOT run touch/df/mount", impl)
+        self.assertIn("PRE-INSTALLED", impl)
+        self.assertIn("node_modules", impl)                # resolved dep dir
+        self.assertIn("Run tests with: npm test", impl)    # resolved test command
+        # process coaching is appended (HOW to spend effort, not WHAT to build).
+        self.assertIn("How to spend your effort", impl)
+        self.assertIn("explore ONCE", impl)
+
+    def test_system_prompt_env_facts_are_resolved_not_hardcoded(self):
+        # The block adapts to the resolved values: the cwd is fixed (sandbox) but
+        # the test/install commands come from the adapter -- change them and the
+        # env-facts block changes (asserted on the block itself, since the bundled
+        # TDD skill legitimately contains `npm test` in its examples).
+        from signalos_lib.product import subagent_build as sb
+        st = sb._StackContext(source_dir="app", test_cmds=["pytest -q"],
+                              install_cmds=["pip install -e ."])
+        facts = sb._env_facts_block(st)
+        self.assertIn("Run tests with: pytest -q", facts)
+        self.assertIn("pip install -e .", facts)
+        self.assertNotIn("npm", facts)
+        self.assertNotIn("node_modules", facts)
+        # A non-node install command yields no node_modules claim.
+        self.assertEqual(sb._resolve_dep_dir(["pip install -e ."]), "")
+
+    def test_first_message_carries_workspace_digest_and_test_command(self):
+        # (c) message 1 (the FIRST dispatch, no fix feedback) carries a workspace
+        # map + config digest + the resolved test command.
+        from signalos_lib.product import subagent_build as sb
+        d = Path(tempfile.mkdtemp())
+        (d / "src" / "components").mkdir(parents=True)
+        (d / "src" / "App.tsx").write_text("export const App = () => null",
+                                           encoding="utf-8")
+        (d / "src" / "components" / "Foo.tsx").write_text(
+            "export const Foo = () => null", encoding="utf-8")
+        (d / "package.json").write_text(json.dumps(
+            {"scripts": {"test": "vitest run"},
+             "dependencies": {"react": "^18"},
+             "devDependencies": {"vitest": "^1"}}), encoding="utf-8")
+        (d / "tsconfig.json").write_text('{"compilerOptions":{"strict":true}}',
+                                         encoding="utf-8")
+        # dependency noise dir must be excluded from the map.
+        (d / "node_modules").mkdir()
+        (d / "node_modules" / "junk.js").write_text("x", encoding="utf-8")
+        task = Task(id="T1", name="Build Foo", text="do it",
+                    files=["src/components/Foo.tsx"], test="")
+        msg = sb._implementer_message(task, "ctx", d, _react_stack())
+        self.assertIn("Workspace map", msg)
+        self.assertIn("src/components/Foo.tsx", msg)       # existing module path
+        self.assertIn("package.json", msg)                 # key config surfaced
+        self.assertIn("npm test", msg)                     # resolved test command
+        self.assertNotIn("node_modules", msg.split("Workspace map", 1)[1]
+                         .split("Work from", 1)[0])        # noise dir excluded
+
+    def test_first_message_has_no_host_path_and_uses_container_path(self):
+        # (b) the misleading `Work from: <windows host path>` line is gone; the
+        # seat is told the CONTAINER path, never the host path.
+        from signalos_lib.product import subagent_build as sb
+        from signalos_lib.product.sandbox import CONTAINER_WORKSPACE
+        d = Path(tempfile.mkdtemp())
+        (d / "src").mkdir(parents=True)
+        task = Task(id="T1", name="X", text="do it", files=[], test="")
+        msg = sb._implementer_message(task, "ctx", d, _react_stack())
+        self.assertIn(f"Work from: {CONTAINER_WORKSPACE}", msg)
+        self.assertNotIn(str(d), msg)                      # no host path leak
+        self.assertNotIn("Work from: " + str(d), msg)
+
+    def test_fixer_and_evidence_messages_use_container_path_not_host(self):
+        # The whole message cluster (fixer / DoD-fixer / evidence) shows the
+        # container path, never the host path.
+        from signalos_lib.product import subagent_build as sb
+        from signalos_lib.product.sandbox import CONTAINER_WORKSPACE
+        d = Path(tempfile.mkdtemp())
+        st = _react_stack()
+        fixer = sb._fixer_message("some error", d, st)
+        self.assertIn(f"Work from: {CONTAINER_WORKSPACE}", fixer)
+        self.assertNotIn(str(d), fixer)
+        ev = sb._evidence_message(d, "default", st, green=True)
+        self.assertIn(f"Work from: {CONTAINER_WORKSPACE}", ev)
+        self.assertNotIn(str(d), ev)
 
 
 # ---------------------------------------------------------------------------
@@ -711,6 +884,124 @@ def _trace(repo_root: Path) -> dict:
     """The build's machine-readable traceability snapshot (grader-visible)."""
     p = repo_root / ".signalos" / "traceability.json"
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# FIX 3/4: the per-task fix loop is PROGRESS-gated, not fixed-count. A red task
+# that keeps progressing keeps earning cycles; a stalled one stops after
+# STALL_ROUNDS; and a seat that ends 'exhausted' is resumable via the objective
+# on-disk gate (its work is never discarded).
+# ---------------------------------------------------------------------------
+
+
+class TestProgressSignature(unittest.TestCase):
+    def test_same_failure_normalizes_to_same_signature(self):
+        # Volatile noise (paths, line:col numbers, durations) must NOT count as
+        # a changed failure -- 'the same error again' has to read as no progress.
+        a = sb._normalize_error_signature(
+            "C:/ws/src/Foo.test.ts(4,25): error TS2307 Cannot find './Foo' (12 ms)")
+        b = sb._normalize_error_signature(
+            "C:/ws/src/Foo.test.ts(9,3): error TS2307 Cannot find './Foo' (44 ms)")
+        self.assertEqual(a, b)
+
+    def test_different_failure_changes_signature(self):
+        a = sb._normalize_error_signature("Cannot find module './Widget'")
+        b = sb._normalize_error_signature("Cannot find module './Store'")
+        self.assertNotEqual(a, b)
+
+    def test_gate_stalls_only_after_consecutive_no_progress(self):
+        d = Path(tempfile.mkdtemp())
+        gate = sb._TaskProgressGate(d, "src", stall_rounds=2)
+        gate.observe(False, "same error")   # baseline
+        self.assertFalse(gate.stalled())
+        gate.observe(False, "same error")   # no progress #1
+        self.assertFalse(gate.stalled())
+        gate.observe(False, "same error")   # no progress #2 -> stalled
+        self.assertTrue(gate.stalled())
+
+    def test_gate_never_stalls_while_failure_signature_moves(self):
+        d = Path(tempfile.mkdtemp())
+        gate = sb._TaskProgressGate(d, "src", stall_rounds=2)
+        gate.observe(False, "error alpha")
+        for word in ("beta", "gamma", "delta", "epsilon", "zeta"):
+            gate.observe(False, f"error {word}")
+            self.assertFalse(gate.stalled())   # a moving failure = progress
+
+
+class TestProgressGatedFixLoop(unittest.TestCase):
+    def test_progressing_red_task_keeps_cycling_past_the_old_fixed_cap(self):
+        """A task that stays red but PROGRESSES (a different failure each cycle)
+        keeps earning fixer cycles -- far past the old fixed 3 and past
+        STALL_ROUNDS -- because forward motion, not a call count, governs."""
+        d = _repo_with_plan()
+        words = ["alpha", "beta", "gamma", "delta", "epsilon",
+                 "zeta", "eta", "theta"]
+        state = {"n": 0}
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts"):
+                i = state["n"]
+                state["n"] += 1
+                # red for: pre-check(i0) + baseline(i1) + 5 fixer checks(i2..i6);
+                # the 6th fixer's check (i7) is GREEN -> exactly 6 fixer passes.
+                if i < 7:
+                    return (False, f"T1 failing at module {words[i]}")
+                return (True, "")
+            return (True, "")                    # T2 pre-green, integration green
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "completed")
+        fixers = rec.roles().count("fixer")
+        self.assertGreater(fixers, 3)            # NOT capped at the old fixed 3
+        self.assertEqual(fixers, 6)              # ran until the objective test went green
+
+    def test_stalled_red_task_stops_after_stall_rounds_not_a_call_count(self):
+        """The SAME failure with no source change is a hard STALL: the loop stops
+        after STALL_ROUNDS no-progress cycles -- and the count TRACKS
+        STALL_ROUNDS, proving it is the control (not a magic number)."""
+        for rounds in (2, 4):
+            with self.subTest(stall_rounds=rounds):
+                d = _repo_with_plan()
+
+                def check(_r, only_test=None):
+                    if only_test and only_test.endswith("T1.test.ts"):
+                        return (False, "T1 stays red, unchanged")
+                    return (True, "")            # T2 pre-green
+                rec = Recorder()
+                with mock.patch.dict(
+                    os.environ,
+                    {"SIGNALOS_BUILD_TASK_STALL_ROUNDS": str(rounds)}):
+                    res = run_subagent_driven_build(
+                        d, adapter="A", prompt="x", run_agent=rec, build_check=check)
+                self.assertEqual(res.status, "budget_exhausted")
+                # exactly STALL_ROUNDS fixer passes, then the honest stall.
+                self.assertEqual(rec.roles().count("fixer"), rounds)
+                self.assertIn("on disk", res.final_text)   # work not discarded
+
+    def test_exhausted_seat_is_resumable_via_on_disk_gate(self):
+        """RESUMABILITY (FIX 4): a seat can end 'exhausted' (it reports it hit a
+        limit), but its work is ON DISK. The per-task loop trusts only the
+        OBJECTIVE test against that on-disk state -- which is green -- so the task
+        SUCCEEDS. Work is never discarded because the seat did not finish
+        cleanly."""
+        d = _repo_with_plan()
+        pre = {"T1": True}
+
+        def check(_r, only_test=None):
+            if only_test and only_test.endswith("T1.test.ts") and pre["T1"]:
+                pre["T1"] = False
+                return (False, "T1 red on the pre-check")   # forces one dispatch
+            return (True, "")                                # on-disk GREEN after the seat
+        rec = Recorder(script={"implementer": [
+            "Status: BLOCKED\nI ran out of budget before I could finish."]})
+        res = run_subagent_driven_build(d, adapter="A", prompt="x",
+                                        run_agent=rec, build_check=check)
+        self.assertEqual(res.status, "completed")          # on-disk green wins
+        self.assertEqual(rec.roles().count("fixer"), 0)    # gate green right after the seat
+        tr = _trace(d)
+        t1 = next(r for r in tr["rows"] if r["task"] == "T1")
+        self.assertEqual(t1["status"], "green")
 
 
 class TestRepairAccounting(unittest.TestCase):

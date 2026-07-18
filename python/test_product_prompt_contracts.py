@@ -112,6 +112,27 @@ def test_belief_carries_requirement_traceability_home() -> None:
     assert "register **every** one here" in onboarding
 
 
+def test_plan_card_forbids_scaffold_toolchain_tasks() -> None:
+    # FAIRNESS FIX (run 13): the selected stack's toolchain (build tool + test
+    # runner + entry point + dependencies) is materialized and installed BEFORE
+    # the Build gate, so the plan must never emit a scaffold/setup/toolchain
+    # task -- a Build seat that re-stands-up the toolchain burns its whole
+    # budget on infrastructure the harness already owns. Every buildable task
+    # must be a product-feature vertical slice with its own failing acceptance
+    # test. The instruction stays stack-agnostic (never names a framework).
+    text = _card("plan.md")
+    assert "toolchain is already provisioned" in text
+    assert "MUST NOT emit any task whose job is to scaffold" in text
+    # a matching Forbidden rule makes it enforceable, not just advisory prose
+    assert "Do not emit any scaffold, setup, toolchain" in text
+    assert (
+        "the stack's build tool, test runner, entry point, and dependencies are "
+        "already provisioned and installed before the Build gate"
+    ) in text
+    # stays stack-agnostic -- does not hardcode a specific framework id
+    assert "react-vite" not in text.lower()
+
+
 def test_observability_card_does_not_require_release_signal_log() -> None:
     # Same unsatisfiable-prerequisite class at G5: the signal-log is opened
     # by a Release agent that a pre-deploy governed delivery never runs.

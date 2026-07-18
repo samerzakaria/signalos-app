@@ -666,34 +666,48 @@ def _run_commands_in_container(repo_root: Path, cmds: list[str], runner) -> dict
         from .dependency_broker import verify_funded_dependencies_from_environment
 
         verify_funded_dependencies_from_environment(repo_root)
-    for cmd in cmds:
-        if not cmd or not cmd.strip():
-            continue
-        if funded and _is_install_command(cmd):
-            outputs.append(
-                "trusted dependency receipt verified; networked install skipped"
-            )
-            continue
-        cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
-        exit_code, out = runner.run(cmd, repo_root, cmd_timeout, env)
-        combined = out.stdout or ""
-        if out.stderr:
-            combined += "\n" + out.stderr
-        outputs.append(combined)
-        if out.timed_out:
-            elapsed = time.perf_counter() - start
-            return {
-                "status": "blocked",
-                "output": f"command timed out after {cmd_timeout}s: {cmd}",
-                "duration_s": round(elapsed, 3),
-            }
-        if exit_code != 0:
-            elapsed = time.perf_counter() - start
-            return {
-                "status": "failed",
-                "output": "\n".join(outputs),
-                "duration_s": round(elapsed, 3),
-            }
+    # FIX 2: run the whole gate-verification command list in ONE warm container so
+    # the dependency volume is materialized + verified ONCE, not per command. The
+    # session boots on enter and is ALWAYS torn down on exit (even on early return
+    # / exception); a fake test runner (no session API) uses a no-op context.
+    import contextlib
+
+    from .sandbox import ContainerRunner
+
+    session_cm = (
+        runner.session(install_timeout_s)
+        if isinstance(runner, ContainerRunner)
+        else contextlib.nullcontext()
+    )
+    with session_cm:
+        for cmd in cmds:
+            if not cmd or not cmd.strip():
+                continue
+            if funded and _is_install_command(cmd):
+                outputs.append(
+                    "trusted dependency receipt verified; networked install skipped"
+                )
+                continue
+            cmd_timeout = install_timeout_s if _is_install_command(cmd) else timeout_s
+            exit_code, out = runner.run(cmd, repo_root, cmd_timeout, env)
+            combined = out.stdout or ""
+            if out.stderr:
+                combined += "\n" + out.stderr
+            outputs.append(combined)
+            if out.timed_out:
+                elapsed = time.perf_counter() - start
+                return {
+                    "status": "blocked",
+                    "output": f"command timed out after {cmd_timeout}s: {cmd}",
+                    "duration_s": round(elapsed, 3),
+                }
+            if exit_code != 0:
+                elapsed = time.perf_counter() - start
+                return {
+                    "status": "failed",
+                    "output": "\n".join(outputs),
+                    "duration_s": round(elapsed, 3),
+                }
     elapsed = time.perf_counter() - start
     return {
         "status": "passed",

@@ -28,6 +28,7 @@ from signalos_lib.product.sandbox import (
     InProcessRunner,
     SandboxUnavailableError,
     build_container_argv,
+    build_container_exec_argv,
     container_engine_available,
     select_runner,
     validate_pinned_image,
@@ -316,6 +317,31 @@ class TestContainerArgv:
         joined = " ".join(argv)
         assert "-e CI=1" in joined
         assert "-e FORCE_COLOR=0" in joined
+
+    def test_noise_suppression_env_is_present_by_default(self):
+        # FIX 5: the container env carries the noise-suppression baseline so tool
+        # output is compact/non-watch and a seat never re-runs a command just to
+        # re-read colour/progress-garbled output. Present even with NO caller env.
+        from signalos_lib.product.sandbox import NOISE_SUPPRESSION_ENV
+        with tempfile.TemporaryDirectory() as d:
+            argv = build_container_argv("npm test", Path(d), engine="docker")
+        joined = " ".join(argv)
+        for key, val in NOISE_SUPPRESSION_ENV.items():
+            assert f"-e {key}={val}" in joined, key
+        # the specific noise knobs the fix requires.
+        for expected in ("-e CI=1", "-e NO_COLOR=1", "-e npm_config_progress=false",
+                         "-e npm_config_fund=false", "-e npm_config_audit=false"):
+            assert expected in joined, expected
+
+    def test_caller_env_overrides_noise_suppression_default(self):
+        # An explicit caller overlay key WINS over the baseline (no duplicate,
+        # caller value forwarded).
+        with tempfile.TemporaryDirectory() as d:
+            argv = build_container_argv(
+                "npm test", Path(d), engine="docker", env={"NO_COLOR": "0"},
+            )
+        assert argv.count("NO_COLOR=1") == 0
+        assert "-e NO_COLOR=0" in " ".join(argv)
 
     def test_secret_overlay_and_credential_file_pointer_are_not_forwarded(self):
         with tempfile.TemporaryDirectory() as d:
@@ -937,6 +963,21 @@ class TestInProcessRunner:
             )
         assert exit_code == 3
 
+    def test_noise_suppression_env_reaches_the_child(self):
+        # FIX 5: the in-process backend gets the same noise-suppression baseline
+        # (compact/non-watch output) as the container backend, even with no
+        # caller overlay -- so it is not backend-specific.
+        with tempfile.TemporaryDirectory() as d:
+            code = ("import os;"
+                    "print(os.environ.get('NO_COLOR'),"
+                    "os.environ.get('npm_config_audit'),"
+                    "os.environ.get('CI'))")
+            _ec, out = InProcessRunner().run(
+                f'{shlex_quote(sys.executable)} -c "{code}"', d, 30, {}
+            )
+        assert "1" in out.stdout       # NO_COLOR=1
+        assert "false" in out.stdout   # npm_config_audit=false
+
     def test_non_secret_env_overlay_is_merged_onto_safe_host_environ(self):
         # Ordinary overlay + host vars reach the child after credential scrubbing.
         marker = "SIGNALOS_SANDBOX_TEST_MARKER"
@@ -1209,3 +1250,328 @@ class TestWslEngineSmoke:
                         f"(exit {exit_code}): {(out.stderr or out.stdout)[:200]}")
         # Same containment guarantees hold through the wsl path translation.
         _assert_fs_containment(out, landed)
+
+
+# ---------------------------------------------------------------------------
+# FIX 2 — ONE warm persistent container per seat: boot once, exec N times, tear
+# down once. The dependency volume is materialized + verified ONCE (at boot),
+# not per command. All offline: the container CLI is the injected `runner` mock.
+# ---------------------------------------------------------------------------
+
+
+def _ok(stdout: str = "", stderr: str = "", rc: int = 0) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+
+
+def _gone(kind: str = "container") -> subprocess.CompletedProcess:
+    marker = "no such volume" if kind == "volume" else "no such container"
+    return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=marker)
+
+
+def _running(state: str = "true") -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=state, stderr="")
+
+
+# The docker CLI calls a funded session makes, in order:
+#   dep prep : [volume create] [bootstrap run] [bootstrap rm -f] [bootstrap inspect]
+#   boot     : [run -d]        [inspect State.Running]
+#   ...execs...
+#   teardown : [rm -f name]    [inspect name]  [volume rm -f]  [volume inspect]
+_FUNDED_DEP_PREP = [_ok("volume"), _ok(), _ok(), _gone()]
+_FUNDED_BOOT = [_ok("cid123"), _running("true")]
+_FUNDED_TEARDOWN = [_ok(), _gone(), _ok(), _gone("volume")]
+
+
+def _argvs(fake: MagicMock) -> list[list[str]]:
+    return [call.args[0] for call in fake.call_args_list]
+
+
+def _boot_argv(argvs: list[list[str]]) -> list[str]:
+    boots = [a for a in argvs if a[:2] == ["docker", "run"] and "--detach" in a]
+    assert len(boots) == 1, f"expected exactly one persistent boot, got {len(boots)}"
+    return boots[0]
+
+
+def _adjacent(argv: list[str], flag: str, value: str) -> bool:
+    return flag in argv and argv[argv.index(flag) + 1] == value
+
+
+class TestPersistentSessionLifecycle:
+    def test_session_boots_once_execs_reuse_it_and_dep_prep_is_once(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP,
+            *_FUNDED_BOOT,
+            _ok("out1"), _ok("out2"), _ok("out3"),   # three execs into ONE container
+            *_FUNDED_TEARDOWN,
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+
+        with runner.session(300):
+            assert runner.session_active is True
+            r1 = runner.run("npm run build", tmp_path, 30, {"CI": "1"})
+            r2 = runner.run("npm test", tmp_path, 30, {"CI": "1"})
+            r3 = runner.run("node -e 1", tmp_path, 30, {"CI": "1"})
+        assert runner.session_active is False
+        assert [r1[1].stdout, r2[1].stdout, r3[1].stdout] == ["out1", "out2", "out3"]
+
+        argvs = _argvs(fake)
+        # dependency volume materialized ONCE, not per exec.
+        vol_creates = [a for a in argvs if a[:2] == ["docker", "volume"] and "create" in a]
+        assert len(vol_creates) == 1
+        # exactly ONE persistent boot; the bootstrap `run` is the only other `run`.
+        boots = [a for a in argvs if a[:2] == ["docker", "run"] and "--detach" in a]
+        assert len(boots) == 1
+        bootstraps = [a for a in argvs if a[:2] == ["docker", "run"] and "--detach" not in a]
+        assert len(bootstraps) == 1
+        # N execs — one per command — into the SAME booted container.
+        execs = [a for a in argvs if a[:2] == ["docker", "exec"]]
+        assert len(execs) == 3
+        name = _boot_argv(argvs)[_boot_argv(argvs).index("--name") + 1]
+        assert all(a[-3:] == ["/bin/sh", "-lc", cmd] and name in a
+                   for a, cmd in zip(execs, ["npm run build", "npm test", "node -e 1"]))
+        # exactly ONE forced removal of the persistent container + its volume.
+        assert argvs.count(["docker", "rm", "-f", name]) == 1
+        assert any(a[:3] == ["docker", "volume", "rm"] for a in argvs)
+
+    def test_boot_preserves_every_containment_flag(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT, _ok("ok"), *_FUNDED_TEARDOWN,
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with runner.session(300):
+            runner.run("npm test", tmp_path, 30, {"CI": "1"})
+        boot = _boot_argv(_argvs(fake))
+
+        # FLAG-BY-FLAG: every containment flag on the per-command hardened `run`
+        # is present on the persistent `run -d` boot.
+        assert "--detach" in boot
+        assert _adjacent(boot, "--network", "none")            # network off
+        assert "--read-only" in boot                            # immutable rootfs
+        assert _adjacent(boot, "--memory", runner.memory)       # memory cap
+        assert _adjacent(boot, "--memory-swap", runner.memory)  # swap == memory
+        assert _adjacent(boot, "--pids-limit", runner.pids)     # pids cap
+        assert _adjacent(boot, "--cpus", runner.cpus)           # cpu cap
+        assert _adjacent(boot, "--cap-drop", "ALL")             # drop all caps
+        assert _adjacent(boot, "--security-opt", "no-new-privileges:true")
+        assert "--init" in boot                                 # reap zombies
+        assert _adjacent(boot, "--shm-size", runner.shm_size)
+        assert _adjacent(boot, "--pull", "never")               # offline / digest-pin
+        assert _adjacent(boot, "--platform", "linux/amd64")
+        # mandatory non-root uid:gid
+        user = boot[boot.index("--user") + 1]
+        assert __import__("re").fullmatch(r"[0-9]+:[0-9]+", user) and not user.startswith("0:")
+        assert "--name" in boot and "--cidfile" in boot
+        # read-only workspace source mount + read-only dependency volume mount.
+        assert any(v.endswith(":/workspace:ro") for v in boot)
+        assert any(v.endswith(":/workspace/node_modules:ro") for v in boot)
+        # size-capped writable tmpfs surfaces (scratch + HOME).
+        tmpfs = [boot[i + 1] for i, t in enumerate(boot) if t == "--tmpfs"]
+        assert any(m.startswith("/tmp:") for m in tmpfs)
+        assert any(m.startswith("/home/signalos:") for m in tmpfs)
+        # the boot idles; the model command NEVER runs at boot.
+        assert boot[-3:] == ["-lc", "sleep infinity"] or boot[-1] == "sleep infinity"
+        assert "npm test" not in boot
+
+    def test_exec_adds_no_privilege_and_pins_non_root(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT, _ok("ok"), *_FUNDED_TEARDOWN,
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with runner.session(300):
+            runner.run("npm test", tmp_path, 30, {"CI": "1"})
+        execs = [a for a in _argvs(fake) if a[:2] == ["docker", "exec"]]
+        assert len(execs) == 1
+        ex = execs[0]
+        # NO privilege escalation on the exec.
+        assert "--privileged" not in ex
+        assert "--cap-add" not in ex
+        assert not any(tok == "--security-opt" for tok in ex)
+        # exec re-pins the SAME mandatory non-root identity (never -u root).
+        user = ex[ex.index("--user") + 1]
+        assert user == runner.container_user and not user.startswith("0:")
+        # exec carries per-command cwd + env only (no run-only containment flags).
+        assert _adjacent(ex, "-w", CONTAINER_WORKSPACE)
+        assert "--network" not in ex and "--rm" not in ex and "run" not in ex[:2]
+
+    def test_teardown_always_happens_even_on_exception(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT,
+            *_FUNDED_TEARDOWN,   # close still runs container rm -f + volume rm
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with pytest.raises(RuntimeError, match="boom"):
+            with runner.session(300):
+                raise RuntimeError("boom")   # seat blows up mid-session
+        assert runner.session_active is False
+        argvs = _argvs(fake)
+        name = _boot_argv(argvs)[_boot_argv(argvs).index("--name") + 1]
+        # the container is STILL forcibly removed + verified gone, and the
+        # dependency volume is cleaned — no leak on the exception path.
+        assert ["docker", "rm", "-f", name] in argvs
+        assert any(a[:3] == ["docker", "volume", "rm"] for a in argvs)
+
+    def test_boot_failure_fails_closed_and_cleans_up(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP,
+            _ok("", "daemon down", rc=125),     # boot fails
+            _ok(), _gone(),                     # cleanup container (rm -f + inspect)
+            _ok(), _gone("volume"),             # cleanup dependency volume
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with pytest.raises(SandboxUnavailableError, match="exit 125"):
+            runner.open_session(300)
+        assert runner.session_active is False
+        argvs = _argvs(fake)
+        # fail-closed: NO command ever execs, and the dependency volume is cleaned.
+        assert not any(a[:2] == ["docker", "exec"] for a in argvs)
+        assert any(a[:3] == ["docker", "volume", "rm"] for a in argvs)
+
+    def test_boot_not_running_fails_closed(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP,
+            _ok("cid123"),          # run -d returns 0 ...
+            _running("false"),      # ... but the idle process already died
+            _ok(), _gone(),         # cleanup container
+            _ok(), _gone("volume"), # cleanup volume
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with pytest.raises(SandboxUnavailableError, match="not running"):
+            runner.open_session(300)
+        assert runner.session_active is False
+        assert not any(a[:2] == ["docker", "exec"] for a in _argvs(fake))
+
+    def test_exec_on_vanished_container_fails_closed(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT,
+            _ok("", "Error response from daemon: is not running", rc=1),  # exec
+            _running("false"),   # container-running probe on the non-zero exit
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        runner.open_session(300)
+        with pytest.raises(SandboxUnavailableError, match="no longer running"):
+            runner.run("npm test", tmp_path, 30, {"CI": "1"})
+
+    def test_nonzero_exit_with_live_container_stays_product_evidence(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT,
+            _ok("", "tsc error TS1005", rc=2),  # exec fails ...
+            _running("true"),                   # ... container is still alive
+            *_FUNDED_TEARDOWN,
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with runner.session(300):
+            exit_code, out = runner.run("npm run build", tmp_path, 30, {"CI": "1"})
+        assert exit_code == 2 and "tsc error TS1005" in out.stderr
+
+    def test_exec_timeout_is_reported_without_teardown_midsession(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT,
+            subprocess.TimeoutExpired("docker", 1),   # the exec times out
+            _ok("ok2"),                               # next command still reuses container
+            *_FUNDED_TEARDOWN,
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with runner.session(300):
+            _, out = runner.run("sleep 999", tmp_path, 1, {})
+            assert out.timed_out is True
+            assert runner.session_active is True   # container NOT torn down on timeout
+            exit_code, out2 = runner.run("echo hi", tmp_path, 30, {})
+        assert exit_code == 0 and out2.stdout == "ok2"
+
+    def test_nested_session_is_rejected(self, tmp_path):
+        fake = MagicMock(side_effect=[*_FUNDED_DEP_PREP, *_FUNDED_BOOT, *_FUNDED_TEARDOWN])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        with runner.session(300):
+            with pytest.raises(SandboxUnavailableError, match="already open"):
+                runner.open_session(300)
+
+    def test_run_without_session_uses_ephemeral_hardened_path(self, tmp_path):
+        # No session open -> the legacy per-command `docker run --rm` path (equally
+        # hardened), proving the fail-closed fallback is intact.
+        image = "node:20@sha256:" + "7" * 64
+        fake = MagicMock(side_effect=[_ok("ok\n"), _ok(), _gone()])
+        runner = ContainerRunner(
+            tmp_path, engine="docker", image=image, hardened=True,
+            workspace_read_only=True, writable_paths=("dist",), runner=fake,
+        )
+        exit_code, out = runner.run("npm test", tmp_path, 30, {"CI": "1"})
+        assert exit_code == 0 and out.stdout == "ok\n"
+        argvs = _argvs(fake)
+        assert argvs[0][:2] == ["docker", "run"] and "--detach" not in argvs[0]
+        assert not any(a[:2] == ["docker", "exec"] for a in argvs)
+
+    def test_teardown_verification_failure_is_surfaced(self, tmp_path):
+        # close_session must FAIL CLOSED when the container removal cannot be
+        # verified (a possible leak), rather than silently swallow it.
+        fake = MagicMock(side_effect=[
+            *_FUNDED_DEP_PREP, *_FUNDED_BOOT, _ok("ok"),
+            _ok("", "denied", rc=1),        # rm -f fails
+            _ok("still there", rc=0),       # inspect: container STILL exists
+            _ok(), _gone("volume"),         # volume cleanup ok
+        ])
+        runner = _funded_dependency_runner(tmp_path, fake)
+        runner.open_session(300)
+        runner.run("npm test", tmp_path, 30, {"CI": "1"})
+        with pytest.raises(SandboxUnavailableError, match="still exists"):
+            runner.close_session()
+
+
+class TestNonHardenedPersistentSession:
+    def test_non_hardened_session_boots_and_execs_without_user(self, tmp_path):
+        fake = MagicMock(side_effect=[
+            _ok("cid"), _running("true"),   # boot + readiness
+            _ok("hello\n"),                 # exec
+            _ok(), _gone(),                 # teardown (no volume for non-hardened)
+        ])
+        runner = ContainerRunner(tmp_path, engine="docker", runner=fake)
+        with runner.session(60):
+            exit_code, out = runner.run("echo hello", tmp_path, 60, {"CI": "1"})
+        assert exit_code == 0 and out.stdout == "hello\n"
+        argvs = _argvs(fake)
+        boot = _boot_argv(argvs)
+        assert "--read-only" in boot and _adjacent(boot, "--network", "none")
+        assert "--user" not in boot          # non-hardened inherits the image user
+        assert "--cidfile" not in boot       # cidfile is a funded-only concern
+        exec_argv = next(a for a in argvs if a[:2] == ["docker", "exec"])
+        assert "--user" not in exec_argv     # exec inherits the same (image) user
+        assert exec_argv[-3:] == ["sh", "-lc", "echo hello"]
+        name = boot[boot.index("--name") + 1]
+        assert ["docker", "rm", "-f", name] in argvs
+
+
+class TestBuildContainerExecArgv:
+    def test_hardened_exec_argv_shape(self):
+        argv = build_container_exec_argv(
+            "npm test", engine="docker", container_name="signalos-funded-x",
+            env={"CI": "1"}, workdir_rel="frontend", hardened=True,
+            container_user="1000:1000",
+        )
+        assert argv[:2] == ["docker", "exec"]
+        assert _adjacent(argv, "-w", f"{CONTAINER_WORKSPACE}/frontend")
+        assert _adjacent(argv, "--user", "1000:1000")
+        assert "--privileged" not in argv and "--cap-add" not in argv
+        assert argv[-4:] == ["signalos-funded-x", "/bin/sh", "-lc", "npm test"]
+        # hardened HOME/cache env is forwarded; CI overlay too.
+        joined = " ".join(argv)
+        assert "HOME=/home/signalos" in joined and "CI=1" in joined
+
+    def test_exec_argv_filters_secret_env(self):
+        argv = build_container_exec_argv(
+            "ls", engine="docker", container_name="c",
+            env={"OPENAI_API_KEY": "sk-secret", "SAFE": "ok"}, hardened=False,
+        )
+        joined = " ".join(argv)
+        assert "sk-secret" not in joined and "OPENAI_API_KEY" not in joined
+        assert "SAFE=ok" in joined
+        assert argv[-4:] == ["c", "sh", "-lc", "ls"]
+
+    def test_exec_rejects_empty_container_name(self):
+        with pytest.raises(ValueError, match="persistent container name"):
+            build_container_exec_argv("ls", engine="docker", container_name="")
+
+    def test_exec_rejects_root_user_when_hardened(self):
+        with pytest.raises(ValueError, match="non-root"):
+            build_container_exec_argv(
+                "ls", engine="docker", container_name="c",
+                hardened=True, container_user="0:0",
+            )

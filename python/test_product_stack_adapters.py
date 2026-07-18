@@ -771,6 +771,26 @@ class TestGreenfieldShellHelpers:
         assert adapter_has_greenfield_shell("agent-selected") is False
         assert adapter_has_greenfield_shell("not-a-real-stack") is False
 
+    def test_scaffold_is_idempotent_and_shell_present_guards_rescaffold(
+        self, tmp_path: Path
+    ) -> None:
+        # FAIRNESS FIX (scaffold-first at the G4 boundary): the stack shell must
+        # be safe to materialize even when the files already exist, so the
+        # scaffold-first step can GUARANTEE the shell is present idempotently
+        # (no first-run-vs-resumed special case). Calling scaffold twice must
+        # not raise and must leave a byte-identical shell; and after the first
+        # call ``stack_shell_present`` is True, so the scaffold-first guard turns
+        # any second materialize into a strict no-op.
+        adapter = get_adapter("react-vite")
+        first = adapter.scaffold(tmp_path, {})
+        pkg_after_first = (tmp_path / "package.json").read_text(encoding="utf-8")
+        # the idempotency guard the orchestrator reads now short-circuits a re-scaffold
+        assert stack_shell_present(tmp_path) is True
+        second = adapter.scaffold(tmp_path, {})  # safe to call again
+        assert first["created"] == second["created"]
+        assert (tmp_path / "package.json").read_text(encoding="utf-8") == pkg_after_first
+        assert (tmp_path / "vite.config.ts").is_file()
+
 
 class TestGetAdapter:
     def test_returns_correct_adapter_by_id(self) -> None:

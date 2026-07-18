@@ -48,6 +48,8 @@ __all__ = [
     "ProviderExecutionError",
 ]
 
+import hashlib
+import json
 import os
 import re
 import shlex
@@ -60,15 +62,16 @@ from typing import Any, Callable, Optional
 
 from ..artifacts import resolve_gate_artifacts, resolve_workspace_path
 from .agent_loop import AgentLoop, LoopResult
-from .sandbox import SandboxUnavailableError
+from .sandbox import CONTAINER_WORKSPACE, SandboxUnavailableError
 from .wiring_check import unwired_lint
 from .budgets import (
     resolve_build_doc_cap,
     resolve_build_fixer_error_batch,
-    resolve_build_implementer_tool_budget,
+    resolve_build_implementer_runaway_guard,
     resolve_build_max_tasks,
     resolve_build_reviewer_tool_budget,
     resolve_build_task_fix_cycles,
+    resolve_build_task_stall_rounds,
     resolve_build_test_embed_cap,
     resolve_repair_cycle_budget,
 )
@@ -112,6 +115,28 @@ _STATUS_RE = re.compile(r"\b(DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)\b")
 _CODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go", ".rs",
                   ".cs", ".java", ".kt", ".dart", ".rb", ".php")
 
+# Workspace-map bounds + noise filters (message-1 repo map). Dependency/build
+# output dirs are the WORKLOAD's, not the product the seat edits -- excluded so
+# the map is the PROJECT, not its generated noise. Config filenames are the
+# common cross-stack ones (package.json, tsconfig, vite/jest/vitest, pyproject,
+# go.mod, Cargo.toml, ...) -- whichever are present are surfaced verbatim.
+_DIGEST_MAX_DEPTH = 3
+_DIGEST_MAX_ENTRIES = 200
+_DIGEST_CONFIG_CAP = 800
+_DIGEST_SKIP_DIRS = frozenset({
+    "node_modules", ".git", ".signalos", "dist", "build", "coverage",
+    ".venv", "venv", "env", "__pycache__", ".next", ".turbo", "target",
+    ".dart_tool", ".vite", ".cache", "obj", "bin", ".idea", ".vscode",
+    ".pytest_cache", ".mypy_cache", "vendor",
+})
+_DIGEST_OTHER_CONFIGS = (
+    "tsconfig.json", "vite.config.ts", "vite.config.js", "vitest.config.ts",
+    "vitest.config.js", "jest.config.js", "jest.config.ts", "angular.json",
+    "next.config.js", "next.config.ts", "nest-cli.json", "pyproject.toml",
+    "requirements.txt", "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
+    "pubspec.yaml",
+)
+
 
 # ---------------------------------------------------------------------------
 # Stack context -- everything stack-specific, resolved ONCE per build from the
@@ -124,7 +149,15 @@ class _StackContext:
     source_dir: str = "src"
     build_cmds: list = field(default_factory=list)
     test_cmds: list = field(default_factory=list)
+    install_cmds: list = field(default_factory=list)
     gotchas: str = ""
+    # The absolute path the workspace is bind-mounted to INSIDE the sandbox
+    # (commands + tools all run from here). Resolved from the sandbox module, NOT
+    # the Windows host path -- the seat must never see the host path.
+    container_workspace: str = CONTAINER_WORKSPACE
+    # The dependency directory pre-installed in the sandbox (e.g. node_modules),
+    # derived from the resolved install command -- "" when the stack has none.
+    dep_dir: str = ""
     # (repo_root, test_path) -> argv for ONE test file, or None if the adapter
     # has no single-test runner (per-task gate then falls back to full checks).
     test_file_command: Optional[Callable[[Path, str], list]] = None
@@ -133,6 +166,27 @@ class _StackContext:
     def build_and_test_hint(self) -> str:
         cmds = [*self.build_cmds, *self.test_cmds]
         return " && ".join(cmds) if cmds else "the project's build and test commands"
+
+    @property
+    def test_hint(self) -> str:
+        return " && ".join(self.test_cmds) if self.test_cmds else "the project's test command"
+
+
+# Package managers whose installed-dependency directory is a stable, well-known
+# fact keyed on the resolved install command (not a per-task assumption): every
+# node package manager installs into node_modules.
+_NODE_PM_RE = re.compile(r"\b(?:npm|yarn|pnpm|npx)\b", re.I)
+
+
+def _resolve_dep_dir(install_cmds: list) -> str:
+    """The pre-installed dependency directory implied by the stack's INSTALL
+    command (resolved from the adapter, never hand-authored): node package
+    managers -> ``node_modules``; "" when the directory is not a well-known
+    single path so the env-facts block stays generic instead of guessing."""
+    joined = " ".join(str(c) for c in (install_cmds or []))
+    if _NODE_PM_RE.search(joined):
+        return "node_modules"
+    return ""
 
 
 def _resolve_stack(repo_root: Path) -> _StackContext:
@@ -154,6 +208,8 @@ def _resolve_stack(repo_root: Path) -> _StackContext:
         plan = adapter.validation_plan(repo_root)
         ctx.build_cmds = list(plan.get("build", []) or [])
         ctx.test_cmds = list(plan.get("test", []) or [])
+        ctx.install_cmds = list(plan.get("install", []) or [])
+        ctx.dep_dir = _resolve_dep_dir(ctx.install_cmds)
     except Exception:
         pass
     # Optional adapter extensions -- absent on most adapters; degrade cleanly.
@@ -676,11 +732,152 @@ def parse_implementer_status(text: str) -> str:
 # Prompt assembly (stack-agnostic: specifics come from _StackContext)
 # ---------------------------------------------------------------------------
 
+def _dependency_fact(stack: _StackContext) -> str:
+    """The "toolchain + dependencies are pre-installed" fact, resolved from the
+    stack's INSTALL command (never hand-authored): names the pre-installed
+    dependency directory when it is a well-known single path, and the exact
+    install command the seat must NOT re-run. Falls back to a toolchain-only
+    fact when the stack has no install step."""
+    if not stack.install_cmds:
+        return ("- The toolchain is PRE-INSTALLED in the sandbox. Do NOT run "
+                "environment/setup or install steps.")
+    where = (f" ({stack.dep_dir} is present under {stack.container_workspace})"
+             if stack.dep_dir else "")
+    install = " && ".join(str(c) for c in stack.install_cmds)
+    return (f"- Toolchain + dependencies are PRE-INSTALLED{where}. Do NOT run "
+            f"install (e.g. `{install}`).")
+
+
+def _env_facts_block(stack: _StackContext) -> str:
+    """Fixed sandbox FACTS prepended to the implementer system prompt so the seat
+    does not spend actions rediscovering its own environment (cwd, write-freedom,
+    pre-installed deps, the test command). Values are resolved BY THE HARNESS
+    from the sandbox profile + stack adapter -- this states the environment, it
+    does NOT hardcode the model's output."""
+    ws = stack.container_workspace
+    lines = [
+        "## Environment (fixed facts -- do NOT spend actions discovering these)",
+        f"- Working directory: {ws} (the bind-mounted project root). pwd returns "
+        f"{ws}; every tool and run_command runs from here. You cannot cd "
+        "elsewhere -- use relative paths.",
+        f"- This is an isolated throwaway sandbox you own: create/overwrite/"
+        f"delete files in {ws} freely. Do NOT test write permission, do NOT run "
+        "touch/df/mount, do NOT create probe/scratch files (no "
+        "test-write-perm.txt), do NOT make a second copy of a file with a "
+        "different suffix.",
+        _dependency_fact(stack),
+    ]
+    if stack.test_cmds:
+        lines.append(f"- Run tests with: {stack.test_hint}.")
+    return "\n".join(lines)
+
+
+def _effort_directives() -> str:
+    """Process coaching appended to the implementer system prompt: HOW to spend
+    effort, never WHAT to build. Kills the re-list / re-read / re-run / probe-file
+    waste every reference harness suppresses up front."""
+    return "\n".join([
+        "## How to spend your effort",
+        "- You already have the workspace map and env facts above -- explore "
+        "ONCE; do not re-list or re-read files you've seen.",
+        "- Plan, then act. Batch independent tool calls; chain shell commands "
+        "with &&.",
+        "- The harness runs the authoritative test and feeds you its output -- "
+        "do NOT re-run a passing/unchanged test just to observe state; trust the "
+        "fed-back result.",
+        "- Read a file once and remember it; do not create scratch/probe files.",
+    ])
+
+
+def _workspace_tree(root: Path) -> list[str]:
+    """A depth-capped, entry-capped listing of the workspace (dependency/build
+    dirs and dot-dirs excluded), directories first. Bounded so the map never
+    blows the prompt on a large repo."""
+    out: list[str] = []
+
+    def _walk(d: Path, depth: int) -> None:
+        if depth > _DIGEST_MAX_DEPTH or len(out) >= _DIGEST_MAX_ENTRIES:
+            return
+        try:
+            entries = sorted(d.iterdir(),
+                             key=lambda p: (p.is_file(), p.name.lower()))
+        except OSError:
+            return
+        for p in entries:
+            if len(out) >= _DIGEST_MAX_ENTRIES:
+                return
+            name = p.name
+            if p.is_dir():
+                if name in _DIGEST_SKIP_DIRS or name.startswith("."):
+                    continue
+                out.append(p.relative_to(root).as_posix() + "/")
+                _walk(p, depth + 1)
+            elif p.is_file():
+                out.append(p.relative_to(root).as_posix())
+
+    _walk(root, 0)
+    return out
+
+
+def _config_digests(root: Path) -> list[tuple[str, str]]:
+    """Key config files surfaced verbatim (capped): package.json reduced to its
+    scripts + dependency NAMES (versions are noise), plus whichever common
+    cross-stack config files are present."""
+    out: list[tuple[str, str]] = []
+    pkg = root / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
+            digest: dict[str, Any] = {}
+            if isinstance(data.get("scripts"), dict):
+                digest["scripts"] = data["scripts"]
+            deps = sorted({*(data.get("dependencies") or {}),
+                           *(data.get("devDependencies") or {})})
+            if deps:
+                digest["dependencies"] = deps
+            if digest:
+                out.append(("package.json",
+                            json.dumps(digest, indent=2)[:_DIGEST_CONFIG_CAP]))
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    for name in _DIGEST_OTHER_CONFIGS:
+        p = root / name
+        if p.is_file():
+            try:
+                body = p.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                continue
+            if body:
+                out.append((name, body[:_DIGEST_CONFIG_CAP]))
+    return out
+
+
+def _workspace_digest(repo_root: Path, stack: _StackContext) -> str:
+    """The workspace MAP handed to the seat in message 1 of EVERY dispatch: a
+    depth-capped file tree (product files; dependency/build dirs omitted) plus
+    the key config files (scripts/deps/compiler options). This is what
+    Aider/Cline/OpenHands hand over for free, so the seat never spends actions
+    re-listing the project it was just given. Size-bounded; "" when unavailable."""
+    root = Path(repo_root)
+    if not root.is_dir():
+        return ""
+    parts: list[str] = []
+    tree = _workspace_tree(root)
+    if tree:
+        parts.append("Files on disk (product tree; dependency/build dirs omitted):")
+        parts.extend(f"- {p}" for p in tree)
+    for name, body in _config_digests(root):
+        parts.append(f"\n`{name}`:\n{body}")
+    return "\n".join(parts).strip()
+
+
 def _implementer_system_prompt(governance_frame: str, stack: _StackContext) -> str:
     cap = resolve_build_doc_cap()
     impl = _strip_template_wrapper(_load_bundled("implementer"))[:cap]
     tdd = _load_bundled("tdd")[:cap]
     parts = [
+        _env_facts_block(stack),
+        "",
         "You are the implementer subagent in a SignalOS-governed build. You "
         "have real tools (read_file, write_file, edit_file, run_command, "
         "search_files, list_directory). You implement ONE task at a time as a "
@@ -698,6 +895,7 @@ def _implementer_system_prompt(governance_frame: str, stack: _StackContext) -> s
     ]
     if governance_frame.strip():
         parts += ["", "## Governance frame (binding forbidden rules)", governance_frame[:cap]]
+    parts += ["", _effort_directives()]
     return "\n".join(parts)
 
 
@@ -842,6 +1040,26 @@ def _implementer_message(task: Task, context: str, repo_root: Path,
         lines += [f"- {e}" for e in task.extra]
     lines += ["", "## Context", context, ""]
 
+    # Surface the RESOLVED test command up front (not only in the later fixer/
+    # final messages) so the first draft already knows how to run the gate.
+    if stack.test_cmds:
+        lines += [
+            f"Run the project's tests with `{stack.test_hint}` via run_command "
+            "(the harness runs the authoritative gate and feeds you its output).",
+            "",
+        ]
+
+    # Message-1 workspace MAP for EVERY dispatch (what Aider/Cline hand over for
+    # free): a depth-capped file tree + key config files so the seat never spends
+    # actions re-listing the project it was just given.
+    digest = _workspace_digest(repo_root, stack)
+    if digest:
+        lines += [
+            "## Workspace map (already on disk -- explore ONCE, do not re-list)",
+            digest,
+            "",
+        ]
+
     test_src = _read_test(repo_root, task.test, project_id)
     src_hint = f"under {stack.source_dir}/**"
     if task.test and test_src:
@@ -887,7 +1105,10 @@ def _implementer_message(task: Task, context: str, repo_root: Path,
         ]
     if stack.gotchas:
         lines += [stack.gotchas, ""]
-    lines += [f"Work from: {repo_root}", ""]
+    # Commands run INSIDE the sandbox at the container workspace path, never the
+    # Windows host path -- state the container path so the seat never chases a
+    # cwd that does not exist where its commands execute.
+    lines += [f"Work from: {stack.container_workspace}", ""]
     if fix_feedback.strip():
         lines += [
             "## Fix these issues from the objective test run, then re-run to green:",
@@ -961,7 +1182,7 @@ def _fixer_message(errors: str, repo_root: Path, stack: _StackContext) -> str:
         "and confirm green before finishing.",
         "",
         stack.gotchas,
-        f"Work from: {repo_root}",
+        f"Work from: {stack.container_workspace}",
     ])
 
 
@@ -1031,7 +1252,7 @@ def _evidence_message(repo_root: Path, project_id: str, stack: _StackContext,
             f"{p.get('integration', 0)}, review fixes {p.get('review', 0)}). "
             "A build that reached green with 0 repairs is stronger than one that "
             "needed several -- write the real count, never round it down.")
-    lines.append(f"Work from: {repo_root}")
+    lines.append(f"Work from: {stack.container_workspace}")
     return "\n".join(lines)
 
 
@@ -1215,17 +1436,25 @@ def _default_run_agent(
     cancel_check: Optional[Callable[[], bool]] = None,
 ) -> RunAgent:
     """Real dispatcher: each call is a FRESH AgentLoop (fresh run_id, fresh
-    context) -- the "fresh subagent per task/review" the bundled skill requires,
-    with a bounded tool budget so no single conversation blows the context.
-    When *usage* is given, per-run token totals accumulate into it
-    ({"in": int|None, "out": int|None}) for build-level cost accounting."""
-    impl_budget = resolve_build_implementer_tool_budget()
+    context) -- the "fresh subagent per task/review" the bundled skill requires.
+
+    WRITE seats (implementer / fixer / evidence) run in BUILD-SEAT mode: their
+    turn is controlled by PROGRESS, not a small tool-call cap -- the turn ends on
+    end_turn or the loop's stall detector, and the only numeric ``tool_call_limit``
+    they carry is a very high anti-runaway backstop. READ-mostly reviewer/arbiter
+    seats keep a small bound (review is bounded by design). When *usage* is given,
+    per-run token totals accumulate into it ({"in": int|None, "out": int|None})
+    for build-level cost accounting."""
+    runaway_guard = resolve_build_implementer_runaway_guard()
     rev_budget = resolve_build_reviewer_tool_budget()
 
     def run(role: str, adapter: Any, system_prompt: str, user_message: str) -> str:
         if cancel_check is not None and cancel_check():
             raise BuildCancelled("parent delivery cancellation requested")
-        limit = rev_budget if role.endswith("reviewer") else impl_budget
+        # WRITE seats are progress-controlled (build_seat) with a high anti-
+        # runaway guard; reviewer/arbiter seats stay read-mostly and bounded.
+        is_write_seat = role in ("implementer", "fixer", "evidence")
+        limit = runaway_guard if is_write_seat else rev_budget
         loop = AgentLoop(
             # Reviewers get a READ-ONLY tool set (no write_file / edit_file /
             # run_command) via the adapter proxy -- enforced by the schema the
@@ -1242,6 +1471,10 @@ def _default_run_agent(
             project_id=project_id,
             signed_gates=list(signed_gates),
             tool_call_limit=limit,
+            # Progress-gated turn ONLY for build write seats; reviewer/arbiter
+            # seats keep the default (small-cap) AgentLoop behaviour, exactly
+            # like the G0-G3 gate agents.
+            build_seat=is_write_seat,
         )
         try:
             res = loop.run(system_prompt, user_message)
@@ -1274,8 +1507,22 @@ def _default_run_agent(
         # described work instead of performing it is distinguishable from real
         # work. Roles that are supposed to change files (implementer/fixer) also
         # flag a run that landed no write; reviewers legitimately emit only text.
+        #
+        # RESUMABILITY (FIX 4): none of these outcomes is terminal for the task.
+        # budget_exhausted / max_tokens / stalled_no_(tool|progress) all leave
+        # the seat's real work ON DISK; the caller re-runs the OBJECTIVE test
+        # gate against that on-disk state and the progress gate decides whether
+        # to spend another cycle. So we only NARRATE the unproductive outcome
+        # here (never raise) -- the on-disk gate, not the seat's self-report, is
+        # what determines success.
         writes_expected = role in ("implementer", "fixer")
-        if res.status in ("stalled_no_tool", "max_tokens"):
+        if res.status == "stalled_no_progress":
+            emit({"type": "system",
+                  "text": f"The {role} step stopped making progress (no state "
+                          "change / no new information); ending its turn. Any "
+                          "work it did is on disk -- the objective test gate "
+                          "decides what happens next."})
+        elif res.status in ("stalled_no_tool", "max_tokens"):
             emit({"type": "system",
                   "text": f"The {role} step did not perform tool work "
                           f"(outcome: {res.status}); it described the work "
@@ -1409,6 +1656,130 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
         ) from exc
     except Exception as exc:  # never bypass on product/check error -- report not-green
         return False, f"build check error: {type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Per-task PROGRESS gate -- the PRIMARY control on the fix loop (FIX 3).
+#
+# STOP LIMITING THE BUILD BY COUNTING FIXER PASSES. A red task earns fixer
+# cycles WHILE it makes progress toward passing its objective test, and stops
+# only on a REAL stall -- never at a fixed cycle count. Every signal is
+# objective (the objective test result + the on-disk source), never the model's
+# self-claim:
+#   * became green            -> success (progress, and we're done)
+#   * failure signature moved  -> progress (a different failure = forward motion)
+#   * failing set shrank       -> progress (fewer diagnostics)
+#   * product source changed   -> progress (the fixer actually edited the code)
+# PROGRESS is the OR of those. A cycle with NONE of them is a no-progress round;
+# STALL_ROUNDS consecutive no-progress rounds ends the loop. A task that keeps
+# progressing runs as many cycles as it needs (money/time are the outer walls).
+# ---------------------------------------------------------------------------
+
+_ERR_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_ERR_NUM_RE = re.compile(r"\d+")
+
+
+def _normalize_error_signature(errs: str) -> str:
+    """A stable hash of a failing test/build result, robust to the volatile
+    noise that shifts between cycles of the SAME task -- line:col numbers,
+    durations, and numeric ids (collapsed to a placeholder) -- so 'the same
+    failure again' is recognized as no progress. The workspace path is constant
+    across a task's fix cycles, so paths are deliberately NOT collapsed: a
+    failure that moves to a DIFFERENT file/module is meaningful forward motion
+    and must read as progress (erring toward MORE cycles, never a false stall)."""
+    s = _ERR_ANSI_RE.sub("", errs or "")
+    s = _ERR_NUM_RE.sub("N", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def _failure_line_count(errs: str) -> int:
+    """Cheap objective proxy for the failing-test SET size: the count of
+    non-empty diagnostic lines. A drop is treated as 'the failing set shrank'
+    (progress). Imprecision here only ever GRANTS an extra cycle, never forces a
+    false stall (the error-signature and source signals are OR'd in)."""
+    return len([ln for ln in (errs or "").splitlines() if ln.strip()])
+
+
+def _source_fingerprint(repo_root: Path, source_dir: str) -> str:
+    """A content hash of the product SOURCE tree -- the objective 'did the
+    workspace source change since the last cycle' signal (the fixer's real edits
+    land here). '' when there is no source dir yet (e.g. the injected-check unit
+    path), so it simply does not contribute and the error signals decide."""
+    src = Path(repo_root) / source_dir
+    if not src.is_dir():
+        return ""
+    h = hashlib.sha256()
+    try:
+        paths = sorted(src.rglob("*"))
+    except OSError:
+        return ""
+    for p in paths:
+        try:
+            if not p.is_file() or p.suffix not in _CODE_SUFFIXES:
+                continue
+            data = p.read_bytes()
+        except OSError:
+            continue
+        h.update(str(p.relative_to(repo_root)).replace("\\", "/").encode("utf-8"))
+        h.update(b"\x00")
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
+class _TaskProgressGate:
+    """Decides whether a still-red task is making PROGRESS or has STALLED, from
+    the objective per-task test result plus the on-disk source. This is the
+    PRIMARY control on the per-task fix loop -- NOT a fixed cycle count.
+
+    Usage: ``observe(green, errs)`` once for the post-implementer baseline, then
+    once after each fixer cycle's objective check. ``stalled()`` is True after
+    STALL_ROUNDS consecutive no-progress cycles; ``error_repeated`` tells the
+    next fixer prompt to change strategy when the same failure recurs."""
+
+    def __init__(self, repo_root: Path, source_dir: str,
+                 stall_rounds: int) -> None:
+        self._repo_root = repo_root
+        self._source_dir = source_dir
+        self._stall_rounds = max(1, int(stall_rounds))
+        self._prev_err_sig: str | None = None
+        self._prev_fail_count: int = 0
+        self._prev_src_fp: str | None = None
+        self._no_progress = 0
+        self._error_repeated = False
+
+    def observe(self, green: bool, errs: str) -> None:
+        """Record one cycle's objective result and update progress/stall state
+        relative to the previous cycle."""
+        err_sig = _normalize_error_signature(errs)
+        fail_count = _failure_line_count(errs)
+        src_fp = _source_fingerprint(self._repo_root, self._source_dir)
+        if self._prev_err_sig is None or green:
+            # Baseline (post-implementer state) or reached green: nothing to
+            # compare against / already done -> not a no-progress round.
+            progressed = True
+            self._error_repeated = False
+        else:
+            self._error_repeated = err_sig == self._prev_err_sig
+            progressed = (
+                not self._error_repeated
+                or fail_count < self._prev_fail_count
+                or src_fp != self._prev_src_fp
+            )
+        self._no_progress = 0 if progressed else self._no_progress + 1
+        self._prev_err_sig = err_sig
+        self._prev_fail_count = fail_count
+        self._prev_src_fp = src_fp
+
+    def stalled(self) -> bool:
+        return self._no_progress >= self._stall_rounds
+
+    @property
+    def error_repeated(self) -> bool:
+        """True when the last cycle reproduced the SAME failure signature -- the
+        cue to make the next fixer prompt change strategy (re-sending the same
+        prompt to the same model just reproduces the same failed fix)."""
+        return self._error_repeated
 
 
 # ---------------------------------------------------------------------------
@@ -1682,7 +2053,7 @@ def _dod_fixer_message(task: "Task", violations: list, repo_root: Path,
         *[f"- {v}" for v in violations],
         "",
         "Then re-run the task's test via run_command and confirm it still passes.",
-        f"Work from: {repo_root}",
+        f"Work from: {stack.container_workspace}",
     ])
 
 
@@ -1765,6 +2136,9 @@ def run_subagent_driven_build(
     emit = emit or (lambda _e: None)
     signed_gates = list(signed_gates or [])
     cycles = max(1, int(repair_cycles)) if repair_cycles else resolve_repair_cycle_budget()
+    # PRIMARY per-task control: PROGRESS, not a fixed fixer-pass count (FIX 3).
+    per_task_stall_rounds = resolve_build_task_stall_rounds()
+    # SECONDARY bounded convergence loops only (DoD quality + reviewer re-review).
     per_task_cycles = resolve_build_task_fix_cycles()
     reviewer = reviewer_adapter if reviewer_adapter is not None else adapter
     usage: dict = {"in": None, "out": None}
@@ -1891,6 +2265,30 @@ def run_subagent_driven_build(
                 emit({"type": "system", "text": f"“{task.name}” already passes its test — skipping."})
                 summary.append(f"{task.id} test_green=True (pre-existing)")
                 continue
+        # CONTROL DECISION 3 (structural read): in a PLAN-DRIVEN build the plan
+        # authors a failing acceptance test for every buildable FEATURE slice
+        # (the plan card requires it), so a task that carries NO acceptance test
+        # of its own is not product-feature build work -- it is a scaffold /
+        # setup / toolchain step whose shell the stack adapter already
+        # provisioned before this gate. Mark it pre-existing-green and NEVER
+        # dispatch a build seat at it, so no feature budget is billed for the
+        # infrastructure the harness already owns (the failure mode: a first
+        # seat burning its whole budget re-standing-up the toolchain). This is a
+        # STRUCTURAL signal -- the ABSENCE of a RED acceptance test, never a
+        # match on the task's name/title -- so it generalizes to any product;
+        # the behavioural signal above (a task WITH a test that already passes)
+        # is preferred whenever a test exists. Guarded by `plan_driven` so the
+        # pure acceptance-criteria fallback -- where NO task carries a test and
+        # those tasks ARE the real work -- is untouched and still builds.
+        if plan_driven and not task.test:
+            matrix.set(task.id, status="pre-existing-green")
+            emit({"type": "system",
+                  "text": f"“{task.name}” carries no acceptance test — its "
+                          "toolchain is already provisioned before the build; "
+                          "skipping (no build seat spent)."})
+            summary.append(f"{task.id} pre-existing-green "
+                           "(no acceptance test — not dispatched)")
+            continue
         emit({"type": "system", "text": f"Building: {task.name}"})
         run("implementer", adapter, impl_sys,
             _implementer_message(task, context, repo_root, stack, project_id))
@@ -1899,14 +2297,23 @@ def run_subagent_driven_build(
         # OBJECTIVE per-task green gate (only when the plan gave this task a test).
         if task.test:
             ok, errs = check(repo_root, task.test)
-            prev = None
-            for _ in range(per_task_cycles):
-                if ok:
-                    break
-                stalled = hash(errs.strip()) == prev
-                prev = hash(errs.strip())
+            # PROGRESS-GATED fix loop (FIX 3): the PRIMARY control here is
+            # PROGRESS, not a fixed fixer-pass count. The red task keeps earning
+            # fixer cycles WHILE it makes progress toward green (its failure
+            # signature moves, its failing set shrinks, or its source changes);
+            # it stops only after STALL_ROUNDS consecutive no-progress cycles.
+            # Every cycle re-runs the OBJECTIVE test against the on-disk work, so
+            # a partial-but-progressing build gets more cycles and a stalled one
+            # is reported honestly red (its files stay on disk -- FIX 4). A green
+            # result wins immediately.
+            gate = _TaskProgressGate(repo_root, stack.source_dir,
+                                     per_task_stall_rounds)
+            gate.observe(ok, errs)  # baseline: the post-implementer on-disk state
+            while not ok and not gate.stalled():
                 emit({"type": "system", "text": f"Getting “{task.name}” to pass its test."})
-                feedback = (_stall_directive(1) + "\n\n" + errs) if stalled else errs
+                # Same failure recurring -> tell the next pass to change strategy
+                # (re-sending the same prompt reproduces the same failed fix).
+                feedback = (_stall_directive(1) + "\n\n" + errs) if gate.error_repeated else errs
                 run("fixer", adapter, impl_sys,
                     _implementer_message(task, context, repo_root, stack,
                                          project_id, fix_feedback=feedback))
@@ -1914,6 +2321,7 @@ def run_subagent_driven_build(
                 per_task_repairs += 1  # a per-task FIX pass (not the draft)
                 matrix.bump_attempts(task.id)
                 ok, errs = check(repo_root, task.test)
+                gate.observe(ok, errs)
             if ok:
                 # PER-TASK DEFINITION-OF-DONE hard gate: a passing test is
                 # necessary but not sufficient -- the task is not "done" until
@@ -1982,7 +2390,11 @@ def run_subagent_driven_build(
                        **_repair_metrics())
         # FAIL FAST at the PHASE level: with any task red/blocked the build can
         # never sign, so integration/review/evidence would be paid spend on a
-        # refused build. Every attemptable task was still attempted above.
+        # refused build. Every attemptable task was still attempted above, each
+        # driven by the progress gate until it went green or genuinely STALLED
+        # (never cut off while progressing). The partial work stays ON DISK and
+        # its exact state is recorded in the traceability matrix -- reported
+        # honestly red, never discarded unexamined (FIX 4).
         summary.append(_repair_summary_line())
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
@@ -1992,8 +2404,10 @@ def run_subagent_driven_build(
             final_text=("Subagent-driven build finished RED: "
                         f"failed={','.join(failed_tasks) or 'none'} "
                         f"blocked={','.join(blocked_tasks) or 'none'} -- every "
-                        "independent task was attempted; integration/review/"
-                        "evidence skipped (a red build cannot sign).\n"
+                        "independent task was attempted and driven until green or "
+                        "stalled; partial work is on disk (see the traceability "
+                        "matrix); integration/review/evidence skipped (a red build "
+                        "cannot sign).\n"
                         + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],

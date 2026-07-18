@@ -51,6 +51,8 @@ If the Belief signature is missing → refuse. The Expectation Map is **not** a 
     test: "core/execution/tests/skeletons/wave-01/add-expense.test.tsx"
 ```
 
+**The stack's toolchain is already provisioned — never plan a scaffold/setup task.** Before the Build gate runs, SignalOS materializes and installs the selected stack's toolchain for you: the build tool, the test runner, the application entry point, and the declared dependencies are already present and installed in the workspace. You therefore MUST NOT emit any task whose job is to scaffold, set up, initialize, configure, or install the project or its toolchain (for example "initialize the project", "set up the test runner", "configure the build", "install dependencies"). That infrastructure is done — billing it to a Build seat burns the whole task budget on plumbing the harness already owns and never ships product value. **Every buildable task in `PLAN.tasks.yaml` MUST be a product-FEATURE vertical slice that carries its own failing acceptance test** (per the wiring rule above). This is stack-agnostic: it holds whether the stack is a web UI, a Python service, or a Node API — the toolchain is pre-provisioned in every case, so the plan only ever decomposes product features, never setup.
+
 Each buildable task's failing-test skeleton IS the task's signed acceptance spec, and the Build seat drives the product until it passes. It MUST be a behavioural / integration test — never an isolated unit test or a file/symbol-existence assertion:
 
 - **Exercise the real app entry.** For a UI task, `render(<App/>)` (the actual application root — not the component in isolation) and assert a user-observable outcome, e.g. "the user adds an expense and sees it in the list." A module written but never mounted into the running app then fails this test through the normal build loop, so **wiring is enforced by the test itself**, not by a separate reviewer or a static gate. For an API task, call the real route/handler and assert the response.
@@ -82,6 +84,7 @@ Each buildable task's failing-test skeleton IS the task's signed acceptance spec
 
 - Do not modify production code.
 - Do not invent scope beyond the signed Belief and Expectation Map.
+- Do not emit any scaffold, setup, toolchain, "initialize project", "configure build", or dependency-installation task: the stack's build tool, test runner, entry point, and dependencies are already provisioned and installed before the Build gate. Every buildable task must be a product-feature vertical slice with its own failing acceptance test.
 - Do not silently omit acceptance rows or redlines.
 - Do not write gate signatures, signed governance artifacts, secrets, or deploy actions.
 - Do not leave reserved markers or unfilled template tokens in any emitted artifact: no `TBD`, `TODO`, `FIXME`, `XXX`; no `[DATE]`, `[link]`, `[###-feature-name]`, `<to be filled>`, or `{{…}}`. Every field carries a concrete value, or is omitted when its value is set by the signing act. An artifact containing any such marker cannot be signed and blocks the gate — fix it before emitting.

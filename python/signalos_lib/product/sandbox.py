@@ -54,9 +54,11 @@ __all__ = [
     "SandboxUnavailableError",
     "select_runner",
     "build_container_argv",
+    "build_container_exec_argv",
     "container_engine_available",
     "validate_pinned_image",
     "CONTAINER_WORKSPACE",
+    "NOISE_SUPPRESSION_ENV",
     "FUNDED_PROFILE",
     "FUNDED_PLATFORM",
 ]
@@ -71,9 +73,10 @@ import stat
 import subprocess
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterator, Mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,6 +159,13 @@ FUNDED_WRITABLE_PATHS = (
     "dist",
 )
 FUNDED_EPHEMERAL_CACHE_PATH = "node_modules/.vite"
+# FIX 2: the idle entrypoint of a persistent per-seat container. It does nothing
+# but keep the container alive so the real workload can `exec` into it; the
+# container is torn down with `rm -f` at seat end. `sleep infinity` is a coreutils
+# no-op present in the pinned Debian image. If it is ever unavailable the boot
+# readiness check (State.Running) fails closed rather than running a command in an
+# unverified container.
+_IDLE_COMMAND = "sleep infinity"
 _PINNED_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 _SIZE_RE = re.compile(r"^([1-9][0-9]*)([kmgt])(?:i?b)?$", re.IGNORECASE)
 _SIZE_MULTIPLIERS = {
@@ -179,6 +189,17 @@ class DependencyMount:
     tree_sha256: str
     file_count: int
     total_bytes: int
+
+
+@dataclass(frozen=True)
+class _ContainerSession:
+    """Handle to the ONE persistent per-seat container (FIX 2): a warm container
+    booted once, ``exec``-ed into by every ``run()``, and torn down (container
+    then dependency volume) when the seat ends."""
+    container_name: str
+    cidfile: Path | None
+    dependency_volume: str | None
+    hardened: bool
 
 
 def _default_tmpfs(size: str) -> dict[str, str]:
@@ -359,6 +380,32 @@ def _safe_env_overlay(
     }
 
 
+# Noise-suppression environment overlaid UNDER every governed command's own env
+# so tool output stays compact + deterministic and the workload never lands in an
+# interactive watch/prompt mode. A seat then does not re-run a command just to
+# re-read colour/progress-garbled output, and does not hang a build in a watcher.
+# Generic + safe: these only change PRESENTATION and disable npm's fund/audit
+# extras (the latter also avoids a pointless network probe under --network none);
+# none change product behaviour. An explicit caller overlay key always WINS.
+NOISE_SUPPRESSION_ENV: dict[str, str] = {
+    "CI": "1",                       # run-once / non-interactive (no watch prompt)
+    "NO_COLOR": "1",                 # strip ANSI colour from tool output
+    "FORCE_COLOR": "0",              # the other half of the colour kill-switch
+    "npm_config_progress": "false",  # no npm progress bars
+    "npm_config_fund": "false",      # no "packages are looking for funding" footer
+    "npm_config_audit": "false",     # no audit summary (also skips a network probe)
+}
+
+
+def _with_noise_suppression(env: Mapping[str, str] | None) -> dict[str, str]:
+    """Overlay the noise-suppression defaults UNDER an explicit command env
+    (caller keys WIN). Applied by every runner so compact, deterministic,
+    non-watch tool output is the default for governed commands on any backend."""
+    merged: dict[str, str] = dict(NOISE_SUPPRESSION_ENV)
+    merged.update({str(key): str(value) for key, value in (env or {}).items()})
+    return merged
+
+
 def _child_process_env(
     overlay: Mapping[str, str] | None = None,
     *,
@@ -460,6 +507,7 @@ def build_container_argv(
     cidfile: str | None = None,
     platform: str | None = None,
     dependency_volume: str | None = None,
+    detach: bool = False,
 ) -> list[str]:
     """Construct the container CLI argv that runs *command* inside a throwaway
     container with a READ-ONLY root filesystem, ONLY *workspace* bind-mounted
@@ -480,6 +528,14 @@ def build_container_argv(
     Pass ``read_only=False`` to drop the immutable rootfs, ``tmpfs=`` to
     override the writable tmpfs surface, or ``pull=None`` to omit ``--pull``
     (the default ``never`` keeps the run offline/digest-pinned).
+
+    Pass ``detach=True`` (FIX 2) to boot ONE persistent per-seat container that
+    idles on *command* (an idle entrypoint) and is torn down with ``rm -f`` at
+    seat end. The argv is IDENTICAL to the per-command form except for the added
+    ``--detach`` -- EVERY containment flag (network/read-only/user/caps/limits/
+    mounts/dependency volume) is carried unchanged, so the warm container is
+    bounded exactly like the throwaway one. The real workload then runs via
+    ``build_container_exec_argv`` (``exec``), which adds no privileges.
 
     The argv is built (and assertable) WITHOUT a running daemon, so it is unit
     testable offline; executing it needs a docker/podman/WSL host.
@@ -523,6 +579,13 @@ def build_container_argv(
         "run",
         "--rm",                 # throwaway: no state survives the command.
     ]
+    if detach:
+        # FIX 2: a persistent per-seat container. It idles on the idle entrypoint
+        # now (the real workload execs in) and is removed with `rm -f` at seat
+        # end; `--rm` stays as a belt-and-braces auto-clean if the idle process
+        # ever exits. Every containment flag below is still applied, so the warm
+        # container is bounded exactly like the throwaway per-command one.
+        argv.append("--detach")
     if container_name:
         argv += ["--name", container_name]
     if cidfile:
@@ -602,12 +665,78 @@ def build_container_argv(
             "-e", "NPM_CONFIG_CACHE=/tmp/npm-cache",
             "-e", "PYTHONPYCACHEPREFIX=/tmp/pycache",
         ]
-    for key, val in _safe_env_overlay(env).items():
-        argv += ["-e", f"{key}={val}"]  # overlay env INTO the container only.
+    for key, val in _safe_env_overlay(_with_noise_suppression(env)).items():
+        # Noise-suppression baseline (CI/no-colour/no-npm-chatter) + the caller's
+        # own non-secret overlay, forwarded INTO the container only.
+        argv += ["-e", f"{key}={val}"]
     if hardened:
         argv += [image, "-lc", command]
     else:
         argv += [image, "sh", "-lc", command]
+    return argv
+
+
+def build_container_exec_argv(
+    command: str,
+    *,
+    engine: str = "docker",
+    container_name: str,
+    env: Mapping[str, str] | None = None,
+    workdir_rel: str = "",
+    hardened: bool = False,
+    container_user: str | None = None,
+) -> list[str]:
+    """Construct the ``<engine> exec`` argv that runs *command* inside the
+    ALREADY-BOOTED persistent container *container_name* (FIX 2). The boot is
+    ``build_container_argv(..., detach=True)``.
+
+    CONTAINMENT: ``exec`` joins the booted container's namespaces and cgroup, so
+    EVERY boot constraint still binds -- ``--network none`` (shared network
+    namespace), the read-only rootfs and every mount incl. the read-only
+    dependency volume (shared mount namespace), ``--memory``/``--pids-limit``/
+    ``--cpus`` (shared cgroup), and ``--cap-drop ALL`` + ``no-new-privileges``
+    (inherited process security). This builder therefore adds NO capabilities or
+    privileges: no ``--privileged``, no ``--cap-add``, no ``--security-opt``
+    relaxation. For a hardened boot it re-pins the SAME mandatory non-root
+    ``uid:gid`` on the exec (defense in depth -- exec already defaults to the
+    booted container's ``--user``) so the workload can never run as root; a
+    non-hardened boot inherits the image-default user unchanged, exactly as the
+    per-command ``run`` path did.
+
+    Pure argv construction, assertable WITHOUT a running daemon.
+    """
+    if engine not in _ENGINE_CLI:
+        raise ValueError(f"unknown container engine: {engine!r}")
+    if not container_name:
+        raise ValueError("container exec requires a persistent container name")
+    workdir = CONTAINER_WORKSPACE
+    if workdir_rel:
+        workdir = f"{CONTAINER_WORKSPACE}/{workdir_rel.replace(chr(92), '/').strip('/')}"
+    argv: list[str] = [
+        *_ENGINE_CLI[engine],
+        "exec",
+        "-w", workdir,          # per-command cwd = the mount (or a contained subdir).
+    ]
+    if hardened:
+        # Re-pin the mandatory non-root identity; exec adds no privileges.
+        argv += [
+            "--user",
+            _validate_non_root_user(container_user or _default_container_user()),
+        ]
+        argv += [
+            "-e", "HOME=/home/signalos",
+            "-e", "NPM_CONFIG_CACHE=/tmp/npm-cache",
+            "-e", "PYTHONPYCACHEPREFIX=/tmp/pycache",
+        ]
+    for key, val in _safe_env_overlay(_with_noise_suppression(env)).items():
+        # Same noise-suppression baseline + caller overlay the run path forwarded,
+        # applied per command via -e (credential names are still filtered out).
+        argv += ["-e", f"{key}={val}"]
+    argv.append(container_name)
+    if hardened:
+        argv += ["/bin/sh", "-lc", command]
+    else:
+        argv += ["sh", "-lc", command]
     return argv
 
 
@@ -689,7 +818,10 @@ class InProcessRunner(SandboxRunner):
         timeout: float,
         env: Mapping[str, str] | None = None,
     ) -> tuple[int, CommandOutput]:
-        full_env = _child_process_env(env)
+        # Overlay the noise-suppression baseline UNDER the caller's env (caller
+        # wins) so the in-process path gets the same compact/non-watch output as
+        # the container path.
+        full_env = _child_process_env(_with_noise_suppression(env))
         try:
             proc = subprocess.run(
                 cmd,
@@ -767,6 +899,9 @@ class ContainerRunner(SandboxRunner):
         self.dependency_mount = dependency_mount
         self.require_funded_dependencies = bool(require_funded_dependencies)
         self._runner = runner
+        # FIX 2: the ONE warm per-seat container, set while a session is open.
+        # None -> every run() takes the legacy per-command `docker run --rm` path.
+        self._session: _ContainerSession | None = None
         self.name = f"container:{engine}"
         if self.hardened:
             if self.engine == "wsl":
@@ -1048,7 +1183,7 @@ class ContainerRunner(SandboxRunner):
         if errors:
             raise SandboxUnavailableError("; ".join(errors))
 
-    def _cleanup_hardened_container(self, name: str, cidfile: Path) -> None:
+    def _cleanup_hardened_container(self, name: str, cidfile: Path | None) -> None:
         cleanup_errors: list[str] = []
         try:
             removed = self._runtime_call(["rm", "-f", name])
@@ -1071,7 +1206,8 @@ class ContainerRunner(SandboxRunner):
         except Exception as exc:
             cleanup_errors.append(f"cleanup verification failed: {type(exc).__name__}: {exc}")
         try:
-            cidfile.unlink(missing_ok=True)
+            if cidfile is not None:
+                cidfile.unlink(missing_ok=True)
         except OSError as exc:
             cleanup_errors.append(f"CID file cleanup failed: {exc}")
         if cleanup_errors:
@@ -1087,7 +1223,291 @@ class ContainerRunner(SandboxRunner):
         output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
         return "no such volume" in output or "volume not found" in output
 
+    # -- persistent per-seat container lifecycle (FIX 2) ---------------------
+
+    @property
+    def session_active(self) -> bool:
+        """True while a persistent per-seat container is booted; every ``run()``
+        then ``exec``s into it instead of booting a throwaway per command."""
+        return self._session is not None
+
+    def open_session(self, timeout: float) -> None:
+        """Boot ONE persistent container for a whole task/seat and materialize +
+        verify the dependency volume ONCE, then serve every ``run()`` as an
+        ``exec`` into it until ``close_session()``.
+
+        FIX 2 (perf/fairness): the legacy path ran EVERY run_command as a fresh
+        ``docker run --rm``, re-materializing + re-hashing the WHOLE dependency
+        tree and paying a container cold start per command -- a seat that runs 20
+        commands paid that ~20x. This boots the hardened container once (with the
+        IDENTICAL containment flags -- see ``build_container_argv``), preps the
+        dependency volume once, and execs each command in.
+
+        FAIL-CLOSED: any boot/readiness failure raises SandboxUnavailableError,
+        and everything provisioned so far is torn down before re-raising so a
+        failed boot never leaks a container or the dependency volume. While a
+        session is open no command runs in an unverified container and no
+        unhardened fallback is ever taken.
+        """
+        if self._session is not None:
+            raise SandboxUnavailableError(
+                "a sandbox container session is already open"
+            )
+        token = f"{os.getpid()}-{uuid.uuid4().hex}"
+        container_name = (
+            f"signalos-funded-{token}"[:63]
+            if self.hardened
+            else f"signalos-sandbox-{token}"[:63]
+        )
+        cidfile: Path | None = None
+        dependency_volume: str | None = None
+        try:
+            if self.hardened:
+                cid_dir = Path(tempfile.gettempdir()) / "signalos-sandbox-cids"
+                try:
+                    cid_dir.mkdir(parents=True, exist_ok=True)
+                    cidfile = cid_dir / f"{token}.cid"
+                    cidfile.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise SandboxUnavailableError(
+                        "cannot create the funded container identity file"
+                    ) from exc
+                dependency_mount = self._load_dependency_mount()
+                if dependency_mount is not None:
+                    # Materialize + verify the dependency volume ONCE for the whole
+                    # seat (the win over the per-command path, which did it every
+                    # time).  On failure this cleans up its own volume and raises.
+                    dependency_volume = self._prepare_dependency_volume(
+                        dependency_mount, token, timeout
+                    )
+            self._boot_persistent_container(
+                container_name,
+                cidfile=cidfile,
+                dependency_volume=dependency_volume,
+                timeout=timeout,
+            )
+            self._session = _ContainerSession(
+                container_name=container_name,
+                cidfile=cidfile,
+                dependency_volume=dependency_volume,
+                hardened=self.hardened,
+            )
+        except BaseException:
+            # Fail-closed: tear down anything provisioned before re-raising so a
+            # failed boot never leaks a container or the dependency volume. The
+            # cleanup is idempotent -- `rm -f`/`volume rm` of a never-created name
+            # is treated as already-gone, so this is safe even mid-boot.
+            cleanup_errors: list[str] = []
+            try:
+                self._cleanup_hardened_container(container_name, cidfile)
+            except SandboxUnavailableError as exc:
+                cleanup_errors.append(str(exc))
+            if dependency_volume is not None:
+                try:
+                    self._cleanup_dependency_volume(dependency_volume)
+                except SandboxUnavailableError as exc:
+                    cleanup_errors.append(str(exc))
+            if cleanup_errors:
+                _LOGGER.warning(
+                    "sandbox session boot cleanup issues: %s",
+                    "; ".join(cleanup_errors),
+                )
+            raise
+
+    def close_session(self) -> None:
+        """Tear down the persistent per-seat container and its dependency volume.
+
+        Fail-closed: raises SandboxUnavailableError when the container removal
+        cannot be VERIFIED (a possible leak is surfaced, never swallowed). Safe to
+        call with no open session (no-op). The container is removed FIRST
+        (releasing the volume mount), then the volume."""
+        session = self._session
+        self._session = None
+        if session is None:
+            return
+        cleanup_errors: list[str] = []
+        try:
+            self._cleanup_hardened_container(
+                session.container_name, session.cidfile
+            )
+        except SandboxUnavailableError as exc:
+            cleanup_errors.append(str(exc))
+        if session.dependency_volume is not None:
+            try:
+                self._cleanup_dependency_volume(session.dependency_volume)
+            except SandboxUnavailableError as exc:
+                cleanup_errors.append(str(exc))
+        if cleanup_errors:
+            raise SandboxUnavailableError("; ".join(cleanup_errors))
+
+    @contextmanager
+    def session(self, timeout: float) -> Iterator["ContainerRunner"]:
+        """Context-managed persistent session: open on enter, ALWAYS tear down on
+        exit (try/finally), even on exception. See ``open_session``."""
+        self.open_session(timeout)
+        try:
+            yield self
+        finally:
+            self.close_session()
+
+    def _build_boot_argv(
+        self,
+        *,
+        container_name: str,
+        cidfile: str | None,
+        dependency_volume: str | None,
+    ) -> list[str]:
+        """The boot argv: identical containment to the per-command run plus
+        ``--detach``, idling on the idle entrypoint (workload execs in later)."""
+        return build_container_argv(
+            _IDLE_COMMAND,
+            self.workspace,
+            engine=self.engine,
+            image=self.image,
+            env=None,
+            cpus=self.cpus,
+            memory=self.memory,
+            pids=self.pids,
+            network=self.network,
+            read_only=self.read_only,
+            tmpfs_size=self.tmpfs_size,
+            shm_size=self.shm_size,
+            pull=self.pull,
+            workdir_rel="",
+            hardened=self.hardened,
+            workspace_read_only=self.workspace_read_only,
+            writable_paths=self.writable_paths,
+            container_user=self.container_user,
+            container_name=container_name,
+            cidfile=cidfile,
+            platform=self.platform,
+            dependency_volume=dependency_volume,
+            detach=True,
+        )
+
+    def _boot_persistent_container(
+        self,
+        container_name: str,
+        *,
+        cidfile: Path | None,
+        dependency_volume: str | None,
+        timeout: float,
+    ) -> None:
+        argv = self._build_boot_argv(
+            container_name=container_name,
+            cidfile=str(cidfile) if cidfile is not None else None,
+            dependency_volume=dependency_volume,
+        )
+        try:
+            proc = self._runner(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=min(timeout, 120),
+                env=_child_process_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxUnavailableError(
+                "persistent sandbox container did not boot before the deadline"
+            ) from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SandboxUnavailableError(
+                f"container runtime execution failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "container launch failed").strip()
+            raise SandboxUnavailableError(
+                f"container runtime could not boot the persistent workload "
+                f"(exit {proc.returncode}): {detail}"
+            )
+        # Readiness / fail-closed: `run -d` returns 0 once the container STARTS,
+        # even if the idle process immediately died (e.g. a bad mount). Verify it
+        # is actually Running before any command execs into it.
+        if not self._container_running(container_name):
+            raise SandboxUnavailableError(
+                "persistent sandbox container is not running after boot"
+            )
+
+    def _container_running(self, name: str) -> bool:
+        try:
+            inspected = self._runtime_call(
+                ["inspect", "-f", "{{.State.Running}}", name]
+            )
+        except Exception:
+            return False
+        return inspected.returncode == 0 and (inspected.stdout or "").strip() == "true"
+
+    def _exec_in_session(
+        self,
+        cmd: str,
+        cwd: str | os.PathLike[str],
+        timeout: float,
+        env: Mapping[str, str] | None,
+    ) -> tuple[int, CommandOutput]:
+        session = self._session
+        if session is None:  # pragma: no cover - guarded by run()
+            raise SandboxUnavailableError("no persistent sandbox session is open")
+        argv = build_container_exec_argv(
+            cmd,
+            engine=self.engine,
+            container_name=session.container_name,
+            env=env,
+            workdir_rel=_rel_subdir(self.workspace, cwd),
+            hardened=self.hardened,
+            container_user=self.container_user,
+        )
+        try:
+            proc = self._runner(
+                argv,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,       # per-command timeout, same as the run path.
+                env=_child_process_env(),
+            )
+        except subprocess.TimeoutExpired:
+            # Preserve the per-command timeout contract: the outer `exec` is killed
+            # and the command is reported timed out (identical to the run path).
+            return (_TIMEOUT_EXIT_CODE, CommandOutput("", "", timed_out=True))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SandboxUnavailableError(
+                f"container runtime execution failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if proc.returncode != 0 and not self._container_running(
+            session.container_name
+        ):
+            # Fail-closed: a non-zero exit whose container is no longer running
+            # means containment collapsed (the exec never really ran inside the
+            # boundary), NOT a workload result -- surface it rather than report a
+            # bogus exit code. A non-zero exit with the container STILL running is
+            # genuine product/toolchain evidence and passes through unchanged.
+            detail = (proc.stderr or proc.stdout or "container is gone").strip()
+            raise SandboxUnavailableError(
+                f"persistent sandbox container is no longer running "
+                f"(exec exit {proc.returncode}): {detail}"
+            )
+        return (proc.returncode, CommandOutput(proc.stdout or "", proc.stderr or ""))
+
     def run(
+        self,
+        cmd: str,
+        cwd: str | os.PathLike[str],
+        timeout: float,
+        env: Mapping[str, str] | None = None,
+    ) -> tuple[int, CommandOutput]:
+        # FIX 2: when a persistent per-seat container is open, exec into it; the
+        # dependency volume was already materialized + verified once at boot.
+        # Otherwise fall back to the legacy per-command `docker run --rm` path
+        # below -- EQUALLY hardened (same containment flags), just cold every
+        # command. There is no less-hardened fallback.
+        if self._session is not None:
+            return self._exec_in_session(cmd, cwd, timeout, env)
+        return self._run_ephemeral(cmd, cwd, timeout, env)
+
+    def _run_ephemeral(
         self,
         cmd: str,
         cwd: str | os.PathLike[str],

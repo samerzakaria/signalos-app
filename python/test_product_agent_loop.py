@@ -2180,3 +2180,162 @@ class TestSandboxRouting(unittest.TestCase):
         self.assertEqual(got, expected)
         self.assertIn("exit_code: 0", got)
         self.assertIn("signalos-sandbox-proof", got)
+
+
+# ---------------------------------------------------------------------------
+# FIX 3/4: build-seat progress control. A build/fixer seat is NOT stopped by a
+# small tool-call cap -- it runs until end_turn or a STALL detector (no state
+# change / no new information across a window). This behaviour is OPT-IN via
+# build_seat=True; every other AgentLoop caller (G0-G3 gate agents, IPC, tests)
+# keeps the small-cap default UNCHANGED.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSeatStallDetector(unittest.TestCase):
+    def _reads(self, path: str, n: int) -> list:
+        """n identical read_file tool-call responses (same nonexistent path ->
+        identical result each time -> no new information after the first)."""
+        return [_tool_resp("read_file", {"path": path}, f"r{i}") for i in range(n)]
+
+    def test_stall_detector_ends_a_build_seat_without_a_small_cap(self):
+        # A build seat repeats a no-progress action (re-reading the same missing
+        # file). With a HIGH anti-runaway guard (1000) the small cap never bites;
+        # the STALL DETECTOR is what ends the turn -- cleanly, as a completed-but-
+        # unproductive turn (status "stalled_no_progress"), not a hard failure.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            events: list[dict] = []
+            provider = AgentTestProvider(
+                # 1 real write (progress), then 6 identical no-progress reads.
+                script=[_tool_resp("write_file",
+                                   {"path": "src/a.ts", "content": "export const a = 1;"},
+                                   "w0"),
+                        *self._reads("does/not/exist.txt", 6),
+                        _end_resp()])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="build-seat-stall",
+                emit=events.append,
+                build_seat=True,
+                stall_window=3,       # small for a deterministic assertion
+                tool_call_limit=1000,  # the high anti-runaway guard, not the bound
+            )
+            res = loop.run("sys", "do the task")
+
+            self.assertEqual(res.status, "stalled_no_progress")
+            # write(productive) + read1(new,productive) + read2,3,4(no-progress:
+            # streak 1,2,3 -> stall at window=3). NOT a small call cap: 5 << 1000.
+            self.assertEqual(res.tool_calls_made, 5)
+            self.assertLess(res.tool_calls_made, loop.tool_call_limit)
+            self.assertTrue(any(e.get("type") == "stalled_no_progress"
+                                for e in events))
+            # FIX 4: on-disk work SURVIVES a stalled turn -- nothing discarded.
+            self.assertTrue((root / "src" / "a.ts").is_file())
+            self.assertFalse(res.wrote_no_files)
+
+    def test_productive_build_seat_runs_past_the_window_to_end_turn(self):
+        # A seat that keeps making real progress (distinct writes) is never
+        # stopped by the stall detector even though it makes far more than
+        # `stall_window` tool calls -- progress, not a count, governs.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=[_tool_resp("write_file",
+                                   {"path": f"src/f{i}.ts", "content": f"export const v{i}={i};"},
+                                   f"w{i}") for i in range(6)] + [_end_resp("done")])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="build-seat-progress",
+                build_seat=True,
+                stall_window=3,
+            )
+            res = loop.run("sys", "write the modules")
+            self.assertEqual(res.status, "completed")   # ran to end_turn
+            self.assertEqual(res.tool_calls_made, 6)     # all 6 writes, no stall
+            for i in range(6):
+                self.assertTrue((root / "src" / f"f{i}.ts").is_file())
+
+    def test_default_loop_has_no_stall_detector_g0_g3_unchanged(self):
+        # The SAME repetitive no-progress scenario on a DEFAULT loop
+        # (build_seat=False -- the G0-G3 gate-agent path) does NOT stall: the
+        # loop runs every scripted call and ends only on the scripted end_turn.
+        # No "stalled_no_progress" status/event exists on that path.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            events: list[dict] = []
+            provider = AgentTestProvider(
+                script=[*self._reads("does/not/exist.txt", 8), _end_resp()])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="default-no-stall",
+                emit=events.append,
+                # build_seat defaults False; a small stall_window is IGNORED.
+                stall_window=3,
+            )
+            res = loop.run("sys", "inspect")
+            self.assertEqual(res.status, "completed")     # ran to end_turn
+            self.assertEqual(res.tool_calls_made, 8)       # every read consumed
+            self.assertFalse(any(e.get("type") == "stalled_no_progress"
+                                 for e in events))
+            self.assertFalse(loop.build_seat)
+
+    def test_default_loop_keeps_its_small_tool_call_cap(self):
+        # G0-G3 default loops are still bounded by their tool_call_limit (the
+        # 250-style cap), UNCHANGED. A build_seat=False loop given a tiny cap
+        # halts with budget_exhausted -- proving the cap is still the default
+        # primary bound off the build path.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            provider = AgentTestProvider(
+                script=self._reads("does/not/exist.txt", 10) + [_end_resp()])
+            loop = AgentLoop(
+                adapter=_adapter(provider),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="default-cap",
+                tool_call_limit=3,   # small cap still governs off the build path
+            )
+            res = loop.run("sys", "inspect")
+            self.assertEqual(res.status, "budget_exhausted")
+            self.assertEqual(res.tool_calls_made, 3)
+
+    def test_identical_command_repeat_trips_the_stall_fast(self):
+        # The tighter REPEAT signal: an identical command hammered with no state
+        # change stalls at repeat_cmd_limit (before the wider window). Unit-level
+        # so it never touches the sandbox.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            loop = AgentLoop(
+                adapter=_adapter(AgentTestProvider()),
+                repo_root=root,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                run_id="repeat-cmd",
+                build_seat=True,
+                stall_window=99,       # isolate the repeat path
+                repeat_cmd_limit=3,
+            )
+            # Initialize the per-run stall counters (normally done in the loop).
+            loop._no_progress_streak = 0
+            loop._repeat_cmd_streak = 0
+            loop._last_cmd_sig = None
+            tc = ToolCall(id="c", name="run_command", arguments={"command": "npm test"})
+            mseq = loop._mutation_seq
+            # call 1: first-seen output -> new info -> productive (no stall)
+            self.assertFalse(loop._record_build_progress(tc, "exit 1: same", mseq))
+            # calls 2,3: identical command + identical output, no mutation
+            self.assertFalse(loop._record_build_progress(tc, "exit 1: same", mseq))
+            self.assertFalse(loop._record_build_progress(tc, "exit 1: same", mseq))
+            # call 4: repeat streak hits the limit -> STALL
+            self.assertTrue(loop._record_build_progress(tc, "exit 1: same", mseq))
+            # a landed mutation resets the repeat streak (progress again)
+            loop._mutation_seq += 1
+            wtc = ToolCall(id="w", name="write_file",
+                           arguments={"path": "src/x.ts", "content": "1"})
+            self.assertFalse(loop._record_build_progress(wtc, "OK", loop._mutation_seq - 1))
+            self.assertEqual(loop._repeat_cmd_streak, 0)

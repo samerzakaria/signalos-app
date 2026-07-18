@@ -15,9 +15,29 @@ DEFAULT_REPAIR_CYCLE_BUDGET = 8
 DEFAULT_GATE_REWORK_BUDGET = 8
 DEFAULT_GATE_REOPEN_BUDGET = 3
 # G4 subagent-driven build knobs (subagent_build.py). Each subagent is a FRESH
-# bounded conversation; the per-task/fixer cycles bound convergence loops.
-DEFAULT_BUILD_IMPLEMENTER_TOOL_BUDGET = 40
+# conversation. The PRIMARY control on a build/fixer seat is PROGRESS, not a
+# tool-call count: the seat's turn ends naturally on end_turn or on the loop's
+# stall detector (no state change across a window), NOT on a small call cap.
+# This value is therefore NOT the seat's working budget -- it is a single,
+# deliberately-high anti-runaway backstop that only ever fires on a pathological
+# infinite loop (an order of magnitude above the old 40-call seat cap). Money
+# ($ per model) and the G4 build timeout are the ultimate wall-clock/$ walls;
+# this guard just prevents a truly unbounded loop. Do NOT treat it as "the
+# budget" and do NOT lower it into normal-operation range.
+DEFAULT_BUILD_IMPLEMENTER_RUNAWAY_GUARD = 1000
 DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 20
+# STALL_ROUNDS for the per-task PROGRESS gate (subagent_build.py): the PRIMARY
+# control on the red-test fix loop. A red task keeps earning fixer cycles WHILE
+# it makes progress; it stops only after this many CONSECUTIVE cycles with no
+# progress (no new failure signature, no smaller failing set, no source change).
+# This is NOT a fixed cycle count -- a progressing task runs as many cycles as
+# it needs (bounded ultimately by money/time), a stalled one stops fast.
+DEFAULT_BUILD_TASK_STALL_ROUNDS = 2
+# Small bound for the SECONDARY convergence loops only -- the deterministic
+# Definition-of-Done quality fixer and the reviewer re-review loop. These are
+# NOT the primary fix control (that is the progress gate above); they iterate a
+# bounded, shrinking set of concrete findings, so a small fixed bound is
+# correct.
 DEFAULT_BUILD_TASK_FIX_CYCLES = 3
 DEFAULT_BUILD_MAX_TASKS = 12
 DEFAULT_BUILD_FIXER_ERROR_BATCH = 12
@@ -33,8 +53,9 @@ AGENT_LOOP_TOOL_BUDGET_ENV = "SIGNALOS_AGENT_LOOP_TOOL_BUDGET"
 REPAIR_CYCLE_BUDGET_ENV = "SIGNALOS_AGENT_REPAIR_CYCLE_BUDGET"
 GATE_REWORK_BUDGET_ENV = "SIGNALOS_GATE_REWORK_BUDGET"
 GATE_REOPEN_BUDGET_ENV = "SIGNALOS_GATE_REOPEN_BUDGET"
-BUILD_IMPLEMENTER_TOOL_BUDGET_ENV = "SIGNALOS_BUILD_IMPLEMENTER_TOOL_BUDGET"
+BUILD_IMPLEMENTER_RUNAWAY_GUARD_ENV = "SIGNALOS_BUILD_IMPLEMENTER_RUNAWAY_GUARD"
 BUILD_REVIEWER_TOOL_BUDGET_ENV = "SIGNALOS_BUILD_REVIEWER_TOOL_BUDGET"
+BUILD_TASK_STALL_ROUNDS_ENV = "SIGNALOS_BUILD_TASK_STALL_ROUNDS"
 BUILD_TASK_FIX_CYCLES_ENV = "SIGNALOS_BUILD_TASK_FIX_CYCLES"
 BUILD_MAX_TASKS_ENV = "SIGNALOS_BUILD_MAX_TASKS"
 BUILD_FIXER_ERROR_BATCH_ENV = "SIGNALOS_BUILD_FIXER_ERROR_BATCH"
@@ -83,13 +104,18 @@ def resolve_gate_reopen_budget(value: int | None = None) -> int:
     )
 
 
-def resolve_build_implementer_tool_budget(value: int | None = None) -> int:
-    """Tool-call budget for ONE G4 implementer/fixer subagent conversation."""
+def resolve_build_implementer_runaway_guard(value: int | None = None) -> int:
+    """Anti-runaway backstop (NOT the working budget) for ONE G4 implementer/
+    fixer subagent conversation. The seat's turn normally ends on end_turn or the
+    loop's stall detector (no state change across a window) -- PROGRESS is the
+    primary control, not this number. This guard only fires on a pathological
+    infinite loop and is deliberately an order of magnitude above the old seat
+    cap; money/time are the real walls."""
     return _resolve_budget(
         value,
-        env_name=BUILD_IMPLEMENTER_TOOL_BUDGET_ENV,
-        default=DEFAULT_BUILD_IMPLEMENTER_TOOL_BUDGET,
-        label="build implementer tool budget",
+        env_name=BUILD_IMPLEMENTER_RUNAWAY_GUARD_ENV,
+        default=DEFAULT_BUILD_IMPLEMENTER_RUNAWAY_GUARD,
+        label="build implementer runaway guard",
     )
 
 
@@ -103,9 +129,26 @@ def resolve_build_reviewer_tool_budget(value: int | None = None) -> int:
     )
 
 
+def resolve_build_task_stall_rounds(value: int | None = None) -> int:
+    """STALL_ROUNDS for the per-task PROGRESS gate: consecutive no-progress fixer
+    cycles tolerated before a still-red task is declared stalled. This is NOT a
+    fixed fixer-pass count -- while a task keeps progressing (its failure
+    signature changes or its source changes) it earns more cycles; only a true
+    stall (no change at all for this many rounds) stops it."""
+    return _resolve_budget(
+        value,
+        env_name=BUILD_TASK_STALL_ROUNDS_ENV,
+        default=DEFAULT_BUILD_TASK_STALL_ROUNDS,
+        label="build per-task stall rounds",
+    )
+
+
 def resolve_build_task_fix_cycles(value: int | None = None) -> int:
-    """Bounded fixer passes to drive ONE plan task's test green before the
-    next task (the per-task green gate)."""
+    """Small bound for the SECONDARY per-task convergence loops only: the
+    deterministic Definition-of-Done quality fixer and the reviewer re-review
+    loop. NOT the primary red-test fix control -- that is the progress gate
+    (resolve_build_task_stall_rounds). These loops iterate a bounded, shrinking
+    set of concrete findings, so a small fixed bound is correct."""
     return _resolve_budget(
         value,
         env_name=BUILD_TASK_FIX_CYCLES_ENV,
