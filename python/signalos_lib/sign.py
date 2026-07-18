@@ -784,6 +784,42 @@ def check_gate(
     return result
 
 
+def _strip_draft_signature_entries(text: str) -> str:
+    """Remove agent-authored placeholder DRAFT entries from the ``## Signatures``
+    block. That block is owned by the signing mechanism, not the authoring
+    agent: a ``- signer: DRAFT -- awaiting ...`` placeholder (e.g. an unfillable
+    "client role" slot the simulated founder never signs) can never become a
+    real signature, and its mere presence makes a validly-signed gate read as
+    "unsigned or draft" (``_parse_signers`` flags ANY ``DRAFT`` token). Dropping
+    these placeholders as part of signing keeps the anti-forgery check strict and
+    untouched while letting a genuine APPROVED signature stand. Real (non-DRAFT)
+    entries and all non-signature content are preserved verbatim; content ABOVE
+    the block (and thus the artifact hash) is never modified. Line-based so it
+    works whether or not the block is fenced."""
+    m = re.search(r"^## Signatures", text, re.MULTILINE)
+    if not m:
+        return text
+    head = text[: m.start()]
+    out: list[str] = []
+    skipping = False
+    for line in text[m.start():].splitlines(keepends=True):
+        stripped = line.strip()
+        if re.match(r"-\s+signer:", stripped):
+            skipping = "DRAFT" in stripped.upper()
+            if not skipping:
+                out.append(line)
+            continue
+        if skipping:
+            # continuation of a dropped DRAFT entry, unless a new structural
+            # marker (fence / heading) ends the entry.
+            if stripped.startswith("```") or stripped.startswith("#"):
+                skipping = False
+                out.append(line)
+            continue
+        out.append(line)
+    return head + "".join(out)
+
+
 def sign_artifact(
     path: Path,
     signer: str,
@@ -829,6 +865,11 @@ def sign_artifact(
     )
 
     text = path.read_text(encoding="utf-8", errors="replace")
+    # The signing mechanism OWNS the ## Signatures block: drop any placeholder
+    # DRAFT entries an authoring agent left in it before adding the real
+    # signature, so a validly-signed gate never reads as draft. (Hash was
+    # computed above from content ABOVE the block, which this never touches.)
+    text = _strip_draft_signature_entries(text)
 
     sig_m = re.search(r"^## Signatures", text, re.MULTILINE)
     if sig_m:
