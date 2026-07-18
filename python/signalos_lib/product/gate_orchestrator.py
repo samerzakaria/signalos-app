@@ -138,6 +138,10 @@ _KNOWN_VERDICTS = {"approve", "approve-with-conditions", "request-changes", "rej
 _UNREVIEWABLE_LOOP_STATUSES = frozenset({
     "error", "cancelled", "budget_exhausted", "stalled_no_tool",
     "max_tokens", "text_only",
+    # Gap 6: the whole-build integration ratchet stopped because the passing set
+    # stopped growing -- an honest incomplete product (K of M still failing), NOT
+    # a successful outcome. Must never open for a verdict / sign.
+    "stalled_incomplete",
 })
 
 # ---------------------------------------------------------------------------

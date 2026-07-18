@@ -219,20 +219,21 @@ class TestOrchestration(unittest.TestCase):
         self.assertLess(roles.index("fixer"), roles.index("spec-reviewer"))
 
     def test_red_after_budget_fails_fast_no_review_no_evidence(self):
-        """FAIL FAST: a definitively-red integration stops the build -- review
-        and evidence would be paid spend on a build the gate must refuse (the
-        missing evidence artifact keeps the sign fail-closed)."""
+        """A definitively-red integration STALLS (value ratchet, constant
+        failures) and stops the build -- review and evidence would be paid spend
+        on a build the gate must refuse (the missing evidence artifact keeps the
+        sign fail-closed). Honest stall, NOT budget_exhausted."""
         rec = Recorder()
         res = run_subagent_driven_build(
             _repo(), adapter="A", prompt="x", run_agent=rec,
-            build_check=lambda r, only_test=None: (False, "still broken"), repair_cycles=3,
+            build_check=lambda r, only_test=None: (False, "still broken"),
         )
         roles = rec.roles()
-        self.assertEqual(roles.count("fixer"), 3)  # exhausts the repair budget
+        self.assertEqual(roles.count("fixer"), 3)  # STALL_ROUNDS (value-gated)
         self.assertNotIn("spec-reviewer", roles)   # never green -> no review
         self.assertNotIn("evidence", roles)        # fail-fast: no paid evidence pass
-        self.assertEqual(res.status, "budget_exhausted")
-        self.assertIn("STOPPED (fail-fast)", res.final_text)
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertIn("did not converge", res.final_text)
 
     def test_failed_task_continues_independents_skips_dependents(self):
         """A task whose plan test stays red after its fix budget does NOT stop
@@ -1230,6 +1231,128 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         self.assertEqual(rec.roles().count("fixer"), 4)
 
 
+# ---------------------------------------------------------------------------
+# Gap 6: the WHOLE-BUILD / INTEGRATION loop is the SAME converge-or-stall value
+# ratchet, at whole-build scope. A build that keeps reducing total failing cases
+# keeps cycling past the old fixed repair budget; one stuck at K stalls honestly
+# ("K of M", NOT budget_exhausted); a cross-task regression is not progress;
+# all-green completes and signs; provider-error cycles are not charged.
+# ---------------------------------------------------------------------------
+
+
+class _WholeBuildSentinel(Recorder):
+    """A Recorder whose integration fixers optionally report an infra no-op."""
+    def __init__(self, infra_fixers=(), **kw):
+        super().__init__(**kw)
+        self._infra = set(infra_fixers)
+        self._fixers = 0
+
+    def __call__(self, role, adapter, system_prompt, user_message):
+        out = super().__call__(role, adapter, system_prompt, user_message)
+        if role == "fixer":
+            self._fixers += 1
+            if self._fixers in self._infra:
+                self.last_outcome = {"status": "completed", "wrote_no_files": True,
+                                     "provider_turn_errors": 1}
+                return out
+        self.last_outcome = {"status": "completed", "wrote_no_files": False,
+                             "provider_turn_errors": 0}
+        return out
+
+
+class TestBuildScopeConvergence(unittest.TestCase):
+    def _run(self, seq_totals, green_at, rec=None, extra_check=None):
+        """Drive the whole-build integration loop via a structured whole-build
+        sentinel (case_results(repo, None)) whose passing count follows `seq`.
+        `_repo()` has one no-test task, so integration IS the whole-build gate."""
+        d = _repo()
+        seq, total = seq_totals
+        st = {"i": -1}
+
+        def check(_r, only_test=None):
+            if only_test is None:               # the whole-build integration check
+                st["i"] = min(st["i"] + 1, len(seq) - 1)
+                p = seq[st["i"]]
+                if extra_check is not None:
+                    extra_check(st["i"])
+                return (p >= green_at, "" if p >= green_at else _fails(total - p))
+            return (True, "")                    # any per-task check green
+
+        def case_results(_r, test_path):
+            if test_path is None:                # whole-build sentinel
+                p = seq[max(0, st["i"])]
+                return ({f"c{j}" for j in range(p)}, total)
+            return None
+        rec = rec or Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                        build_check=check, case_results=case_results)
+        return res, rec
+
+    def test_whole_build_passing_growth_cycles_past_the_old_fixed_budget(self):
+        # Passing grows 2,4,...,30 over 14 integration cycles -- FAR past the old
+        # fixed repair_cycle_budget(8). Convergence, not a count, governs.
+        seq = list(range(2, 32, 2))              # 2..30, 15 entries
+        res, rec = self._run((seq, 30), green_at=30)
+        self.assertEqual(res.status, "completed")
+        fixers = rec.roles().count("fixer")
+        self.assertGreater(fixers, 8)            # past the OLD fixed budget
+        self.assertEqual(fixers, 14)             # ran until all cases pass
+        self.assertIn("evidence", rec.roles())   # green -> review + evidence
+
+    def test_whole_build_stall_is_k_of_m_not_budget_exhausted(self):
+        # Passing stuck at 3 of 10 -> stalls after STALL_ROUNDS with an HONEST
+        # "K of M" result, NOT a budget exhaustion.
+        res, rec = self._run(([3, 3, 3, 3, 3, 3], 10), green_at=10)
+        self.assertNotEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertEqual(rec.roles().count("fixer"), 3)   # STALL_ROUNDS
+        self.assertIn("7 of 10 acceptance checks still failing", res.final_text)
+        self.assertIn("did not converge", res.final_text)
+        self.assertNotIn("evidence", rec.roles())         # red cannot sign
+
+    def test_whole_build_all_green_completes_and_signs_path(self):
+        res, rec = self._run(([2], 2), green_at=2)        # already all-green
+        self.assertEqual(res.status, "completed")
+        self.assertEqual(rec.roles().count("fixer"), 0)   # no repair needed
+        self.assertIn("evidence", rec.roles())
+
+    def test_whole_build_cross_task_regression_is_not_progress(self):
+        # An integration cycle that PASSES a new case but DROPS a prior green one
+        # (cross-task regression) is not progress -- the high-water-mark set
+        # refuses to count it, so a churn of regressions stalls.
+        d = _repo()
+        seq = [{"c0", "c1", "c2"},   # baseline: 3 pass
+               {"c0", "c1", "c3"},   # c2 regressed, c3 new -> NOT progress
+               {"c0", "c1", "c3"},
+               {"c0", "c1", "c3"}]
+        st = {"i": -1}
+
+        def check(_r, only_test=None):
+            if only_test is None:
+                st["i"] = min(st["i"] + 1, len(seq) - 1)
+                return (False, _fails(2))
+            return (True, "")
+
+        def case_results(_r, test_path):
+            if test_path is None:
+                return (set(seq[max(0, st["i"])]), 5)
+            return None
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                        build_check=check, case_results=case_results)
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertEqual(rec.roles().count("fixer"), 3)   # regression never progresses
+
+    def test_whole_build_provider_error_cycle_not_charged(self):
+        # FIX #4 at build scope: the first integration fixer hits a provider turn
+        # error (landed no work) -> not charged; STALL still needs STALL_ROUNDS
+        # charged cycles -> 4 fixers total (3 charged + 1 uncharged infra).
+        rec = _WholeBuildSentinel(infra_fixers={1})
+        res, rec = self._run(([2, 2, 2, 2, 2], 5), green_at=5, rec=rec)
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertEqual(rec.roles().count("fixer"), 4)
+
+
 class TestRepairAccounting(unittest.TestCase):
     def test_green_build_logs_zero_repairs_and_is_behavior_unchanged(self):
         """A build green after its tasks records repair_attempts=0 (per-task 0,
@@ -1292,18 +1415,18 @@ class TestRepairAccounting(unittest.TestCase):
         self.assertIn("repair_attempts=1", res.final_text)
 
     def test_red_integration_logs_bounded_repairs_and_stays_unverified(self):
-        """Integration red after the bounded budget: the attempts are made and
-        COUNTED, and the build stays NOT-verified -- never forced green."""
+        """Integration red: the whole-build value ratchet stalls (constant
+        failures never converge), attempts are COUNTED, and the build stays
+        NOT-verified -- never forced green. Honest stall, NOT budget_exhausted."""
         d = _repo()
         rec = Recorder()
         res = run_subagent_driven_build(
             d, adapter="A", prompt="x", run_agent=rec,
             build_check=lambda r, only_test=None: (False, "still broken"),
-            repair_cycles=3,
         )
-        # NOT verified: bounded budget exhausted, no forced green
-        self.assertEqual(res.status, "budget_exhausted")
-        self.assertEqual(rec.roles().count("fixer"), 3)  # bounded at the budget
+        # NOT verified: honest converge-or-stall stop, no forced green
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertEqual(rec.roles().count("fixer"), 3)  # STALL_ROUNDS, value-gated
         self.assertNotIn("evidence", rec.roles())        # a red build cannot sign
         # count logged in final_text ...
         self.assertIn("repair_attempts=3", res.final_text)

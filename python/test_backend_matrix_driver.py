@@ -3345,3 +3345,44 @@ def test_stray_non_json_stdout_is_recorded_not_fatal(driver: ModuleType) -> None
     stray = client.stray_stdout()
     assert any("Chromium" in s for s in stray)                   # recorded for diagnosis
     assert any("vite" in s for s in stray)
+
+
+def test_cost_guard_no_cap_relies_on_value_stop_and_provider_ceiling(driver: ModuleType) -> None:
+    # User choice: rely only on value-stop + the provider's hard account ceiling
+    # -- no per-model money cap (a flat cap would cut a legitimately-working
+    # flagship like fable mid-build). With cap=inf the guard TRACKS spend but
+    # never cuts on cost, and a monitoring hiccup is best-effort (the value-based
+    # converge-or-stall gate + the provider ceiling are the real bounds).
+    inf = float("inf")
+
+    class BigSpend:
+        def __init__(self) -> None:
+            self.v = iter((10.0, 500.0, 9000.0))   # __init__ consumes the first
+
+        def usage(self) -> float:
+            return next(self.v)
+
+    guard = driver.CostGuard(BigSpend(), cap=inf, interval=0.0)
+    assert guard.check(force=True) == 490.0        # huge spend -> NO raise
+    assert guard.check(force=True) == 8990.0       # still never cuts on cost
+
+    class Flaky:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def usage(self) -> float:
+            self.n += 1
+            if self.n == 1:
+                return 10.0                        # __init__ baseline ok
+            raise driver.InfrastructureError("usage endpoint down")
+
+    # No cap: two monitoring failures are best-effort, NOT fatal.
+    g_nocap = driver.CostGuard(Flaky(), cap=inf, interval=0.0)
+    assert g_nocap.check(force=True) == 0.0
+    assert g_nocap.check(force=True) == 0.0        # 2nd failure, no abort
+
+    # Finite cap: two monitoring failures still abort fail-closed (unchanged).
+    g_cap = driver.CostGuard(Flaky(), cap=5.0, interval=0.0)
+    g_cap.check(force=True)                         # failure 1
+    with pytest.raises(driver.CostGuardError, match="monitoring failed"):
+        g_cap.check(force=True)                     # failure 2 -> abort

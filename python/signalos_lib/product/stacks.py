@@ -462,6 +462,16 @@ class ReactViteAdapter:
         npx = "npx.cmd" if os.name == "nt" else "npx"
         return ([npx, "vitest", "run", test_path, "--reporter=json"], "vitest-json")
 
+    def structured_suite_command(self, repo_root: Path,
+                                 test_paths: list) -> tuple[list[str], str]:
+        """argv + reporter-kind to run MANY acceptance test files in ONE
+        machine-readable invocation, for the WHOLE-BUILD convergence signal
+        (aggregate passing case-ids across all acceptance tests each integration
+        cycle -- so a cross-task regression that drops an earlier green case is
+        caught)."""
+        npx = "npx.cmd" if os.name == "nt" else "npx"
+        return ([npx, "vitest", "run", *test_paths, "--reporter=json"], "vitest-json")
+
     def prompt_gotchas(self, repo_root: Path) -> str:
         """Stack-specific conventions injected into build-agent prompts, so the
         prompt layer stays stack-agnostic (mirrors design.UILibraryAdapter's

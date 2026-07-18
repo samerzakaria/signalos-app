@@ -1432,7 +1432,12 @@ class CostGuard:
             self.failures = 0
         except InfrastructureError as exc:
             self.failures += 1
-            if self.failures >= 2:
+            # With a FINITE cap we must monitor spend to enforce it, so two
+            # failures abort fail-closed. With NO cap (inf) the value-based
+            # converge-or-stall gate + the provider's hard account ceiling are
+            # the bounds and this poll is best-effort spend TRACKING only -- a
+            # monitoring hiccup must not kill a legitimately-working run.
+            if self.failures >= 2 and self.cap != float("inf"):
                 raise CostGuardError("provider usage monitoring failed twice; aborting fail-closed") from exc
             return self.spent
         if observed_usage + 1e-9 < self.last_usage:
@@ -4789,8 +4794,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.live:
             if not args.acknowledge_key_exposure:
                 parser.error("--live requires --acknowledge-key-exposure; see the backend matrix README")
-            if args.max_cost_per_model is None or args.max_cost_per_model <= 0:
-                parser.error("--live requires a positive --max-cost-per-model USD cap")
+            # --max-cost-per-model is OPTIONAL. The primary control is the
+            # value-based converge-or-stall gate (a build spends only while it
+            # is adding value and stops on a genuine stall, so it never spends
+            # forever), and the provider enforces a hard account ceiling. A flat
+            # per-model $ cap would artificially cut a legitimately-working
+            # flagship (e.g. fable) mid-build, so when omitted there is no
+            # per-model cut -- only value-stop + the provider ceiling. If set, it
+            # is honoured as an extra soft ceiling.
+            if args.max_cost_per_model is not None and args.max_cost_per_model <= 0:
+                parser.error("--max-cost-per-model, if set, must be a positive USD amount")
             if models_config_path != DEFAULT_MODELS_CONFIG.resolve():
                 raise ValueError(
                     "live funded runs require the repository-owned model catalog"
@@ -5070,7 +5083,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         key=key,
                         key_source=key_source,
                         router=router,
-                        cost_cap=float(args.max_cost_per_model),
+                        cost_cap=(
+                            float(args.max_cost_per_model)
+                            if args.max_cost_per_model is not None
+                            else float("inf")
+                        ),
                         init_timeout=args.init_timeout,
                         gate_timeout=args.gate_timeout,
                         g4_build_timeout=args.g4_build_timeout,

@@ -1863,12 +1863,22 @@ def _dispatch_agent_loop_build(
             adapter = ProviderAdapter(model=model, provider_name=provider_name)
             agent = agent_loader.load_agent("G4")
             system_prompt = agent.get("content") or "You are the SignalOS G4 Build agent."
+            # Gap 6 (top level): the whole G4 build agent is NOT stopped by a
+            # fixed tool-call budget. It runs in BUILD-SEAT mode -- the primary
+            # control is PROGRESS (the per-seat stall detector: ends a turn that
+            # stops changing state / surfacing new information). The only numeric
+            # bound is a very high anti-runaway guard; money + the G4 timeout are
+            # the real walls. NO fixed call budget as the primary stop at ANY
+            # level now.
+            from .budgets import resolve_build_implementer_runaway_guard
+            runaway_guard = resolve_build_implementer_runaway_guard()
             loop = AgentLoop(
                 adapter=adapter,
                 repo_root=repo_root,
                 enforcement_provider=FileEnforcementProvider(),
                 run_id=run_id,
-                tool_call_limit=tool_call_budget,
+                tool_call_limit=runaway_guard,   # anti-runaway backstop, not the stop
+                build_seat=True,                 # PROGRESS is the primary control
                 emit=_capture,
                 execution_context="delivery",
                 active_gate="G4",

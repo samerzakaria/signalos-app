@@ -72,7 +72,6 @@ from .budgets import (
     resolve_build_task_fix_cycles,
     resolve_build_task_stall_rounds,
     resolve_build_test_embed_cap,
-    resolve_repair_cycle_budget,
 )
 
 # A single subagent turn: (role, adapter, system_prompt, user_message) -> report
@@ -165,6 +164,11 @@ class _StackContext:
     # the per-CASE convergence signal. None when the stack has no structured
     # reporter -> the gate falls back to the line-count convergence signal.
     structured_test_command: Optional[Callable[[Path, str], tuple]] = None
+    # (repo_root, [test_path, ...]) -> (argv, reporter_kind) that runs MANY test
+    # files in ONE machine-readable invocation, for the WHOLE-BUILD convergence
+    # signal (aggregate passing case-ids across all acceptance tests). None ->
+    # the whole-build gate aggregates per-file structured runs instead.
+    structured_suite_command: Optional[Callable[[Path, list], tuple]] = None
 
     @property
     def build_and_test_hint(self) -> str:
@@ -229,6 +233,9 @@ def _resolve_stack(repo_root: Path) -> _StackContext:
     stc = getattr(adapter, "structured_test_file_command", None)
     if callable(stc):
         ctx.structured_test_command = stc
+    ssc = getattr(adapter, "structured_suite_command", None)
+    if callable(ssc):
+        ctx.structured_suite_command = ssc
     return ctx
 
 
@@ -1857,6 +1864,68 @@ def _run_structured_test(repo_root: Path, test_path: str, stack: _StackContext,
     return _CaseResult(green=green, passing=passing, total=total, errors=errs)
 
 
+def _run_structured_suite(repo_root: Path, test_paths: list, stack: _StackContext,
+                          project_id: str = "default") -> "Optional[_CaseResult]":
+    """Aggregate structured per-CASE results across MANY IMMUTABLE acceptance
+    test files -- the WHOLE-BUILD convergence signal. Prefers the stack's suite
+    command (ONE runner invocation over all files); else aggregates per-file
+    _run_structured_test. Returns a _CaseResult whose passing/total are the UNION
+    across the acceptance tests (so a cross-task regression that drops an earlier
+    green case shows as a smaller passing set), or None when no structured
+    reporter exists (caller falls back to the line-count signal)."""
+    paths = [p for p in (test_paths or []) if p]
+    if not paths:
+        return None
+    fn = stack.structured_suite_command
+    if fn is not None:
+        rels: list = []
+        for tp in paths:
+            rel, _reason = _resolve_test_rel(repo_root, tp, project_id)
+            if rel:
+                rels.append(rel)
+        if rels:
+            try:
+                spec = fn(repo_root, rels)
+            except Exception:
+                spec = None
+            if spec:
+                argv = spec[0]
+                kind = spec[1] if len(spec) > 1 else ""
+                try:
+                    rc, out, err, timed = _exec_test_argv(repo_root, argv)
+                except SandboxUnavailableError as exc:
+                    raise ExecutionInfrastructureError(
+                        "sandbox-unavailable",
+                        f"structured suite containment failed: {exc}",
+                    ) from exc
+                except (OSError, subprocess.TimeoutExpired):
+                    return None
+                if not timed:
+                    parsed = _parse_structured_cases(kind, out, err)
+                    if parsed is not None:
+                        passing, failing, total = parsed
+                        return _CaseResult(green=(rc == 0 and not failing),
+                                           passing=passing, total=total, errors="")
+    # Fallback: aggregate per-file structured runs (still immutable-only).
+    passing: set = set()
+    total = 0
+    got = False
+    any_failing = False
+    for tp in paths:
+        r = _run_structured_test(repo_root, tp, stack, project_id)
+        if r is None:
+            continue
+        got = True
+        passing |= set(r.passing)
+        total += r.total
+        if not r.green:
+            any_failing = True
+    if not got:
+        return None
+    return _CaseResult(green=not any_failing, passing=frozenset(passing),
+                       total=total, errors="")
+
+
 class _TaskProgressGate:
     """Decides whether a still-red task is CONVERGING toward green or has
     STALLED. The PRIMARY control on the per-task fix loop -- NOT a fixed cycle
@@ -1952,6 +2021,14 @@ class _TaskProgressGate:
             k = max(0, self._last_total - len(self._passing_hwm))
             return f"{k} of {self._last_total} acceptance checks still failing"
         return f"{self._best_fail_count or 0} check(s) still failing"
+
+
+# Last-resort anti-runaway backstop for the WHOLE-BUILD integration loop (Gap 6):
+# a deliberately-high cap on integration cycles that only fires on a pathological
+# non-terminating loop. The PRIMARY control is the value ratchet (converge-or-
+# stall); money + the G4 timeout + the per-seat freeze detector are the real
+# walls. Never the normal stop.
+_INTEGRATION_RUNAWAY_GUARD = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -2308,8 +2385,11 @@ def run_subagent_driven_build(
     """
     emit = emit or (lambda _e: None)
     signed_gates = list(signed_gates or [])
-    cycles = max(1, int(repair_cycles)) if repair_cycles else resolve_repair_cycle_budget()
-    # PRIMARY per-task control: PROGRESS, not a fixed fixer-pass count (FIX 3).
+    # PRIMARY control at BOTH scopes: CONVERGENCE, not a fixed fixer-pass count.
+    # The legacy ``repair_cycles``/repair_cycle_budget integration bound is gone
+    # (Gap 6) -- the integration loop is now the same converge-or-stall ratchet as
+    # the per-task gate. The param is accepted for back-compat but no longer caps
+    # the whole-build loop.
     per_task_stall_rounds = resolve_build_task_stall_rounds()
     # SECONDARY bounded convergence loops only (DoD quality + reviewer re-review).
     per_task_cycles = resolve_build_task_fix_cycles()
@@ -2361,6 +2441,56 @@ def run_subagent_driven_build(
                 and int(o.get("provider_turn_errors") or 0) == 0)
 
     tasks = decompose_tasks(repo_root, prompt, project_id)
+
+    def whole_build_passing() -> "tuple[Optional[frozenset], Optional[int]]":
+        """The WHOLE-BUILD convergence signal (Gap 6): the UNION passing
+        case-id set + total across ALL immutable acceptance tests, re-measured
+        every integration cycle so a cross-task regression is caught (a later
+        task must not silently drop an earlier green case). (None, None) means no
+        structured reporter -> the integration gate uses the line-count fallback.
+
+        Injected ``case_results`` drives it in tests: a whole-build sentinel
+        ``case_results(repo_root, None)`` when provided, else the per-task
+        results aggregated over every task that carries an acceptance test."""
+        test_paths = [t.test for t in tasks if t.test]
+        if case_results is not None:
+            try:
+                agg = case_results(repo_root, None)  # optional whole-build sentinel
+            except Exception:
+                agg = None  # a per-task-only fake -> aggregate per task below
+            if agg:
+                return frozenset(agg[0]), int(agg[1])
+            passing: set = set()
+            total = 0
+            got = False
+            for tp in test_paths:
+                cr = case_results(repo_root, tp)
+                if cr:
+                    passing |= set(cr[0])
+                    total += int(cr[1])
+                    got = True
+            return (frozenset(passing), total) if got else (None, None)
+        if build_check is None:
+            sr = _run_structured_suite(repo_root, test_paths, stack, project_id)
+            if sr is not None:
+                return sr.passing, sr.total
+        return None, None
+
+    def incomplete_task_ids() -> list:
+        """Tasks whose acceptance test is still RED at the whole-build stall --
+        named in the honest report ('tasks X,Y incomplete'). Best-effort, run
+        ONCE at the stall (not per cycle)."""
+        out: list = []
+        for t in tasks:
+            if not t.test:
+                continue
+            try:
+                ok, _errs = check(repo_root, t.test)
+            except Exception:
+                ok = True  # never let the report break the build
+            if not ok:
+                out.append(t.id)
+        return out
     context = _task_context(repo_root, prompt, project_id)
     impl_sys = _implementer_system_prompt(governance_frame, stack)
     spec_sys = _reviewer_system_prompt("spec")
@@ -2665,23 +2795,36 @@ def run_subagent_driven_build(
     if cancel_check is not None and cancel_check():
         raise BuildCancelled("parent delivery cancellation requested")
 
-    # PHASE 2 -- INTEGRATION: full build + whole suite to green (cross-task).
-    # Same input -> same model -> most likely the same failed output, so a
-    # stalled pass (identical error signature) must CHANGE something: first the
-    # strategy (narrow deep-dive on one file), then the model (the independent
-    # reviewer adapter, when it differs). Never re-send an identical prompt.
+    # PHASE 2 -- INTEGRATION: full build + whole suite, driven by the SAME
+    # converge-or-stall value ratchet as the per-task gate, but at WHOLE-BUILD
+    # scope (Gap 6). The primary control is CONVERGENCE of the whole-build
+    # passing case-id set, NOT a fixed repair-cycle count -- a build that keeps
+    # reducing total failing cases keeps cycling; one stuck at K failing stops
+    # after STALL_ROUNDS with an HONEST "K of M" result. The whole set is
+    # re-measured every cycle so a cross-task regression (a later task dropping
+    # an earlier green case) is caught (the high-water-mark set already refuses
+    # to count it as progress). The exact-error-repeat `stalls` counter now only
+    # drives the fixer PROMPT escalation (change strategy, then model); the STOP
+    # decision is the value ratchet. A very high loop guard is the last-resort
+    # anti-runaway backstop (money + freeze detector are the real walls); it is
+    # never the normal stop.
     green, last_errors = check(repo_root)
+    b_passing, b_total = whole_build_passing()
+    igate = _TaskProgressGate(per_task_stall_rounds)
+    igate.observe(green, b_passing, b_total, _failure_line_count(last_errors),
+                  seat_landed_work=seat_landed_work())  # baseline (post per-task)
     prev_sig = None
     stalls = 0
-    for cycle in range(cycles):
-        if green:
-            break
+    guard = 0
+    while not green and not igate.stalled() and guard < _INTEGRATION_RUNAWAY_GUARD:
+        guard += 1
         sig = hash(last_errors.strip())
         stalls = stalls + 1 if sig == prev_sig else 0
         prev_sig = sig
         n = len([l for l in last_errors.splitlines() if l.strip()]) if last_errors else 0
         emit({"type": "system",
-              "text": f"Integrating: compiling and fixing {n} real error(s) (pass {cycle + 1})"
+              "text": f"Integrating: compiling and fixing {n} real error(s) "
+                      f"({igate.still_failing_summary})"
                       + (f" — changing approach (stall {stalls})." if stalls else ".")})
         msg = _fixer_message(last_errors, repo_root, stack)
         fixer_adapter = adapter
@@ -2692,32 +2835,50 @@ def run_subagent_driven_build(
         run("fixer", fixer_adapter, impl_sys, msg)
         calls += 1
         integration_repairs += 1  # a final full-suite / integration FIX pass
+        landed = seat_landed_work()   # read BEFORE the next dispatch (FIX #4)
         green, last_errors = check(repo_root)
+        b_passing, b_total = whole_build_passing()
+        igate.observe(green, b_passing, b_total, _failure_line_count(last_errors),
+                      seat_landed_work=landed)
     emit({"type": "system",
           "text": "The product compiles and all tests pass."
-                  if green else "Build still has errors after the repair budget — "
-                                "stopping (fail-fast)."})
+                  if green else f"Build did not converge — {igate.still_failing_summary}; "
+                                "stopping honestly (its work stays on disk)."})
     summary.append(f"integration_green={green}")
     matrix.persist(phase="integration", integration_green=green,
                    **_repair_metrics())
 
     if not green:
-        # FAIL FAST: integration definitively failed its budget. Review and
-        # evidence would be spend on a build the gate must refuse anyway; the
-        # missing Build Evidence artifact keeps the sign fail-closed. The build
-        # stays NOT-verified here -- the repair budget is exhausted, never forced
-        # green; the logged repair count records how hard it tried.
+        # HONEST CONVERGE-OR-STALL STOP (Gap 6): the whole-build passing set
+        # stopped growing (or a cross-task regression appeared). This is NOT a
+        # budget exhaustion -- it is an honest incomplete product. Review and
+        # evidence are skipped (a red build cannot sign; the missing Build
+        # Evidence keeps the sign fail-closed); the partial work stays ON DISK
+        # and the traceability matrix records it. Report K of M + which tasks are
+        # still incomplete.
+        incomplete = incomplete_task_ids()
+        still = igate.still_failing_summary
+        matrix.persist(phase="stalled-incomplete", integration_green=False,
+                       checks_still_failing=igate.checks_still_failing,
+                       incomplete_tasks=incomplete, **_repair_metrics())
+        summary.append(f"did_not_converge ({still})"
+                       + (f" incomplete_tasks={','.join(incomplete)}" if incomplete else ""))
         summary.append(_repair_summary_line())
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
+        tasks_note = (f" (tasks {', '.join(incomplete)} incomplete)"
+                      if incomplete else "")
         return LoopResult(
             run_id="g4-subagent-build",
-            status="budget_exhausted",
-            final_text="Subagent-driven build STOPPED (fail-fast): integration "
-                       "stayed red after the repair budget.\n" + "\n".join(summary),
+            status="stalled_incomplete",
+            final_text=(f"Subagent-driven build STOPPED — did not converge: {still}"
+                        f"{tasks_note}. The whole-build passing set stopped growing; "
+                        "partial work is on disk (see the traceability matrix); "
+                        "review/evidence skipped (a red build cannot sign).\n"
+                        + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],
-            error="integration failed its objective gate",
+            error=f"integration did not converge: {still}",
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
         )
