@@ -2219,6 +2219,10 @@ class SidecarClient:
             # provider/build warnings) if the sidecar dies during a heavy G4
             # fleet -- the tail is the only forensic record of a silent exit.
             self._stderr: deque[str] = deque(maxlen=2000)
+            # Stray non-JSON lines seen on the protocol channel (a build
+            # subprocess/library that wrote to fd 1). Recorded for diagnosis
+            # instead of crashing the run; surfaced in the result row.
+            self._stray_stdout: deque[str] = deque(maxlen=100)
             self._counter = 0
             creationflags = 0
             kwargs: dict[str, Any] = {}
@@ -2384,10 +2388,19 @@ class SidecarClient:
                 return events, None
             try:
                 message = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise InfrastructureError("sidecar corrupted the NDJSON protocol with non-JSON stdout") from exc
+            except json.JSONDecodeError:
+                # A stray non-JSON line on the protocol channel (a build
+                # subprocess or library that wrote to fd 1 instead of stderr) is
+                # NOT a reason to kill a long, expensive build: the real terminal
+                # response arrives on a later line. Record it for diagnosis and
+                # skip it -- a genuine total corruption still surfaces as no
+                # terminal response (timeout). (It also counts as heartbeat
+                # activity above, which is fine: the build IS alive.)
+                self._record_stray_stdout(line)
+                continue
             if not isinstance(message, dict):
-                raise InfrastructureError("sidecar emitted a non-object NDJSON message")
+                self._record_stray_stdout(line)
+                continue
             if message.get("id") == req_id and "ok" in message and not message.get("kind"):
                 return events, message
             if "ok" in message and not message.get("kind") and message.get("id") != req_id:
@@ -2541,6 +2554,18 @@ class SidecarClient:
 
     def stderr_tail(self) -> list[str]:
         return [str(redact(line, self.secrets)) for line in self._stderr]
+
+    def _record_stray_stdout(self, line: str) -> None:
+        """Record a stray non-JSON line seen on the protocol channel (rather
+        than crashing the run). Kept bounded; also mirrored into the stderr tail
+        with a marker so it is impossible to miss during diagnosis."""
+        snippet = line.rstrip("\n")[:1000]
+        self._stray_stdout.append(snippet)
+        with contextlib.suppress(Exception):
+            self._stderr.append(f"STRAY-STDOUT: {snippet}")
+
+    def stray_stdout(self) -> list[str]:
+        return [str(redact(line, self.secrets)) for line in self._stray_stdout]
 
 
 def _event_evidence(events: Sequence[dict[str, Any]], secrets: Iterable[str]) -> dict[str, Any]:
@@ -4546,6 +4571,7 @@ def _run_row(
         # here prevents a leftover G4 child from racing the snapshot, secret
         # scan, reparse-point checks, clean-room build, or browser oracle.
         row["sidecar_stderr_tail"] = sidecar.stderr_tail()
+        row["sidecar_stray_stdout"] = sidecar.stray_stdout()
         sidecar.close()
         sidecar = None
 

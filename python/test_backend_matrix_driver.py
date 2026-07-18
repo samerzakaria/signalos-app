@@ -3318,3 +3318,30 @@ def test_gate_requirement_trace_is_cumulative_across_traced_gates(
     anchor = driver._gate_requirement_trace(ws, "G0", req_ids, scan_gates=["G0"])
     assert anchor["ok"] is False
     assert anchor["missing_requirement_ids"] == ["REQ-C"]
+
+
+def test_stray_non_json_stdout_is_recorded_not_fatal(driver: ModuleType) -> None:
+    # Regression (deepseekv4pro run 2): a single stray non-JSON line on the
+    # protocol channel (a build subprocess/library that wrote to fd 1) used to
+    # raise "sidecar corrupted the NDJSON protocol" and kill a multi-dollar
+    # build. It is now recorded (for diagnosis) and skipped; the real terminal
+    # on a later line is still returned.
+    import json as _json
+    import queue as _queue
+
+    client = driver.SidecarClient.__new__(driver.SidecarClient)
+    client._stdout = _queue.Queue()
+    client._stderr = __import__("collections").deque(maxlen=2000)
+    client._stray_stdout = __import__("collections").deque(maxlen=100)
+    client.secrets = ()
+    client._stdout.put("Chromium 141.0 downloading...")          # stray tool line
+    client._stdout.put(_json.dumps({"id": "other", "kind": "event"}))
+    client._stdout.put("[vite] building for production...")      # another stray line
+    client._stdout.put(_json.dumps({"id": "req", "ok": True, "data": {}}))
+
+    events, terminal = client._wait_for("req", timeout=30, guard=None)
+    assert terminal == {"id": "req", "ok": True, "data": {}}     # not fatal
+    assert len(events) == 1                                       # the real event kept
+    stray = client.stray_stdout()
+    assert any("Chromium" in s for s in stray)                   # recorded for diagnosis
+    assert any("vite" in s for s in stray)
