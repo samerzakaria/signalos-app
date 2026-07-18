@@ -245,3 +245,29 @@ class TestLiteLLMCallPath:
 
         assert adapter.routed_model == "openrouter/qwen/qwen3.7-max"
         assert adapter.context_length == 262_144
+
+
+def test_output_ceiling_is_model_aware_not_the_old_fixed_4096():
+    # Regression (deepseekv4pro run 1): the gate agent's output was capped at a
+    # fixed 4096, so a thorough model's G2 plan truncated (max_tokens) and the
+    # gate blocked. The ceiling is now model-aware; unknown models take the
+    # vetted 16384 default (4x the old cap), never 4096.
+    from signalos_lib.product.provider_adapter import _output_ceiling
+
+    assert _output_ceiling("deepseek/deepseek-v4-pro") == 16384   # unknown -> default
+    assert _output_ceiling("anthropic/claude-fable-5") == 64000
+    assert _output_ceiling("openai/gpt-4.1") == 32768
+    assert _output_ceiling("gpt-3.5-turbo") == 4096              # genuinely-4096 models kept
+    assert _output_ceiling(None) == 16384
+
+
+def test_adapter_wires_model_aware_output_ceiling_into_the_wrapped_provider():
+    # The gate agent's ProviderAdapter built its LiteLLMAgentProvider without a
+    # max_tokens -> the 4096 default. It now gets the model-aware ceiling, so a
+    # thorough model can finish its governance artifact.
+    lm = _fake_litellm(response=_text_response("ok"))
+    caps = ProviderCapabilities(model="deepseek/deepseek-v4-pro", supports_tool_calls=True)
+    adapter = ProviderAdapter(
+        model="deepseek/deepseek-v4-pro", litellm_module=lm, capabilities=caps
+    )
+    assert adapter._provider._max_tokens == 16384  # not the old 4096

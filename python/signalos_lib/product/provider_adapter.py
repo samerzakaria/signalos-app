@@ -923,6 +923,37 @@ def _is_auth_error(litellm: Any, exc: Exception) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Per-model completion-token ceilings for the agent-loop provider. The old
+# hardcoded 4096 default truncated a thorough model's governance artifact:
+# deepseek-v4-pro's G2 plan blew past 4096 even across truncation-continues and
+# the gate blocked with `max_tokens` -- a harness cap, not a model limit. Large
+# models support far more, and providers clamp an over-large request DOWN to the
+# model's real cap, so a generous ceiling never 400s. Mirrors
+# agent_dispatch._MODEL_MAX_OUTPUT_TOKENS; unknown models take the vetted
+# 16384 default (4x the old cap) "that no mainstream chat model 400s on".
+_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
+    ("gpt-4-turbo", 4096),
+    ("gpt-3.5", 4096),
+    ("gpt-4.1", 32768),
+    ("gpt-4o", 16384),
+    ("o1", 32768),
+    ("o3", 32768),
+    ("claude", 64000),
+    ("gemini", 32768),
+)
+_DEFAULT_OUTPUT_CEILING = 16384
+
+
+def _output_ceiling(model: str | None) -> int:
+    """The completion-token budget for *model* -- model-aware, never the old
+    fixed 4096 that truncated a thorough model's governance turn."""
+    low = (model or "").lower()
+    for prefix, cap in _OUTPUT_CEILINGS:
+        if prefix in low:
+            return cap
+    return _DEFAULT_OUTPUT_CEILING
+
+
 class ProviderAdapter:
     """Capability-detecting wrapper around an AgentProvider (Q1).
 
@@ -951,6 +982,7 @@ class ProviderAdapter:
         self._provider: AgentProvider = provider or LiteLLMAgentProvider(
             litellm_module=litellm_module,
             provider_name=provider_name,
+            max_tokens=_output_ceiling(model),
         )
         capability_model = _normalize_litellm_model(model, provider_name=provider_name)
         detected = capabilities or detect_capabilities(
