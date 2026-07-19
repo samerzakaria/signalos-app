@@ -1700,18 +1700,22 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
 # lines, and a line-count gate scores that (40 > 4) as NO progress and STALLS a
 # genuinely-converging build with a FALSE red. Both burn the wall-clock.
 #
-# The convergence signal is now a high-water-mark SET of PASSING acceptance
-# test-CASES, read from the runner's MACHINE-READABLE output over the IMMUTABLE
-# plan-authored acceptance test (never the model's own colocated tests):
+# The convergence signal is the high-water-mark of the LARGEST SINGLE-RUN
+# passing set -- the acceptance CASES that passed TOGETHER in ONE machine-
+# readable runner invocation over the IMMUTABLE plan-authored acceptance test
+# (never the model's own colocated tests), NOT a cross-cycle union:
 #   * a build that does not compile / fails to collect = ZERO passing cases
-#     (worst state); when it compiles and cases start passing, the passing SET
-#     GROWS = progress (compile-awareness, for free)
-#   * PROGRESS = the passing high-water-mark SET strictly GREW (new passes) AND
-#     no previously-passing case regressed (dropping a prior pass is NOT
-#     progress, even if raw counts look better) -- i.e. a proper superset of the
-#     running high-water union
-#   * GREEN (all acceptance cases pass) = success
-#   * STALL = STALL_ROUNDS consecutive cycles with no growth of the passing set
+#     (worst state); when it compiles and cases start passing together, the
+#     single-run set GROWS = progress (compile-awareness, for free)
+#   * PROGRESS = this ONE run's passing set is a strict SUPERSET of the best
+#     single-run set so far (strictly more cases passed together, none dropped) --
+#     regression-aware: dropping a previously-together-passing case is NOT
+#     progress even if the cross-run union grew
+#   * a FLAKY suite whose single-run max is stuck (e.g. 5/6, rotating which 5)
+#     never sets a new max and STALLS honestly -- the cross-run union would grow
+#     forever and never stall (the observed 5/6-to-the-guard bug)
+#   * GREEN (ALL acceptance cases pass together in ONE run) = success
+#   * STALL = STALL_ROUNDS consecutive cycles with no new single-run maximum
 #     -> terminal honest RED ("did not converge -- K of M acceptance checks
 #     still failing") with the on-disk work intact (FIX 4)
 # When the stack exposes no structured reporter the gate falls back to a
@@ -1866,13 +1870,15 @@ def _run_structured_test(repo_root: Path, test_path: str, stack: _StackContext,
 
 def _run_structured_suite(repo_root: Path, test_paths: list, stack: _StackContext,
                           project_id: str = "default") -> "Optional[_CaseResult]":
-    """Aggregate structured per-CASE results across MANY IMMUTABLE acceptance
-    test files -- the WHOLE-BUILD convergence signal. Prefers the stack's suite
+    """Structured per-CASE results across MANY IMMUTABLE acceptance test files in
+    ONE SINGLE RUN -- the WHOLE-BUILD convergence signal (the cases that passed
+    TOGETHER this cycle, NOT a cross-cycle union). Prefers the stack's suite
     command (ONE runner invocation over all files); else aggregates per-file
-    _run_structured_test. Returns a _CaseResult whose passing/total are the UNION
-    across the acceptance tests (so a cross-task regression that drops an earlier
-    green case shows as a smaller passing set), or None when no structured
-    reporter exists (caller falls back to the line-count signal)."""
+    _run_structured_test within this one cycle. Returns a _CaseResult whose
+    passing/total are this cycle's single-run passing across the acceptance tests
+    (so a cross-task regression that drops an earlier green case shows as a
+    smaller set), or None when no structured reporter exists (caller falls back
+    to the line-count signal)."""
     paths = [p for p in (test_paths or []) if p]
     if not paths:
         return None
@@ -1926,29 +1932,49 @@ def _run_structured_suite(repo_root: Path, test_paths: list, stack: _StackContex
                        total=total, errors="")
 
 
+def _k_of_m(passing: "Optional[frozenset]", total: "Optional[int]") -> str:
+    """Honest 'K of M acceptance checks still failing' from a passing SET + total
+    (the largest single-run passing set). Falls back to a generic phrase when no
+    structured signal is available -- the SAME wording the gate reports, so every
+    non-convergence stop reads consistently."""
+    if passing is not None and total is not None:
+        k = max(0, int(total) - len(passing))
+        return f"{k} of {int(total)} acceptance checks still failing"
+    return "one or more acceptance checks still failing"
+
+
 class _TaskProgressGate:
     """Decides whether a still-red task is CONVERGING toward green or has
     STALLED. The PRIMARY control on the per-task fix loop -- NOT a fixed cycle
     count.
 
-    Convergence is the high-water-mark SET of PASSING acceptance cases: PROGRESS
-    means the passing set strictly GREW with no regression (a proper superset of
-    the running high-water union). GREEN = success. STALL = STALL_ROUNDS
-    consecutive cycles with no growth. When no structured per-case result is
-    available the gate falls back to a line-count running-minimum.
+    Convergence is the high-water-mark of the LARGEST SINGLE-RUN passing set --
+    the cases that passed TOGETHER in ONE structured runner invocation -- NOT a
+    cross-cycle union. This defeats a FLAKY suite: if case A passes one cycle and
+    case B another (never together), a cross-run UNION would grow every cycle and
+    never stall while the suite is never all-green in one run (the observed
+    5/6-forever-to-the-guard bug). PROGRESS means one run's passing set is a
+    strict SUPERSET of the best single-run set so far (strictly more cases passed
+    together, with no case that previously passed together now dropped). GREEN =
+    success = ONE run in which ALL acceptance cases pass together (the authorit-
+    ative ``green`` check). STALL = STALL_ROUNDS consecutive cycles with no new
+    single-run maximum. When no structured per-case result is available the gate
+    falls back to a line-count running-minimum.
 
     FIX #4: ``observe(..., seat_landed_work=False)`` for a cycle whose seat hit a
     provider turn error / did no work does NOT charge the stall counter.
 
     Usage: ``observe(green, passing, total, fail_count)`` once for the post-
-    implementer baseline, then once per fixer cycle. ``stalled()`` is True after
-    STALL_ROUNDS charged no-progress cycles; ``last_cycle_stalled`` cues a
-    strategy change; ``checks_still_failing`` / ``still_failing_summary`` give the
-    honest K-of-M report."""
+    implementer baseline, then once per fixer cycle -- ``passing`` is the SINGLE
+    run's passing set. ``stalled()`` is True after STALL_ROUNDS charged
+    no-progress cycles; ``last_cycle_stalled`` cues a strategy change;
+    ``checks_still_failing`` / ``still_failing_summary`` give the honest K-of-M."""
 
     def __init__(self, stall_rounds: int) -> None:
         self._stall_rounds = max(1, int(stall_rounds))
-        self._passing_hwm: frozenset = frozenset()   # union of all passing case-ids
+        # High-water-mark of the LARGEST SINGLE-RUN passing set (cases that
+        # passed TOGETHER in one run), NOT a cross-cycle union.
+        self._best_single_run: frozenset = frozenset()
         self._seen_structured = False
         self._best_fail_count: int | None = None     # fallback running MINIMUM
         self._last_total: int | None = None
@@ -1959,15 +1985,15 @@ class _TaskProgressGate:
                 total: "Optional[int]", fail_count: int,
                 seat_landed_work: bool = True) -> None:
         """Record one cycle's objective result and update the convergence/stall
-        state. ``passing``/``total`` come from the structured reporter (None ->
-        the line-count fallback is used via ``fail_count``)."""
+        state. ``passing`` is the SINGLE-RUN passing set from the structured
+        reporter (None -> the line-count fallback is used via ``fail_count``)."""
         progressed = self._progress(green, passing, total, fail_count)
         if progressed:
             self._no_progress = 0
         elif seat_landed_work:
             # FIX #4: only a cycle where the seat actually landed work AND set no
-            # new high-water-mark is charged to the stall. An infra no-op cycle
-            # (no work / provider turn error) is retried, not charged.
+            # new single-run maximum is charged to the stall. An infra no-op
+            # cycle (no work / provider turn error) is retried, not charged.
             self._no_progress += 1
         self._last_cycle_stalled = (not green) and (not progressed)
 
@@ -1975,20 +2001,25 @@ class _TaskProgressGate:
                   total: "Optional[int]", fail_count: int) -> bool:
         if green:
             if passing is not None:
-                self._passing_hwm = self._passing_hwm | passing
+                self._best_single_run = frozenset(passing)
             return True
         if passing is not None:
-            # STRUCTURED: passing high-water-mark SET.
+            # STRUCTURED: SINGLE-RUN passing-set high-water-mark. Progress iff
+            # this ONE run passed a strict SUPERSET of the best single run so far
+            # (more cases together, none dropped) -- a flaky suite whose single-
+            # run max is stuck (e.g. 5/6, rotating which 5) never sets a new max
+            # and stalls, even though the cross-run union keeps growing.
             if total is not None:
                 self._last_total = total
+            passing = frozenset(passing)
             if not self._seen_structured:
                 self._seen_structured = True
-                self._passing_hwm = frozenset(passing)
-                return True                      # baseline seeds the HWM
-            grew = not (passing <= self._passing_hwm)      # a new pass beyond HWM
-            regressed = not (self._passing_hwm <= passing)  # a prior pass now missing
-            self._passing_hwm = self._passing_hwm | passing
-            return grew and not regressed
+                self._best_single_run = passing
+                return True                      # baseline seeds the max
+            grew = passing > self._best_single_run   # strict superset (regression-aware)
+            if grew:
+                self._best_single_run = passing
+            return grew
         # FALLBACK: line-count running MINIMUM.
         if self._best_fail_count is None:
             self._best_fail_count = fail_count
@@ -2002,23 +2033,23 @@ class _TaskProgressGate:
 
     @property
     def last_cycle_stalled(self) -> bool:
-        """True when the last red cycle set NO new high-water-mark -- the cue to
-        make the next fixer prompt change strategy."""
+        """True when the last red cycle set NO new single-run maximum -- the cue
+        to make the next fixer prompt change strategy."""
         return self._last_cycle_stalled
 
     @property
     def checks_still_failing(self) -> int:
-        """K -- acceptance checks still failing (M - |passing high-water|), or the
-        fallback failing count when unstructured."""
+        """K -- acceptance checks still failing (M - |best single-run passing|),
+        or the fallback failing count when unstructured."""
         if self._seen_structured and self._last_total is not None:
-            return max(0, self._last_total - len(self._passing_hwm))
+            return max(0, self._last_total - len(self._best_single_run))
         return self._best_fail_count or 0
 
     @property
     def still_failing_summary(self) -> str:
         """Honest 'K of M acceptance checks still failing' (or the fallback)."""
         if self._seen_structured and self._last_total is not None:
-            k = max(0, self._last_total - len(self._passing_hwm))
+            k = max(0, self._last_total - len(self._best_single_run))
             return f"{k} of {self._last_total} acceptance checks still failing"
         return f"{self._best_fail_count or 0} check(s) still failing"
 
@@ -2443,8 +2474,9 @@ def run_subagent_driven_build(
     tasks = decompose_tasks(repo_root, prompt, project_id)
 
     def whole_build_passing() -> "tuple[Optional[frozenset], Optional[int]]":
-        """The WHOLE-BUILD convergence signal (Gap 6): the UNION passing
-        case-id set + total across ALL immutable acceptance tests, re-measured
+        """The WHOLE-BUILD convergence signal (Gap 6): this cycle's SINGLE-RUN
+        passing case-id set + total across ALL immutable acceptance tests (the
+        cases passing TOGETHER this cycle, NOT a cross-cycle union), re-measured
         every integration cycle so a cross-task regression is caught (a later
         task must not silently drop an earlier green case). (None, None) means no
         structured reporter -> the integration gate uses the line-count fallback.
@@ -2652,10 +2684,16 @@ def run_subagent_driven_build(
             # baseline could be charged -- it never is; baseline always seeds).
             gate.observe(ok, passing, total, _failure_line_count(errs),
                          seat_landed_work=seat_landed_work())
-            while not ok and not gate.stalled():
+            pt_guard = 0
+            while (not ok and not gate.stalled()
+                   and pt_guard < _INTEGRATION_RUNAWAY_GUARD):
+                pt_guard += 1  # last-resort anti-runaway backstop (BUG 1): a
+                # pathological gate cannot loop forever; the guard exit leaves the
+                # task RED -> marked failed below -> the honest stalled_incomplete
+                # whole-build return. Never the normal stop (the value ratchet is).
                 emit({"type": "system", "text": f"Getting “{task.name}” to pass its test."})
-                # Last cycle set no new high-water-mark -> tell the next pass to
-                # change strategy (re-running the same approach reproduces the
+                # Last cycle set no new single-run maximum -> tell the next pass
+                # to change strategy (re-running the same approach reproduces the
                 # same non-converging result).
                 feedback = (_stall_directive(1) + "\n\n" + errs) if gate.last_cycle_stalled else errs
                 run("fixer", adapter, impl_sys,
@@ -2741,30 +2779,35 @@ def run_subagent_driven_build(
     if failed_tasks or blocked_tasks:
         matrix.persist(phase="stopped-red", integration_green=False,
                        **_repair_metrics())
-        # FAIL FAST at the PHASE level: with any task red/blocked the build can
-        # never sign, so integration/review/evidence would be paid spend on a
-        # refused build. Every attemptable task was still attempted above, each
-        # driven by the progress gate until it went green or genuinely STALLED
-        # (never cut off while progressing). The partial work stays ON DISK and
-        # its exact state is recorded in the traceability matrix -- reported
-        # honestly red, never discarded unexamined (FIX 4).
+        # HONEST CONVERGE-OR-STALL STOP (Gap 6 / BUG 1): with any task red/blocked
+        # the build can never sign, so integration/review/evidence would be paid
+        # spend on a refused build. Every attemptable task was still attempted
+        # above, each driven by the value ratchet until it went green or genuinely
+        # STALLED (never cut off while converging). This is an honest INCOMPLETE
+        # product -- NOT a budget exhaustion (budget_exhausted is no longer a
+        # whole-build outcome at ANY scope). Report K of M + which tasks are
+        # incomplete; the partial work stays ON DISK (FIX 4).
+        b_passing, b_total = whole_build_passing()
+        still = _k_of_m(b_passing, b_total)
+        incomplete = sorted(set(failed_tasks) | set(blocked_tasks))
         summary.append(_repair_summary_line())
         if usage.get("in") is not None or usage.get("out") is not None:
             summary.append(f"tokens_in={usage.get('in')} tokens_out={usage.get('out')}")
         return LoopResult(
             run_id="g4-subagent-build",
-            status="budget_exhausted",
-            final_text=("Subagent-driven build finished RED (did not converge): "
+            status="stalled_incomplete",
+            final_text=(f"Subagent-driven build STOPPED — did not converge: {still} "
+                        f"(tasks {', '.join(incomplete)} incomplete): "
                         f"failed={','.join(failed_tasks) or 'none'} "
                         f"blocked={','.join(blocked_tasks) or 'none'} -- every "
                         "independent task was attempted and driven until green or "
-                        "until it stopped reducing failures; partial work is on "
-                        "disk (see the traceability matrix); integration/review/"
+                        "until it stopped converging; partial work is on disk "
+                        "(see the traceability matrix); integration/review/"
                         "evidence skipped (a red build cannot sign).\n"
                         + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],
-            error=f"tasks failed their objective gate: {','.join(failed_tasks)}",
+            error=f"tasks did not converge: {','.join(failed_tasks)} ({still})",
             tokens_in=usage.get("in"),
             tokens_out=usage.get("out"),
         )
@@ -2948,10 +2991,13 @@ def run_subagent_driven_build(
                   if not green else "; ".join(review_blocked))
         return LoopResult(
             run_id="g4-subagent-build",
-            status="budget_exhausted",
-            final_text=("Subagent-driven build STOPPED (fail-fast): an independent "
-                        "reviewer finding is unresolved and blocks completion "
-                        "(green tests do not override it).\n" + detail + "\n"
+            # An unresolved reviewer finding is an honest INCOMPLETE outcome, NOT
+            # a budget exhaustion (BUG 1: budget_exhausted is no longer a
+            # whole-build outcome at ANY scope).
+            status="stalled_incomplete",
+            final_text=("Subagent-driven build STOPPED: an independent reviewer "
+                        "finding is unresolved and blocks completion (green tests "
+                        "do not override it).\n" + detail + "\n"
                         + "\n".join(summary)),
             tool_calls_made=calls,
             messages=[],

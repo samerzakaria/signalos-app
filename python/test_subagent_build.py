@@ -264,7 +264,7 @@ class TestOrchestration(unittest.TestCase):
         self.assertEqual(roles.count("implementer"), 1)
         self.assertEqual(roles.count("fixer"), 3)  # STALL_ROUNDS, convergence-gated
         self.assertNotIn("evidence", roles)          # red build: doomed phases cut
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         self.assertIn("T1", res.error)
         self.assertIn("blocked=T3", res.final_text)  # dependent skipped, named
         self.assertIn("T2 test_green=True", res.final_text)  # independent still ran
@@ -950,15 +950,39 @@ class TestProgressSignature(unittest.TestCase):
         self.assertIn("still failing", gate.still_failing_summary)
 
     def test_structured_oscillation_cannot_fake_progress(self):
-        # Grow to {a,b}, drop to {a}, back to {a,b}: never a NEW case beyond the
-        # high-water union -> no progress after the first growth -> stalls.
+        # Grow to {a,b}, drop to {a}, back to {a,b}: never a strict superset of
+        # the best single run {a,b} -> no progress after the first growth -> stalls.
         gate = sb._TaskProgressGate(stall_rounds=3)
         _struct(gate, False, _cases("a"), 3)               # baseline
         _struct(gate, False, _cases("a", "b"), 3)          # grew -> progress
         self.assertFalse(gate.stalled())
         for passing in (_cases("a"), _cases("a", "b"), _cases("a")):
-            _struct(gate, False, passing, 3)               # no NEW case beyond {a,b}
+            _struct(gate, False, passing, 3)               # never exceeds {a,b}
         self.assertTrue(gate.stalled())
+
+    def test_flaky_single_run_max_stuck_stalls_though_union_grows(self):
+        # BUG 2: every run passes a DIFFERENT 5 of 6 (cross-run UNION reaches all
+        # 6, but no single run passes all 6 and none is a superset of the best 5).
+        # A union gate never stalls (ran to the guard); the SINGLE-RUN-MAX gate
+        # stalls honestly at 5/6 after STALL_ROUNDS.
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a", "b", "c", "d", "e"), 6)   # baseline max 5
+        for passing in (_cases("a", "b", "c", "d", "f"),
+                        _cases("a", "b", "c", "e", "f"),
+                        _cases("a", "b", "d", "e", "f")):
+            _struct(gate, False, passing, 6)     # each 5, none a superset of best 5
+        self.assertTrue(gate.stalled())
+        self.assertEqual(gate.checks_still_failing, 1)   # 5 of 6 -> 1 still failing
+        self.assertEqual(gate.still_failing_summary,
+                         "1 of 6 acceptance checks still failing")
+
+    def test_single_run_growth_keeps_cycling(self):
+        # Genuine single-run growth (each run a strict superset) never stalls.
+        gate = sb._TaskProgressGate(stall_rounds=3)
+        _struct(gate, False, _cases("a"), 6)
+        for k in range(2, 7):
+            _struct(gate, False, frozenset(chr(96 + i) for i in range(1, k + 1)), 6)
+            self.assertFalse(gate.stalled())
 
     def test_green_is_immediate_success(self):
         gate = sb._TaskProgressGate(stall_rounds=3)
@@ -1086,7 +1110,7 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         rec = Recorder()
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=check)
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         # STALL_ROUNDS defaults to 3 -> stops after 3 non-converging fixer passes,
         # NOT after churning forever.
         self.assertEqual(rec.roles().count("fixer"), 3)
@@ -1113,7 +1137,7 @@ class TestProgressGatedFixLoop(unittest.TestCase):
                 with mock.patch.dict(os.environ, patch_env):
                     res = run_subagent_driven_build(
                         d, adapter="A", prompt="x", run_agent=rec, build_check=check)
-                self.assertEqual(res.status, "budget_exhausted")
+                self.assertEqual(res.status, "stalled_incomplete")
                 self.assertEqual(rec.roles().count("fixer"), rounds)
                 self.assertIn("on disk", res.final_text)   # work not discarded
 
@@ -1188,7 +1212,7 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         rec = Recorder()
         res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
                                         build_check=check, case_results=case_results)
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         self.assertEqual(rec.roles().count("fixer"), 3)  # STALL_ROUNDS
         self.assertIn("7 of 10 acceptance checks still failing", res.final_text)
 
@@ -1226,7 +1250,7 @@ class TestProgressGatedFixLoop(unittest.TestCase):
         rec = OutcomeRecorder()
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=check)
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         # STALL_ROUNDS(3) CHARGED cycles + 1 uncharged infra cycle = 4 fixers.
         self.assertEqual(rec.roles().count("fixer"), 4)
 
@@ -1352,6 +1376,61 @@ class TestBuildScopeConvergence(unittest.TestCase):
         self.assertEqual(res.status, "stalled_incomplete")
         self.assertEqual(rec.roles().count("fixer"), 4)
 
+    def test_flaky_whole_build_stalls_at_5_of_6_not_runs_to_guard(self):
+        # BUG 2 end-to-end: 6 acceptance cases; every whole-build run passes a
+        # DIFFERENT 5 (union reaches all 6, single-run max stuck at 5, never
+        # all-green in one run). Old union gate ran to the guard (1000); the
+        # single-run-max gate stalls honestly at 5/6 after STALL_ROUNDS.
+        d = _repo()
+        runs = [{"a", "b", "c", "d", "e"}, {"a", "b", "c", "d", "f"},
+                {"a", "b", "c", "e", "f"}, {"a", "b", "d", "e", "f"},
+                {"a", "c", "d", "e", "f"}, {"b", "c", "d", "e", "f"}]
+        st = {"i": -1}
+
+        def check(_r, only_test=None):
+            if only_test is None:
+                st["i"] = min(st["i"] + 1, len(runs) - 1)
+                return (False, _fails(1))        # 5/6, never all-green in one run
+            return (True, "")
+
+        def case_results(_r, test_path):
+            if test_path is None:
+                return (set(runs[max(0, st["i"])]), 6)
+            return None
+        rec = Recorder()
+        res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                        build_check=check, case_results=case_results)
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertEqual(rec.roles().count("fixer"), 3)   # STALL_ROUNDS, NOT the guard
+        self.assertIn("1 of 6 acceptance checks still failing", res.final_text)
+
+    def test_runaway_guard_exit_is_honest_stalled_incomplete(self):
+        # BUG 1: the last-resort runaway-guard exit must be an HONEST stall, never
+        # budget_exhausted. Force the guard low; a build that keeps setting a new
+        # single-run max every cycle (progress, never stalls) but never all-green
+        # exits via the GUARD -> stalled_incomplete.
+        import signalos_lib.product.subagent_build as sbmod
+        d = _repo()
+        st = {"i": 0}
+
+        def check(_r, only_test=None):
+            if only_test is None:
+                st["i"] += 1
+                return (False, _fails(1))        # always red
+            return (True, "")
+
+        def case_results(_r, test_path):
+            if test_path is None:                # growing single-run max, never green
+                return ({f"c{j}" for j in range(st["i"])}, 100)
+            return None
+        rec = Recorder()
+        with mock.patch.object(sbmod, "_INTEGRATION_RUNAWAY_GUARD", 3):
+            res = run_subagent_driven_build(d, adapter="A", prompt="x", run_agent=rec,
+                                            build_check=check, case_results=case_results)
+        self.assertEqual(res.status, "stalled_incomplete")
+        self.assertNotEqual(res.status, "budget_exhausted")
+        self.assertEqual(rec.roles().count("fixer"), 3)   # exited via the guard
+
 
 class TestRepairAccounting(unittest.TestCase):
     def test_green_build_logs_zero_repairs_and_is_behavior_unchanged(self):
@@ -1469,7 +1548,7 @@ class TestReviewerHardWall(unittest.TestCase):
         res = run_subagent_driven_build(_repo(), adapter="A", prompt="x",
                                         run_agent=rec, build_check=_green)
         self.assertNotEqual(res.status, "completed")   # unresolved FAIL -> not done
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         self.assertNotIn("evidence", rec.roles())      # fail-fast before paid evidence
         self.assertIn("reviewer hard wall", res.error or "")
         # the reviewer was actually RE-RUN (not judged once) -- more than one call
@@ -1496,7 +1575,7 @@ class TestReviewerHardWall(unittest.TestCase):
         d = _repo()
         res = run_subagent_driven_build(d, adapter="A", prompt="x",
                                         run_agent=rec, build_check=_green)
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         tr = _trace(d)
         self.assertEqual(tr.get("phase"), "review-blocked")
         blocked = tr.get("review_blocked") or []
@@ -1752,7 +1831,7 @@ class TestPerTaskDodGate(unittest.TestCase):
         res = run_subagent_driven_build(
             d, adapter="A", prompt="x", run_agent=rec,
             build_check=_red_once_for("T1.test.ts"))
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         self.assertNotIn("evidence", rec.roles())
         self.assertIn("dod_failed", res.final_text)
 
@@ -1766,7 +1845,7 @@ class TestPerTaskDodGate(unittest.TestCase):
         res = run_subagent_driven_build(
             d, adapter="A", prompt="x", run_agent=rec,
             build_check=_red_once_for("T1.test.ts"))
-        self.assertEqual(res.status, "budget_exhausted")
+        self.assertEqual(res.status, "stalled_incomplete")
         self.assertIn("fixer", rec.roles())          # DoD dispatched a fixer
         self.assertNotIn("evidence", rec.roles())
         self.assertIn("dod_failed", res.final_text)
