@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -130,26 +131,44 @@ def _is_untracked_payload(rel: str) -> bool:
 
 
 def _run_git(root: Path, args: list[str], *, data: bytes | None = None,
-             timeout: int = 300) -> subprocess.CompletedProcess[bytes]:
-    # 300s (was 60): the release tree is computed at the END of G4 while the
-    # funded run still loads the host hard (Docker seat containers + npm + LLM
-    # streaming). A read-only `git ls-files`/`ls-tree` that takes ~1.4s idle was
-    # observed starved past 60s under that load and false-failed the whole build
-    # as a ReleaseTreeError. A real git read never takes minutes, so a generous
-    # ceiling absorbs load-starvation without masking a genuine hang (the overall
-    # gate/build timeout is the real runaway wall).
-    try:
-        return run_git(
-            args,
-            cwd=root,
-            runner=subprocess.run,
-            input=data,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
-        raise ReleaseTreeError(f"git {' '.join(args)} failed: {exc}") from exc
+             timeout: int = 90, attempts: int = 4) -> subprocess.CompletedProcess[bytes]:
+    # The release tree is computed on the HOST at the END of G4. A read-only
+    # `git ls-files`/`ls-tree` runs in ~1.4s idle, but on a heavily-loaded funded
+    # host (esp. Windows: mandatory file locking + AV real-time scan of the .git
+    # dir during a build's write churn) a single attempt was observed BLOCKED past
+    # even 300s -- a transient environment stall, NOT the model's product. So
+    # retry a fast-ish attempt across the stall window instead of betting the whole
+    # build on one long timeout. A real git read completing takes <<90s, so a
+    # blocked attempt is retried, not waited-out. (The G5 clean-room oracle
+    # re-computes the release from scratch, so this digest is a consistency check,
+    # not the grade.)
+    last_exc: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            return run_git(
+                args,
+                cwd=root,
+                runner=subprocess.run,
+                input=data,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                # GIT_OPTIONAL_LOCKS=0: these are read-only queries (ls-files/
+                # ls-tree/cat-file). Don't let git take the optional index-refresh
+                # lock -- under a loaded funded run a concurrent git op or the OS
+                # holding that lock is a prime suspect for the multi-minute block.
+                extra_env={"GIT_OPTIONAL_LOCKS": "0"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_exc = exc
+            if i < attempts - 1:
+                time.sleep(5 * (i + 1))  # settle, then retry a fresh git process
+        except (OSError, subprocess.SubprocessError, GitProcessPolicyError) as exc:
+            raise ReleaseTreeError(f"git {' '.join(args)} failed: {exc}") from exc
+    raise ReleaseTreeError(
+        f"git {' '.join(args)} did not complete after {attempts} attempts "
+        f"({timeout}s each): {last_exc}"
+    )
 
 
 def _git_paths(root: Path, args: list[str]) -> set[str]:

@@ -85,6 +85,11 @@ _FUNDED_EXTRA_ENV = frozenset({
     "GIT_COMMITTER_NAME",
     "GIT_COMMITTER_EMAIL",
     "GIT_COMMITTER_DATE",
+    # Read-only lock avoidance for release-tree queries (ls-files/ls-tree). This
+    # only tells git to skip the OPTIONAL index-refresh lock; it grants no network
+    # or filesystem capability, so it is safe under funded hardening. Suspected
+    # cause of a multi-minute host-git block during a loaded (Windows) funded run.
+    "GIT_OPTIONAL_LOCKS",
 })
 
 
