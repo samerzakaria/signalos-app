@@ -1062,6 +1062,45 @@ class TestStructuredParsing(unittest.TestCase):
         self.assertIsNone(
             sb._run_structured_test(Path(tempfile.mkdtemp()), "t.test.ts", st))
 
+    def test_zero_discovered_cases_is_not_green(self):
+        # FIX (anti-dodge): a plan (exam) test that discovers ZERO cases -- a
+        # model config that narrows discovery (test.exclude/include/dir) or sets
+        # `passWithNoTests: true` so the runner exits 0 with no tests -- must NOT
+        # score green. Without `total > 0` a broken product could "converge"
+        # against an exam it never actually ran.
+        import unittest.mock as mock
+        st = sb._StackContext(profile="react-vite", source_dir="src")
+        st.structured_test_command = lambda root, rel: (
+            ["npx", "vitest", "run", rel, "--reporter=json"], "vitest-json")
+        zero_case = json.dumps({"testResults": []})  # rc 0, 0 tests discovered
+        with mock.patch.object(sb, "_resolve_test_rel",
+                               return_value=("core/execution/tests/x.test.tsx", "")), \
+             mock.patch.object(sb, "_exec_test_argv",
+                               return_value=(0, zero_case, "", False)):
+            res = sb._run_structured_test(Path(tempfile.mkdtemp()), "x.test.tsx", st)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.total, 0)
+        self.assertFalse(res.green, "0 discovered cases must never score green")
+
+    def test_passing_cases_with_real_total_are_green(self):
+        # Control for the anti-dodge guard: a genuine run with passing cases and
+        # no failures IS green (total > 0).
+        import unittest.mock as mock
+        st = sb._StackContext(profile="react-vite", source_dir="src")
+        st.structured_test_command = lambda root, rel: (
+            ["npx", "vitest", "run", rel, "--reporter=json"], "vitest-json")
+        blob = json.dumps({"testResults": [{"assertionResults": [
+            {"ancestorTitles": ["A"], "title": "works", "status": "passed"},
+        ]}]})
+        with mock.patch.object(sb, "_resolve_test_rel",
+                               return_value=("core/execution/tests/x.test.tsx", "")), \
+             mock.patch.object(sb, "_exec_test_argv",
+                               return_value=(0, blob, "", False)):
+            res = sb._run_structured_test(Path(tempfile.mkdtemp()), "x.test.tsx", st)
+        self.assertIsNotNone(res)
+        self.assertTrue(res.green)
+        self.assertEqual(res.total, 1)
+
 
 class TestProgressGatedFixLoop(unittest.TestCase):
     def test_converging_red_task_keeps_cycling_past_the_old_fixed_cap(self):

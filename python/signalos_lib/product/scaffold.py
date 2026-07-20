@@ -114,7 +114,7 @@ def run_postflight(repo_root: Path, profile: str) -> dict[str, Any]:
             "src/App.vue",
             "src/App.test.ts",
             "src/main.ts",
-            "vite.config.ts",
+            "vite.config.cjs",
             ".signalos/profile.json",
         ]))
     elif profile == "flutter-app":

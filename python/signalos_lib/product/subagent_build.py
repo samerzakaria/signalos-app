@@ -127,12 +127,24 @@ _DIGEST_SKIP_DIRS = frozenset({
     ".dart_tool", ".vite", ".cache", "obj", "bin", ".idea", ".vscode",
     ".pytest_cache", ".mypy_cache", "vendor",
 })
+# Root-level config files surfaced in the build-context digest so the agent SEES
+# its own config. The JS tool configs are enumerated EXTENSION-AGNOSTICALLY (the
+# scaffold ships `vite.config.cjs`, and a model may author `.cjs/.mjs/.cts/.mts`)
+# -- enumerating only `.ts/.js` (the old bug) hid the shipped `.cjs` config from
+# the agent's own context.
+_DIGEST_CONFIG_EXTS = (".ts", ".js", ".cjs", ".mjs", ".cts", ".mts")
+_DIGEST_TOOL_CONFIG_STEMS = (
+    "vite.config", "vitest.config", "jest.config", "next.config",
+    "svelte.config", "astro.config", "rollup.config",
+)
 _DIGEST_OTHER_CONFIGS = (
-    "tsconfig.json", "vite.config.ts", "vite.config.js", "vitest.config.ts",
-    "vitest.config.js", "jest.config.js", "jest.config.ts", "angular.json",
-    "next.config.js", "next.config.ts", "nest-cli.json", "pyproject.toml",
+    "tsconfig.json", "angular.json", "nest-cli.json", "pyproject.toml",
     "requirements.txt", "go.mod", "Cargo.toml", "pom.xml", "build.gradle",
     "pubspec.yaml",
+) + tuple(
+    f"{stem}{ext}"
+    for stem in _DIGEST_TOOL_CONFIG_STEMS
+    for ext in _DIGEST_CONFIG_EXTS
 )
 
 
@@ -1858,7 +1870,13 @@ def _run_structured_test(repo_root: Path, test_path: str, stack: _StackContext,
     if parsed is None:
         return None
     passing, failing, total = parsed
-    green = returncode == 0 and not failing
+    # ANTI-DODGE: a plan (exam) test that discovered ZERO cases is NOT a pass.
+    # A model-authored config can narrow discovery -- `test.exclude`/`include`/
+    # `dir`/`root` pointed away from the acceptance suite, or `passWithNoTests:
+    # true` -- so the runner exits 0 with 0 tests. Without `total > 0` that scored
+    # GREEN and let a broken product "converge" against an exam it never ran. The
+    # graded plan tests always carry >=1 case, so 0 cases means dodged/unrun.
+    green = returncode == 0 and not failing and total > 0
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", stdout + "\n" + stderr)
     errs = "" if green else ("\n".join(
         l for l in out.splitlines()
@@ -1910,7 +1928,10 @@ def _run_structured_suite(repo_root: Path, test_paths: list, stack: _StackContex
                     parsed = _parse_structured_cases(kind, out, err)
                     if parsed is not None:
                         passing, failing, total = parsed
-                        return _CaseResult(green=(rc == 0 and not failing),
+                        # ANTI-DODGE: 0 discovered cases is never green (a
+                        # narrowed/excluded config or passWithNoTests must not
+                        # let a broken product "pass" an exam it never ran).
+                        return _CaseResult(green=(rc == 0 and not failing and total > 0),
                                            passing=passing, total=total, errors="")
     # Fallback: aggregate per-file structured runs (still immutable-only).
     passing: set = set()

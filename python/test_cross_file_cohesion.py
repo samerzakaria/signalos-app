@@ -127,7 +127,7 @@ class TestFoundationSpecsAlwaysPresent(unittest.TestCase):
             self.assertIn("jest-dom", blob)
 
     def test_vite_config_wires_setupfiles(self):
-        # The emitted vite.config.ts must reference the setup file via
+        # The emitted vite.config.cjs must reference the setup file via
         # setupFiles so jest-dom matchers resolve at test time.
         self.assertIn("setupFiles", stacks._VITE_CONFIG)
         self.assertIn("src/test/setup.ts", stacks._VITE_CONFIG)

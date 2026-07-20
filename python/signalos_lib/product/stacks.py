@@ -218,12 +218,25 @@ _PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
     },
 }
 
+# CommonJS config (vite.config.cjs), NOT vite.config.ts. Under the funded
+# read-only workspace mount, a TS/ESM Vite config makes Vite esbuild-bundle it
+# and write a `vite.config.*.timestamp-*.mjs` sidecar NEXT TO the config at the
+# workspace root -- and that write throws EROFS, so the graded `npm test` /
+# `vite build` cannot even LOAD the config, for every model regardless of skill
+# (observed: 229 EROFS in a funded run; the graded runner never started). A
+# `.cjs` config is loaded by Node via require -- no esbuild bundle, no sidecar,
+# no root write -- so it loads cleanly under the read-only mount. Validated in a
+# node:20 container with the workspace bind-mounted :ro. The interop guard
+# handles plugin builds that export the plugin as `module.exports = fn` OR as
+# `exports.default = fn`. defineConfig is intentionally omitted (it is identity
+# and importing it pulls Vite's deprecated CJS Node API); `test` is still read
+# from the resolved object.
 _VITE_CONFIG = """\
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+const _react = require('@vitejs/plugin-react');
+const react = _react.default || _react;
 
-export default defineConfig({
+module.exports = {
   plugins: [react()],
   test: {
     environment: 'jsdom',
@@ -232,13 +245,13 @@ export default defineConfig({
     // toBeInTheDocument/toBeChecked resolve under tsc and at runtime.
     setupFiles: ['./src/test/setup.ts'],
   },
-});
+};
 """
 
 _VITEST_SETUP = """\
 // Vitest setup: register @testing-library/jest-dom custom matchers
 // (toBeInTheDocument, toBeChecked, ...) for every test. Referenced by
-// vite.config.ts setupFiles.
+// vite.config.cjs setupFiles.
 import '@testing-library/jest-dom';
 
 // #42: jsdom implements neither window.matchMedia nor ResizeObserver, which
@@ -342,6 +355,24 @@ _TSCONFIG: dict[str, Any] = {
 
 # ---------------------------------------------------------------------------
 
+# Conventional Vite/Vitest config stems x extensions. Detection must be
+# extension-agnostic: the funded scaffold ships `.cjs` (the only form that loads
+# under the read-only workspace mount without an EROFS timestamp sidecar), and a
+# model may legitimately author any of these. The prior detectors hardcoded only
+# `.ts`/`.js`, so the shipped `.cjs` scaffold read as "no vite config".
+_VITE_CONFIG_STEMS = ("vite.config", "vitest.config")
+_VITE_CONFIG_EXTS = (".ts", ".js", ".cjs", ".mjs", ".cts", ".mts")
+
+
+def _has_vite_config(repo_root: Path) -> bool:
+    """True when a Vite/Vitest config exists under any conventional extension."""
+    return any(
+        (repo_root / f"{stem}{ext}").is_file()
+        for stem in _VITE_CONFIG_STEMS
+        for ext in _VITE_CONFIG_EXTS
+    )
+
+
 @dataclass
 class ReactViteAdapter:
     """Adapter for React + Vite projects."""
@@ -368,7 +399,7 @@ class ReactViteAdapter:
                     info["signals"].append("react-dep")
             except (json.JSONDecodeError, OSError):
                 pass
-        if (repo_root / "vite.config.ts").is_file() or (repo_root / "vite.config.js").is_file():
+        if _has_vite_config(repo_root):
             info["signals"].append("vite-config")
         if (repo_root / "src").is_dir():
             info["signals"].append("src-dir")
@@ -406,7 +437,7 @@ class ReactViteAdapter:
         if dependencies:
             pkg["dependencies"].update(dependencies)
         _write("package.json", json.dumps(pkg, indent=2) + "\n")
-        _write("vite.config.ts", _VITE_CONFIG)
+        _write("vite.config.cjs", _VITE_CONFIG)
         _write("index.html", _INDEX_HTML)
         # Fix #12: ship the vitest setup file the config references so the
         # shell is valid before generation and jest-dom matchers resolve.
@@ -1788,16 +1819,20 @@ _VUE_PACKAGE_JSON_TEMPLATE: dict[str, Any] = {
     },
 }
 
+# CommonJS config (vite.config.cjs): loaded by Node via require, so Vite writes
+# NO `*.timestamp-*.mjs` sidecar beside it -- avoiding the EROFS that a TS/ESM
+# config triggers on the funded read-only workspace mount. See the react-vite
+# _VITE_CONFIG note for the full rationale.
 _VUE_VITE_CONFIG = """\
-import { defineConfig } from 'vite';
-import vue from '@vitejs/plugin-vue';
+const _vue = require('@vitejs/plugin-vue');
+const vue = _vue.default || _vue;
 
-export default defineConfig({
+module.exports = {
   plugins: [vue()],
   test: {
     environment: 'jsdom',
   },
-});
+};
 """
 
 _VUE_TSCONFIG: dict[str, Any] = {
@@ -1872,7 +1907,7 @@ class VueViteAdapter:
                     signals.append("vite-dep")
             except (json.JSONDecodeError, OSError):
                 pass
-        if (repo_root / "vite.config.ts").is_file() or (repo_root / "vite.config.js").is_file():
+        if _has_vite_config(repo_root):
             signals.append("vite-config")
         if (repo_root / "src" / "App.vue").is_file():
             signals.append("vue-app")
@@ -1899,7 +1934,7 @@ class VueViteAdapter:
             created.append(rel)
 
         _write("package.json", json.dumps(_VUE_PACKAGE_JSON_TEMPLATE, indent=2) + "\n")
-        _write("vite.config.ts", _VUE_VITE_CONFIG)
+        _write("vite.config.cjs", _VUE_VITE_CONFIG)
         _write("tsconfig.json", json.dumps(_VUE_TSCONFIG, indent=2) + "\n")
         _write("index.html", "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>SignalOS Product</title></head><body><div id=\"app\"></div><script type=\"module\" src=\"/src/main.ts\"></script></body></html>\n")
         _write("src/main.ts", _VUE_MAIN_TS)

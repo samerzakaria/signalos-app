@@ -168,9 +168,16 @@ class TestT2StackAllowlist(unittest.TestCase):
         "index.html",            # react-vite / vue
         "index.css",
         "vite.config.ts",        # react-vite / vue
+        "vite.config.cjs",       # EROFS-safe funded scaffold config (extension-agnostic)
+        "vite.config.mjs",
         "vitest.config.ts",
+        "vitest.config.mjs",     # valid ESM config name under "type":"module"
+        "vitest.config.cjs",
+        "jest.config.ts",        # jest stacks
+        "eslint.config.js",      # ESLint 9 flat config
         "tsconfig.json",         # ts stacks
         "tsconfig.app.json",     # angular
+        "tsconfig.vitest.json",  # tsconfig.*.json glob
         "angular.json",          # angular
         "next.config.js",        # nextjs
         "next.config.mjs",
@@ -231,6 +238,28 @@ class TestT2StackAllowlist(unittest.TestCase):
                 self.assertFalse(
                     _matches_glob(path, write_allow),
                     f"{path!r} must NOT be granted by the T2 write allowlist",
+                )
+
+    def test_supply_chain_and_ci_config_stays_denied_at_t2(self):
+        # SCOPING: broadening the build-config globs (vite/vitest/jest/...) must
+        # NOT open supply-chain / CI / registry config. These stay governance-
+        # owned (install-lifecycle & release surface) -- a model builds the
+        # product, it does not author how the product is installed, shipped, or
+        # gated. Generic agent tools allow these; SignalOS deliberately does not.
+        supply_chain_denied = [
+            ".github/workflows/ci.yml",
+            ".gitlab-ci.yml",
+            "Dockerfile",
+            "docker-compose.yml",
+            ".npmrc",
+            ".yarnrc.yml",
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            write_allow, _ = self._t2(Path(d))
+            for path in supply_chain_denied:
+                self.assertFalse(
+                    _matches_glob(path, write_allow),
+                    f"{path!r} is governance-owned and must NOT be writable at T2",
                 )
 
     def test_t2_write_allowlist_is_not_a_wildcard(self):

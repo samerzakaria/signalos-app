@@ -647,6 +647,33 @@ class TestGovernance(unittest.TestCase):
             self.assertTrue((root / "src" / "App.test.tsx").is_file())
             self.assertTrue((root / "src" / "App.tsx").is_file())
 
+    def test_g4_config_styles_and_test_infra_are_exempt_from_test_first(self):
+        # FIX (test-first re-scope): config, styles, and colocated test-
+        # infrastructure are implementation for gate-gating but carry no gradable
+        # unit test -- demanding a test for a vitest config, a stylesheet, or a
+        # setup file is meaningless friction (it blocked a legitimate EROFS
+        # workaround in a funded run). None of these needs a prior test write.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            seed_trust_tier_paths(root)
+            provider = AgentTestProvider(
+                script=[
+                    _tool_resp("write_file", {"path": "vite.config.cjs", "content": "module.exports={}"}, "c1"),
+                    _tool_resp("write_file", {"path": "src/styles.css", "content": ".x{}"}, "c2"),
+                    _tool_resp("write_file", {"path": "src/test/setup.ts", "content": "import 'x';"}, "c3"),
+                    _end_resp(),
+                ]
+            )
+            loop = _loop(root, provider, active_gate="G4", signed_gates=[0, 1, 2, 3])
+            result = loop.run("sys", "write config + styles + setup, no prior test")
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            for i, m in enumerate(tool_msgs):
+                self.assertIn("OK", m["content"],
+                              f"write {i} should be allowed with no prior test")
+                self.assertNotIn("test-first", m["content"])
+            self.assertTrue((root / "vite.config.cjs").is_file())
+            self.assertTrue((root / "src" / "styles.css").is_file())
+
     def test_plan_authored_test_is_read_only_to_the_agent(self):
         """Spec immutability: the plan's acceptance tests (core/execution/
         tests/**) are the signed spec the build is graded on. The agent must

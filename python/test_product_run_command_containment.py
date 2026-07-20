@@ -104,6 +104,51 @@ class CommandContainmentTest(unittest.TestCase):
         self.assertIsNone(self._check(""))
         self.assertIsNone(self._check("   "))
 
+    # --- FIX (path-escape): inline-eval payloads are CODE, not paths ----------
+    # The scan used to read the quoted `node -e '...'` / `python -c '...'`
+    # argument and false-flag any embedded '/' (a URL, a regex, JSX `</div>`, an
+    # `import '/x'`) as an escaping path -- it denied 27 legitimate node -e calls
+    # in a funded run. The payload is skipped for inline evaluators; what the
+    # code reads/writes is bounded by the sandbox + post-command write governance
+    # (_enforce_command_writes), which is the SAME threat class already accepted
+    # via `npm test`/`pytest` running arbitrary project code.
+
+    def test_node_eval_payload_with_slashes_ok(self) -> None:
+        self.assertIsNone(
+            self._check("node -e \"const s = '/tmp/x'; console.log(s)\"")
+        )
+        self.assertIsNone(
+            self._check("node -e \"import App from '../../src/App'\"")
+        )
+        self.assertIsNone(self._check("node -p \"require('path').sep\""))
+
+    def test_python_c_payload_with_slashes_ok(self) -> None:
+        self.assertIsNone(
+            self._check("python -c \"import os; print('/proc/self')\"")
+        )
+        self.assertIsNone(self._check("python3 -c \"open('data/x').read()\""))
+
+    def test_env_prefixed_node_eval_ok(self) -> None:
+        self.assertIsNone(
+            self._check("NODE_OPTIONS=--max-old-space-size=4096 node -e \"1+1\"")
+        )
+
+    def test_dev_null_ok(self) -> None:
+        self.assertIsNone(self._check("npx vitest run --config /dev/null"))
+        self.assertIsNone(self._check("cat /dev/null"))
+
+    # --- the eval-payload skip must NOT weaken non-evaluators -----------------
+
+    def test_mkdir_p_traversal_still_escapes(self) -> None:
+        # mkdir is not an evaluator, so `-p`'s PATH argument stays checked.
+        self.assertEqual(self._check("mkdir -p ../../gold"), "../../gold")
+
+    def test_grep_e_real_path_arg_still_escapes(self) -> None:
+        # grep is not an evaluator: a real escaping FILE arg is still caught.
+        self.assertEqual(
+            self._check("grep -e foo ../../gold/x"), "../../gold/x"
+        )
+
     # --- FIX 1 regression: the Git-Bash absolute form of the workspace root ---
     # itself was false-denied as "outside the workspace" because Path('/c/ws')
     # mis-resolves to C:\c\ws. The canonical pipeline collapses /c/ -> c:\.

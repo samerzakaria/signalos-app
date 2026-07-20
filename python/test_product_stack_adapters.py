@@ -53,14 +53,27 @@ class TestReactViteScaffold:
         assert ".signalos/profile.json" in result["created"]
         assert (tmp_path / ".signalos" / "profile.json").is_file()
         assert "package.json" in result["created"]
-        assert "vite.config.ts" in result["created"]
+        # EROFS fix: the shipped Vite config MUST be `.cjs` (CommonJS, loaded via
+        # require) -- a `.ts`/`.js`/`.mjs` config makes Vite esbuild-bundle it and
+        # write a `*.timestamp-*.mjs` sidecar at the workspace root, which throws
+        # EROFS on the funded read-only mount so the graded `npm test` can't load
+        # the config for any model. Never regress to a sidecar-triggering config.
+        assert "vite.config.cjs" in result["created"]
+        assert "vite.config.ts" not in result["created"]
 
     def test_scaffold_creates_infrastructure_files(self, tmp_path: Path) -> None:
         result = ReactViteAdapter().scaffold(tmp_path, {})
 
         # Delivery infrastructure files written to disk
         assert (tmp_path / "package.json").is_file()
-        assert (tmp_path / "vite.config.ts").is_file()
+        # EROFS fix: `.cjs` config (no esbuild timestamp sidecar) loads under the
+        # read-only funded workspace mount; a `.ts` config does not.
+        cfg = tmp_path / "vite.config.cjs"
+        assert cfg.is_file()
+        assert not (tmp_path / "vite.config.ts").is_file()
+        cfg_text = cfg.read_text(encoding="utf-8")
+        assert "module.exports" in cfg_text  # CommonJS, require-loaded, no sidecar
+        assert "export default" not in cfg_text
         assert (tmp_path / "index.html").is_file()
         assert (tmp_path / "src" / "main.tsx").is_file()
         assert (tmp_path / "src" / "App.tsx").is_file()
@@ -789,7 +802,7 @@ class TestGreenfieldShellHelpers:
         second = adapter.scaffold(tmp_path, {})  # safe to call again
         assert first["created"] == second["created"]
         assert (tmp_path / "package.json").read_text(encoding="utf-8") == pkg_after_first
-        assert (tmp_path / "vite.config.ts").is_file()
+        assert (tmp_path / "vite.config.cjs").is_file()
 
 
 class TestGetAdapter:

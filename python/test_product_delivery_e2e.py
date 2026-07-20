@@ -94,7 +94,7 @@ class TestDeliveryE2E(unittest.TestCase):
 
             self.assertTrue((repo_root / ".git").exists())
             self.assertTrue((repo_root / "package.json").exists())
-            self.assertTrue((repo_root / "vite.config.ts").exists())
+            self.assertTrue((repo_root / "vite.config.cjs").exists())
             self.assertTrue((repo_root / "src" / "App.tsx").exists())
             self.assertTrue((repo_root / "src" / "App.test.tsx").exists())
             self.assertTrue((repo_root / "src" / "types.ts").exists())

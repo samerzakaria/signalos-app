@@ -709,15 +709,96 @@ def _is_test_path(path: str) -> bool:
     )
 
 
+# Canonical build/test/lint config + manifest recognition. ONE source of truth
+# for "this file is delivery infrastructure, not product logic", shared by
+# _is_implementation_path (gate-gating) and _requires_test_first (TDD scope) so
+# the two never drift. Extension-agnostic on the tool configs: a model may author
+# vite/vitest/jest/... config as .ts/.js/.cjs/.mjs/.cts/.mts and the funded
+# scaffold ships .cjs (the EROFS-safe form).
+_TOOL_CONFIG_STEMS: frozenset[str] = frozenset({
+    "vite.config", "vitest.config", "vitest.workspace", "jest.config",
+    "rollup.config", "webpack.config", "babel.config", "postcss.config",
+    "tailwind.config", "next.config", "nuxt.config", "svelte.config",
+    "astro.config", "playwright.config", "cypress.config", "vue.config",
+    "eslint.config", "stylelint.config", "prettier.config",
+})
+_CONFIG_EXTS: tuple[str, ...] = (".ts", ".js", ".cjs", ".mjs", ".cts", ".mts", ".json")
+_MANIFEST_CONFIG_FILES: frozenset[str] = frozenset({
+    "package.json", "package-lock.json", "jsconfig.json", "angular.json",
+    "components.json", "nest-cli.json", "pnpm-lock.yaml", "yarn.lock",
+})
+_DOTFILE_CONFIG_RE = re.compile(
+    r"^\.(eslintrc|prettierrc|babelrc|browserslistrc|npmrc|nvmrc|editorconfig|"
+    r"stylelintrc|commitlintrc|lintstagedrc)([.\w-]*)?$"
+)
+
+
+def _is_build_config_file(path: str) -> bool:
+    """True for a build/test/lint tool config or a package/tsconfig manifest --
+    delivery infrastructure, not product logic. Extension-agnostic for the tool
+    configs so `vite.config.cjs`/`.mjs`/`.ts`/`.js` all match."""
+    base = _norm(path).rsplit("/", 1)[-1]
+    if base in _MANIFEST_CONFIG_FILES:
+        return True
+    if base.startswith("tsconfig") and base.endswith(".json"):
+        return True
+    if _DOTFILE_CONFIG_RE.match(base):
+        return True
+    for stem in _TOOL_CONFIG_STEMS:
+        if base == stem or (
+            base.startswith(stem + ".") and base.endswith(_CONFIG_EXTS)
+        ):
+            return True
+    return False
+
+
 def _is_implementation_path(path: str) -> bool:
     normed = _norm(path)
     if _is_test_path(normed):
         return False
+    # Build/test config + manifests are delivery infrastructure: gate-gated like
+    # implementation (not writable during G0-G3, requires the delivery gates at
+    # G4) -- but see _requires_test_first, which exempts them from TDD.
+    if _is_build_config_file(normed):
+        return True
     if normed.startswith(("src/", "public/", "app/", "pages/", "components/")):
         return True
-    if normed in ("index.html", "package.json", "tsconfig.json", "vite.config.ts"):
+    if normed == "index.html":
         return True
-    return bool(re.search(r"\.(tsx?|jsx?|html|css|scss|py|rs|go|java|cs)$", normed))
+    return bool(re.search(
+        r"\.(tsx?|jsx?|mjs|cjs|cts|mts|vue|svelte|html|css|scss|sass|less|py|rs|go|java|cs)$",
+        normed,
+    ))
+
+
+def _requires_test_first(path: str) -> bool:
+    """Product logic that must be accompanied by a matching test (TDD). EXCLUDES
+    config/manifests, styles, data, assets, and colocated test-infrastructure --
+    demanding a unit test for a stylesheet, a vitest config, or a test-runner
+    helper is meaningless friction (it blocked a legitimate EROFS workaround in a
+    funded run). Scope: genuine source modules only."""
+    normed = _norm(path)
+    if _is_test_path(normed):
+        return False
+    if _is_build_config_file(normed):
+        return False
+    base = normed.rsplit("/", 1)[-1].lower()
+    # colocated test-infrastructure (setup files, custom runners, mocks, fixtures)
+    if re.search(r"(^|/)(test|tests|__tests__|__mocks__|fixtures?)/", normed) and \
+            not re.search(r"\.(tsx?|jsx?)$", base):
+        return False
+    if base in ("setup.ts", "setup.js", "setup.cjs", "setup.mjs",
+                "vitest.setup.ts", "test-setup.ts", "jest.setup.js"):
+        return False
+    # styles / data / assets / docs / markup / type-decls -- no unit test
+    if re.search(r"(\.d\.ts|\.(css|scss|sass|less|styl|json|svg|png|jpe?g|gif|"
+                 r"webp|ico|avif|md|mdx|txt|html?|ya?ml|toml|lock))$", normed):
+        return False
+    # genuine product code
+    return bool(re.search(
+        r"\.(tsx?|jsx?|mjs|cjs|cts|mts|vue|svelte|py|rs|go|java|cs|rb|php|kt|swift)$",
+        normed,
+    ))
 
 
 def _required_prior_gate_numbers(gate: str | None) -> set[int]:
@@ -949,6 +1030,34 @@ def _is_cmd_shortflag(token: str) -> bool:
         return False
 
 
+# Command roots whose `-e`/`-p`/`-c`/`--eval`/`--print` argument is SOURCE CODE,
+# not a path. Used to skip the inline payload in the path-escape scan so a JSX
+# fragment / URL / regex inside `node -e '...'` is not mis-read as an escaping
+# path (the bug that denied 27 legitimate `node -e` calls in a funded run).
+_EVAL_COMMAND_ROOTS: frozenset[str] = frozenset({
+    "node", "nodejs", "python", "python3", "deno", "bun",
+    "ruby", "perl", "php", "tsx", "ts-node",
+})
+_INLINE_EVAL_FLAGS: frozenset[str] = frozenset({
+    "-e", "-p", "-c", "--eval", "--print",
+})
+# Device pseudo-files: outside the workspace yet always safe to name.
+_DEVICE_PATH_WHITELIST: frozenset[str] = frozenset({
+    "/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr",
+    "/dev/zero", "/dev/tty", "/dev/urandom", "/dev/random", "nul", "NUL",
+})
+# A single filesystem-path token never contains these characters; their presence
+# marks the token as inline code / a shell fragment / an env assignment / a data
+# string rather than a lone path.
+_NON_PATH_TOKEN_RE = re.compile(r"[\n\r;`(){}<>|&=]")
+
+
+def _looks_like_non_path_token(token: str) -> bool:
+    """True when a token is code/data, not a lone filesystem path (so the
+    path-escape scan skips it instead of false-flagging embedded '/')."""
+    return bool(_NON_PATH_TOKEN_RE.search(token)) or bool(re.search(r"\s", token))
+
+
 def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
     """Return the first command token that names a filesystem path OUTSIDE
     *repo_root*, or None when every path stays within the workspace.
@@ -975,9 +1084,47 @@ def _command_escapes_workspace(command: str, repo_root: Path) -> str | None:
         tokens = shlex.split(command, posix=False)
     except ValueError:
         tokens = command.split()
+    # Identify the command verb (skipping leading `KEY=VAL` env prefixes) so the
+    # inline-evaluator payload skip below only fires for real evaluators -- a
+    # `mkdir -p dir/sub` must still have its path argument checked.
+    verb = ""
     for raw in tokens:
-        token = raw.strip().strip('"').strip("'")
+        t = raw.strip().strip('"').strip("'")
+        if not t:
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
+            continue  # env-assignment prefix (`NODE_OPTIONS=... node -e ...`)
+        verb = os.path.basename(t.replace("\\", "/")).lower()
+        break
+    is_evaluator = verb in _EVAL_COMMAND_ROOTS
+    prev_flag = ""
+    for raw in tokens:
+        bare = raw.strip()
+        # An inline-eval flag (`node -e`, `python -c`, `node -p`, ...) marks the
+        # NEXT token as SOURCE CODE, not a filesystem path. Scanning inline JS/py
+        # for `/` (a regex, a URL, JSX `</div>`, `import '/x'`) is a false
+        # path-escape -- it denied 27 legitimate `node -e` calls in a funded run.
+        # What such code WRITES is still caught post-hoc by _enforce_command_writes;
+        # what it READS is bounded by the cwd jail + `--network none`. Gated on
+        # is_evaluator so `mkdir -p`, `grep -e`, `cp -p` keep their args checked.
+        if is_evaluator and bare in _INLINE_EVAL_FLAGS:
+            prev_flag = bare
+            continue
+        if prev_flag:
+            prev_flag = ""
+            continue
+        token = bare.strip('"').strip("'")
         if not token or token.startswith("-"):
+            continue
+        # Special device files are outside the workspace but always safe to name
+        # (`--config /dev/null`, `2>/dev/null`).
+        if token in _DEVICE_PATH_WHITELIST:
+            continue
+        # A lone filesystem path never carries inline whitespace, an env
+        # assignment (`KEY=val`), or shell/code structure; when a token does, it
+        # is a data/code string that only LOOKS path-like because it embeds '/'
+        # (an inline script, a JSON/HTML/JSX blob, a heredoc body).
+        if _looks_like_non_path_token(token):
             continue
         has_sep = "/" in token or "\\" in token
         is_abs = os.path.isabs(token)
@@ -2322,7 +2469,11 @@ class AgentLoop:
                 )
             ):
                 raise ToolPolicyError(
-                    f"'{path}' is owned by the funded dependency policy and is immutable.",
+                    f"'{path}' is owned by the funded dependency policy and is "
+                    "immutable. The scaffold already ships a COMPLETE package.json "
+                    "(all dependencies + `test`/`build`/`dev` scripts) and a working "
+                    "test config -- you do not need to edit it. Write product code "
+                    "under src/ and its tests under tests/ or src/**.",
                     rule="dependency-frozen",
                 )
             # Spec immutability: the plan-authored acceptance tests are the
@@ -2413,10 +2564,13 @@ class AgentLoop:
                         "are signed or explicitly waived.",
                         rule="gate-gating",
                     )
-                if not self._test_written_this_run and not self._has_existing_test_for(path):
+                if (_requires_test_first(path)
+                        and not self._test_written_this_run
+                        and not self._has_existing_test_for(path)):
                     raise ToolPolicyError(
                         f"Implementation write '{path}' is blocked by test-first "
-                        "policy; write or update a matching test first.",
+                        "policy; write or update a matching test first. (Config, "
+                        "styles, assets, and test-infrastructure files are exempt.)",
                         rule="test-first",
                     )
             # `.signalos/` is governance-protected -- EXCEPT a declared per-gate
@@ -2440,8 +2594,13 @@ class AgentLoop:
                 if not _matches_glob(path, allow):
                     self._governance_verdict(
                         "trust-tier",
-                        f"Path '{path}' is not in the {enf.trust_tier} write "
-                        f"allowlist.",
+                        f"Path '{path}' is not writable under the {enf.trust_tier} "
+                        "build profile. WRITABLE: product source (src/**, tests/**, "
+                        "public/**) and standard build/test config (vite/vitest/jest/"
+                        "tsconfig/eslint, ANY extension incl. .cjs/.mjs). "
+                        "GOVERNANCE-OWNED (not writable): dependency manifests "
+                        "(package.json / lockfile), CI & release, container & "
+                        "registry config. Put product code under src/.",
                     )
 
         elif name == "run_command":
@@ -2476,7 +2635,11 @@ class AgentLoop:
             escaping = _command_escapes_workspace(command, self.repo_root)
             if escaping:
                 raise ToolPolicyError(
-                    f"command references a path outside the workspace: {escaping}",
+                    f"Command references a path outside the workspace: '{escaping}'. "
+                    "Use workspace-relative paths (./src/x, not /tmp or ../..). The "
+                    "workspace is READ-ONLY during exec, so create files with the "
+                    "file-write tool (it persists) instead of shell redirection into "
+                    "scratch; the test-runner cache is already writable.",
                     rule="path-escape",
                 )
             if enf.rule_enabled("trust-tier"):
@@ -2484,8 +2647,12 @@ class AgentLoop:
                 if not _command_matches(command, allow, self.repo_root):
                     self._governance_verdict(
                         "trust-tier",
-                        f"Command '{command}' is not in the {enf.trust_tier} "
-                        f"execute allowlist.",
+                        f"Command '{command}' is not in the {enf.trust_tier} execute "
+                        "allowlist. ALLOWED: build/test/typecheck runners (npm run "
+                        "build|test, npx vitest|tsc|vite), inline eval (node -e, "
+                        "python -c), and read-only inspection (cat/ls/head/grep/"
+                        "git status). Dependency install/mutation is owned by the "
+                        "funded broker, not run by generated code.",
                     )
 
         elif name == "read_file":
@@ -2989,6 +3156,22 @@ class AgentLoop:
         command that removes a signed artifact / plan test is a violation too)."""
         enf = self._enforcement
         normed = _norm(rel)
+        # Funded dependency immutability, mirrored at the COMMAND-write layer so
+        # inline eval cannot launder around the write_file guard: a `node -e
+        # "fs.writeFileSync('package.json', ...)"` or `python -c` (both allowed
+        # verification commands) must not mutate the manifest/lockfile the write
+        # tool blocks under the funded profile. (node_modules is additionally a
+        # read-only volume mount, so it cannot be written in-container at all.)
+        if (
+            os.environ.get("SIGNALOS_SANDBOX_PROFILE", "").strip().lower() == "funded"
+            and (
+                normed in {"package.json", "package-lock.json", "node_modules"}
+                or normed.startswith("node_modules/")
+            )
+        ):
+            return ("dependency-frozen",
+                    f"command wrote to '{normed}', owned by the funded dependency "
+                    "policy and immutable during the build")
         if _is_governance_path(rel) and not self._is_allowed_gate_output(rel):
             return ("secret-block",
                     f"wrote to governance path '{_keep_dot_rel(rel)}' (.signalos/)")

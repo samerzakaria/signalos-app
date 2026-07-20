@@ -123,22 +123,35 @@ DEFAULT_TRUST_TIER_PATHS: dict[str, Any] = {
             # blanket root glob — governance stays principled.
             "package.json",
             "tsconfig.json",
-            "tsconfig.app.json",
-            "tsconfig.spec.json",
-            "tsconfig.node.json",
+            "tsconfig.*.json",
+            "jsconfig.json",
             "index.html",
             "index.css",
-            "vite.config.ts",
-            "vite.config.js",
-            "vitest.config.ts",
-            "vitest.config.js",
+            # Build/test/lint tool config -- EXTENSION-AGNOSTIC. The funded
+            # scaffold ships `vite.config.cjs` (the only form that loads under the
+            # read-only workspace mount without an EROFS timestamp sidecar), and a
+            # model may legitimately author `.ts/.js/.cjs/.mjs/.cts/.mts`. The old
+            # list enumerated only `.ts`/`.js`, so a standard `vitest.config.mjs`
+            # or `.cjs` was false-denied (the exact friction that, with the EROFS
+            # trap, blocked the graded test runner). SCOPED to product build
+            # config: supply-chain / CI / registry config (`.github/**`,
+            # `Dockerfile*`, `.npmrc`, `.yarnrc*`) is deliberately NOT writable --
+            # it stays governance-owned (install-lifecycle / release surface).
+            "vite.config.*",
+            "vitest.config.*",
+            "vitest.workspace.*",
+            "jest.config.*",
+            "eslint.config.*",
+            "babel.config.*",
+            "rollup.config.*",
             "angular.json",
-            "next.config.js",
-            "next.config.mjs",
+            "next.config.*",
             "next-env.d.ts",
             "postcss.config.*",
             "tailwind.config.*",
             ".eslintrc*",
+            ".prettierrc*",
+            ".babelrc*",
             "README.md",
             # Python packaging / deps
             "pyproject.toml",

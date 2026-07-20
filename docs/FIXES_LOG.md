@@ -8,6 +8,35 @@ Legend for "Verified": how the fix was proven — `test` (unit/integration), `CI
 
 ---
 
+## Funded-build fairness + anti-gaming hardening (2026-07-20)
+
+Eval-hat re-examination of run 6 (deepseekv4pro: 711-line app, 21/41 tests, honest
+`stalled_incomplete`). A 3-lens panel (benchmark-integrity adversary / agent-ergonomics /
+governance-consistency) + a wiring-completeness audit + 8-system repo research
+(SWE-agent, OpenHands, Aider, Codex, Cline, Devin, gpt-engineer, MetaGPT, SWE-bench)
+found the 21/41 was **suppressed by OUR containment defect, not the model's ceiling**.
+Every reference system lets the agent author its own test/build config; only the *graded
+tests* are immutable (which we already enforce). Fixes adopt what fits our governance and
+hold the line where SignalOS is deliberately stricter (CI/supply-chain/deps stay frozen).
+
+| ID | Issue (root cause) | Fix | Verified |
+|---|---|---|---|
+| OA-34 | **DOMINANT: read-only `/workspace` during exec breaks the graded runner for EVERY model.** The funded profile bind-mounts the workspace `:ro`; the shipped `vite.config.ts` makes Vite esbuild-bundle it and write a `vite.config.ts.timestamp-*.mjs` **sidecar at the read-only root** → EROFS → `npm test`/`vite build` can't even LOAD the config (229 EROFS in run 6). The model diagnosed it and tried 3 legit escapes (`.cjs` config, a CJS island, a Vite monkey-patch) — all denied by our allowlists; it clawed to 23/41 then regressed to 21/41 fighting the harness | Scaffold ships **`vite.config.cjs`** (CommonJS, Node `require`-loaded → no esbuild bundle, no sidecar, no root write) instead of `vite.config.ts`; interop guard handles both plugin export shapes. Read-only containment is **fully preserved** — only the toolchain break is fixed. Vue scaffold + all 6 `vite.config.ts` reference sites updated (extension-agnostic) | ✅ `repro` in a node:20 container with `:ro` workspace (`.ts`=EROFS reproduced byte-for-byte, `.cjs`=vitest 1 pass + `vite build` 30 modules) + 114 stack-adapter + 33 delivery-e2e tests |
+| OA-35 | **Path-escape guard false-denied 27 legit `node -e` calls in run 6** — `_command_escapes_workspace` scanned the quoted `node -e '...'`/`python -c '...'` payload and flagged any embedded `/` (a URL, regex, JSX `</div>`, `import '/x'`) as an escaping path (`node -e` is already allowlisted via `_VERIFICATION_COMMANDS`; the denial came from here, not the execute list) | The scan skips the inline-eval CODE payload (gated on evaluator root, so `mkdir -p`/`grep -e` args stay checked), whitelists device files (`/dev/null`), and skips code/data tokens. Real traversal (`cat ../../gold/x`) still caught | ✅ `test_product_run_command_containment.py` (33: new eval-payload/device/env-prefix pass cases + mkdir/grep-still-escape) |
+| OA-36 | **Write allowlist enumerated vite/vitest config only as `.ts`/`.js`** — a standard `vitest.config.mjs`/`.cjs` (the canonical name under `"type":"module"`, and the EROFS-safe form) was false-denied, compounding OA-34 | Globbed the build/test config family (`vite.config.*`, `vitest.config.*`, `jest.config.*`, `eslint.config.*`, `babel/rollup`, `tsconfig.*.json`) — **SCOPED** to exclude supply-chain/CI/registry config (`.github/**`, `Dockerfile*`, `.npmrc`, `.yarnrc*`), which stays governance-owned | ✅ `test_file_enforcement_provider.py` (13: `.cjs`/`.mjs` writable + new supply-chain-stays-denied scoping test) |
+| OA-37 | **Anti-gaming: a plan (exam) test that discovered 0 cases scored GREEN** — a model config that narrows discovery (`test.exclude`/`include`/`dir`) or sets `passWithNoTests:true` makes the runner exit 0 with no tests; `green = rc==0 and not failing` counted that as a pass, letting a broken product "converge" against an exam it never ran (no false G5 PASS existed — the clean room excludes `core/` and grades via the independent oracle — this closes the G4 convergence/measurement dodge) | `total > 0` required for green in **both** structured scorers (`_run_structured_test` + `_run_structured_suite`) | ✅ `zero-discovered-cases-is-not-green` + passing-control tests |
+| OA-38 | **Layer asymmetry: `_governed_write_violation` (post-command FS-diff) lacked the funded `dependency-frozen` check** that `write_file` has — an inline `node -e "fs.writeFileSync('package.json',…)"` could launder around the manifest freeze | Added the funded `dependency-frozen` clause to the command-write classifier (package.json/lockfile; node_modules is additionally a read-only volume mount) | ✅ containment suite |
+| OA-39 | **Test-first (TDD) gate mis-scoped** — fired "write a test first" on CSS modules, the vitest config, and a test-runner helper (files with no gradable unit test), blocking a legitimate EROFS workaround | Re-scoped test-first to genuine product code via a canonical `_is_build_config_file` predicate (shared with gate-gating so the two never drift); config/styles/assets/colocated test-infra are exempt | ✅ `config-styles-test-infra-exempt-from-test-first` + require/allow tests (3) |
+| OA-40 | **Bare "not in allowlist" denials were dead-ends** (no rule, no allowed set, no next action) — the surface the model hits most; the `dependency-frozen` message didn't say the scaffold is already complete | Trust-tier write/execute + path-escape + dependency-frozen denials now state the rule + the allowed shape + the correct action (incl. "workspace is read-only during exec; a working config is provided; use `.cjs`"). Build-agent-facing internal surfaces, so rule tokens are appropriate | ✅ existing agent-loop suite (message asserts) |
+| OA-41 | **Wiring/drift:** (a) `_DIGEST_OTHER_CONFIGS` (build-context digest) enumerated tool configs only as `.ts`/`.js`, hiding the shipped `.cjs` config from the agent's own context; (b) the per-model output-ceiling table is hand-mirrored across `provider_adapter` + `agent_dispatch` (OA-28) with no drift guard | (a) Digest tool-config recognition is generated extension-agnostically; (b) added a drift test binding the two ceiling tables so a lagging table fails CI, not a live run | ✅ output-ceiling drift test |
+
+Noted (not a bug): the funded agent packet carries `repair_cycle_budget=8`, which the funded
+engine ignores by design (it uses OA-33 **value-based** termination); the field stays live on
+the `delivery.run_delivery`/`repair_loop` path — an intentional per-path difference, documented
+rather than removed.
+
+---
+
 ## Offline product acceptance + release hardening (2026-07-16)
 
 Completed the partially-wired dual-context offline acceptance (funded

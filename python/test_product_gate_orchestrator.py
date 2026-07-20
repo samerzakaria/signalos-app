@@ -1152,7 +1152,7 @@ class TestScaffoldFirst(unittest.TestCase):
             self._orch(d)._scaffold_shell_if_greenfield()
             root = Path(d)
             self.assertTrue((root / "package.json").is_file())
-            self.assertTrue((root / "vite.config.ts").is_file())
+            self.assertTrue((root / "vite.config.cjs").is_file())  # EROFS-safe config
             self.assertTrue((root / "src" / "main.tsx").is_file())
             self.assertTrue((root / "tsconfig.json").is_file())
 

@@ -271,3 +271,25 @@ def test_adapter_wires_model_aware_output_ceiling_into_the_wrapped_provider():
         model="deepseek/deepseek-v4-pro", litellm_module=lm, capabilities=caps
     )
     assert adapter._provider._max_tokens == 16384  # not the old 4096
+
+
+def test_output_ceiling_table_matches_agent_dispatch():
+    """OA-28 drift guard: the per-model output-ceiling table used on the live
+    funded seat path (provider_adapter._OUTPUT_CEILINGS) MUST stay in sync with
+    agent_dispatch._MODEL_MAX_OUTPUT_TOKENS. They are hand-mirrored across two
+    modules (a direct import would cycle), so bind them here -- if one gains a
+    model and the other lags, a thorough model's turn gets silently truncated by
+    the stale table. Fail CI on drift instead of a live run."""
+    from signalos_lib.product.provider_adapter import (
+        _OUTPUT_CEILINGS,
+        _DEFAULT_OUTPUT_CEILING,
+    )
+    from signalos_lib.product.agent_dispatch import (
+        _MODEL_MAX_OUTPUT_TOKENS,
+        _DEFAULT_MODEL_MAX_OUTPUT,
+    )
+    assert dict(_OUTPUT_CEILINGS) == dict(_MODEL_MAX_OUTPUT_TOKENS), (
+        "provider_adapter._OUTPUT_CEILINGS drifted from "
+        "agent_dispatch._MODEL_MAX_OUTPUT_TOKENS -- keep the two tables identical"
+    )
+    assert _DEFAULT_OUTPUT_CEILING == _DEFAULT_MODEL_MAX_OUTPUT
