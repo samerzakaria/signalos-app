@@ -2319,16 +2319,34 @@ def _stage_and_commit_for_release(
         data: bytes | None = None,
         extra_env: dict[str, str] | None = None,
     ):
-        return run_git(
-            args[1:] if args and args[0] == "git" else args,
-            cwd=root,
-            runner=subprocess.run,
-            input=data,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-            extra_env=extra_env,
-        )
+        # Harden the G5 release commit/index host-git against the SAME Windows
+        # stall that blocked the release-TREE read path (mandatory file locking +
+        # AV scan of .git under a loaded funded run): (a) skip git's OPTIONAL
+        # index-refresh lock -- GIT_OPTIONAL_LOCKS is in the funded git env
+        # allowlist -- and (b) retry a blocked attempt instead of failing the whole
+        # G5 release on one timeout. This path spawns ~150-250 short git processes
+        # (hash-object / update-index / ls-files) per finalization, so a single
+        # stall must not lose a complete, oracle-passing product.
+        env = {"GIT_OPTIONAL_LOCKS": "0", **(extra_env or {})}
+        gargs = args[1:] if args and args[0] == "git" else args
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            try:
+                return run_git(
+                    gargs,
+                    cwd=root,
+                    runner=subprocess.run,
+                    input=data,
+                    capture_output=True,
+                    check=False,
+                    timeout=timeout,
+                    extra_env=env,
+                )
+            except subprocess.TimeoutExpired as exc:
+                last_exc = exc
+                if attempt < 3:
+                    time.sleep(5 * (attempt + 1))
+        raise last_exc  # exhausted retries -> surfaced as commit/verification-failed
 
     def _detail(proc: subprocess.CompletedProcess[bytes], fallback: str) -> str:
         raw = proc.stderr or proc.stdout or fallback.encode("utf-8")
