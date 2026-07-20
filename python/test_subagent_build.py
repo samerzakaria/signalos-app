@@ -149,6 +149,32 @@ class TestVerdictParsing(unittest.TestCase):
         self.assertIn("VERDICT: FAIL", msg)
         self.assertIn("budget", msg.lower())
 
+    def test_ensure_trust_tier_declaration_authors_the_prebuild_g4_input(self):
+        # OA-48: Gate 4 requires core/execution/TRUST_TIER.md (a PRE-BUILD
+        # declaration the build.md card only READS) alongside BUILD_EVIDENCE. The
+        # funded flow never authored it -> G4 sign fail-closed "required gate
+        # artifacts are missing". The funded tier is fixed T2, so author it
+        # deterministically: present, T2, no blocking placeholders, and NO
+        # ## Signatures block (the gate sign appends that), so it is not a draft.
+        import tempfile
+        from pathlib import Path
+        from signalos_lib.product.subagent_build import _ensure_trust_tier_declaration
+        from signalos_lib.product.gate_orchestrator import _artifact_placeholder_violations
+        from signalos_lib.sign import _parse_signers
+        root = Path(tempfile.mkdtemp())
+        _ensure_trust_tier_declaration(root, lambda e: None)
+        p = root / "core" / "execution" / "TRUST_TIER.md"
+        self.assertTrue(p.is_file())
+        text = p.read_text(encoding="utf-8")
+        self.assertIn("T2 (Propose)", text)
+        self.assertEqual(_artifact_placeholder_violations(p), [])   # nothing blocks the sign
+        _signers, is_draft, _ = _parse_signers(p)
+        self.assertFalse(is_draft)
+        # idempotent: a second call does not overwrite an existing declaration
+        p.write_text(text + "\nEDITED\n", encoding="utf-8")
+        _ensure_trust_tier_declaration(root, lambda e: None)
+        self.assertIn("EDITED", p.read_text(encoding="utf-8"))
+
     def test_implementer_status(self):
         self.assertEqual(parse_implementer_status("Status: DONE"), "DONE")
         self.assertEqual(parse_implementer_status("... BLOCKED: cannot proceed"), "BLOCKED")
