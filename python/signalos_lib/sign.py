@@ -179,7 +179,22 @@ def _parse_signers(path: Path) -> tuple[list[str], bool, bool | None]:
         return [], False, None
 
     sig_block = text[m.start():]
-    is_draft = bool(re.search(r"DRAFT", sig_block, re.IGNORECASE))
+    # DRAFT detection must key off an actual draft SIGNATURE ENTRY, not the bare
+    # word "draft" anywhere in the post-`## Signatures` tail. The block runs to
+    # EOF, so a legitimate revision-history row ("| 1.0 (draft) | ... | PO
+    # signature pending |") or prose that merely mentions "draft" used to flip
+    # is_draft=True and fail-close a gate that carried a real APPROVED signature
+    # (observed: a funded G0 refused as "unsigned or draft" purely because the
+    # constitution's changelog table below ## Signatures contained "(draft)").
+    # A genuine draft placeholder is a signature FIELD whose value is DRAFT
+    # (`- signer: DRAFT -- awaiting ...`, `verdict: DRAFT`, `status: draft`); that
+    # is what must block. Prose is not a signature. Anti-forgery (hash / verdict /
+    # role / audit-chain in check_gate_signed_strict) is a SEPARATE, untouched
+    # layer -- narrowing is_draft removes a false-positive, it does not weaken it.
+    is_draft = bool(re.search(
+        r"(?im)^\s*[-*]?\s*(signer|verdict|status|signature|approval)\s*:\s*[^\n]*\bDRAFT\b",
+        sig_block,
+    ))
 
     signers: list[str] = []
     for sm in re.finditer(r"signer:\s*(.+)", sig_block):
