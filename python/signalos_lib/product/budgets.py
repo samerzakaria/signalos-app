@@ -25,7 +25,19 @@ DEFAULT_GATE_REOPEN_BUDGET = 3
 # this guard just prevents a truly unbounded loop. Do NOT treat it as "the
 # budget" and do NOT lower it into normal-operation range.
 DEFAULT_BUILD_IMPLEMENTER_RUNAWAY_GUARD = 1000
-DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 20
+# Tool-call budget for ONE read-only G4 reviewer (spec / code) subagent. The
+# reviewer must READ the whole product on disk (one read_file per file) AND then
+# render a PASS/FAIL verdict. The old value (20) was sized for a toy scaffold; a
+# real product is 20-30+ files (a funded expense-tracker run: 12 test files + ~10
+# source + configs = ~25), so the reviewer EXHAUSTED its budget mid-read and
+# returned NO verdict -- which `parse_verdict` fail-closes to FAIL, deadlocking
+# the review->fix loop against a product that objectively passed 45/45 tests
+# (the reviewers never actually judged it; they just ran out of reads). 100 lets
+# a reviewer read a realistic product and still have ample headroom to reason and
+# render an explicit `VERDICT:` line; it stays a bounded read-only budget (review
+# is still bounded by design), env-overridable, and the reviewer message now
+# tells the seat to render its verdict WITHIN this budget rather than over-read.
+DEFAULT_BUILD_REVIEWER_TOOL_BUDGET = 100
 # STALL_ROUNDS for the per-task CONVERGENCE gate (subagent_build.py): the
 # PRIMARY control on the red-test fix loop. A red task keeps earning fixer
 # cycles WHILE it CONVERGES (its failing-check count keeps reaching a new

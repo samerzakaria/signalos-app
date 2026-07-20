@@ -1225,6 +1225,17 @@ def _final_review_message(kind: str, prompt: str, stack: _StackContext) -> str:
          if kind == "spec" else
          "Code quality: single responsibility, clear names, real (non-mock) "
          "tests that assert behavior, maintainability, accessibility."),
+        # You have a bounded read budget -- read the KEY files, then DECIDE.
+        # Rendering a verdict is mandatory; do not spend your whole budget reading
+        # and leave no verdict (an absent verdict is treated as a hard FAIL and
+        # blocks a product you may not have actually found fault with).
+        "You have a limited read budget. Read the key source and test files, then "
+        "STOP READING and render your judgement -- do not exhaust your budget on "
+        "reads. End your reply with EXACTLY one line, and only one:",
+        "  VERDICT: PASS",
+        "  VERDICT: FAIL -- <the single most important blocking reason>",
+        "Only return FAIL for a concrete, fixable defect you actually found in the "
+        "code (name the file); if the product satisfies the ask, return PASS.",
     ])
 
 

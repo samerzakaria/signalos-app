@@ -130,6 +130,25 @@ class TestVerdictParsing(unittest.TestCase):
         self.assertEqual(parse_verdict(""), "FAIL")
         self.assertEqual(parse_verdict("I looked at it, seems fine maybe"), "FAIL")
 
+    def test_reviewer_budget_is_large_enough_to_read_a_real_product(self):
+        # A read-only reviewer must read a whole product (20-30+ files) AND render
+        # a verdict. The old budget (20) starved reviewers on a real product (a
+        # funded run: 45/45 tests passing, ~25 files) -- they exhausted reads and
+        # returned NO verdict, which fail-closes to FAIL and deadlocks the review
+        # loop against a valid product. Guard the budget stays realistic.
+        from signalos_lib.product.budgets import resolve_build_reviewer_tool_budget
+        self.assertGreaterEqual(resolve_build_reviewer_tool_budget(), 60)
+
+    def test_final_review_message_demands_an_explicit_verdict_within_budget(self):
+        # The reviewer message must (a) demand an explicit VERDICT: line the
+        # parser recognizes, and (b) tell the seat to render it WITHIN its read
+        # budget rather than over-reading and leaving no verdict.
+        from signalos_lib.product.subagent_build import _final_review_message, _StackContext
+        msg = _final_review_message("spec", "Build an expense tracker", _StackContext())
+        self.assertIn("VERDICT: PASS", msg)
+        self.assertIn("VERDICT: FAIL", msg)
+        self.assertIn("budget", msg.lower())
+
     def test_implementer_status(self):
         self.assertEqual(parse_implementer_status("Status: DONE"), "DONE")
         self.assertEqual(parse_implementer_status("... BLOCKED: cannot proceed"), "BLOCKED")

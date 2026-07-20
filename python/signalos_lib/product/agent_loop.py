@@ -783,9 +783,13 @@ def _requires_test_first(path: str) -> bool:
     if _is_build_config_file(normed):
         return False
     base = normed.rsplit("/", 1)[-1].lower()
-    # colocated test-infrastructure (setup files, custom runners, mocks, fixtures)
-    if re.search(r"(^|/)(test|tests|__tests__|__mocks__|fixtures?)/", normed) and \
-            not re.search(r"\.(tsx?|jsx?)$", base):
+    # colocated test-infrastructure: ANYTHING under a test/mocks/fixtures dir is
+    # test infra, not product logic -- setup files, custom runners, a11y shims
+    # (`axe-core-shim.ts`), factories, fixtures. Extension-agnostic: an earlier
+    # `.ts/.tsx` carve-out here still demanded a unit test for a test shim, which
+    # denied a model's legitimate a11y-testing scaffold during review hardening.
+    # (Real test FILES are already exempt above via _is_test_path.)
+    if re.search(r"(^|/)(test|tests|__tests__|__mocks__|fixtures?|testing)/", normed):
         return False
     if base in ("setup.ts", "setup.js", "setup.cjs", "setup.mjs",
                 "vitest.setup.ts", "test-setup.ts", "jest.setup.js"):
