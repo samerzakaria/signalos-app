@@ -25,6 +25,11 @@ UNTRACKED_EXCLUDED_DIRS = frozenset({
     "dist", "build", "coverage", "target", ".next", ".nuxt", "out",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".tox", ".cache", ".turbo",
+    # Standard JS toolchain scratch/output dirs a graded build/test/lint/UX-proof
+    # step may drop into the workspace -- excluded so a valid product's release
+    # digest does not drift at G4->G5 on transient toolchain artifacts.
+    ".vite", "test-results", "playwright-report", ".parcel-cache",
+    ".svelte-kit", ".astro", ".vitest",
 })
 
 

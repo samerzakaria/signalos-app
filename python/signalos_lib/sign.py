@@ -89,13 +89,15 @@ VALID_VERDICTS = (
 SOLO_FOUNDER_GATE0_CONSENT = "I approve Gate 0 as sole founder"
 _GATE0_APPROVAL_LOCK_TTL_SECONDS = 300.0
 _AUDIT_APPEND_LOCK_WAIT_SECONDS = 15.0
+# Only UNAMBIGUOUS SignalOS template slots block G0 signing. `double-brace` and
+# `todo-token` are excluded (they false-flag JSX `{{ }}` / `$XXX.XX` / `TBD` in
+# legitimate constitution/spec prose); they remain advisory. See the matching
+# note on _BLOCKING_PLACEHOLDER_KINDS in gate_orchestrator.py.
 _GATE0_BLOCKING_PLACEHOLDER_KINDS = frozenset({
-    "double-brace",
     "date-token",
     "link-token",
     "feature-token",
     "fill-token",
-    "todo-token",
 })
 
 _RELEASE_URL_USERINFO_RE = re.compile(
@@ -243,7 +245,15 @@ def _parse_signatures(path: Path) -> list[dict]:
             "role": _field(chunk, "role"),
             "verdict": _field(chunk, "verdict").upper(),
             "artifact_hash": _field(chunk, "artifact_hash"),
-            "is_draft": "DRAFT" in chunk.upper(),
+            # OA-43 class: an entry is a DRAFT placeholder when its SIGNER value
+            # or verdict/status FIELD is DRAFT -- not when the substring "draft"
+            # appears in prose (e.g. a real name "Draftbit Inc." or a
+            # `conditions: addressed the draft-review feedback` note).
+            "is_draft": (
+                bool(re.match(r"DRAFT\b", first_line, re.IGNORECASE))
+                or _field(chunk, "verdict").strip().upper() == "DRAFT"
+                or _field(chunk, "status").strip().upper() == "DRAFT"
+            ),
         })
     return sigs
 
@@ -820,7 +830,11 @@ def _strip_draft_signature_entries(text: str) -> str:
     for line in text[m.start():].splitlines(keepends=True):
         stripped = line.strip()
         if re.match(r"-\s+signer:", stripped):
-            skipping = "DRAFT" in stripped.upper()
+            # OA-43 class: strip an entry only when the SIGNER VALUE is a DRAFT
+            # placeholder (`- signer: DRAFT -- awaiting ...`), never when a real
+            # signer NAME merely contains the substring "draft" (e.g. "Draftbit
+            # Inc."). \b after DRAFT excludes "Draftbit".
+            skipping = bool(re.match(r"-\s+signer:\s*DRAFT\b", stripped, re.IGNORECASE))
             if not skipping:
                 out.append(line)
             continue

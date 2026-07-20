@@ -253,12 +253,18 @@ class DeliveryState:
     release_evidence: dict = field(default_factory=dict)
 
 
-# High-confidence unfilled-template markers that block a gate signature (0.6).
-# The noisy single-brace pattern is deliberately excluded so legitimate prose or
-# code containing ``{word}`` is not flagged -- only unambiguous leftovers block.
+# High-confidence, UNAMBIGUOUS unfilled-template markers that block a gate
+# signature. Only the specific SignalOS template slots block: `[DATE]`, `[link]`,
+# `[###-feature-name]`, `<to be filled>`. The `single-brace` pattern was already
+# excluded because legitimate `{word}` prose/JSX is not a leftover; `double-brace`
+# and `todo-token` are excluded for the SAME reason -- they false-flag real
+# React-spec prose a capable model writes: JSX `style={{ padding: 8 }}` /
+# mustache `{{ x }}` (double-brace), and `$XXX.XX`, `Export: TBD`, `// TODO` in a
+# code snippet (todo-token). These stay ADVISORY findings; they no longer
+# hard-deadlock the sign path. Genuine incompleteness is caught by the specific
+# slots above plus requirement-trace / artifact-completeness gate checks.
 _BLOCKING_PLACEHOLDER_KINDS = frozenset({
-    "double-brace", "date-token", "link-token",
-    "feature-token", "fill-token", "todo-token",
+    "date-token", "link-token", "feature-token", "fill-token",
 })
 
 

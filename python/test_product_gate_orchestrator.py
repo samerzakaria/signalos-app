@@ -696,11 +696,15 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             # All four G0 artifacts present (Fix 2), but SOUL-DOCUMENT still
-            # carries unresolved template placeholders -> the sign path must
-            # refuse on the placeholder, not on a missing artifact.
+            # carries UNAMBIGUOUS unfilled template slots -> the sign path must
+            # refuse on the placeholder, not on a missing artifact. (Uses the
+            # specific SignalOS slots -- <to be filled>, [DATE] -- that still
+            # block; the ambiguous `{{ }}` / TODO / $XXX prose no longer blocks,
+            # see the OA-44 test below.)
             soul = _seed_g0_artifacts(root)
             soul.write_text(
-                "# Soul Document\n\nPurpose: {{fill this in}}\nTODO: write it\n",
+                "# Soul Document\n\nPurpose: <to be filled by the founder>\n"
+                "Ratified: [DATE]\n",
                 encoding="utf-8",
             )
             (root / ".signalos").mkdir(parents=True, exist_ok=True)
@@ -718,6 +722,36 @@ class TestRealSignAuditAndWaive(unittest.TestCase):
             self.assertEqual(res["status"], "explicit-approval-required")
             self.assertEqual(orch.state.current_gate, "G0")      # did not advance
             self.assertNotIn("G0", orch.state.signed)
+
+    def test_ambiguous_react_spec_prose_does_not_block_gate_advance(self):
+        """OA-44: a gate artifact carrying legitimate React-spec prose that merely
+        LOOKS like a placeholder must NOT hard-block signing -- JSX `style={{ }}`,
+        a `$XXX.XX` money-format example, a `// TODO` in a code snippet, or an
+        `Export: TBD` note are real content a capable model writes, not unfilled
+        template slots. (The unambiguous slots <to be filled>/[DATE] still block,
+        see the test above.)"""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            soul = _seed_g0_artifacts(root)
+            soul.write_text(
+                "# Soul Document\n\nThe app renders amounts as `$XXX.XX`.\n"
+                "Example: `<div style={{ padding: 8, margin: 0 }}>`.\n"
+                "```tsx\n// TODO: revisit pagination later\n```\n"
+                "Export format: TBD pending a follow-up wave.\n",
+                encoding="utf-8",
+            )
+            (root / ".signalos").mkdir(parents=True, exist_ok=True)
+            events = []
+            orch = GateOrchestrator(
+                root, _EndAdapter(), events.append,
+                enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+                prompt="build it",
+            )
+            orch._gate_review_ready = lambda *a, **k: {"ok": True}
+            orch.start()
+            approval = _explicit_g0_approval(root, "prose-not-placeholder-g0")
+            self.assertTrue(approval["signed"],
+                            "legitimate React-spec prose must not block the sign path")
 
     def test_missing_artifact_blocks_gate_advance(self):
         """0.1 fail-closed: a gate whose expected artifacts are ALL missing on

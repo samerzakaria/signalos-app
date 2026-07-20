@@ -2227,10 +2227,18 @@ def _a11y_issues(src: str) -> list[str]:
         attrs = m.group(1)
         if re.search(r"type\s*=\s*[\"'](?:hidden|submit|button)[\"']", attrs):
             continue
-        if not re.search(r"\b(?:id|aria-label|aria-labelledby|placeholder|name)\b",
-                         attrs):
-            issues.append("an <input> has no label/id/aria-label (a11y)")
-            break
+        if re.search(r"\b(?:id|aria-label|aria-labelledby|placeholder|name)\b", attrs):
+            continue
+        # Wrapping-label idiom: `<label>Amount <input /></label>` labels the input
+        # accessibly even with NO attribute on the input tag itself -- a valid,
+        # common React a11y pattern. If the input sits inside an open <label> with
+        # no intervening </label>, it is labelled; don't false-flag it.
+        before = src[: m.start()]
+        last_label = before.rfind("<label")
+        if last_label != -1 and "</label>" not in before[last_label:]:
+            continue
+        issues.append("an <input> has no label/id/aria-label (a11y)")
+        break
     for m in re.finditer(r"<button\b([^>]*)>(.*?)</button>", src, re.S):
         attrs, inner = m.group(1), m.group(2)
         if re.search(r"aria-label|aria-labelledby|title", attrs):
