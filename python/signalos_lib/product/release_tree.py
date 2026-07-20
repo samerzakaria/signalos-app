@@ -130,7 +130,14 @@ def _is_untracked_payload(rel: str) -> bool:
 
 
 def _run_git(root: Path, args: list[str], *, data: bytes | None = None,
-             timeout: int = 60) -> subprocess.CompletedProcess[bytes]:
+             timeout: int = 300) -> subprocess.CompletedProcess[bytes]:
+    # 300s (was 60): the release tree is computed at the END of G4 while the
+    # funded run still loads the host hard (Docker seat containers + npm + LLM
+    # streaming). A read-only `git ls-files`/`ls-tree` that takes ~1.4s idle was
+    # observed starved past 60s under that load and false-failed the whole build
+    # as a ReleaseTreeError. A real git read never takes minutes, so a generous
+    # ceiling absorbs load-starvation without masking a genuine hang (the overall
+    # gate/build timeout is the real runaway wall).
     try:
         return run_git(
             args,
