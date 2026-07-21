@@ -99,6 +99,31 @@ class ProfileValidationTests(unittest.TestCase):
 
         self.assertEqual(find_unresolved_placeholders(content), [])
 
+    def test_marker_rule_documented_in_backticks_is_not_a_placeholder(self) -> None:
+        # OA-50: a governance artifact that DOCUMENTS the marker rule names the
+        # forbidden tokens in inline code. It must not trip the scanner over its
+        # own rulebook (this exact §P7 Documentation-Standards line refused the
+        # G0 sign in the deepseekv4pro funded run).
+        rule = (
+            "## Documentation Standards\n\n"
+            "- All governance artifacts must be free of reserved markers -- no "
+            "`TBD`, `TODO`, `FIXME`, `XXX`, `[DATE]`, `{{...}}`, or "
+            "`<to be filled>` tokens.\n"
+        )
+        self.assertEqual(find_unresolved_placeholders(rule), [])
+
+    def test_bare_slots_still_block_after_code_span_masking(self) -> None:
+        # The masking must not open a hole: a genuinely UNFILLED, bare slot is
+        # still a blocking finding.
+        bare = "# Soul\n\nPurpose: <to be filled by the founder>\nRatified: [DATE]\n"
+        kinds = {f["kind"] for f in find_unresolved_placeholders(bare)}
+        self.assertIn("fill-token", kinds)
+        self.assertIn("date-token", kinds)
+
+    def test_placeholder_inside_fenced_code_block_is_ignored(self) -> None:
+        fenced = "Example template line:\n\n```\nCreated: [DATE]\n```\n\nEnd.\n"
+        self.assertEqual(find_unresolved_placeholders(fenced), [])
+
     def test_dry_run_combines_contract_and_generated_file_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

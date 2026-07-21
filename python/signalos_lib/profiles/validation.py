@@ -22,6 +22,25 @@ _PLACEHOLDER_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("todo-token", re.compile(r"\b(TODO|TBD|FIXME|XXX)\b")),
 )
 
+# A placeholder token that appears inside an inline-code span (`...`) or a fenced
+# code block (``` ... ```) is a *reference to* the token, not a live unfilled
+# slot. A governance artifact that states the marker rule -- e.g. a Constitution
+# §Documentation-Standards line "artifacts must be free of `[DATE]` or
+# `<to be filled>` markers" -- legitimately names the very tokens it forbids.
+# Scanning the raw text flags that rule as its own violation and refuses to sign
+# the artifact (the model authored a documentation standard, not a leftover
+# slot). Real unfilled slots in every SignalOS template are BARE ("Created:
+# [DATE]"), never backticked, so masking code spans keeps genuine leftovers
+# caught while ending this self-referential false positive.
+_CODE_FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+
+
+def _mask_code_spans(line: str) -> str:
+    """Blank inline-code spans so their contents are not scanned, preserving
+    column positions with an equal-length space fill."""
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line)
+
 
 @dataclass(frozen=True)
 class ProfileValidationIssue:
@@ -215,10 +234,23 @@ def dry_run_profile_validation(
 
 
 def find_unresolved_placeholders(content: str) -> list[dict[str, Any]]:
-    """Return obvious unresolved template tokens in generated text."""
+    """Return obvious unresolved template tokens in generated text.
+
+    Tokens inside inline-code spans or fenced code blocks are references, not
+    unfilled slots, and are ignored -- see _CODE_FENCE_RE / _INLINE_CODE_RE and
+    the rationale beside them. This prevents a governance artifact that documents
+    the marker rule from tripping the scanner over its own rulebook.
+    """
 
     findings: list[dict[str, Any]] = []
-    for line_number, line in enumerate(content.splitlines(), start=1):
+    in_fence = False
+    for line_number, raw in enumerate(content.splitlines(), start=1):
+        if _CODE_FENCE_RE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        line = _mask_code_spans(raw)
         for kind, pattern in _PLACEHOLDER_PATTERNS:
             for match in pattern.finditer(line):
                 findings.append(
