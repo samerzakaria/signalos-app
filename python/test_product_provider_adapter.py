@@ -283,6 +283,26 @@ class TestTransientProviderRetry:
             pass
         assert lm._calls["n"] == 4  # 1 initial + 3 retries
 
+    def test_key_limit_exceeded_fails_fast_even_as_apierror(self):
+        # OA-52: a funded run died at G4 on OpenRouter "Key limit exceeded
+        # (total limit)", surfaced as an APIError (a retryable CLASS). It must
+        # fail fast -- retrying a budget-exhausted key wastes calls and buries
+        # the actionable message. The message must win over the class.
+        err = _FakeAPIError(
+            "Key limit exceeded (total limit). Manage it using "
+            "https://openrouter.ai/workspaces/default/keys/abc"
+        )
+        lm = _sequence_litellm(
+            [("raise", err), ("return", _text_response("must not reach"))]
+        )
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        try:
+            prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+            assert False, "expected RuntimeError"
+        except RuntimeError:
+            pass
+        assert lm._calls["n"] == 1  # NOT retried despite APIError class
+
     def test_gemini_routed_to_ai_studio_with_api_key(self, monkeypatch):
         # A GEMINI_API_KEY is a Google AI Studio key; LiteLLM only routes it
         # when the model carries the `gemini/` prefix. A bare name falls through

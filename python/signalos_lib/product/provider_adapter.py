@@ -976,10 +976,25 @@ _RETRYABLE_MESSAGE_SIGNATURES = (
     "connection aborted", "connection error", "remotely closed",
     "read timed out", "timed out", "502", "503", "504", "429",
 )
+# Hard, user-ACTIONABLE billing / spending-limit errors. These surface as a
+# provider APIError (a retryable CLASS) but must NEVER be retried -- retrying a
+# key that is out of budget only wastes calls and buries the real message. A
+# funded run died at G4 on OpenRouter "Key limit exceeded (total limit)"; the
+# fix is the user raising the key limit, not a retry. Checked FIRST, before the
+# retryable-class match, so the message wins over the class.
+_NON_RETRYABLE_MESSAGE_SIGNATURES = (
+    "key limit exceeded", "insufficient credit", "insufficient_quota",
+    "credit balance is too low", "purchase credits", "payment required",
+    "exceeded your current quota", "billing", "402",
+)
 
 
 def _is_retryable_provider_error(litellm: Any, exc: Exception) -> bool:
     """True for transient infra faults worth retrying; False for terminal ones."""
+    msg = str(exc).lower()
+    # Hard billing/limit errors fail fast even when the class looks retryable.
+    if any(sig in msg for sig in _NON_RETRYABLE_MESSAGE_SIGNATURES):
+        return False
     for name in _NON_RETRYABLE_LITELLM_EXC:
         cls = getattr(litellm, name, None)
         if isinstance(cls, type) and isinstance(exc, cls):
@@ -988,7 +1003,6 @@ def _is_retryable_provider_error(litellm: Any, exc: Exception) -> bool:
         cls = getattr(litellm, name, None)
         if isinstance(cls, type) and isinstance(exc, cls):
             return True
-    msg = str(exc).lower()
     return any(sig in msg for sig in _RETRYABLE_MESSAGE_SIGNATURES)
 
 
