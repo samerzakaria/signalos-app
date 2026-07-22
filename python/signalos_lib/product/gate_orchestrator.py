@@ -1485,9 +1485,33 @@ class GateOrchestrator:
                     "ok": False,
                     "reason": f"profile '{profile}' has no build/test validation; cannot verify a real build.",
                 })
-            result = run_validation(self.repo_root, plan)
+            # DETERMINISTIC plan-coverage contract (no LLM in the loop): the
+            # FROZEN plan-authored acceptance tests (the G2 test-first contract,
+            # one per task) MUST actually run in this verification. Passed as
+            # frozen_tests, run_validation FAILS the test category if any was
+            # dropped from disk, excluded from test discovery, or the command was
+            # neutered -- so a build cannot skip a requirement's test and still
+            # pass on a green remainder (the gate input is forced, not left to
+            # the LLM reviewer). A non-canonical plan yields no frozen tests ->
+            # byte-identical historical behavior.
+            frozen_tests = self._frozen_plan_tests()
+            result = run_validation(self.repo_root, plan, frozen_tests=frozen_tests)
             results = result.get("results", {})
             b, t = results.get("build", {}), results.get("test", {})
+            uncollected = t.get("frozen_tests_uncollected") or []
+            if uncollected:
+                return finish({
+                    "ok": False,
+                    "reason": ("G4 plan-coverage gate FAILED: these plan-authored "
+                               "acceptance tests were NOT run (dropped from disk, "
+                               "excluded from test discovery, or the test command "
+                               "was neutered). The plan's test contract is immutable "
+                               "during the build -- restore each and run it, never "
+                               "delete or weaken it:\n"
+                               + "\n".join(f"- {p}" for p in uncollected)),
+                    "build": b.get("status"), "test": "failed",
+                    "frozen_tests_uncollected": list(uncollected),
+                })
             if b.get("status") == "passed" and t.get("status") == "passed":
                 # 3. UX/BEHAVIORAL ACCEPTANCE hard gate (product requirement, so
                 # it runs in BOTH profiles): a green build that ships NO real,
@@ -1533,6 +1557,26 @@ class GateOrchestrator:
                 "ok": False,
                 "reason": f"G4 build verification error: {type(exc).__name__}: {exc}",
             })
+
+    def _frozen_plan_tests(self) -> list:
+        """The plan-authored acceptance-test paths (one per canonical task) that
+        the G4 build MUST actually run -- the deterministic coverage contract
+        fed to run_validation as ``frozen_tests``. Same task source the G2
+        plan-contract froze (``decompose_canonical_plan_tasks``). Empty when the
+        plan is non-canonical (no enforcement -> historical behavior)."""
+        try:
+            from .subagent_build import decompose_canonical_plan_tasks
+            tasks = decompose_canonical_plan_tasks(self.repo_root, self.project_id)
+        except Exception:
+            return []
+        seen: set = set()
+        out: list = []
+        for t in tasks:
+            test = str(getattr(t, "test", "") or "").strip()
+            if test and test not in seen:
+                seen.add(test)
+                out.append(test)
+        return out
 
     # (Import-graph shapes + entry names live in wiring_check.py -- the single
     # source for the wiring analysis, shared with the in-loop build reviewer so a

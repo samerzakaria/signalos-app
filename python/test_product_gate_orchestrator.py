@@ -1150,6 +1150,91 @@ class TestUxAcceptanceGate(unittest.TestCase):
             self.assertTrue(res["ok"])
 
 
+class TestG4PlanCoverageGate(unittest.TestCase):
+    """OA-53: the G4 build wall must DETERMINISTICALLY enforce that every
+    plan-authored acceptance test (the G2 test-first contract, one per task)
+    actually RAN -- a build cannot drop/skip/neuter a requirement's test and
+    still pass on a green remainder. Objective (run_validation frozen_tests),
+    never left to the LLM reviewer."""
+
+    def _make(self, root):
+        orch = GateOrchestrator(
+            Path(root), _EndAdapter(), (lambda e: None),
+            enforcement_provider=StaticEnforcementProvider(trust_tier="T3"),
+            sign_fn=lambda *a, **k: ["G4.md"], prompt="build an expense tracker")
+        orch._product_source_dir = lambda: "src"
+        orch._prepare_g4_attribution()
+        return orch
+
+    def _write(self, root, rel, content):
+        p = Path(root) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+
+    def _seed_wired_product(self, d):
+        self._write(d, "src/App.tsx",
+                    "import { List } from './components/List';\n"
+                    "export default function App(){ return <List/>; }\n")
+        self._write(d, "src/components/List.tsx", "export const List = () => null;\n")
+
+    def test_forwards_frozen_plan_tests_to_run_validation(self):
+        # The plan's frozen acceptance-test paths must be passed to
+        # run_validation so a neutered/excluded test is caught by machine.
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._seed_wired_product(d)
+            orch._frozen_plan_tests = lambda: [
+                "src/features/add.test.tsx", "src/features/delete.test.tsx"]
+            captured = {}
+
+            def fake_run(repo_root, plan, dry_run=False, frozen_tests=None):
+                captured["frozen_tests"] = frozen_tests
+                return {"results": {"build": {"status": "passed"},
+                                    "test": {"status": "passed"}}}
+
+            with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation", side_effect=fake_run), \
+                 mock.patch("signalos_lib.product.acceptance.run_ux_acceptance",
+                            return_value={"ok": True, "ran": True, "reason": "ok"}):
+                res = orch._verify_g4_build(_Result())
+            self.assertTrue(res["ok"])
+            self.assertEqual(captured["frozen_tests"],
+                             ["src/features/add.test.tsx", "src/features/delete.test.tsx"])
+
+    def test_uncollected_frozen_test_fails_g4(self):
+        # A build that excluded/neutered a required plan test -> run_validation
+        # reports it uncollected -> G4 is refused with an actionable reason.
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self._seed_wired_product(d)
+            orch._frozen_plan_tests = lambda: ["src/features/reconcile.test.tsx"]
+
+            def fake_run(repo_root, plan, dry_run=False, frozen_tests=None):
+                return {"results": {"build": {"status": "passed"},
+                                    "test": {"status": "failed", "output": "…",
+                                             "frozen_tests_uncollected": ["src/features/reconcile.test.tsx"]}}}
+
+            with mock.patch("signalos_lib.product.stacks.detect_profile", return_value="react-vite"), \
+                 mock.patch("signalos_lib.product.validation.build_validation_plan",
+                            return_value={"can_validate_build": True, "can_validate_tests": True, "profile": "react-vite"}), \
+                 mock.patch("signalos_lib.product.validation.run_validation", side_effect=fake_run):
+                res = orch._verify_g4_build(_Result())
+            self.assertFalse(res["ok"])
+            self.assertIn("plan-coverage", res["reason"])
+            self.assertIn("reconcile.test.tsx", res["reason"])
+            self.assertEqual(res.get("frozen_tests_uncollected"),
+                             ["src/features/reconcile.test.tsx"])
+
+    def test_frozen_plan_tests_empty_without_canonical_plan(self):
+        # No canonical plan -> no frozen tests -> historical behavior (no
+        # false-fail on a non-canonical plan).
+        with tempfile.TemporaryDirectory() as d:
+            orch = self._make(d)
+            self.assertEqual(orch._frozen_plan_tests(), [])
+
+
 class TestScaffoldFirst(unittest.TestCase):
     """FIX 2: GateOrchestrator materializes the SELECTED stack's shell before
     the BUILD gate on a greenfield repo -- and is a STRICT no-op on a repo that
@@ -1266,7 +1351,7 @@ class TestValidationConvergence(unittest.TestCase):
                 "signalos_lib.product.validation", fromlist=["run_validation"]
             ).run_validation
 
-            def _spy(repo_root, plan, dry_run=False):
+            def _spy(repo_root, plan, dry_run=False, frozen_tests=None):
                 calls.append(plan.get("profile"))
                 return {"results": {"build": {"status": "passed"},
                                     "test": {"status": "passed"}}}
