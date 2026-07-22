@@ -1560,23 +1560,15 @@ class GateOrchestrator:
 
     def _frozen_plan_tests(self) -> list:
         """The plan-authored acceptance-test paths (one per canonical task) that
-        the G4 build MUST actually run -- the deterministic coverage contract
-        fed to run_validation as ``frozen_tests``. Same task source the G2
-        plan-contract froze (``decompose_canonical_plan_tasks``). Empty when the
-        plan is non-canonical (no enforcement -> historical behavior)."""
+        the G4 build MUST actually run -- the deterministic coverage contract fed
+        to run_validation as ``frozen_tests``. SINGLE source shared with the
+        in-loop integration gate (subagent_build._frozen_plan_test_paths), so the
+        backstop and the repair loop enforce the identical contract."""
         try:
-            from .subagent_build import decompose_canonical_plan_tasks
-            tasks = decompose_canonical_plan_tasks(self.repo_root, self.project_id)
+            from .subagent_build import _frozen_plan_test_paths
+            return _frozen_plan_test_paths(self.repo_root, self.project_id)
         except Exception:
             return []
-        seen: set = set()
-        out: list = []
-        for t in tasks:
-            test = str(getattr(t, "test", "") or "").strip()
-            if test and test not in seen:
-                seen.add(test)
-                out.append(test)
-        return out
 
     # (Import-graph shapes + entry names live in wiring_check.py -- the single
     # source for the wiring analysis, shared with the in-loop build reviewer so a

@@ -747,6 +747,49 @@ class TestSingleTestHonestWhenNoRunner(unittest.TestCase):
         self.assertNotIn("pre-existing", res.final_text)
 
 
+class TestFrozenPlanCoverageLoop(unittest.TestCase):
+    """OA-53b: the in-loop integration gate (_default_build_check, full-suite
+    mode) passes the plan's FROZEN acceptance tests to run_validation, so a
+    dropped/excluded/neutered required test surfaces as actionable feedback the
+    fixer repairs -- convergence inside the loop, not only a post-hoc hard fail
+    at _verify_g4_build."""
+
+    def test_default_build_check_forwards_frozen_tests_and_fails_on_uncollected(self):
+        captured = {}
+
+        def fake_run(repo_root, plan, dry_run=False, frozen_tests=None):
+            captured["frozen"] = frozen_tests
+            return {"results": {
+                "build": {"status": "passed"},
+                "test": {"status": "failed",
+                         "output": "FROZEN TEST VERIFICATION FAILED: "
+                                   "src/features/add.test.tsx",
+                         "frozen_tests_uncollected": ["src/features/add.test.tsx"]},
+            }}
+
+        with mock.patch.object(sb, "_frozen_plan_test_paths",
+                               return_value=["src/features/add.test.tsx"]), \
+             mock.patch("signalos_lib.product.stacks.detect_profile",
+                        return_value="react-vite"), \
+             mock.patch("signalos_lib.product.validation.build_validation_plan",
+                        return_value={"can_validate_build": True,
+                                      "can_validate_tests": True,
+                                      "profile": "react-vite"}), \
+             mock.patch("signalos_lib.product.validation.run_validation",
+                        side_effect=fake_run):
+            green, detail = sb._default_build_check(Path(tempfile.gettempdir()))
+
+        # the plan's frozen tests were forwarded to the integration run
+        self.assertEqual(captured["frozen"], ["src/features/add.test.tsx"])
+        # a dropped frozen test -> not green + actionable feedback for the fixer
+        self.assertFalse(green)
+        self.assertIn("add.test.tsx", detail)
+
+    def test_frozen_plan_test_paths_empty_without_canonical_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(sb._frozen_plan_test_paths(Path(d)), [])
+
+
 # ---------------------------------------------------------------------------
 # FIX 1 (part 6) — the run wrapper surfaces a "narrated, wrote nothing" outcome
 # ---------------------------------------------------------------------------

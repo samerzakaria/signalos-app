@@ -1667,6 +1667,26 @@ def _run_single_test(repo_root: Path, test_path: str, stack: _StackContext,
     return False, "\n".join(fails[:20]) or out[-1500:]
 
 
+def _frozen_plan_test_paths(repo_root: Path, project_id: str = "default") -> list:
+    """The plan-authored acceptance-test paths (one per canonical task) -- the
+    deterministic G4 coverage contract, the SAME task source the G2 plan-contract
+    froze (``decompose_canonical_plan_tasks``). Fed to run_validation as
+    ``frozen_tests`` so a dropped/excluded/neutered required test FAILS the run.
+    Empty when the plan is non-canonical -> historical (no-op) behavior."""
+    try:
+        tasks = decompose_canonical_plan_tasks(repo_root, project_id)
+    except Exception:
+        return []
+    seen: set = set()
+    out: list = []
+    for t in tasks:
+        test = str(getattr(t, "test", "") or "").strip()
+        if test and test not in seen:
+            seen.add(test)
+            out.append(test)
+    return out
+
+
 def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
                          project_id: str = "default",
                          stack: Optional[_StackContext] = None) -> "tuple[bool, str]":
@@ -1686,7 +1706,14 @@ def _default_build_check(repo_root: Path, only_test: Optional[str] = None,
         if not (plan.get("can_validate_build") and plan.get("can_validate_tests")):
             # Cannot verify here -> don't spin; the gate's own check is the wall.
             return True, ""
-        result = run_validation(repo_root, plan)
+        # Loop-driven plan-coverage (OA-53b): the frozen plan-authored acceptance
+        # tests MUST actually run in the integration gate, so a dropped/excluded/
+        # neutered required test surfaces HERE as actionable feedback the fixer
+        # repairs (restore + run it) and CONVERGES on -- not only at the post-hoc
+        # _verify_g4_build backstop. A genuine inability to pass a required test
+        # still fail-closes at the gate (the product does not meet the spec).
+        frozen_tests = _frozen_plan_test_paths(repo_root, project_id)
+        result = run_validation(repo_root, plan, frozen_tests=frozen_tests)
         results = result.get("results", {})
         b, t = results.get("build", {}), results.get("test", {})
         if b.get("status") == "passed" and t.get("status") == "passed":
