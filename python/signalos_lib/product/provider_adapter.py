@@ -706,10 +706,14 @@ class LiteLLMAgentProvider:
         litellm_module: Any | None = None,
         max_tokens: int = 4096,
         provider_name: str | None = None,
+        num_retries: int | None = None,
+        retry_base_seconds: float | None = None,
     ) -> None:
         self._litellm = litellm_module
         self._max_tokens = max_tokens
         self._provider_name = provider_name
+        self._num_retries = _resolve_provider_num_retries(num_retries)
+        self._retry_base_seconds = _resolve_provider_retry_base(retry_base_seconds)
 
     @property
     def litellm(self) -> Any:
@@ -741,31 +745,45 @@ class LiteLLMAgentProvider:
         if stream:
             kwargs["stream"] = True
 
-        try:
-            resp = litellm.completion(**kwargs)
-        except Exception as exc:  # noqa: BLE001 — must classify, not swallow
-            if _is_auth_error(litellm, exc):
-                raise ProviderAuthError(
-                    "Provider authentication failed. Connect a provider in "
-                    "Settings (set the API key) and retry."
-                ) from exc
-            raise RuntimeError(_provider_error_message(exc, provider_name=self._provider_name)) from exc
-
-        if stream:
-            # Layer 2 seed: capture the request only — never consume the stream.
-            capture_transcript(kwargs, None, streamed=True)
-            return AgentResponse(
-                content=None,
-                tool_calls=None,
-                stop_reason="end_turn",
-                usage=TokenUsage(),
-                stream=self._wrap_stream(resp),
-            )
-
-        # Layer 2 seed: capture the raw request + raw response (opt-in, OFF by
-        # default) before we normalize it, so funded runs seed a replay corpus.
-        capture_transcript(kwargs, resp, streamed=False)
-        return self._normalize_response(resp)
+        # Bounded retry over TRANSIENT provider faults (empty/non-JSON gateway
+        # body, 429/5xx, dropped connection, empty `choices`). The completion AND
+        # its normalization are inside the loop so an empty-`choices` transient
+        # (raised by _normalize_response) is retried too. Auth / bad-request /
+        # context-window errors are NOT retried -- they fail fast and clearly.
+        attempt = 0
+        while True:
+            try:
+                resp = litellm.completion(**kwargs)
+                if stream:
+                    # Layer 2 seed: capture the request only — never consume it.
+                    capture_transcript(kwargs, None, streamed=True)
+                    return AgentResponse(
+                        content=None,
+                        tool_calls=None,
+                        stop_reason="end_turn",
+                        usage=TokenUsage(),
+                        stream=self._wrap_stream(resp),
+                    )
+                # Layer 2 seed: capture the raw request + raw response (opt-in,
+                # OFF by default) before we normalize it, to seed a replay corpus.
+                capture_transcript(kwargs, resp, streamed=False)
+                return self._normalize_response(resp)
+            except ProviderAuthError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — must classify, not swallow
+                if _is_auth_error(litellm, exc):
+                    raise ProviderAuthError(
+                        "Provider authentication failed. Connect a provider in "
+                        "Settings (set the API key) and retry."
+                    ) from exc
+                if attempt >= self._num_retries or not _is_retryable_provider_error(
+                    litellm, exc
+                ):
+                    raise RuntimeError(
+                        _provider_error_message(exc, provider_name=self._provider_name)
+                    ) from exc
+                _sleep_provider_backoff(attempt, self._retry_base_seconds)
+                attempt += 1
 
     def _normalize_response(self, resp: Any) -> AgentResponse:
         choices = getattr(resp, "choices", None) or (
@@ -916,6 +934,96 @@ def _is_auth_error(litellm: Any, exc: Exception) -> bool:
         token in msg
         for token in ("api key", "api_key", "unauthorized", "authentication", "401")
     )
+
+
+# --- transient provider-fault retry -----------------------------------------
+# A transient gateway fault (OpenRouter returning an empty/whitespace body that
+# litellm cannot parse to JSON -> `APIError: Unable to get json response`, a
+# 429/5xx, a dropped connection, a read timeout, or an empty `choices` list) is
+# INFRASTRUCTURE, not a model or governance outcome. A single one must never
+# kill a multi-gate funded run (it did: a G3 whitespace-only response ended a
+# run whose G0-G2 were already signed). The provider call is retried with capped
+# exponential backoff before it surfaces as a RuntimeError. Auth and genuine
+# request errors (bad-request / context-window / not-found) are NOT retried --
+# retrying them only burns tokens and delays a real, actionable failure. This is
+# the same "don't let provider flakiness read as model weakness" intent as the
+# turn-error accounting at the top of this module.
+_PROVIDER_NUM_RETRIES_ENV = "SIGNALOS_PROVIDER_NUM_RETRIES"
+_PROVIDER_RETRY_BASE_ENV = "SIGNALOS_PROVIDER_RETRY_BASE_SECONDS"
+_DEFAULT_PROVIDER_NUM_RETRIES = 4
+_DEFAULT_PROVIDER_RETRY_BASE_SECONDS = 2.0
+_PROVIDER_RETRY_BACKOFF_CAP_SECONDS = 30.0
+
+# litellm exception class NAMES, matched via getattr so any litellm version and a
+# fake litellm in tests both work. Non-retryable is checked FIRST because in the
+# openai/litellm hierarchy BadRequestError/ContextWindowExceededError ARE
+# instances of APIError -- order makes the terminal classes win.
+_NON_RETRYABLE_LITELLM_EXC = (
+    "AuthenticationError", "PermissionDeniedError", "BadRequestError",
+    "ContextWindowExceededError", "NotFoundError", "UnprocessableEntityError",
+    "ContentPolicyViolationError",
+)
+_RETRYABLE_LITELLM_EXC = (
+    "APIError", "APIConnectionError", "APIResponseValidationError", "Timeout",
+    "RateLimitError", "ServiceUnavailableError", "InternalServerError",
+)
+# Message signatures for transient faults that arrive as a bare APIError or a
+# plain RuntimeError (our own "no choices" normalize guard, gateway errors).
+_RETRYABLE_MESSAGE_SIGNATURES = (
+    "unable to get json response", "expecting value", "no choices",
+    "overloaded", "temporarily unavailable", "service unavailable",
+    "bad gateway", "gateway time-out", "gateway timeout", "connection reset",
+    "connection aborted", "connection error", "remotely closed",
+    "read timed out", "timed out", "502", "503", "504", "429",
+)
+
+
+def _is_retryable_provider_error(litellm: Any, exc: Exception) -> bool:
+    """True for transient infra faults worth retrying; False for terminal ones."""
+    for name in _NON_RETRYABLE_LITELLM_EXC:
+        cls = getattr(litellm, name, None)
+        if isinstance(cls, type) and isinstance(exc, cls):
+            return False
+    for name in _RETRYABLE_LITELLM_EXC:
+        cls = getattr(litellm, name, None)
+        if isinstance(cls, type) and isinstance(exc, cls):
+            return True
+    msg = str(exc).lower()
+    return any(sig in msg for sig in _RETRYABLE_MESSAGE_SIGNATURES)
+
+
+def _resolve_provider_num_retries(explicit: int | None) -> int:
+    if explicit is not None:
+        return max(0, int(explicit))
+    import os
+    raw = os.environ.get(_PROVIDER_NUM_RETRIES_ENV)
+    if raw:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return _DEFAULT_PROVIDER_NUM_RETRIES
+
+
+def _resolve_provider_retry_base(explicit: float | None) -> float:
+    if explicit is not None:
+        return max(0.0, float(explicit))
+    import os
+    raw = os.environ.get(_PROVIDER_RETRY_BASE_ENV)
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return _DEFAULT_PROVIDER_RETRY_BASE_SECONDS
+
+
+def _sleep_provider_backoff(attempt: int, base_seconds: float) -> None:
+    if base_seconds <= 0:
+        return
+    import time
+    delay = min(base_seconds * (2 ** attempt), _PROVIDER_RETRY_BACKOFF_CAP_SECONDS)
+    time.sleep(delay)
 
 
 # ---------------------------------------------------------------------------

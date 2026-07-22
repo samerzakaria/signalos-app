@@ -100,6 +100,41 @@ def _fake_litellm(*, response=None, raise_exc=None):
     return mod
 
 
+class _FakeAPIError(Exception):
+    pass
+
+
+class _FakeBadRequestError(Exception):
+    pass
+
+
+def _sequence_litellm(effects):
+    """Fake litellm whose completion yields each effect in turn (repeating the
+    last). Each effect is ('raise', exc) or ('return', response). Exposes the
+    litellm exception classes so the retry classifier can match by type."""
+    calls = {"n": 0}
+    seq = list(effects)
+
+    def completion(**kwargs):
+        i = calls["n"]
+        calls["n"] += 1
+        kind, payload = seq[min(i, len(seq) - 1)]
+        if kind == "raise":
+            raise payload
+        return payload
+
+    return types.SimpleNamespace(
+        completion=completion,
+        AuthenticationError=_FakeAuthError,
+        APIError=_FakeAPIError,
+        BadRequestError=_FakeBadRequestError,
+        supports_function_calling=lambda model=None: True,
+        get_model_info=lambda model=None: {"max_input_tokens": 128000},
+        model_list=["gpt-4o"],
+        _calls=calls,
+    )
+
+
 def _text_response(text):
     # OpenAI-shaped dict — _normalize_response handles dict or object.
     return {
@@ -166,6 +201,87 @@ class TestLiteLLMCallPath:
             assert False, "expected ProviderAuthError"
         except ProviderAuthError:
             pass
+
+
+class TestTransientProviderRetry:
+    """OA-51: a transient OpenRouter fault (empty/whitespace body that litellm
+    cannot parse to JSON, 429/5xx, dropped connection, empty `choices`) must be
+    retried, not fail the gate. This exact fault -- APIError "Unable to get json
+    response" at G3 -- killed a run whose G0-G2 were already signed."""
+
+    def test_transient_api_error_retried_then_succeeds(self):
+        err = _FakeAPIError(
+            "APIError: OpenrouterException - Unable to get json response"
+        )
+        lm = _sequence_litellm(
+            [("raise", err), ("raise", err), ("return", _text_response("recovered"))]
+        )
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        resp = prov.chat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="deepseek/deepseek-v4-pro",
+        )
+        assert resp.content == "recovered"
+        assert lm._calls["n"] == 3  # 2 transient failures + 1 success
+
+    def test_bare_exception_with_transient_signature_retried(self):
+        # The real G3 fault surfaced as a message, not a typed class; the
+        # signature alone must still trigger a retry.
+        err = RuntimeError(
+            "litellm.APIError: OpenrouterException - Unable to get json "
+            "response - Expecting value: line 253 column 1 (char 1386)"
+        )
+        lm = _sequence_litellm([("raise", err), ("return", _text_response("ok"))])
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        resp = prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+        assert resp.content == "ok"
+        assert lm._calls["n"] == 2
+
+    def test_empty_choices_transient_retried(self):
+        empty = {"choices": [], "usage": {}}
+        lm = _sequence_litellm([("return", empty), ("return", _text_response("ok"))])
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        resp = prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+        assert resp.content == "ok"
+        assert lm._calls["n"] == 2
+
+    def test_bad_request_fails_fast_no_retry(self):
+        # A genuine request error must fail immediately -- retrying only burns
+        # tokens and delays an actionable failure.
+        err = _FakeBadRequestError("BadRequestError: invalid 'tools' schema")
+        lm = _sequence_litellm(
+            [("raise", err), ("return", _text_response("must not reach"))]
+        )
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        try:
+            prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+            assert False, "expected RuntimeError"
+        except RuntimeError:
+            pass
+        assert lm._calls["n"] == 1  # NOT retried
+
+    def test_auth_error_not_retried(self):
+        lm = _sequence_litellm([("raise", _FakeAuthError("invalid api key"))])
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        try:
+            prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+            assert False, "expected ProviderAuthError"
+        except ProviderAuthError:
+            pass
+        assert lm._calls["n"] == 1  # NOT retried
+
+    def test_retries_exhausted_raises_runtime_error(self):
+        err = _FakeAPIError("Unable to get json response")
+        lm = _sequence_litellm([("raise", err)])  # always fails
+        prov = LiteLLMAgentProvider(
+            litellm_module=lm, num_retries=3, retry_base_seconds=0
+        )
+        try:
+            prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+            assert False, "expected RuntimeError"
+        except RuntimeError:
+            pass
+        assert lm._calls["n"] == 4  # 1 initial + 3 retries
 
     def test_gemini_routed_to_ai_studio_with_api_key(self, monkeypatch):
         # A GEMINI_API_KEY is a Google AI Studio key; LiteLLM only routes it
