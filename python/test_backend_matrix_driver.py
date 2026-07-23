@@ -38,6 +38,7 @@ EXPECTED_MODELS = [
     ("qwen37max", "openrouter", "qwen/qwen3.7-max", "OPENROUTER_API_KEY"),
     ("mimov25pro", "openrouter", "xiaomi/mimo-v2.5-pro", "OPENROUTER_API_KEY"),
     ("kimik27code", "openrouter", "moonshotai/kimi-k2.7-code", "OPENROUTER_API_KEY"),
+    ("kimik3", "openrouter", "moonshotai/kimi-k3", "OPENROUTER_API_KEY"),
     ("deepseekv4flash", "openrouter", "deepseek/deepseek-v4-flash", "OPENROUTER_API_KEY"),
     ("gptoss120b", "openrouter", "openai/gpt-oss-120b", "OPENROUTER_API_KEY"),
     ("gpt56terrapro", "openrouter", "openai/gpt-5.6-terra-pro", "OPENROUTER_API_KEY"),
@@ -53,7 +54,8 @@ EXPECTED_MODELS = [
 EXPECTED_COHORTS = {
     **{alias: "primary" for alias in (
         "fable5", "gpt56solpro", "grok45", "glm52", "deepseekv4pro",
-        "qwen37max", "mimov25pro", "kimik27code", "deepseekv4flash", "gptoss120b",
+        "qwen37max", "mimov25pro", "kimik27code", "kimik3", "deepseekv4flash",
+        "gptoss120b",
     )},
     **{alias: "challenger" for alias in (
         "gpt56terrapro", "sonnet5", "qwen37plus", "mimov25", "minimaxm3", "nemotron3ultra",
