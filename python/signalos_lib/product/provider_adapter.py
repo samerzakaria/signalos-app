@@ -708,12 +708,14 @@ class LiteLLMAgentProvider:
         provider_name: str | None = None,
         num_retries: int | None = None,
         retry_base_seconds: float | None = None,
+        request_timeout: float | None = None,
     ) -> None:
         self._litellm = litellm_module
         self._max_tokens = max_tokens
         self._provider_name = provider_name
         self._num_retries = _resolve_provider_num_retries(num_retries)
         self._retry_base_seconds = _resolve_provider_retry_base(retry_base_seconds)
+        self._request_timeout = _resolve_provider_request_timeout(request_timeout)
 
     @property
     def litellm(self) -> Any:
@@ -734,6 +736,10 @@ class LiteLLMAgentProvider:
             "model": _normalize_litellm_model(model, provider_name=self._provider_name),
             "messages": messages,
             "max_tokens": self._max_tokens,
+            # OA-57: bounded per-request timeout -- an unresponsive upstream must
+            # fail in minutes and reach the terminal error chain, never hang on
+            # litellm's ~600s default through every retry (heartbeat starvation).
+            "timeout": self._request_timeout,
         }
         if tools:
             kwargs["tools"] = tools
@@ -981,11 +987,16 @@ _RETRYABLE_MESSAGE_SIGNATURES = (
 # key that is out of budget only wastes calls and buries the real message. A
 # funded run died at G4 on OpenRouter "Key limit exceeded (total limit)"; the
 # fix is the user raising the key limit, not a retry. Checked FIRST, before the
-# retryable-class match, so the message wins over the class.
+# retryable-class match, so the message wins over the class. OA-57 adds the
+# litellm unmapped-provider routing error ("LLM Provider NOT provided" + its
+# "Provider List:" banner): a mis-routed model id is a CONFIGURATION error --
+# retrying it can only fail identically while printing the banner each attempt.
 _NON_RETRYABLE_MESSAGE_SIGNATURES = (
     "key limit exceeded", "insufficient credit", "insufficient_quota",
     "credit balance is too low", "purchase credits", "payment required",
     "exceeded your current quota", "billing", "402",
+    "llm provider not provided", "unmapped llm provider",
+    "provider list: https://docs.litellm.ai",
 )
 
 
@@ -1017,6 +1028,31 @@ def _resolve_provider_num_retries(explicit: int | None) -> int:
         except ValueError:
             pass
     return _DEFAULT_PROVIDER_NUM_RETRIES
+
+
+# OA-57: a BOUNDED per-request timeout passed to litellm.completion. Without
+# it, litellm's default (~600s) applies: when an upstream endpoint goes
+# unresponsive, each attempt hangs ~10 minutes and the OA-51 retry loop turns
+# that into 60-90 minutes of SILENCE -- no stdout agent-events -- which starved
+# the driver's inactivity heartbeat and killed a funded run whose build seats
+# had all been finishing cleanly. A generous-but-bounded ceiling: a real
+# completion (even a long G2 plan) streams well within it, while a hung
+# endpoint now fails in minutes and reaches the terminal error chain.
+_PROVIDER_REQUEST_TIMEOUT_ENV = "SIGNALOS_PROVIDER_REQUEST_TIMEOUT"
+_DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 180.0
+
+
+def _resolve_provider_request_timeout(explicit: float | None) -> float:
+    if explicit is not None:
+        return max(1.0, float(explicit))
+    import os
+    raw = os.environ.get(_PROVIDER_REQUEST_TIMEOUT_ENV)
+    if raw:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            pass
+    return _DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS
 
 
 def _resolve_provider_retry_base(explicit: float | None) -> float:

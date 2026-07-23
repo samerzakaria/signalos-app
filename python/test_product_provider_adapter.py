@@ -283,6 +283,44 @@ class TestTransientProviderRetry:
             pass
         assert lm._calls["n"] == 4  # 1 initial + 3 retries
 
+    def test_unmapped_provider_fails_fast_even_as_apierror(self):
+        # OA-57 seed: litellm's unmapped-provider routing error ("LLM Provider
+        # NOT provided" + the "Provider List:" banner) can surface as a bare
+        # APIError (a retryable class). It is a CONFIGURATION error -- retrying
+        # fails identically while printing the banner each attempt (a live
+        # funded run spun silently on exactly this). Message must win: 1 call.
+        err = _FakeAPIError(
+            "litellm.APIError: LLM Provider NOT provided. Pass in the LLM "
+            "provider you are trying to call.\nProvider List: "
+            "https://docs.litellm.ai/docs/providers"
+        )
+        lm = _sequence_litellm(
+            [("raise", err), ("return", _text_response("must not reach"))]
+        )
+        prov = LiteLLMAgentProvider(litellm_module=lm, retry_base_seconds=0)
+        try:
+            prov.chat(messages=[{"role": "user", "content": "hi"}],
+                      model="moonshotai/kimi-k3")
+            assert False, "expected RuntimeError"
+        except RuntimeError:
+            pass
+        assert lm._calls["n"] == 1  # NOT retried
+
+    def test_bounded_request_timeout_is_forwarded_to_litellm(self):
+        # OA-57 seed: chat() must pass a bounded per-request timeout to
+        # litellm.completion -- without it, litellm's ~600s default turns an
+        # unresponsive upstream into 60-90 min of silent retry hanging (a live
+        # funded run was killed by heartbeat starvation on exactly this).
+        lm = _fake_litellm(response=_text_response("ok"))
+        prov = LiteLLMAgentProvider(litellm_module=lm, request_timeout=120)
+        prov.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+        assert lm._captured["timeout"] == 120
+        # default is bounded too (never None / never litellm's default)
+        lm2 = _fake_litellm(response=_text_response("ok"))
+        prov2 = LiteLLMAgentProvider(litellm_module=lm2)
+        prov2.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
+        assert 0 < lm2._captured["timeout"] <= 600
+
     def test_key_limit_exceeded_fails_fast_even_as_apierror(self):
         # OA-52: a funded run died at G4 on OpenRouter "Key limit exceeded
         # (total limit)", surfaced as an APIError (a retryable CLASS). It must
