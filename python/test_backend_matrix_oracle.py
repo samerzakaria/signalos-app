@@ -189,3 +189,97 @@ def test_record_actions_must_mutate_the_selected_non_first_record(tmp_path: Path
     by_name = {check["name"]: check for check in result["checks"]}
     assert by_name["DELETE_DURABLE"]["status"] == "fail"
     assert by_name["RECONCILE_DURABLE"]["status"] == "fail"
+
+
+# ---------------------------------------------------------------------------
+# Seeded known-bad audit (OA-56): every oracle check must have killed at least
+# one bad product. Each seed is ONE plausible, surgical mutation of GOOD_APP —
+# the app still looks right and works in-session; only the targeted behaviour
+# is broken. A seed that stops failing means the oracle rung regressed.
+# ---------------------------------------------------------------------------
+
+# Focus indicator suppressed everywhere (the classic "designer killed the
+# outline" bug). Everything else is fully functional and accessible.
+NO_FOCUS_APP = GOOD_APP.replace(
+    ":focus-visible { outline: 3px solid #2255cc; outline-offset: 2px; }",
+    "*:focus, *:focus-visible { outline: none; box-shadow: none; }",
+)
+
+# Description input loses its label: no label text, no aria-label, no title.
+UNLABELED_INPUT_APP = GOOD_APP.replace(
+    '<label>Description <input id="description" name="description" required></label>',
+    '<input id="description" name="description" required>',
+)
+
+# Submit control taken out of the tab order (a real button with an accessible
+# name, but tabindex=-1 -- keyboard users can never reach it).
+UNREACHABLE_SUBMIT_APP = GOOD_APP.replace(
+    '<button type="submit">Add expense</button>',
+    '<button type="submit" tabindex="-1">Add expense</button>',
+)
+
+# Rows render the description but silently drop the amount and date.
+MISSING_FIELDS_APP = GOOD_APP.replace(
+    "details.textContent = ` ${Number(expense.amount).toFixed(2)} ${expense.category} ${expense.date} `;",
+    "details.textContent = ` ${expense.category} `;",
+)
+
+# The filter UI exists and looks wired, but the predicate ignores it.
+BROKEN_FILTER_APP = GOOD_APP.replace(
+    'expenses.filter((item) => filter.value === "All" || item.category === filter.value)',
+    "expenses.filter(() => true)",
+)
+
+# State lives only in memory: everything works in-session, nothing survives a
+# reload (the exact bug the scenario prompt warns against).
+NO_PERSIST_APP = GOOD_APP.replace(
+    "function save() { localStorage.setItem(storageKey, JSON.stringify(expenses)); render(); }",
+    "function save() { render(); }",
+)
+
+
+def _oracle_verdict(tmp_path: Path, fixture: str) -> dict:
+    assert fixture != GOOD_APP, "seed mutation failed to apply"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(fixture, encoding="utf-8")
+    evidence = tmp_path / "evidence.json"
+    completed = _run_oracle(dist, evidence)
+    assert completed.returncode == 1, completed.stdout or completed.stderr
+    result = json.loads(evidence.read_text(encoding="utf-8"))
+    assert result["status"] == "fail"
+    return {check["name"]: check for check in result["checks"]}
+
+
+def test_suppressed_focus_outline_fails_boot_form(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, NO_FOCUS_APP)
+    assert by_name["BOOT_FORM"]["status"] == "fail"
+
+
+def test_unlabeled_input_fails_boot_form(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, UNLABELED_INPUT_APP)
+    assert by_name["BOOT_FORM"]["status"] == "fail"
+
+
+def test_keyboard_unreachable_submit_fails_boot_form(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, UNREACHABLE_SUBMIT_APP)
+    assert by_name["BOOT_FORM"]["status"] == "fail"
+
+
+def test_missing_amount_and_date_fails_add_fields(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, MISSING_FIELDS_APP)
+    # the mutation is surgical: the form itself stays accessible
+    assert by_name["BOOT_FORM"]["status"] == "pass"
+    assert by_name["ADD_FIELDS"]["status"] == "fail"
+
+
+def test_noop_filter_fails_filter_check(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, BROKEN_FILTER_APP)
+    assert by_name["BOOT_FORM"]["status"] == "pass"
+    assert by_name["FILTER"]["status"] == "fail"
+
+
+def test_in_memory_only_state_fails_persist_add(tmp_path: Path) -> None:
+    by_name = _oracle_verdict(tmp_path, NO_PERSIST_APP)
+    assert by_name["BOOT_FORM"]["status"] == "pass"
+    assert by_name["PERSIST_ADD"]["status"] == "fail"

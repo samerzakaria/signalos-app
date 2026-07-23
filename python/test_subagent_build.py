@@ -1900,6 +1900,33 @@ class TestTaskDodViolations(unittest.TestCase):
         task = Task(id="T1", name="T", text="", files=["src/Form.tsx"])
         self.assertEqual(task_dod_violations(d, task, source_dir="src"), [])
 
+    def test_near_duplicate_modules_are_flagged(self):
+        # OA-56 seed: a task that FORKS a parallel copy of a module instead of
+        # reusing it must trip the near-duplicate consolidation violation.
+        # The rung's contract is line-set Jaccard > 0.95 (deliberately
+        # conservative so similar-but-legit modules are never false-flagged);
+        # this fork is 24/25 identical (~96%) -- squarely a copy. Documented
+        # boundary: a fork diluted below ~95% similarity is NOT flagged.
+        d = self._repo()
+        (d / "src").mkdir(parents=True)
+        base = "\n".join(
+            f"export function helper{i}(x: number) {{ return x + {i}; }}"
+            for i in range(24)
+        ) + "\n"
+        (d / "src" / "listUtils.ts").write_text(base, encoding="utf-8")
+        # the fork: identical except one appended line
+        (d / "src" / "listHelpers.ts").write_text(
+            base + "export const forked = true;\n", encoding="utf-8")
+        (d / "src" / "App.tsx").write_text(
+            "import { helper0 } from './listUtils';\n"
+            "import { forked } from './listHelpers';\n"
+            "export default () => <div>{String(forked)}{helper0(1)}</div>;\n",
+            encoding="utf-8")
+        task = Task(id="T1", name="T", text="",
+                    files=["src/listUtils.ts", "src/listHelpers.ts"])
+        viol = task_dod_violations(d, task, source_dir="src")
+        self.assertTrue(any("near-duplicates" in v for v in viol), viol)
+
 
 def _dod_plan_repo(test_body: str, *, impl_rel: str = "src/store/s.ts",
                    impl_body: str = "export const s = 1;\n") -> Path:

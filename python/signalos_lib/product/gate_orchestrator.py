@@ -32,7 +32,7 @@ from ..git_process import (
 )
 from ..projects import validate_project_id
 from .agent_loop import AgentLoop, LoopResult
-from .wiring_check import CODE_SUFFIXES, SCAFFOLD_NAMES, find_unwired_modules
+from .wiring_check import CODE_SUFFIXES, SCAFFOLD_NAMES, unwired_lint
 from .budgets import resolve_gate_reopen_budget, resolve_gate_rework_budget
 from .enforcement_state import EnforcementProvider
 from .release_tree import ReleaseTreeError
@@ -1460,18 +1460,19 @@ class GateOrchestrator:
                 "reason": f"No real product source under {src_dir}/** -- implement the "
                           "product's modules/logic (not just tests or a stub), then rebuild.",
             })
-        # 1.5. WIRING gate: every product module must be reachable from the app
-        # entry through the import graph. Components that exist but are never
-        # composed ("pieces without wiring" -- the dominant observed failure)
-        # are refused by machine, with the orphan modules named.
+        # 1.5. WIRING is NOT a static gate (v1.2 demotion; OA-56 audit made this
+        # honest). Reachability is enforced by the DoD dead-code check during
+        # the build and by the plan's App-render acceptance tests (an unwired
+        # module fails a RED test) -- the old import-graph refusal caused
+        # false-positive kills (see wiring_check.py). What remains here is the
+        # ADVISORY lint: name unreachable modules as a heads-up, never refuse.
         orphans = self._unwired_modules()
         if orphans:
-            return finish({
-                "ok": False,
-                "reason": ("Build has UNWIRED modules -- written but never imported/"
-                           "composed into the app. Wire each into the app's component "
-                           "tree (import + render/use it), or remove it if truly "
-                           "unneeded:\n" + "\n".join(f"- {o}" for o in orphans)),
+            self.emit({
+                "type": "system",
+                "text": ("Advisory wiring lint: modules not reachable from the "
+                         "app entry (enforced by the acceptance tests, not this "
+                         "lint): " + ", ".join(orphans[:10])),
             })
         # 2. Independent build + test; surface the ACTUAL errors so rework
         # feedback is actionable (e.g. a missing module the compiler can name).
@@ -1571,17 +1572,16 @@ class GateOrchestrator:
             return []
 
     # (Import-graph shapes + entry names live in wiring_check.py -- the single
-    # source for the wiring analysis, shared with the in-loop build reviewer so a
-    # module written-but-never-composed is caught DURING the build, not only at
-    # this gate.)
+    # source for the wiring analysis. Wiring is enforced by the DoD dead-code
+    # check + the plan's App-render acceptance tests; this lint is advisory.)
 
     def _unwired_modules(self) -> list:
-        """Product-source modules UNREACHABLE from the app entry through the
-        import graph -- the dominant 'green but not a product' failure (pieces
-        written, never composed). Delegates to the shared wiring check, which the
-        in-loop build reviewer also runs, so the same violation is caught DURING
-        the build (with a fix pass) rather than only here at the gate."""
-        return find_unwired_modules(self.repo_root, self._product_source_dir())
+        """ADVISORY ONLY (v1.2 demotion): product-source modules unreachable
+        from the app entry through the import graph, surfaced as a heads-up in
+        the gate walk. Never decides pass/fail -- the static refusal caused
+        false-positive kills; real enforcement is the DoD dead-code check plus
+        the App-render acceptance tests (see wiring_check.py)."""
+        return unwired_lint(self.repo_root, self._product_source_dir())
 
     def _verify_ux_acceptance(self, profile: str) -> dict:
         """UX/BEHAVIORAL acceptance HARD gate: a build is not VERIFIED unless it

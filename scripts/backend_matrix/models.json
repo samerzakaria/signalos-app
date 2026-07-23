@@ -43,6 +43,11 @@
       "cohort": "primary"
     },
     {
+      "alias": "kimik3",
+      "id": "moonshotai/kimi-k3",
+      "cohort": "primary"
+    },
+    {
       "alias": "deepseekv4flash",
       "id": "deepseek/deepseek-v4-flash",
       "cohort": "primary"

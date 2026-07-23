@@ -3242,6 +3242,127 @@ def test_oracle_input_is_built_product_and_excludes_the_source_tree(
     }
 
 
+def test_oracle_mutating_its_sealed_input_is_an_infrastructure_error(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    """OA-56 seed: the clean-room's input-tree-unchanged wall must actually
+    fire. An oracle that MUTATES its sealed production input (here: appending
+    to product/assets/app.js -- a file not bound into the evidence, so the
+    sealed-evidence validation alone would not notice) must be refused as
+    InfrastructureError, never graded."""
+
+    workspace = tmp_path / "workspace"
+    (workspace / "src").mkdir(parents=True)
+    package_json = {
+        "name": "expense-tracker",
+        "private": True,
+        "scripts": {"build": "vite build", "test": "vitest run"},
+    }
+    (workspace / "package.json").write_text(
+        json.dumps(package_json), encoding="utf-8"
+    )
+    (workspace / "package-lock.json").write_text(
+        json.dumps({"lockfileVersion": 3}), encoding="utf-8"
+    )
+    package_sha = driver._sha256_file(workspace / "package.json")
+    lock_sha = driver._sha256_file(workspace / "package-lock.json")
+
+    oracle_pkg = tmp_path / "oracle-package.json"
+    oracle_pkg.write_text(
+        json.dumps({"name": "signalos-oracle-runtime", "private": True}),
+        encoding="utf-8",
+    )
+    oracle_lock = tmp_path / "oracle-package-lock.json"
+    oracle_lock.write_text(json.dumps({"lockfileVersion": 3}), encoding="utf-8")
+
+    class BuildingFunded:
+        def public_evidence(self) -> dict[str, Any]:
+            return {
+                "inputs": {
+                    "package_json_sha256": package_sha,
+                    "package_lock_sha256": lock_sha,
+                }
+            }
+
+        def run_offline_command(
+            self,
+            ws: Path,
+            command: str,
+            *,
+            timeout: float,
+            writable_paths: tuple[str, ...] = (),
+            env: dict[str, str] | None = None,
+            secrets_to_redact: Any = (),
+        ) -> dict[str, Any]:
+            if command == "npm run build":
+                dist = Path(ws) / "dist"
+                (dist / "assets").mkdir(parents=True, exist_ok=True)
+                (dist / "index.html").write_text(
+                    "<!doctype html><title>built product</title>\n",
+                    encoding="utf-8",
+                )
+                (dist / "assets" / "app.js").write_text(
+                    "console.log('built');\n", encoding="utf-8"
+                )
+            return {"ok": True, "returncode": 0, "timed_out": False}
+
+    class MutatingOracle:
+        def __init__(self) -> None:
+            self.policy = SimpleNamespace(
+                profile=driver.ORACLE_RUNTIME_PROFILE,
+                package_json=oracle_pkg,
+                package_lock=oracle_lock,
+            )
+
+        def run_offline_command(
+            self,
+            ws: Path,
+            command: str,
+            *,
+            timeout: float,
+            writable_paths: tuple[str, ...] = (),
+            env: dict[str, str] | None = None,
+            secrets_to_redact: Any = (),
+        ) -> dict[str, Any]:
+            product_index_sha = driver._sha256_file(
+                Path(ws) / "product" / "index.html"
+            )
+            # the mutation: the oracle rewrites part of its sealed input
+            app_js = Path(ws) / "product" / "assets" / "app.js"
+            app_js.write_text(
+                app_js.read_text(encoding="utf-8") + "// oracle tamper\n",
+                encoding="utf-8",
+            )
+            dist = Path(ws) / "dist"
+            dist.mkdir(parents=True, exist_ok=True)
+            (dist / "oracle-evidence.json").write_text(
+                json.dumps(_well_formed_oracle_evidence(driver, product_index_sha)),
+                encoding="utf-8",
+            )
+            return {"ok": True, "returncode": 0, "timed_out": False}
+
+    oracle_source = b"export default function oracle() {}\n"
+    oracle_asset = {
+        "name": "oracle.mjs",
+        "source": oracle_source,
+        "sha256": hashlib.sha256(oracle_source).hexdigest(),
+    }
+
+    with pytest.raises(
+        driver.InfrastructureError, match="mutated its sealed production input"
+    ):
+        driver._clean_room_acceptance(
+            workspace,
+            tmp_path / "row" / "clean-room",
+            oracle_asset,
+            scenario_id="expense_tracker",
+            timeout=30,
+            secrets=(),
+            funded_context=BuildingFunded(),
+            oracle_context=MutatingOracle(),
+        )
+
+
 def test_both_dependency_contexts_teardown_on_success_and_failure(
     driver: ModuleType, tmp_path: Path
 ) -> None:
