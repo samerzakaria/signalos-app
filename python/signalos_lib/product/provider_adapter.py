@@ -1039,7 +1039,13 @@ def _resolve_provider_num_retries(explicit: int | None) -> int:
 # completion (even a long G2 plan) streams well within it, while a hung
 # endpoint now fails in minutes and reaches the terminal error chain.
 _PROVIDER_REQUEST_TIMEOUT_ENV = "SIGNALOS_PROVIDER_REQUEST_TIMEOUT"
-_DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 180.0
+# OA-59: 180s killed LEGITIMATE long generations on slow models (kimi-k3's big
+# plan/implementer outputs take 200-400s) -- each kill was BILLED then retried,
+# burning ~$24 in one run and masquerading as provider degradation; fast models
+# (deepseek) masked it. 600s tolerates a slow 16k-token completion while still
+# bounding a truly hung request (the infinite-hang class is dead via OA-58's
+# process-tree kill, not this ceiling).
+_DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 600.0
 
 
 def _resolve_provider_request_timeout(explicit: float | None) -> float:
