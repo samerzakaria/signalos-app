@@ -1039,13 +1039,16 @@ def _resolve_provider_num_retries(explicit: int | None) -> int:
 # completion (even a long G2 plan) streams well within it, while a hung
 # endpoint now fails in minutes and reaches the terminal error chain.
 _PROVIDER_REQUEST_TIMEOUT_ENV = "SIGNALOS_PROVIDER_REQUEST_TIMEOUT"
-# OA-59: 180s killed LEGITIMATE long generations on slow models (kimi-k3's big
-# plan/implementer outputs take 200-400s) -- each kill was BILLED then retried,
-# burning ~$24 in one run and masquerading as provider degradation; fast models
-# (deepseek) masked it. 600s tolerates a slow 16k-token completion while still
-# bounding a truly hung request (the infinite-hang class is dead via OA-58's
-# process-tree kill, not this ceiling).
-_DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 600.0
+# OA-59b (founder correction): NO duration cap on productive work -- that is
+# the VALUE-BASED termination rule this product removed caps for, and OA-57's
+# 180s (then 600s) violated it: it killed BILLED, legitimate slow-model long
+# generations (~$24 burned in one run) while the hangs it targeted were really
+# the OA-58 container bug. This value is a LAST-RESORT dead-socket bound only
+# (one completion never legitimately takes an hour); liveness decisions belong
+# to value signals: the driver's inactivity heartbeat, OA-58's tree-kill, and
+# (queued) a streaming token-flow watchdog -- kill only when NO tokens arrive,
+# never while value is flowing.
+_DEFAULT_PROVIDER_REQUEST_TIMEOUT_SECONDS = 3600.0
 
 
 def _resolve_provider_request_timeout(explicit: float | None) -> float:

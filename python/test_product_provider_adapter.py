@@ -319,7 +319,9 @@ class TestTransientProviderRetry:
         lm2 = _fake_litellm(response=_text_response("ok"))
         prov2 = LiteLLMAgentProvider(litellm_module=lm2)
         prov2.chat(messages=[{"role": "user", "content": "hi"}], model="gpt-4o")
-        assert 0 < lm2._captured["timeout"] <= 600
+        # OA-59b: last-resort dead-socket bound ONLY -- generous enough that no
+        # legitimate generation is ever killed by a clock (value-based rule).
+        assert 0 < lm2._captured["timeout"] <= 3600
 
     def test_key_limit_exceeded_fails_fast_even_as_apierror(self):
         # OA-52: a funded run died at G4 on OpenRouter "Key limit exceeded
