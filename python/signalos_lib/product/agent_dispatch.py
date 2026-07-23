@@ -1009,6 +1009,12 @@ _MODEL_MAX_OUTPUT_TOKENS: tuple[tuple[str, int], ...] = (
     ("o3", 32768),
     ("claude", 64000),
     ("gemini", 32768),
+    # OA-60: kimi-k3 is a REASONING model -- max_tokens covers hidden reasoning
+    # PLUS visible output. At the 16384 default it burned the ENTIRE budget on
+    # reasoning, returning EMPTY content (billed, useless), and the truncation-
+    # continue prompt just re-triggered more reasoning. 65536 (model supports
+    # 384k completion) leaves room for both.
+    ("kimi", 65536),
 )
 _DEFAULT_MODEL_MAX_OUTPUT = 16384
 

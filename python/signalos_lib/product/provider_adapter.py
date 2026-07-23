@@ -1107,6 +1107,10 @@ _OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
     ("o3", 32768),
     ("claude", 64000),
     ("gemini", 32768),
+    # OA-60: reasoning models (kimi-k3) spend max_tokens on hidden reasoning +
+    # visible output; the 16384 default was fully consumed by reasoning ->
+    # empty content, billed. Mirrors agent_dispatch._MODEL_MAX_OUTPUT_TOKENS.
+    ("kimi", 65536),
 )
 _DEFAULT_OUTPUT_CEILING = 16384
 
