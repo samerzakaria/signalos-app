@@ -2996,6 +2996,12 @@ def run_subagent_driven_build(
     # decision is the value ratchet. A very high loop guard is the last-resort
     # anti-runaway backstop (money + freeze detector are the real walls); it is
     # never the normal stop.
+    # OA-58 defense-in-depth: announce the (long) whole-suite validation BEFORE
+    # it runs -- this stdout event feeds the driver's inactivity heartbeat, so a
+    # legitimately slow first integration pass can never read as dead silence.
+    emit({"type": "system",
+          "text": "Integration gate: running the whole build + full test suite "
+                  "in the container (first pass after per-task seats)."})
     green, last_errors = check(repo_root)
     b_passing, b_total = whole_build_passing()
     igate = _TaskProgressGate(per_task_stall_rounds)

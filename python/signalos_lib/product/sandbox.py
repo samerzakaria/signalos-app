@@ -843,6 +843,45 @@ class InProcessRunner(SandboxRunner):
         return proc.returncode, CommandOutput(proc.stdout or "", proc.stderr or "")
 
 
+def _run_bounded(argv, *, timeout=None, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run drop-in whose timeout ACTUALLY terminates on Windows.
+
+    Bare subprocess.run, on TimeoutExpired, kills only the direct child and then
+    performs an UNBOUNDED communicate() to drain pipes; any descendant still
+    holding the inherited stdout handle blocks that drain forever (OA-58 -- two
+    funded runs hung ~90 min in the G4 whole-suite container validation). This
+    wrapper: Popen -> communicate(timeout) -> on expiry, kill the WHOLE process
+    tree (taskkill /F /T on Windows, kill() elsewhere) -> BOUNDED final drain ->
+    raise TimeoutExpired so callers' existing except-branches behave unchanged.
+    """
+    capture = kwargs.pop("capture_output", False)
+    if capture:
+        kwargs.setdefault("stdout", subprocess.PIPE)
+        kwargs.setdefault("stderr", subprocess.PIPE)
+    check = kwargs.pop("check", False)
+    proc = subprocess.Popen(argv, **kwargs)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True, timeout=30, check=False,
+            )
+        else:
+            proc.kill()
+        try:
+            out, err = proc.communicate(timeout=15)  # bounded drain, never forever
+        except subprocess.TimeoutExpired:
+            out, err = "", ""
+        raise subprocess.TimeoutExpired(argv, timeout, output=out, stderr=err)
+    completed = subprocess.CompletedProcess(argv, proc.returncode, out, err)
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(
+            proc.returncode, argv, output=out, stderr=err)
+    return completed
+
+
 class ContainerRunner(SandboxRunner):
     """Opt-in backend: runs the command inside a throwaway container with ONLY
     the workspace bind-mounted read-write, the network disabled, and cpu/mem/pids
@@ -876,10 +915,23 @@ class ContainerRunner(SandboxRunner):
         platform: str | None = None,
         dependency_mount: DependencyMount | None = None,
         require_funded_dependencies: bool = False,
-        runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+        runner: Callable[..., subprocess.CompletedProcess] | None = None,
     ) -> None:
         if engine not in _ENGINE_CLI:
             raise ValueError(f"unknown container engine: {engine!r}")
+        # OA-58: default to the BOUNDED runner, never bare subprocess.run. On
+        # Windows, subprocess.run's TimeoutExpired path performs an UNBOUNDED
+        # second communicate() to drain pipes after killing docker.exe; a
+        # child/grandchild (Docker CLI relay, or a container-side process
+        # spawned by the suite) holding the inherited stdout handle blocks that
+        # drain FOREVER -- the per-command timeout fires internally but run()
+        # never returns. Two funded runs died on exactly this: the G4
+        # whole-suite validation hung silently ~90 min until the driver's
+        # heartbeat killed the journey. Same hazard the sibling paths already
+        # mitigate (InProcessRunner._kill_lingering_children; validation.py's
+        # Popen + _terminate_process_tree); this closes the container paths.
+        if runner is None:
+            runner = _run_bounded
         self.workspace = Path(workspace).resolve()
         self.engine = engine
         self.image = image
@@ -1439,7 +1491,7 @@ class ContainerRunner(SandboxRunner):
             return False
         return inspected.returncode == 0 and (inspected.stdout or "").strip() == "true"
 
-    def _exec_in_session(
+    def _exec_in_session(  # noqa: D401 -- see OA-58 note on the bounded runner
         self,
         cmd: str,
         cwd: str | os.PathLike[str],
