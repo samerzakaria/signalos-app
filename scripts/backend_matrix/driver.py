@@ -4604,8 +4604,21 @@ def _run_row(
                 workspace / ".signalos" / "agent-runs" / run_id / "delivery.json"
             )
             persisted = json.loads(delivery_file.read_text(encoding="utf-8"))
+            mutated = False
             if str(persisted.get("status") or "") == "cancelled":
                 persisted["status"] = "blocked"
+                mutated = True
+            # The killed session also persisted its cancel as last_outcome
+            # ("cancellation observed before ..."); left in place it poisons
+            # the resumed checkpoint validation. Clear it -- the rerun writes
+            # a genuine outcome.
+            stale_reason = str(
+                (persisted.get("last_outcome") or {}).get("reason") or ""
+            )
+            if "cancellation observed" in stale_reason:
+                persisted["last_outcome"] = {}
+                mutated = True
+            if mutated:
                 delivery_file.write_text(
                     json.dumps(persisted, indent=2), encoding="utf-8"
                 )
