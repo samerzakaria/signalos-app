@@ -1178,10 +1178,15 @@ class GateOrchestrator:
                 pass
 
     def _prepare_g4_attribution(self) -> dict:
-        """Persist the pre-build tree. Reuse only an interrupted attempt from
-        this delivery; completed/refused attempts receive a fresh baseline."""
+        """Persist the pre-build tree. OA-62: any valid SAME-DELIVERY record
+        carries its ORIGINAL baseline forward -- a rework/resume rerun after a
+        'refused'/'attributed' attempt must never re-capture the baseline from
+        the now-populated tree (that made baseline==post, delta==0, and refused
+        a genuinely model-built product on resume). Only a delivery with NO
+        prior record captures a fresh pre-build baseline."""
         existing = self._load_g4_attribution()
-        if existing and existing.get("phase") == "running":
+        if existing and existing.get("phase") in (
+                "running", "refused", "attributed", "verified"):
             baseline = existing.get("baseline_tree")
             meaningful = existing.get("baseline_meaningful_tree")
             if (isinstance(baseline, dict)
@@ -1190,6 +1195,15 @@ class GateOrchestrator:
                     and existing.get("baseline_meaningful_digest")
                     == self._g4_tree_digest(meaningful)
                     and existing.get("source_dir") == self._product_source_dir()):
+                if existing.get("phase") != "running":
+                    # rework/resume rerun: same original baseline, new attempt
+                    try:
+                        existing["attempt"] = max(
+                            1, int(existing.get("attempt", 0)) + 1)
+                    except (TypeError, ValueError):
+                        existing["attempt"] = 1
+                    existing["phase"] = "running"
+                    self._write_g4_attribution(existing)
                 return existing
 
         attempt = 1
