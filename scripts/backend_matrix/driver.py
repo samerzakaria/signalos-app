@@ -4575,7 +4575,14 @@ def _run_row(
             # ...and RE-MATERIALIZE with this run's broker: only the driver
             # materializes (the engine merely verifies), so the resumed
             # workspace needs a fresh, hash-verified bundle + receipt signed
-            # under this run's attestation key before the walk re-enters.
+            # under this run's attestation key before the walk re-enters. The
+            # broker only fills a CLEAN slot (fail-closed anti-tamper), so the
+            # prior run's broker-owned node_modules is removed first -- the
+            # identical bundle re-unpacks; the model's product source is
+            # untouched.
+            stale_modules = workspace / "node_modules"
+            if stale_modules.is_dir():
+                shutil.rmtree(stale_modules)
             row["resume_dependency_receipt"] = funded_context.materialize_after_init(
                 workspace
             )
