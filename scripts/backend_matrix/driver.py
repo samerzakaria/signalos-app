@@ -4572,6 +4572,13 @@ def _run_row(
                     raise InfrastructureError(
                         f"cannot clear stale dependency receipt {stale_receipt}: {exc}"
                     )
+            # ...and RE-MATERIALIZE with this run's broker: only the driver
+            # materializes (the engine merely verifies), so the resumed
+            # workspace needs a fresh, hash-verified bundle + receipt signed
+            # under this run's attestation key before the walk re-enters.
+            row["resume_dependency_receipt"] = funded_context.materialize_after_init(
+                workspace
+            )
             # An "active" checkpoint at G4 means the interrupted G4 build reruns
             # INSIDE this agent:resume call, so it gets the same heartbeat
             # budget as the verdict that normally runs the build: only a frozen
