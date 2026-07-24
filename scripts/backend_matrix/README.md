@@ -63,6 +63,13 @@ python scripts/backend_matrix/driver.py --live --models exploratory `
 python scripts/backend_matrix/driver.py --live --models all `
   --orchestrator-profile benchmark `
   --max-cost-per-model 2.00 --acknowledge-key-exposure
+
+# Continue an interrupted funded journey from its persisted gate checkpoint.
+# --resume-root takes the EXISTING per-model row directory (the one containing
+# workspace/), and exactly one --models entry names the model to continue with
+# -- it may differ from the model that started the journey.
+python scripts/backend_matrix/driver.py --live --resume-root C:\tmp\funded-run\20260722T010203Z-ab12cd34\kimik3 `
+  --models glm52 --orchestrator-profile benchmark --acknowledge-key-exposure
 ```
 
 Use `--list-models` to see the authoritative aliases, cohort, and provider model
@@ -80,6 +87,17 @@ required GitHub workflows, and complete successful job sets from
 `ci_policy.json`; a caller-supplied SHA is not accepted as CI proof. It refuses
 any output root inside the Git worktree. Use `production` only when you intentionally
 want the extra release-safety stages included in the measured journey.
+
+`--resume-root` exists because a funded delivery must be continuable from where
+it stopped -- with any model -- rather than forcing a fresh start. It reuses the
+interrupted row's workspace and persisted `delivery.json`, sends `agent:resume`
+(never `agent:deliver`), keeps every fresh-run precondition (engine/CI checks,
+key checks, dependency verification), skips the gates the interrupted run
+already signed, and re-enters the verdict loop at the persisted current gate
+with the same G4 build heartbeat budget. The `--orchestrator-profile` must match
+the persisted delivery profile. Resumed rows are marked `resumed` with a
+`model_chain` naming every model that worked on the delivery; treat them as
+journey-completion evidence, not single-model benchmark scores.
 
 ## API key handling
 

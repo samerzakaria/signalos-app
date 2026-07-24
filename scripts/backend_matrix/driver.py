@@ -4228,6 +4228,102 @@ def _delivery_request(
     }
 
 
+def _resume_request(
+    *,
+    spec: ModelSpec,
+    run_id: str,
+    orchestrator_profile: str,
+    provider_context_length: int,
+) -> dict[str, Any]:
+    """Build the agent:resume request that continues a persisted delivery.
+
+    The prompt is intentionally absent: the persisted delivery owns it.  The
+    provider/model name the CONTINUING model, which may differ from the model
+    that started the journey -- the backend threads them into a fresh adapter,
+    so model-switch resume is first-class, never a fresh mandatory restart.
+    """
+    profile = _validate_orchestrator_profile(orchestrator_profile)
+    return {
+        "run_id": run_id,
+        "provider": spec.provider,
+        "model": spec.model,
+        "profile": profile,
+        "provider_context_length": provider_context_length,
+    }
+
+
+def _locate_resumable_delivery(resume_root: Path) -> dict[str, Any]:
+    """Find the one persisted governed delivery under an existing row root.
+
+    ``resume_root`` is a prior per-model row directory (the one containing
+    ``workspace/``).  The workspace persists exactly one governed delivery run
+    under ``.signalos/agent-runs`` (G4 spawns ``*-g4-*`` helper runs, which are
+    not resumable deliveries and are excluded).  Fails closed with a clear
+    reason instead of guessing: resume must continue the exact interrupted
+    gate walk or refuse.
+    """
+    root = Path(resume_root).expanduser().resolve()
+    workspace = root / "workspace"
+    if not workspace.is_dir():
+        raise ValueError(
+            f"--resume-root must be an existing row directory containing workspace/: {root}"
+        )
+    runs_dir = workspace / ".signalos" / "agent-runs"
+    if not runs_dir.is_dir():
+        raise ValueError(
+            "resume root has no persisted deliveries (.signalos/agent-runs is missing); "
+            "nothing to continue"
+        )
+    candidates = sorted(
+        entry.name
+        for entry in runs_dir.iterdir()
+        if entry.is_dir() and "-g4-" not in entry.name
+    )
+    if len(candidates) != 1:
+        raise ValueError(
+            "expected exactly one persisted delivery under .signalos/agent-runs "
+            "(excluding *-g4-* helper runs); found "
+            + (", ".join(candidates) if candidates else "none")
+        )
+    run_id = candidates[0]
+    delivery = _load_delivery(workspace, run_id)
+    if delivery.get("run_id") != run_id:
+        raise ValueError(
+            f"persisted delivery.json names run {delivery.get('run_id')!r}, "
+            f"but lives under {run_id!r}"
+        )
+    status = str(delivery.get("status") or "")
+    if status not in {"active", "awaiting-verdict", "reopened"}:
+        raise ValueError(
+            f"persisted delivery status {status!r} is not resumable by this driver "
+            "(complete/stopped/cancelled/blocked journeys cannot be continued here)"
+        )
+    current_gate = str(delivery.get("current_gate") or "")
+    if current_gate not in GATES:
+        raise ValueError(f"persisted current gate {current_gate!r} is not a known gate")
+    signed = delivery.get("signed")
+    if signed != list(GATES[: GATES.index(current_gate)]):
+        raise ValueError(
+            f"persisted signed gates {signed!r} are not the clean prefix before "
+            f"{current_gate}; this benchmark cannot continue a waived or reordered walk"
+        )
+    original_model: str | None = None
+    prior_result = root / "result.json"
+    if prior_result.is_file():
+        with contextlib.suppress(OSError, json.JSONDecodeError):
+            prior = json.loads(prior_result.read_text(encoding="utf-8"))
+            if isinstance(prior, dict) and isinstance(prior.get("model"), str):
+                original_model = prior["model"]
+    return {
+        "resume_root": root,
+        "run_id": run_id,
+        "current_gate": current_gate,
+        "signed": list(signed),
+        "profile": str(delivery.get("profile") or ""),
+        "original_model": original_model,
+    }
+
+
 def _run_row(
     spec: ModelSpec,
     scenario: dict[str, Any],
@@ -4248,11 +4344,20 @@ def _run_row(
     provider_model_metadata: dict[str, Any],
     funded_context: FundedRunContext,
     oracle_context: FundedRunContext,
+    resume: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     orchestrator_profile = _validate_orchestrator_profile(orchestrator_profile)
     workspace = row_dir / "workspace"
-    workspace.mkdir(parents=True, exist_ok=False)
-    run_id = f"matrix-{spec.alias}-{uuid.uuid4().hex[:12]}"
+    if resume is None:
+        workspace.mkdir(parents=True, exist_ok=False)
+        run_id = f"matrix-{spec.alias}-{uuid.uuid4().hex[:12]}"
+    else:
+        # Continue the persisted journey inside the SAME row/workspace; every
+        # precondition below is idempotent against the existing tree.
+        if not workspace.is_dir():
+            raise InfrastructureError(f"resume workspace is missing: {workspace}")
+        run_id = str(resume["run_id"])
+    resume_stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     row: dict[str, Any] = {
         "schema": "signalos.backend-matrix.row.v1",
         "status": "running",
@@ -4273,7 +4378,23 @@ def _run_row(
         "calls": [],
         "gates": [],
     }
+    if resume is not None:
+        # A resumed row is journey-completion evidence, not a single-model
+        # benchmark score: the model chain names every model that worked on
+        # this delivery (the continuing model may differ from the original).
+        row["resumed"] = True
+        row["resumed_from_run_id"] = run_id
+        row["resumed_from_gate"] = str(resume["current_gate"])
+        row["model_chain"] = [
+            model
+            for model in (resume.get("original_model"), spec.model)
+            if isinstance(model, str) and model
+        ]
     result_path = row_dir / "result.json"
+    if resume is not None and result_path.is_file():
+        # Preserve the interrupted row's evidence instead of overwriting it.
+        with contextlib.suppress(OSError):
+            result_path.replace(row_dir / f"result.prior-{resume_stamp}.json")
     row_secrets = tuple(
         dict.fromkeys(
             (
@@ -4382,11 +4503,25 @@ def _run_row(
                 "role": "PO",
             },
         )
-        row["release_origin"] = _prepare_local_release_remote(
-            workspace,
-            release_origin,
-            env=tool_env,
-        )
+        if resume is None:
+            row["release_origin"] = _prepare_local_release_remote(
+                workspace,
+                release_origin,
+                env=tool_env,
+            )
+        else:
+            # The interrupted run already prepared this row-local origin and
+            # wired the workspace remote to it; re-preparing would corrupt it.
+            if not release_origin.is_dir():
+                raise InfrastructureError(
+                    "resume root is missing its row-local release origin "
+                    "(release-origin.git); the journey cannot finalize G5 without it"
+                )
+            row["release_origin"] = {
+                "kind": "row-local-bare-git-origin",
+                "path": str(release_origin.resolve()),
+                "reused": True,
+            }
         _safe_json_write(result_path, row, row_secrets)
         baseline = _snapshot_product_tree(workspace)
 
@@ -4394,22 +4529,64 @@ def _run_row(
         # call made by this delivery contributes to this one cumulative cap.
         cost = CostGuard(router, cost_cap)
 
-        deliver = invoke(
-            "agent:deliver",
-            _delivery_request(
-                prompt=str(scenario["prompt"]),
-                spec=spec,
-                run_id=run_id,
-                orchestrator_profile=orchestrator_profile,
-                provider_context_length=int(
-                    provider_model_metadata["context_length"]
+        if resume is None:
+            deliver = invoke(
+                "agent:deliver",
+                _delivery_request(
+                    prompt=str(scenario["prompt"]),
+                    spec=spec,
+                    run_id=run_id,
+                    orchestrator_profile=orchestrator_profile,
+                    provider_context_length=int(
+                        provider_model_metadata["context_length"]
+                    ),
                 ),
-            ),
-            gate_timeout,
-        )
-        deliver_data = _require_ok("agent:deliver", deliver)
-        if deliver_data.get("run_id") != run_id or deliver_data.get("gate") != "G0":
-            raise ProductFailure("agent:deliver returned the wrong run or first gate")
+                gate_timeout,
+            )
+            deliver_data = _require_ok("agent:deliver", deliver)
+            if deliver_data.get("run_id") != run_id or deliver_data.get("gate") != "G0":
+                raise ProductFailure("agent:deliver returned the wrong run or first gate")
+        else:
+            resume_gate = str(resume["current_gate"])
+            # An "active" checkpoint at G4 means the interrupted G4 build reruns
+            # INSIDE this agent:resume call, so it gets the same heartbeat
+            # budget as the verdict that normally runs the build: only a frozen
+            # process is cut off, never a working one.
+            resume_runs_g4_build = resume_gate == "G4"
+            resumed_terminal = invoke(
+                "agent:resume",
+                _resume_request(
+                    spec=spec,
+                    run_id=run_id,
+                    orchestrator_profile=orchestrator_profile,
+                    provider_context_length=int(
+                        provider_model_metadata["context_length"]
+                    ),
+                ),
+                g4_build_timeout if resume_runs_g4_build else gate_timeout,
+                heartbeat=resume_runs_g4_build,
+            )
+            if resumed_terminal.get("ok") is not True:
+                message = str(resumed_terminal.get("error") or "")
+                if "already active" in message or "no persisted state" in message:
+                    # Fail once with the exact reason; retrying cannot help --
+                    # another session owns the delivery, or there is nothing
+                    # persisted to continue.
+                    raise InfrastructureError(
+                        "agent:resume cannot continue this journey: "
+                        + message
+                        + " (verify --resume-root and that no other session holds "
+                        "this delivery; the driver does not retry)"
+                    )
+            resume_data = _require_ok("agent:resume", resumed_terminal)
+            if (
+                resume_data.get("run_id") != run_id
+                or resume_data.get("gate") != resume_gate
+            ):
+                raise ProductFailure(
+                    "agent:resume returned the wrong run or gate: expected "
+                    f"{run_id!r} at {resume_gate!r}, got {resume_data!r}"
+                )
         persisted_start = _load_delivery(workspace, run_id)
         persisted_profile = persisted_start.get("profile")
         row["persisted_orchestrator_profile"] = persisted_profile
@@ -4420,7 +4597,15 @@ def _run_row(
             )
 
         trace_gates = set(scenario.get("trace_requirements_through_gates") or [])
+        # Resume keeps the SAME gate walk: gates the persisted delivery already
+        # signed are skipped (their signatures and artifacts persist on disk),
+        # and the loop re-enters at the persisted current gate.  G4 attribution
+        # reuses the in-flight checkpoint, so resumed work keeps its original
+        # baseline and already-green plan tasks stay skipped.
+        already_signed = frozenset(resume["signed"]) if resume is not None else frozenset()
         for index, gate in enumerate(GATES):
+            if gate in already_signed:
+                continue
             signed_before = list(GATES[:index])
             state = _load_delivery(workspace, run_id)
             dependency_receipt: dict[str, Any] | None = None
@@ -4581,7 +4766,11 @@ def _run_row(
         sidecar = None
 
         local_final_tree = _snapshot_product_tree(workspace)
-        release_checkout = row_dir / "release-checkout"
+        release_checkout = (
+            row_dir / "release-checkout"
+            if resume is None
+            else row_dir / f"release-checkout-{resume_stamp}"
+        )
         row["release_checkout"] = _checkout_pushed_release(
             Path(row["release_origin"]["path"]),
             release_checkout,
@@ -4594,7 +4783,11 @@ def _run_row(
                 "pushed release product bytes differ from the finalized local workspace"
             )
         changed_sources = _changed_product_sources(baseline, final_tree)
-        if not changed_sources:
+        if not changed_sources and resume is None:
+            # On a resumed row the "baseline" is the interrupted mid-flight
+            # tree (the original model may have authored every source file
+            # before the interruption), so an empty diff is legitimate
+            # journey-completion evidence there -- but never on a fresh run.
             raise ProductFailure("this run produced no new or changed real product source files")
         row["product_tree"] = {
             "baseline": baseline,
@@ -4602,6 +4795,8 @@ def _run_row(
             "local_matches_remote": True,
             "changed_source_files": changed_sources,
         }
+        if resume is not None:
+            row["product_tree"]["baseline_kind"] = "resumed-mid-flight"
 
         scan = _secret_scan(
             release_checkout,
@@ -4746,6 +4941,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "benchmark is the stable comparison default."
         ),
     )
+    parser.add_argument(
+        "--resume-root",
+        type=Path,
+        default=None,
+        metavar="ROW_DIR",
+        help=(
+            "Continue an interrupted funded journey from its persisted gate "
+            "checkpoint. Takes an EXISTING per-model row directory (the one "
+            "containing workspace/). Requires exactly one --models entry: the "
+            "model to continue with, which may differ from the original."
+        ),
+    )
     parser.add_argument("--env-file", type=Path, default=None, help="Explicit dotenv path; never copied into results.")
     parser.add_argument("--output-root", type=Path, default=Path(tempfile.gettempdir()) / "signalos-backend-matrix")
     parser.add_argument("--max-cost-per-model", type=float, default=None, metavar="USD")
@@ -4815,6 +5022,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         scenario_path = args.scenario.expanduser().resolve()
         orchestrator_profile = _validate_orchestrator_profile(args.orchestrator_profile)
+        resume: dict[str, Any] | None = None
+        if args.resume_root is not None:
+            # Founder requirement: a funded delivery must be continuable from
+            # where it stopped with ANY model; a fresh start is never mandatory.
+            if args.preflight:
+                raise ValueError(
+                    "--resume-root continues paid work; combine it with --live, not --preflight"
+                )
+            choices = _flatten_model_args(args.models) or []
+            if len(choices) != 1 or choices[0] in {
+                "all",
+                "primary",
+                "challenger",
+                "exploratory",
+            }:
+                raise ValueError(
+                    "--resume-root continues exactly one persisted journey; pass exactly "
+                    "one --models entry naming the model to continue with (it may differ "
+                    "from the original; cohorts and 'all' are not allowed)"
+                )
+            resume = _locate_resumable_delivery(args.resume_root)
+            if args.live:
+                _require_external_output_root(resume["resume_root"])
+            if resume["profile"] != orchestrator_profile:
+                raise ValueError(
+                    f"persisted delivery profile {resume['profile']!r} does not match "
+                    f"--orchestrator-profile {orchestrator_profile!r}; pass the "
+                    "original profile to continue this journey"
+                )
         engine = _engine_metadata()
         _require_reproducible_engine(engine, live=bool(args.live))
 
@@ -4844,6 +5080,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # lookup and every provider/GitHub request.  Only local Git identity
         # discovery is allowed ahead of it for a live run.
         selected = select_models(catalog, args.models)
+        if resume is not None and len(selected) != 1:
+            raise ValueError(
+                "--resume-root continues one persisted journey; the model selection "
+                f"resolved to {len(selected)} models instead of exactly one"
+            )
         if any(
             spec.key_env != selected[0].key_env
             or spec.provider != selected[0].provider
@@ -5067,6 +5308,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     },
                     "results": [],
                 }
+                if resume is not None:
+                    funded_context.register_scan_root(resume["resume_root"])
+                    oracle_context.register_scan_root(resume["resume_root"])
+                    manifest["resume"] = {
+                        "resume_root": str(resume["resume_root"]),
+                        "resumed_from_run_id": resume["run_id"],
+                        "resumed_from_gate": resume["current_gate"],
+                        "note": (
+                            "resumed rows are journey-completion evidence, "
+                            "not single-model benchmark scores"
+                        ),
+                    }
                 manifest_path = run_root / "matrix-result.json"
                 _safe_json_write(manifest_path, manifest, active_secrets)
                 provider_models = {
@@ -5074,12 +5327,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
                 for spec in selected:
                     _require_engine_unchanged(engine)
-                    print(f"[{spec.alias}] starting fresh backend journey", flush=True)
+                    if resume is not None:
+                        row_dir = Path(resume["resume_root"])
+                        print(
+                            f"[{spec.alias}] resuming persisted backend journey "
+                            f"{resume['run_id']} from {resume['current_gate']}",
+                            flush=True,
+                        )
+                    else:
+                        row_dir = run_root / spec.alias
+                        print(f"[{spec.alias}] starting fresh backend journey", flush=True)
                     row = _run_row(
                         spec,
                         scenario,
                         oracle_asset,
-                        run_root / spec.alias,
+                        row_dir,
                         key=key,
                         key_source=key_source,
                         router=router,
@@ -5098,23 +5360,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                         provider_model_metadata=provider_models[spec.model],
                         funded_context=funded_context,
                         oracle_context=oracle_context,
+                        resume=resume,
                     )
                     _require_engine_unchanged(engine)
-                    manifest["results"].append(
-                        {
-                            "alias": spec.alias,
-                            "cohort": spec.cohort,
-                            "model": spec.model,
-                            "status": row.get("status"),
-                            "failure_type": row.get("failure_type"),
-                            "error": row.get("error"),
-                            "result": str(
-                                (run_root / spec.alias / "result.json").relative_to(
-                                    run_root
-                                )
-                            ),
-                        }
-                    )
+                    result_entry: dict[str, Any] = {
+                        "alias": spec.alias,
+                        "cohort": spec.cohort,
+                        "model": spec.model,
+                        "status": row.get("status"),
+                        "failure_type": row.get("failure_type"),
+                        "error": row.get("error"),
+                        "result": str(
+                            str(row_dir / "result.json")
+                            if resume is not None
+                            else (run_root / spec.alias / "result.json").relative_to(
+                                run_root
+                            )
+                        ),
+                    }
+                    if resume is not None:
+                        result_entry["resumed"] = True
+                        result_entry["resumed_from_run_id"] = resume["run_id"]
+                        result_entry["model_chain"] = row.get("model_chain")
+                    manifest["results"].append(result_entry)
                     _safe_json_write(manifest_path, manifest, active_secrets)
                     print(f"[{spec.alias}] {row.get('status')}", flush=True)
                     if args.fail_fast and row.get("status") != "pass":

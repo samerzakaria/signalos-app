@@ -3509,3 +3509,455 @@ def test_cost_guard_no_cap_relies_on_value_stop_and_provider_ceiling(driver: Mod
     g_cap.check(force=True)                         # failure 1
     with pytest.raises(driver.CostGuardError, match="monitoring failed"):
         g_cap.check(force=True)                     # failure 2 -> abort
+
+
+def _resumable_row_fixture(
+    root: Path,
+    *,
+    run_id: str = "matrix-kimik3-95dce1e12345",
+    current_gate: str = "G4",
+    status: str = "awaiting-verdict",
+    signed: list[str] | None = None,
+    profile: str = "benchmark",
+    original_model: str | None = "moonshotai/kimi-k3",
+) -> str:
+    """Persist an interrupted funded journey the way the real backend does."""
+
+    workspace = root / "workspace"
+    run_dir = workspace / ".signalos" / "agent-runs" / run_id
+    run_dir.mkdir(parents=True)
+    # G4 spawns helper runs whose ids contain "-g4-"; resume must never pick one.
+    (workspace / ".signalos" / "agent-runs" / f"{run_id}-g4-fleet").mkdir()
+    (workspace / ".signalos" / "INIT_COMPLETE.json").write_text("{}", encoding="utf-8")
+    (run_dir / "delivery.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "prompt": "Build the governed expense tracker",
+                "current_gate": current_gate,
+                "status": status,
+                "signed": signed if signed is not None else ["G0", "G1", "G2", "G3"],
+                "waived": [],
+                "conditions": {},
+                "profile": profile,
+                "last_outcome": {
+                    "gate": current_gate,
+                    "ok": True,
+                    "reason": "gate work complete",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "release-origin.git").mkdir()
+    if original_model:
+        (root / "result.json").write_text(
+            json.dumps({"model": original_model, "status": "error"}),
+            encoding="utf-8",
+        )
+    return run_id
+
+
+def test_resume_root_requires_exactly_one_model_and_fails_fast(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # FOUNDER REQUIREMENT: a funded delivery must be continuable from where it
+    # stopped -- with any model -- so --resume-root exists; but it continues ONE
+    # persisted journey, so it needs exactly one --models entry (the model to
+    # continue with).  Everything here must fail before any engine/git work.
+    monkeypatch.setattr(
+        driver,
+        "_engine_metadata",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("engine/subprocess work must not start")
+        ),
+    )
+    row_root = tmp_path / "row"
+    base = ["--live", "--acknowledge-key-exposure", "--resume-root", str(row_root)]
+
+    # Zero models (default selection would be the whole catalog).
+    assert driver.main(base) == 2
+    assert "exactly one --models entry" in capsys.readouterr().err
+
+    # Two models.
+    assert driver.main([*base, "--models", "kimik3", "glm52"]) == 2
+    assert "exactly one --models entry" in capsys.readouterr().err
+
+    # A cohort is many models, not the one continuation model.
+    assert driver.main([*base, "--models", "primary"]) == 2
+    assert "exactly one --models entry" in capsys.readouterr().err
+
+    # Resume is paid continuation work; a keyless preflight cannot resume.
+    assert driver.main(["--preflight", "--resume-root", str(row_root)]) == 2
+    assert "--live" in capsys.readouterr().err
+
+    # One model but a root without a persisted workspace: clear driver error.
+    assert driver.main([*base, "--models", "glm52"]) == 2
+    assert "workspace" in capsys.readouterr().err
+
+    # Persisted profile wins: continuing with the wrong --orchestrator-profile
+    # is refused before any preflight, key lookup, or provider work.
+    _resumable_row_fixture(row_root, profile="production")
+    assert driver.main([*base, "--models", "glm52"]) == 2
+    assert "does not match --orchestrator-profile" in capsys.readouterr().err
+
+
+def test_locate_resumable_delivery_finds_the_single_governed_run(
+    driver: ModuleType, tmp_path: Path
+) -> None:
+    root = tmp_path / "row"
+    run_id = _resumable_row_fixture(root)
+
+    resume = driver._locate_resumable_delivery(root)
+
+    assert resume["run_id"] == run_id
+    assert resume["current_gate"] == "G4"
+    assert resume["signed"] == ["G0", "G1", "G2", "G3"]
+    assert resume["profile"] == "benchmark"
+    # The original model comes from the interrupted row's result bundle so the
+    # resumed row can publish an honest model_chain.
+    assert resume["original_model"] == "moonshotai/kimi-k3"
+    assert resume["resume_root"] == root.resolve()
+
+    # Ambiguity fails closed: a second non-g4 run means "exactly one" is false.
+    second = root / "workspace" / ".signalos" / "agent-runs" / "matrix-other-run"
+    second.mkdir()
+    with pytest.raises(ValueError, match="exactly one persisted delivery"):
+        driver._locate_resumable_delivery(root)
+    second.rmdir()
+
+    # A finished journey has nothing to resume.
+    finished = tmp_path / "finished"
+    _resumable_row_fixture(finished, status="complete")
+    with pytest.raises(ValueError, match="not resumable"):
+        driver._locate_resumable_delivery(finished)
+
+    # A waived/reordered walk cannot be continued by this strict benchmark.
+    skewed = tmp_path / "skewed"
+    _resumable_row_fixture(skewed, signed=["G0", "G2"])
+    with pytest.raises(ValueError, match="clean prefix"):
+        driver._locate_resumable_delivery(skewed)
+
+    with pytest.raises(ValueError, match="workspace"):
+        driver._locate_resumable_delivery(tmp_path / "does-not-exist")
+
+
+def test_resume_flow_sends_agent_resume_and_reenters_loop_at_persisted_gate(
+    driver: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Continuing an interrupted journey must NOT start fresh.
+
+    The row runner sends agent:resume (never agent:deliver) carrying the NEW
+    model/provider -- model-switch continuation is first-class -- and re-enters
+    the same per-gate verdict loop at the persisted current gate, skipping the
+    gates the interrupted run already signed.
+    """
+    row_root = tmp_path / "row"
+    run_id = _resumable_row_fixture(row_root)
+    workspace = row_root / "workspace"
+    delivery_path = (
+        workspace / ".signalos" / "agent-runs" / run_id / "delivery.json"
+    )
+
+    class FakeSidecar:
+        instances: list["FakeSidecar"] = []
+
+        def __init__(self, ws: Path, env: dict[str, str], secrets: Any) -> None:
+            self.workspace = Path(ws)
+            self.calls: list[dict[str, Any]] = []
+            FakeSidecar.instances.append(self)
+
+        def call(
+            self,
+            command: str,
+            args: Any,
+            *,
+            timeout: float,
+            guard: Any = None,
+            heartbeat: bool = False,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            self.calls.append(
+                {
+                    "command": command,
+                    "args": args,
+                    "timeout": timeout,
+                    "heartbeat": heartbeat,
+                }
+            )
+            return [], self._respond(command, args)
+
+        def _write_delivery(self, payload: dict[str, Any]) -> None:
+            delivery_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def _respond(self, command: str, args: Any) -> dict[str, Any]:
+            if command == "capabilities":
+                return {
+                    "ok": True,
+                    "data": {
+                        "protocol": 1,
+                        "version": "test",
+                        "commands": [
+                            "gate0:approve",
+                            "agent:deliver",
+                            "agent:verdict",
+                            "agent:cancel",
+                            "agent:resume",
+                            "state:gates",
+                        ],
+                    },
+                }
+            if command == "signal-init":
+                return {"ok": True, "data": {}}
+            if command == "agent:resume":
+                # The backend re-emits the persisted checkpoint; state on disk
+                # is already awaiting-verdict at G4.
+                return {
+                    "ok": True,
+                    "data": {
+                        "run_id": args["run_id"],
+                        "gate": "G4",
+                        "status": "awaiting-verdict",
+                        "profile": "benchmark",
+                        "resumed": True,
+                    },
+                }
+            if command == "agent:verdict":
+                gate = args["gate_id"]
+                if gate == "G4":
+                    self._write_delivery(
+                        {
+                            "run_id": run_id,
+                            "current_gate": "G5",
+                            "status": "awaiting-verdict",
+                            "signed": ["G0", "G1", "G2", "G3", "G4"],
+                            "waived": [],
+                            "conditions": {},
+                            "profile": "benchmark",
+                            "last_outcome": {"gate": "G5", "ok": True},
+                        }
+                    )
+                    return {"ok": True, "data": {"status": "advanced", "gate": "G5"}}
+                assert gate == "G5", f"unexpected verdict gate {gate!r}"
+                self._write_delivery(
+                    {
+                        "run_id": run_id,
+                        "current_gate": "G5",
+                        "status": "complete",
+                        "signed": ["G0", "G1", "G2", "G3", "G4", "G5"],
+                        "waived": [],
+                        "conditions": {},
+                        "profile": "benchmark",
+                        "last_outcome": {"gate": "G5", "ok": True},
+                        "release_evidence": {
+                            "release_finalization": {
+                                "status": "succeeded",
+                                "outcome": {},
+                            }
+                        },
+                    }
+                )
+                return {
+                    "ok": True,
+                    "data": {
+                        "status": "complete",
+                        "ready": True,
+                        "waived": [],
+                        "conditions": {},
+                        "release_finalization": {"status": "succeeded"},
+                    },
+                }
+            if command == "state:gates":
+                return {
+                    "ok": True,
+                    "data": [
+                        {"gate": gate, "status": "signed"} for gate in driver.GATES
+                    ],
+                }
+            return {"ok": False, "error": f"{command} must not be called on resume"}
+
+        def stderr_tail(self) -> str:
+            return ""
+
+        def stray_stdout(self) -> list[str]:
+            return []
+
+        def close(self) -> None:
+            pass
+
+    class FakeCostGuard:
+        def __init__(self, router: Any, cap: float) -> None:
+            self.started_usage = 0.0
+            self.last_usage = 0.0
+            self.spent = 0.0
+            self.backward_observations: list[Any] = []
+
+        def check(self, force: bool = False) -> float:
+            return 0.0
+
+    class FakeRowFundedContext:
+        def __init__(self) -> None:
+            self.verified_g4_receipt = False
+
+        def redaction_secrets(self, provider_key: str = "") -> tuple[str, ...]:
+            return (provider_key,) if provider_key else ()
+
+        def attestation_scan_needles(self) -> tuple[tuple[str, bytes], ...]:
+            return ()
+
+        def sidecar_environment(
+            self,
+            runtime_home: Path,
+            *,
+            spec: Any,
+            provider_key: str,
+            expected_git_remote: Path,
+        ) -> dict[str, str]:
+            assert expected_git_remote == row_root / "release-origin.git"
+            return {}
+
+        def verify_materialized_after_init(self, ws: Path) -> dict[str, Any]:
+            self.verified_g4_receipt = True
+            return {"status": "verified", "receipt_sha256": "verified"}
+
+    funded_context = FakeRowFundedContext()
+    monkeypatch.setattr(driver, "SidecarClient", FakeSidecar)
+    monkeypatch.setattr(driver, "CostGuard", FakeCostGuard)
+    monkeypatch.setattr(driver, "_tool_subprocess_env", lambda home: {})
+    monkeypatch.setattr(
+        driver, "_snapshot_product_tree", lambda ws: {"src/App.tsx": "same-bytes"}
+    )
+    monkeypatch.setattr(
+        driver,
+        "_strict_gate",
+        lambda ws, gate: {"gate": gate, "signed": True, "reasons": []},
+    )
+    monkeypatch.setattr(
+        driver,
+        "_checkout_pushed_release",
+        lambda remote, destination, finalization, *, env: {"verified": True},
+    )
+    monkeypatch.setattr(
+        driver,
+        "_secret_scan",
+        lambda root, key, exact_values=(): {
+            "ok": True,
+            "files_scanned": 0,
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        driver,
+        "_clean_room_acceptance",
+        lambda *args, **kwargs: kwargs.get("evidence", {}),
+    )
+
+    catalog = driver.load_model_catalog(MODEL_CONFIG)
+    spec = next(entry for entry in catalog if entry.alias == "glm52")
+    scenario = {
+        "id": "expense_tracker",
+        "name": "Expense Tracker",
+        "profile": "react-vite",
+        "prompt": "Build the governed expense tracker",
+    }
+    resume = driver._locate_resumable_delivery(row_root)
+
+    row = driver._run_row(
+        spec,
+        scenario,
+        {"name": "oracle.mjs", "source": b"", "sha256": "0", "repository_path": "x"},
+        row_root,
+        key="unit-test-key",
+        key_source="test",
+        router=SimpleNamespace(),
+        cost_cap=float("inf"),
+        init_timeout=30.0,
+        gate_timeout=1800.0,
+        g4_build_timeout=5400.0,
+        command_timeout=60.0,
+        orchestrator_profile="benchmark",
+        engine={"commit": "0" * 40, "tree": "clean"},
+        hashes={},
+        provider_model_metadata={"id": spec.model, "context_length": 128_000},
+        funded_context=funded_context,
+        oracle_context=FakeRowFundedContext(),
+        resume=resume,
+    )
+
+    assert row["status"] == "pass", row.get("error")
+    calls = FakeSidecar.instances[-1].calls
+    commands = [call["command"] for call in calls]
+    # Resume, never a fresh mandatory start: agent:deliver is absent and the
+    # signed gates G0-G3 are skipped (no gate0:approve, no earlier verdicts).
+    assert "agent:deliver" not in commands
+    assert "gate0:approve" not in commands
+    assert commands == [
+        "capabilities",
+        "signal-init",
+        "agent:resume",
+        "agent:verdict",
+        "agent:verdict",
+        "state:gates",
+    ]
+
+    resume_call = calls[commands.index("agent:resume")]
+    # The continuation carries the NEW model/provider (model-switch is allowed)
+    # against the persisted run id, and -- because the persisted checkpoint is
+    # at G4 -- gets the G4 build heartbeat budget, so an interrupted build that
+    # reruns inside agent:resume is only cut off when genuinely frozen.
+    assert resume_call["args"]["run_id"] == run_id
+    assert resume_call["args"]["model"] == spec.model == "z-ai/glm-5.2"
+    assert resume_call["args"]["provider"] == spec.provider
+    assert resume_call["args"]["profile"] == "benchmark"
+    assert "prompt" not in resume_call["args"]
+    assert resume_call["timeout"] == 5400.0
+    assert resume_call["heartbeat"] is True
+
+    verdicts = [call for call in calls if call["command"] == "agent:verdict"]
+    assert [call["args"]["gate_id"] for call in verdicts] == ["G4", "G5"]
+    assert [entry["gate"] for entry in row["gates"]] == ["G4", "G5"]
+    assert row["gates"][0]["signed_before"] == ["G0", "G1", "G2", "G3"]
+    # The funded dependency receipt is still verified at the first (resumed)
+    # G4 checkpoint -- resume keeps every fresh-run precondition.
+    assert funded_context.verified_g4_receipt is True
+    assert row["gates"][0]["funded_dependencies"]["status"] == "verified"
+
+    # Result-bundle honesty: journey-completion evidence, not a single-model
+    # benchmark score.
+    assert row["resumed"] is True
+    assert row["resumed_from_run_id"] == run_id
+    assert row["resumed_from_gate"] == "G4"
+    assert row["model_chain"] == ["moonshotai/kimi-k3", "z-ai/glm-5.2"]
+    assert row["release_origin"]["reused"] is True
+    assert row["product_tree"]["baseline_kind"] == "resumed-mid-flight"
+    # The interrupted row's evidence is archived, never overwritten.
+    assert list(row_root.glob("result.prior-*.json"))
+    persisted_result = json.loads(
+        (row_root / "result.json").read_text(encoding="utf-8")
+    )
+    assert persisted_result["resumed"] is True
+    assert persisted_result["run_id"] == run_id
+
+
+def test_resume_refusals_surface_clear_errors_without_retry(
+    driver: ModuleType,
+) -> None:
+    # The sidecar's two refusal shapes must become one clear driver error --
+    # never a retry loop.  Assert at the source that the resume branch raises
+    # on both messages and performs no retry.
+    source = DRIVER_PATH.read_text(encoding="utf-8")
+    start = source.index("def _run_row(")
+    end = source.index("def _bounded_dependency_timeout", start)
+    run_row = source[start:end]
+    assert '"already active" in message or "no persisted state" in message' in run_row
+    assert "the driver does not retry" in run_row
+    # The resumed entry into G4 keeps the build heartbeat budget selection.
+    assert 'resume_runs_g4_build = resume_gate == "G4"' in run_row
+    assert "g4_build_timeout if resume_runs_g4_build else gate_timeout" in run_row
+    assert "heartbeat=resume_runs_g4_build" in run_row
+    # And the advancing-into-G4 verdict budget (fresh or resumed) is unchanged.
+    assert "g4_build_timeout if runs_g4_build else gate_timeout" in run_row
