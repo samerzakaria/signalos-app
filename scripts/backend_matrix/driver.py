@@ -4298,10 +4298,14 @@ def _locate_resumable_delivery(resume_root: Path) -> dict[str, Any]:
     # for a blocked checkpoint is a request-changes verdict that re-runs the
     # gate (gate_orchestrator.apply_verdict: "the reviewer must request changes
     # so the gate agent reruns"). Only terminal journeys are refused.
-    if status not in {"active", "awaiting-verdict", "reopened", "blocked"}:
+    # 'cancelled' is resumable too: the benchmark driver is the only canceller
+    # in this harness (heartbeat kill -> cancel_and_stop), so a cancelled
+    # checkpoint is the driver's OWN kill marker, un-done by the resume prep
+    # (OA-61f). Only complete/stopped journeys are terminal.
+    if status not in {"active", "awaiting-verdict", "reopened", "blocked", "cancelled"}:
         raise ValueError(
             f"persisted delivery status {status!r} is not resumable by this driver "
-            "(complete/stopped/cancelled journeys cannot be continued here)"
+            "(complete/stopped journeys cannot be continued here)"
         )
     current_gate = str(delivery.get("current_gate") or "")
     if current_gate not in GATES:
@@ -4583,6 +4587,28 @@ def _run_row(
             stale_modules = workspace / "node_modules"
             if stale_modules.is_dir():
                 shutil.rmtree(stale_modules)
+            # OA-61f: a heartbeat-killed prior session leaves ITS OWN
+            # cancel-requested marker (driver cancel_and_stop) and may have
+            # flipped the persisted status to 'cancelled'. Resuming is the
+            # explicit intent here, so the driver un-does its own kill-cancel:
+            # clear the marker and restore a resumable 'blocked' checkpoint.
+            # (This never overrides a human cancel -- the benchmark driver is
+            # the only canceller in this harness.)
+            cancel_marker = (
+                workspace / ".signalos" / "agent-runs" / run_id
+                / "cancel-requested.json"
+            )
+            if cancel_marker.is_file():
+                cancel_marker.unlink()
+            delivery_file = (
+                workspace / ".signalos" / "agent-runs" / run_id / "delivery.json"
+            )
+            persisted = json.loads(delivery_file.read_text(encoding="utf-8"))
+            if str(persisted.get("status") or "") == "cancelled":
+                persisted["status"] = "blocked"
+                delivery_file.write_text(
+                    json.dumps(persisted, indent=2), encoding="utf-8"
+                )
             row["resume_dependency_receipt"] = funded_context.materialize_after_init(
                 workspace
             )
