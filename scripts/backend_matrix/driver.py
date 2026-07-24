@@ -4293,10 +4293,15 @@ def _locate_resumable_delivery(resume_root: Path) -> dict[str, Any]:
             f"but lives under {run_id!r}"
         )
     status = str(delivery.get("status") or "")
-    if status not in {"active", "awaiting-verdict", "reopened"}:
+    # `blocked` IS resumable: it is exactly what an interrupted gate leaves (a
+    # provider death mid-G4 -> "blocked"), and the engine's designed re-entry
+    # for a blocked checkpoint is a request-changes verdict that re-runs the
+    # gate (gate_orchestrator.apply_verdict: "the reviewer must request changes
+    # so the gate agent reruns"). Only terminal journeys are refused.
+    if status not in {"active", "awaiting-verdict", "reopened", "blocked"}:
         raise ValueError(
             f"persisted delivery status {status!r} is not resumable by this driver "
-            "(complete/stopped/cancelled/blocked journeys cannot be continued here)"
+            "(complete/stopped/cancelled journeys cannot be continued here)"
         )
     current_gate = str(delivery.get("current_gate") or "")
     if current_gate not in GATES:
@@ -4321,6 +4326,7 @@ def _locate_resumable_delivery(resume_root: Path) -> dict[str, Any]:
         "signed": list(signed),
         "profile": str(delivery.get("profile") or ""),
         "original_model": original_model,
+        "status": status,
     }
 
 
@@ -4587,6 +4593,28 @@ def _run_row(
                     "agent:resume returned the wrong run or gate: expected "
                     f"{run_id!r} at {resume_gate!r}, got {resume_data!r}"
                 )
+            if str(resume.get("status") or "") == "blocked":
+                # A BLOCKED checkpoint (what a provider death mid-gate leaves)
+                # is never directly signable; the engine's designed re-entry is
+                # a request-changes verdict that RERUNS the gate agent on the
+                # same workspace (signed gates persist, green tasks skip, the
+                # attribution checkpoint is reused). For G4 that rerun IS the
+                # build, so it gets the build's heartbeat budget.
+                rerun = invoke(
+                    "agent:verdict",
+                    {
+                        "run_id": run_id,
+                        "gate_id": resume_gate,
+                        "verdict": "request-changes",
+                        "feedback": (
+                            "Resume of an interrupted build: continue the "
+                            "existing work to completion; do not restart."
+                        ),
+                    },
+                    g4_build_timeout if resume_runs_g4_build else gate_timeout,
+                    heartbeat=resume_runs_g4_build,
+                )
+                _require_ok("agent:verdict", rerun)
         persisted_start = _load_delivery(workspace, run_id)
         persisted_profile = persisted_start.get("profile")
         row["persisted_orchestrator_profile"] = persisted_profile
