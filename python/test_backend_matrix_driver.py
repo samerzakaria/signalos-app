@@ -2308,7 +2308,13 @@ def test_real_rows_verify_funded_receipt_at_first_g4_checkpoint() -> None:
     checkpoint = run_row.index("_validate_review_checkpoint", verify)
 
     assert g4 < verify < checkpoint
-    assert "funded_context.materialize_after_init" not in run_row
+    # OA-61d: exactly ONE materialize call is sanctioned inside _run_row -- the
+    # RESUME branch re-materializes (fresh receipt under this run's key, since
+    # the prior run's key was zeroed at teardown). Fresh rows still only VERIFY:
+    # the single call must sit BEFORE the gate loop's G4 verify checkpoint.
+    materialize_calls = run_row.count("funded_context.materialize_after_init")
+    assert materialize_calls == 1
+    assert run_row.index("funded_context.materialize_after_init") < g4
 
 
 def test_local_and_engine_subprocesses_never_inherit_ambient_credentials(
@@ -3823,6 +3829,12 @@ def test_resume_flow_sends_agent_resume_and_reenters_loop_at_persisted_gate(
         def verify_materialized_after_init(self, ws: Path) -> dict[str, Any]:
             self.verified_g4_receipt = True
             return {"status": "verified", "receipt_sha256": "verified"}
+
+        def materialize_after_init(self, ws: Path) -> dict[str, Any]:
+            # OA-61d: resume re-materializes with THIS run's broker before
+            # re-entering the walk (fresh receipt under this run's key).
+            self.rematerialized_on_resume = True
+            return {"status": "ready", "receipt_sha256": "rematerialized"}
 
     funded_context = FakeRowFundedContext()
     monkeypatch.setattr(driver, "SidecarClient", FakeSidecar)
