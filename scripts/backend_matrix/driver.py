@@ -138,6 +138,12 @@ SUBPROCESS_ENV_ALLOWLIST = {
     "REQUESTS_CA_BUNDLE",
     "CURL_CA_BUNDLE",
     "PLAYWRIGHT_BROWSERS_PATH",
+    # OA-63: provider liveness tuning (numeric only, no credential/network
+    # capability). Without these the sidecar fell back to the 3600s default and
+    # a dead upstream socket silently starved the driver heartbeat twice.
+    "SIGNALOS_PROVIDER_REQUEST_TIMEOUT",
+    "SIGNALOS_PROVIDER_NUM_RETRIES",
+    "SIGNALOS_PROVIDER_RETRY_BASE_SECONDS",
 }
 
 PROXY_ENV_NAMES = {
