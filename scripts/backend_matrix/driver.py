@@ -4554,6 +4554,24 @@ def _run_row(
                 raise ProductFailure("agent:deliver returned the wrong run or first gate")
         else:
             resume_gate = str(resume["current_gate"])
+            # OA-61c: dependency receipts are HMAC-signed with the ORIGINAL
+            # run's ephemeral attestation key (zeroed at its teardown), so a
+            # prior run's receipt can NEVER verify in a resumed run -- by
+            # design. Drop the stale receipt so this run's broker
+            # re-materializes the (hash-verified, identical) bundle and signs
+            # a FRESH receipt under this run's key.
+            for stale_receipt in (
+                workspace / ".signalos" / "dependency-receipt.json",
+                workspace / ".signalos" / "dependencies"
+                / ".signalos-dependency-receipt.json",
+            ):
+                try:
+                    if stale_receipt.is_file():
+                        stale_receipt.unlink()
+                except OSError as exc:
+                    raise InfrastructureError(
+                        f"cannot clear stale dependency receipt {stale_receipt}: {exc}"
+                    )
             # An "active" checkpoint at G4 means the interrupted G4 build reruns
             # INSIDE this agent:resume call, so it gets the same heartbeat
             # budget as the verdict that normally runs the build: only a frozen
